@@ -296,18 +296,18 @@ def get_lead_activity_status(lead_id):
 from frappe.share import add
 
 def after_insert_event(doc, method):
-    if doc.custom_assigned_to:
+    if doc.custom_allocated_to:
         share_event_with_user(doc)
 
 def before_save_event(doc, method):
-    if doc.custom_assigned_to:
+    if doc.custom_allocated_to:
         # Ensure share exists before saving
         share_event_with_user(doc)
 
 def share_event_with_user(doc):
     try:
-        # Share event with custom_assigned_to user
-        add(doc.doctype, doc.name, doc.custom_assigned_to, write=1, share=1, everyone=0)
-        frappe.msgprint(f"Event shared with {doc.custom_assigned_to}")
+        # Share event with custom_allocated_to user
+        add(doc.doctype, doc.name, doc.custom_allocated_to, write=1, share=1, everyone=0)
+        frappe.msgprint(f"Event shared with {doc.custom_allocated_to}")
     except Exception as e:
-        frappe.log_error(f"Failed to share Event {doc.name} with {doc.custom_assigned_to}: {str(e)}")
+        frappe.log_error(f"Failed to share Event {doc.name} with {doc.custom_allocated_to}: {str(e)}")
