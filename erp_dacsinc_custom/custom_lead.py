@@ -301,8 +301,9 @@ def after_insert_event(doc, method):
 
 def before_save_event(doc, method):
     if doc.custom_allocated_to:
-        # Ensure share exists before saving
-        share_event_with_user(doc)
+        # Ensure share exists before saving if document already exists
+        if doc.get("name"):
+            share_event_with_user(doc)
 
 def share_event_with_user(doc):
     try:
