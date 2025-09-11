@@ -137,13 +137,17 @@ app_license = "mit"
 # ---------------
 # Hook on document methods and events
 
-# doc_events = {
-# 	"*": {
-# 		"on_update": "method",
-# 		"on_cancel": "method",
-# 		"on_trash": "method"
-# 	}
-# }
+doc_events = {
+	# "Lead": {
+	# 	"after_insert": "method",
+	# 	"before_save": "method",
+	# }
+	"Event": {
+        "after_insert": "erp_dacsinc_custom.custom_lead.after_insert_event",
+        "before_save": "erp_dacsinc_custom.custom_lead.before_save_event"
+    }
+
+}
 
 # Scheduled Tasks
 # ---------------

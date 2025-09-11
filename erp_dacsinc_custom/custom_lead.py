@@ -288,3 +288,26 @@ def get_lead_activity_status(lead_id):
     total_count = frappe.db.count("ToDo", {"reference_type":"Lead","reference_name": lead_id})  # Total activities regardless of status
 
     return {"open": open_count, "closed": closed_count, "total": total_count}
+
+
+
+
+
+from frappe.share import add
+
+def after_insert_event(doc, method):
+    if doc.custom_assigned_to:
+        share_event_with_user(doc)
+
+def before_save_event(doc, method):
+    if doc.custom_assigned_to:
+        # Ensure share exists before saving
+        share_event_with_user(doc)
+
+def share_event_with_user(doc):
+    try:
+        # Share event with custom_assigned_to user
+        add(doc.doctype, doc.name, doc.custom_assigned_to, write=1, share=1, everyone=0)
+        frappe.msgprint(f"Event shared with {doc.custom_assigned_to}")
+    except Exception as e:
+        frappe.log_error(f"Failed to share Event {doc.name} with {doc.custom_assigned_to}: {str(e)}")
