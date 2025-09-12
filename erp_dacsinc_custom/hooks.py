@@ -138,15 +138,14 @@ app_license = "mit"
 # Hook on document methods and events
 
 doc_events = {
-	# "Lead": {
-	# 	"after_insert": "method",
-	# 	"before_save": "method",
-	# }
-	"Event": {
+    "Event": {
         "after_insert": "erp_dacsinc_custom.custom_lead.after_insert_event",
         "before_save": "erp_dacsinc_custom.custom_lead.before_save_event"
+    },
+    "Lead": {
+        "after_insert": "erp_dacsinc_custom.custom_lead.after_insert_lead",
+        "before_save": "erp_dacsinc_custom.custom_lead.before_save_lead"
     }
-
 }
 
 # Scheduled Tasks

@@ -229,28 +229,35 @@ def _make_quotation(source_name, target_doc=None, ignore_permissions=False):
 
 
 import frappe
-
 @frappe.whitelist()
 def get_activities_for_lead(lead_name):
     """
     Fetches all To-dos and Events linked to a specific lead.
     Returns a dictionary with two keys: 'todos' and 'events'.
+    Filters records based on the current user's permissions.
     """
     if not lead_name:
         return None
 
-    # Fetch all To-dos where the lead is the reference
+    user = frappe.session.user  # Get the current session user
+
+    # Fetch all To-dos where the lead is the reference, considering user permissions
     todos = frappe.get_all(
         "ToDo",
         filters={
             "reference_type": "Lead",
             "reference_name": lead_name,
         },
-        fields=["name", "description", "status", "date","allocated_to"]
+        fields=["name", "description", "status", "date", "allocated_to"],
     )
+    
+    # Filter ToDos based on access permissions
+    todos = [
+        todo for todo in todos
+        if frappe.has_permission("ToDo", "read", todo["name"])  # Check if user has 'read' permission on the ToDo
+    ]
 
-    # --- THIS IS THE CORRECTED PART ---
-    # The child DocType name must be exactly "Event Participants" (plural)
+    # Fetch all Events where the lead is referenced, considering user permissions
     events = frappe.get_all(
         "Event",
         filters=[
@@ -259,13 +266,18 @@ def get_activities_for_lead(lead_name):
         ],
         fields=["name", "subject", "starts_on", "status"]
     )
+    
+    # Filter Events based on access permissions
+    events = [
+        event for event in events
+        if frappe.has_permission("Event", "read", event["name"])  # Check if user has 'read' permission on the Event
+    ]
 
     return {
         "todos": todos,
         "events": events
     }
-    
-    
+   
 
 import frappe
 
@@ -289,27 +301,66 @@ def get_lead_activity_status(lead_id):
 
     return {"open": open_count, "closed": closed_count, "total": total_count}
 
+from frappe.share import add, get_users, remove
 
-
-
-
-from frappe.share import add
-
+# Event after insertion for Event
 def after_insert_event(doc, method):
     if doc.custom_allocated_to:
+        remove_existing_shares(doc)
         share_event_with_user(doc)
 
+# Event before saving for Event
 def before_save_event(doc, method):
     if not doc.is_new():
         if doc.custom_allocated_to:
-            # Ensure share exists before saving if document already exists
             if doc.get("name"):
+                remove_existing_shares(doc)
                 share_event_with_user(doc)
 
+# Lead after insertion
+def after_insert_lead(doc, method):
+    print("After Insert Lead Triggered")  # Debugging line to check if the function is called
+    if doc.lead_owner:
+        print(f"Lead Owner: {doc.lead_owner}")  # Debugging line to check if lead_owner is set
+        remove_existing_shares(doc)
+        share_event_with_user(doc)
+    else:
+        print("No lead_owner set.")  # Debugging line if lead_owner is not set
+
+# Lead before saving
+def before_save_lead(doc, method):
+    if not doc.is_new():
+        if doc.lead_owner:
+            if doc.get("name"):
+                remove_existing_shares(doc)
+                share_event_with_user(doc)
+
+# Function to remove existing shares
+def remove_existing_shares(doc):
+    try:
+        # Get all users who have access to this document
+        shares = get_users(doc.doctype, doc.name)
+        
+        # Remove share for each user except the new one
+        for share in shares:
+            # Check to ensure that the current user is not the one we want to share with
+            if (doc.doctype == "Event" and share.user != doc.custom_allocated_to) or \
+               (doc.doctype == "Lead" and share.user != doc.lead_owner):
+                remove(doc.doctype, doc.name, share.user)
+        
+        frappe.msgprint(f"Removed all shares except the new user for {doc.doctype} {doc.name}")
+    except Exception as e:
+        frappe.log_error(f"Failed to remove shares for {doc.doctype} {doc.name}: {str(e)}")
+
+# Function to share event or lead with the appropriate user
 def share_event_with_user(doc):
     try:
-        # Share event with custom_allocated_to user
-        add(doc.doctype, doc.name, doc.custom_allocated_to, write=1, share=1, everyone=0)
-        frappe.msgprint(f"Event shared with {doc.custom_allocated_to}")
+        # Check for Event or Lead and share accordingly
+        if doc.doctype == "Event" and doc.custom_allocated_to:
+            add(doc.doctype, doc.name, doc.custom_allocated_to, write=1, share=1, everyone=0)
+            frappe.msgprint(f"Event shared with {doc.custom_allocated_to}")
+        elif doc.doctype == "Lead" and doc.lead_owner:
+            add(doc.doctype, doc.name, doc.lead_owner, write=1, share=1, everyone=0)
+            frappe.msgprint(f"Lead shared with {doc.lead_owner}")
     except Exception as e:
-        frappe.log_error(f"Failed to share Event {doc.name} with {doc.custom_allocated_to}: {str(e)}")
+        frappe.log_error(f"Failed to share {doc.doctype} {doc.name} with {doc.custom_allocated_to if doc.doctype == 'Event' else doc.lead_owner}: {str(e)}")
