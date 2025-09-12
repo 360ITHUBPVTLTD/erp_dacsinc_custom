@@ -92,7 +92,7 @@ class WorkflowOverride extends frappe.ui.form.States {
 
                                             });
 
-                                        }, __('Enter Lost Reason'));  // Title for the prompt
+                                        }, __('Enter Lost Pipeline'));  // Title for the prompt
                                     }
 
 
@@ -157,7 +157,7 @@ class WorkflowOverride extends frappe.ui.form.States {
 
                                             });
 
-                                        }, __('Enter Lost Reason'));  // Title for the prompt
+                                        }, __('Enter PO Value'));  // Title for the prompt
                                     }
 
 
@@ -231,7 +231,7 @@ class WorkflowOverride extends frappe.ui.form.States {
 
                                             });
 
-                                        }, __('Enter Unqualified Lead Reason'));  // Title for the prompt
+                                        }, __('Enter Lost Enquiry Reason'));  // Title for the prompt
                                     }
 
 
