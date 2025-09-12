@@ -47,7 +47,7 @@ class WorkflowOverride extends frappe.ui.form.States {
                                             me.frm.set_value('custom_lost_pipeline_description', values.lost_reason_description);
 
                                             me.frm.save().then(() => {
-
+                                                me.apply_workflow_action(d);
                                                 // ✅ Step 1: Check if any open activities exist
                                                 // frappe.call({
                                                 //     method: "frappe.client.get_list",
@@ -112,7 +112,7 @@ class WorkflowOverride extends frappe.ui.form.States {
                                             me.frm.set_value('custom_po_value', values.po_value);
 
                                             me.frm.save().then(() => {
-
+                                                me.apply_workflow_action(d);
                                                 // ✅ Step 1: Check if any open activities exist
                                                 // frappe.call({
                                                 //     method: "frappe.client.get_list",
@@ -186,7 +186,7 @@ class WorkflowOverride extends frappe.ui.form.States {
                                             me.frm.set_value('custom_lost_enquiry_description', values.lost_reason_description);
 
                                             me.frm.save().then(() => {
-
+                                                me.apply_workflow_action(d);
                                                 // ✅ Step 1: Check if any open activities exist
                                                 // frappe.call({
                                                 //     method: "frappe.client.get_list",
