@@ -329,6 +329,15 @@ def after_insert_lead(doc, method):
 
 # Lead before saving
 def before_save_lead(doc, method):
+    old_status = doc.get_db_value('custom_lead_category')
+    new_status = doc.custom_lead_category
+    if old_status != new_status:
+        doc.append('custom_lead_status_change_history', {
+            'old_status': old_status,
+            'new_status': new_status,
+            'changed_by': frappe.session.user,
+            'updated_at': frappe.utils.now_datetime(),
+        })
     if not doc.is_new():
         if doc.lead_owner:
             if doc.get("name"):
@@ -348,7 +357,7 @@ def remove_existing_shares(doc):
                (doc.doctype == "Lead" and share.user != doc.lead_owner):
                 remove(doc.doctype, doc.name, share.user)
         
-        frappe.msgprint(f"Removed all shares except the new user for {doc.doctype} {doc.name}")
+        # frappe.msgprint(f"Removed all shares except the new user for {doc.doctype} {doc.name}")
     except Exception as e:
         frappe.log_error(f"Failed to remove shares for {doc.doctype} {doc.name}: {str(e)}")
 
@@ -358,9 +367,9 @@ def share_event_with_user(doc):
         # Check for Event or Lead and share accordingly
         if doc.doctype == "Event" and doc.custom_allocated_to:
             add(doc.doctype, doc.name, doc.custom_allocated_to, write=1, share=1, everyone=0)
-            frappe.msgprint(f"Event shared with {doc.custom_allocated_to}")
+            # frappe.msgprint(f"Event shared with {doc.custom_allocated_to}")
         elif doc.doctype == "Lead" and doc.lead_owner:
             add(doc.doctype, doc.name, doc.lead_owner, write=1, share=1, everyone=0)
-            frappe.msgprint(f"Lead shared with {doc.lead_owner}")
+            # frappe.msgprint(f"Lead shared with {doc.lead_owner}")
     except Exception as e:
         frappe.log_error(f"Failed to share {doc.doctype} {doc.name} with {doc.custom_allocated_to if doc.doctype == 'Event' else doc.lead_owner}: {str(e)}")

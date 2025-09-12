@@ -26,7 +26,7 @@ app_license = "mit"
 
 # include js, css files in header of desk.html
 # app_include_css = "/assets/erp_dacsinc_custom/css/erp_dacsinc_custom.css"
-# app_include_js = "/assets/erp_dacsinc_custom/js/erp_dacsinc_custom.js"
+app_include_js = "/assets/erp_dacsinc_custom/js/workflow.js"
 
 # include js, css files in header of web template
 # web_include_css = "/assets/erp_dacsinc_custom/css/erp_dacsinc_custom.css"
