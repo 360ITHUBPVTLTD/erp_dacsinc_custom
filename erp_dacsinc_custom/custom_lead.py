@@ -373,3 +373,19 @@ def share_event_with_user(doc):
             # frappe.msgprint(f"Lead shared with {doc.lead_owner}")
     except Exception as e:
         frappe.log_error(f"Failed to share {doc.doctype} {doc.name} with {doc.custom_allocated_to if doc.doctype == 'Event' else doc.lead_owner}: {str(e)}")
+
+
+
+
+
+@frappe.whitelist()
+def get_lead_details(lead_id):
+    lead = frappe.get_doc("Lead", lead_id)
+    return {
+        "lead_name": lead.lead_name,
+        "email_id": lead.email_id,
+        "mobile_no": lead.mobile_no,
+        "company_name": lead.company_name,
+        "custom_lead_category": getattr(lead, "custom_lead_category", None),
+        "link": f"/app/lead/{lead.name}"
+    }

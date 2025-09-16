@@ -157,7 +157,7 @@ class WorkflowOverride extends frappe.ui.form.States {
 
                                             });
 
-                                        }, __('Enter PO Value'));  // Title for the prompt
+                                        }, __('Enter PO Value'));    // Title for the prompt
                                     }
 
 
