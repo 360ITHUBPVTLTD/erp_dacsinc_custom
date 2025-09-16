@@ -138,6 +138,10 @@ app_include_js = "/assets/erp_dacsinc_custom/js/workflow.js"
 # Hook on document methods and events
 
 doc_events = {
+    "Item": {
+        "after_insert": "erp_dacsinc_custom.custom_script.item_after_insert",
+        "before_save": "erp_dacsinc_custom.custom_script.item_before_save"
+    },
     "Event": {
         "after_insert": "erp_dacsinc_custom.custom_lead.after_insert_event",
         "before_save": "erp_dacsinc_custom.custom_lead.before_save_event"
