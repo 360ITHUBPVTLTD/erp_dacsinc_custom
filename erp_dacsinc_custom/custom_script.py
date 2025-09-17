@@ -28,7 +28,7 @@ def update_tax_child(doc):
         # Fetch tax_rate
         tax_rate = doc.custom_tax_rate  # Assuming this stores your tax template
 
-        if tax_rate and tax_rate != 'Non-GST - AH':
+        if tax_rate and tax_rate != 'Non-GST - IND':
             # Add In-State entry
             doc.append('taxes', {
                 "tax_category": "In-State",
@@ -44,7 +44,7 @@ def update_tax_child(doc):
         # Always add Non-GST entry
         doc.append('taxes', {
             # "tax_category": "Non-GST",
-            "item_tax_template": "Non-GST - AH"
+            "item_tax_template": "Non-GST - IND"
         })
 
     except Exception as e:
