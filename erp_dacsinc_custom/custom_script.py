@@ -46,3 +46,20 @@ def update_tax_child(doc):
 
     except Exception as e:
         frappe.log_error(f"Error in updating taxes: {str(e)}")
+import frappe
+
+@frappe.whitelist()
+def get_customer_contacts(customer):
+    """Return all contacts linked to a given customer with phone and email details"""
+    return frappe.db.sql("""
+        SELECT 
+            c.name, 
+            c.first_name,
+            c.last_name,
+            (SELECT phone FROM `tabContact Phone` WHERE parent=c.name AND is_primary_phone=1 LIMIT 1) AS phone,
+            (SELECT email_id FROM `tabContact Email` WHERE parent=c.name AND is_primary=1 LIMIT 1) AS email
+        FROM `tabContact` c
+        INNER JOIN `tabDynamic Link` dl ON dl.parent = c.name
+        WHERE dl.link_doctype = 'Customer' AND dl.link_name = %s
+    """, (customer,), as_dict=1)
+
