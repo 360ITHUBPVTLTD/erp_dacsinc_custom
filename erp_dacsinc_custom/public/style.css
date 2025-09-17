@@ -1,0 +1,17 @@
+
+.workspace-sidebar {
+    display: none;
+}
+
+
+.layout-side-section {
+    display: none;
+}
+
+
+.layout-main-section {
+    width: 100% ;  
+    transition: width 0.3s ease; 
+}
+
+
