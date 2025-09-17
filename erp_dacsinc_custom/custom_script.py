@@ -10,11 +10,14 @@ def copy_custom_fields(doc, method):
 
 
 
-def item_before_save(doc, method):
+def item_after_insert(doc, method):
+    doc.description = ''
     if doc.custom_tax_rate:
         update_tax_child(doc)
 
-
+def item_before_save(doc, method):
+    if doc.custom_tax_rate:
+        update_tax_child(doc)
 
 
 def update_tax_child(doc):
