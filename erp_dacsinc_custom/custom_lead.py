@@ -295,9 +295,9 @@ def get_tasks_for_lead(lead_name):
 
 @frappe.whitelist()
 def get_lead_activity_status(lead_id):
-    open_count = frappe.db.count("ToDo", {"reference_type":"Lead","reference_name": lead_id, "status": "Open"})
-    closed_count = frappe.db.count("ToDo", {"reference_type":"Lead","reference_name": lead_id, "status": "Closed"})
-    total_count = frappe.db.count("ToDo", {"reference_type":"Lead","reference_name": lead_id})  # Total activities regardless of status
+    open_count = frappe.db.count("Lead Activity", {"reference_type":"Lead","reference_name": lead_id, "status": "Open"})
+    closed_count = frappe.db.count("Lead Activity", {"reference_type":"Lead","reference_name": lead_id, "status": "Completed"})
+    total_count = frappe.db.count("Lead Activity", {"reference_type":"Lead","reference_name": lead_id})  # Total activities regardless of status
 
     return {"open": open_count, "closed": closed_count, "total": total_count}
 

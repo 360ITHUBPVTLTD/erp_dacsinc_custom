@@ -1,0 +1,200 @@
+{
+ "actions": [],
+ "allow_import": 1,
+ "autoname": "LD-ACT.#####",
+ "creation": "2025-09-18 16:13:26.880451",
+ "doctype": "DocType",
+ "document_type": "Document",
+ "engine": "InnoDB",
+ "field_order": [
+  "details",
+  "subject",
+  "category",
+  "column_break_4",
+  "status",
+  "starts_on",
+  "ends_on",
+  "column_break_myhe",
+  "assigned_to",
+  "created_on",
+  "created_by",
+  "section_break_8",
+  "description",
+  "section_break_wgnf",
+  "actual_visit_at",
+  "location",
+  "actual_checked_out_at",
+  "column_break_rrca",
+  "notes",
+  "reference_type",
+  "reference_name",
+  "reference_doc_name"
+ ],
+ "fields": [
+  {
+   "fieldname": "details",
+   "fieldtype": "Section Break",
+   "label": "Details",
+   "oldfieldtype": "Section Break"
+  },
+  {
+   "fieldname": "subject",
+   "fieldtype": "Small Text",
+   "in_global_search": 1,
+   "in_list_view": 1,
+   "label": "Subject",
+   "reqd": 1
+  },
+  {
+   "fieldname": "column_break_4",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "starts_on",
+   "fieldtype": "Datetime",
+   "label": "Starts on",
+   "reqd": 1
+  },
+  {
+   "fieldname": "ends_on",
+   "fieldtype": "Datetime",
+   "label": "Ends on"
+  },
+  {
+   "default": "Open",
+   "fieldname": "status",
+   "fieldtype": "Select",
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "label": "Status",
+   "options": "Open\nCompleted\nCancelled"
+  },
+  {
+   "fieldname": "section_break_8",
+   "fieldtype": "Section Break"
+  },
+  {
+   "fieldname": "description",
+   "fieldtype": "Text Editor",
+   "in_global_search": 1,
+   "label": "Description",
+   "oldfieldname": "description",
+   "oldfieldtype": "Text",
+   "print_width": "300px",
+   "width": "300px"
+  },
+  {
+   "default": "Initial Call",
+   "fieldname": "category",
+   "fieldtype": "Select",
+   "label": "Category",
+   "options": "Initial Call\nFollow up Call\nInitial Meeting\nFollow up meetings\nMeeting (Sample)\nProposal/Quotation\nOrder Closure"
+  },
+  {
+   "default": "__user",
+   "fieldname": "assigned_to",
+   "fieldtype": "Link",
+   "label": "Assigned To",
+   "options": "User"
+  },
+  {
+   "default": "Now",
+   "fieldname": "created_on",
+   "fieldtype": "Datetime",
+   "label": "Created On",
+   "read_only": 1
+  },
+  {
+   "fieldname": "column_break_myhe",
+   "fieldtype": "Column Break"
+  },
+  {
+   "default": "__user",
+   "fieldname": "created_by",
+   "fieldtype": "Link",
+   "label": "Created By",
+   "options": "User",
+   "read_only": 1
+  },
+  {
+   "fieldname": "section_break_wgnf",
+   "fieldtype": "Section Break"
+  },
+  {
+   "fieldname": "actual_visit_at",
+   "fieldtype": "Datetime",
+   "label": "Actual Visit At"
+  },
+  {
+   "fieldname": "location",
+   "fieldtype": "Data",
+   "label": "Location"
+  },
+  {
+   "fieldname": "actual_checked_out_at",
+   "fieldtype": "Datetime",
+   "label": "Actual Checked Out At"
+  },
+  {
+   "fieldname": "column_break_rrca",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "notes",
+   "fieldtype": "Small Text",
+   "label": "Notes"
+  },
+  {
+   "fieldname": "reference_type",
+   "fieldtype": "Link",
+   "label": "Reference Type",
+   "options": "DocType"
+  },
+  {
+   "fieldname": "reference_name",
+   "fieldtype": "Dynamic Link",
+   "label": "Reference Name",
+   "options": "reference_type"
+  },
+  {
+   "fieldname": "reference_doc_name",
+   "fieldtype": "Data",
+   "label": "Reference Doc Name"
+  }
+ ],
+ "grid_page_length": 50,
+ "icon": "fa fa-calendar",
+ "links": [],
+ "modified": "2025-09-18 17:45:56.107477",
+ "modified_by": "Administrator",
+ "module": "Erp Dacsinc Custom",
+ "name": "Lead Activity",
+ "naming_rule": "Expression (old style)",
+ "owner": "Administrator",
+ "permissions": [
+  {
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "export": 1,
+   "import": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "System Manager",
+   "share": 1,
+   "write": 1
+  }
+ ],
+ "read_only": 1,
+ "row_format": "Dynamic",
+ "sender_field": "sender",
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "states": [],
+ "subject_field": "subject",
+ "title_field": "subject",
+ "track_changes": 1,
+ "track_seen": 1,
+ "track_views": 1
+}
