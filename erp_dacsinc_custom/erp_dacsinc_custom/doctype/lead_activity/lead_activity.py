@@ -28,12 +28,13 @@ class LeadActivity(Document):
 			self.reference_name = None
 			self.reference_doc_name = None
 	def after_insert(self):
-		# Server Script: Event (After Insert)
-
-		if doc.event_participants:
-			first_row = doc.event_participants[0]
-			ref_type = first_row.reference_doctype
-			ref_name = first_row.reference_docname
+		"""
+		If you want to sync with Event, make sure Event has these fields.
+		Otherwise, update LeadActivity itself (not Event).
+		"""
+		if self.reference_type and self.reference_name:
+			ref_type = self.reference_type
+			ref_name = self.reference_name
 			ref_doc = frappe.get_doc(ref_type, ref_name)
 
 			if ref_type == "Lead":
@@ -45,13 +46,12 @@ class LeadActivity(Document):
 			else:
 				ref_doc_name = ref_name
 
+			# ✅ Update Lead Activity itself instead of Event
 			frappe.db.set_value(
-				"Event",
-				doc.name,
+				"Lead Activity",
+				self.name,
 				{
-					"custom_reference_type": ref_type,
-					"custom_reference_name": ref_name,
-					"custom_reference_doc_name": ref_doc_name
+					"reference_doc_name": ref_doc_name
 				}
 			)
 
