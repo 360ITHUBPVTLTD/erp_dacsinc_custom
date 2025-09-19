@@ -716,12 +716,15 @@ def get_followup_report(from_date=None, to_date=None):
         frappe.throw(f"Error fetching followup report: {str(e)}")
 
 import frappe
+import frappe
 
 @frappe.whitelist()
 def get_lead_category_report(from_date=None, to_date=None):
     """
-    Returns lead counts per user, categorized by custom_lead_category,
-    filtered by custom_created_at.
+    Returns lead counts per user:
+    - categorized by custom_lead_category
+    - lead type distribution (custom_lead_type)
+    - direction type distribution (custom_direction_type)
     """
     user = frappe.session.user
     roles = frappe.get_roles(user)
@@ -737,28 +740,50 @@ def get_lead_category_report(from_date=None, to_date=None):
     leads = frappe.get_all(
         "Lead",
         filters=filters,
-        fields=["owner", "custom_lead_category"]
+        fields=["owner", "custom_lead_category", "custom_lead_type", "custom_direction_type"]
     )
 
     summary = {}
     all_categories = set()
+    all_lead_types = set()
+    all_direction_types = set()
 
     for l in leads:
         u = l.owner
         cat = l.custom_lead_category or "Uncategorized"
+        lead_type = l.custom_lead_type or "Unknown"
+        direction = l.custom_direction_type or "Unknown"
+
         all_categories.add(cat)
+        all_lead_types.add(lead_type)
+        all_direction_types.add(direction)
 
         if u not in summary:
             full_name = frappe.db.get_value("User", u, "full_name") if u != "Guest" else "Guest"
-            summary[u] = {"name": full_name, "categories": {}}
+            summary[u] = {"name": full_name, "categories": {}, "lead_types": {}, "direction_types": {}}
 
+        # Category counts
         summary[u]["categories"][cat] = summary[u]["categories"].get(cat, 0) + 1
+
+        # Lead type counts
+        summary[u]["lead_types"][lead_type] = summary[u]["lead_types"].get(lead_type, 0) + 1
+
+        # Direction type counts
+        summary[u]["direction_types"][direction] = summary[u]["direction_types"].get(direction, 0) + 1
 
     return {
         "users": [
-            {"id": uid, "name": data["name"], "categories": data["categories"]}
+            {
+                "id": uid,
+                "name": data["name"],
+                "categories": data["categories"],
+                "lead_types": data["lead_types"],
+                "direction_types": data["direction_types"]
+            }
             for uid, data in summary.items()
         ],
         "lead_categories": sorted(all_categories),
+        "lead_types": sorted(all_lead_types, key=lambda x: ["HOT", "WARM", "COLD", "WON", "LOST"].index(x) if x in ["HOT", "WARM", "COLD", "WON", "LOST"] else 99),
+        "direction_types": sorted(all_direction_types, key=lambda x: ["Inbound", "Outbound"].index(x) if x in ["Inbound", "Outbound"] else 99),
         "is_admin": is_admin
     }
