@@ -10,7 +10,7 @@ def copy_custom_fields(doc, method):
 
 
 
-def item_after_insert(doc, method):
+def item_after_insert(doc, method):  
     doc.description = ''
     if doc.custom_tax_rate:
         update_tax_child(doc)
