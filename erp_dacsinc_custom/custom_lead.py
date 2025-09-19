@@ -654,10 +654,6 @@ def get_followup_summary(session_user=None):
         "categories": sorted(c for c in all_categories if c),
         "matrix": summary                       # keyed by full name
     }
-
-
-
-
 import frappe
 from frappe.utils import nowdate
 
@@ -672,7 +668,7 @@ def get_followup_report(from_date=None, to_date=None):
         roles = frappe.get_roles(user)
         is_admin = "DAC CRM Head" in roles
 
-        # Default: show all records if no date range
+        # Default filters
         filters = {}
         if from_date and to_date:
             filters["created_on"] = ["between", [from_date, to_date]]
@@ -702,7 +698,8 @@ def get_followup_report(from_date=None, to_date=None):
             if cat not in summary[u]["categories"]:
                 summary[u]["categories"][cat] = {"Open": 0, "Closed": 0}
 
-            status = a.status if a.status in ["Open", "Closed"] else "Open"
+            # ✅ Map Completed → Closed
+            status = "Closed" if a.status == "Completed" else "Open"
             summary[u]["categories"][cat][status] += 1
 
         return {
@@ -717,8 +714,6 @@ def get_followup_report(from_date=None, to_date=None):
     except Exception as e:
         frappe.log_error(frappe.get_traceback(), "get_followup_report Error")
         frappe.throw(f"Error fetching followup report: {str(e)}")
-
-
 
 import frappe
 

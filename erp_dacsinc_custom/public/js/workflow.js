@@ -42,7 +42,7 @@ class WorkflowOverride extends frappe.ui.form.States {
                                             let lead_id = me.frm.doc.name; // Get current Lead ID
 
                                             me.frm.set_value('custom_po_value', values.po_value);
-
+                                            me.frm.set_value('custom_lead_type', 'WON');
                                             me.frm.save().then(() => {
                                                 me.apply_workflow_action(d);
                                                
@@ -76,7 +76,7 @@ class WorkflowOverride extends frappe.ui.form.States {
 
                                             me.frm.set_value('custom_lost_enquiry_reason', values.lost_reason);
                                             me.frm.set_value('custom_lost_enquiry_description', values.lost_reason_description);
-
+                                            me.frm.set_value('custom_lead_type', 'LOST');
                                             me.frm.save().then(() => {
                                                 me.apply_workflow_action(d);
                                                
@@ -106,7 +106,7 @@ class WorkflowOverride extends frappe.ui.form.States {
 
                                             me.frm.set_value('custom_lost_pipeline_reason', values.lost_reason);
                                             me.frm.set_value('custom_lost_pipeline_description', values.lost_reason_description);
-
+                                            me.frm.set_value('custom_lead_type', 'LOST');
                                             me.frm.save().then(() => {
                                                 me.apply_workflow_action(d);
                                                 
