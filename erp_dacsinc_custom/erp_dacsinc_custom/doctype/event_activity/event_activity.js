@@ -3,7 +3,7 @@
 
 frappe.ui.form.on("Event Activity", {
 	refresh(frm) {
-        render_leads(frm);
+        render_reference(frm);
         if (frm.is_new()) return;
 
         // Clear old custom buttons
@@ -116,48 +116,76 @@ frappe.ui.form.on("Event Activity", {
 	},
 });
 
-
-function render_leads(frm) {
-    let lead_section = frm.fields_dict.lead_html.$wrapper;
+function render_reference(frm) {
+    let section = frm.fields_dict.lead_html.$wrapper;
 
     // Loading spinner
-    lead_section.html(`
+    section.html(`
         <div style="text-align:center; padding:20px;">
             <span class="fa fa-spinner fa-spin fa-2x text-muted"></span>
-            <p class="text-muted" style="margin-top: 10px;">Loading leads...</p>
+            <p class="text-muted" style="margin-top: 10px;">Loading data...</p>
         </div>
     `);
 
-    // Check if event is linked to a Lead
-    if (frm.doc.reference_type === "Lead" && frm.doc.reference_name) {
+    if (frm.doc.reference_type && frm.doc.reference_name) {
+        let method_map = {
+            'Lead': 'erp_dacsinc_custom.custom_lead.get_lead_details',
+            'Customer': 'erp_dacsinc_custom.custom_lead.get_customer_details',
+            'Supplier': 'erp_dacsinc_custom.custom_lead.get_supplier_details'
+        };
+
+        let method = method_map[frm.doc.reference_type];
+        if (!method) {
+            section.html(`<div style="text-align:center; padding:20px; color:#666;">
+                <p>Unsupported reference type: ${frm.doc.reference_type}</p>
+            </div>`);
+            return;
+        }
+
         frappe.call({
-            method: "erp_dacsinc_custom.custom_lead.get_lead_details",
-            args: { lead_id: frm.doc.reference_name },
+            method: method,
+            args: { id: frm.doc.reference_name },
             callback: function(r) {
                 if (r.message) {
-                    let lead = r.message;
-                    let lead_category = lead.custom_lead_category || "No Category";
-                    let email = lead.email_id || "-";
-                    let mobile = lead.mobile_no || "-";
-                    let company = lead.company_name || "-";
+                    let doc = r.message;
+
+                    // Handle display name based on type
+                    let display_name = "-";
+                    let category = "-";
+                    let company = "-";
+
+                    if (frm.doc.reference_type === "Lead") {
+                        display_name = frm.doc.reference_doc_name || "-";
+                        category = doc.custom_lead_category || "-";
+                        company = doc.company_name || "-";
+                    } else if (frm.doc.reference_type === "Customer") {
+                        display_name = frm.doc.reference_doc_name || "-";
+                        company =  "-";
+                    } else if (frm.doc.reference_type === "Supplier") {
+                        display_name = frm.doc.reference_doc_name || "-";
+                        company = "-";
+                    }
+
+                    let email = doc.email_id || "-";
+                    let mobile = doc.mobile_no || "-";
 
                     let html = `
                         <div style="overflow-x:auto; margin-top:15px;">
                             <table class="table table-bordered">
                                 <thead>
                                     <tr style="background-color:#3498DB; color:white; text-align: left;">
-                                        <th style="padding:12px;">Lead Name</th>
+                                        <th style="padding:12px;">${frm.doc.reference_type} Name</th>
                                         <th style="padding:12px;">Email</th>
                                         <th style="padding:12px;">Mobile</th>
                                         <th style="padding:12px;">Company</th>
-                                        <th style="padding:12px;">Status</th>
+                                        <th style="padding:12px;">Category</th>
                                     </tr>
                                 </thead>
                                 <tbody>
                                     <tr style="border-bottom:1px solid #eee;">
                                         <td style="padding:10px; font-weight:600;">
-                                            <a href="${lead.link}" target="_blank" style="color:#007bff; text-decoration:none;">
-                                                ${lead.lead_name}
+                                            <a href="${doc.link || '#'}" target="_blank" style="color:#007bff; text-decoration:none;">
+                                                ${display_name}
                                             </a>
                                             <div style="font-size:11px; color:#888;">(${frm.doc.reference_name})</div>
                                         </td>
@@ -166,7 +194,7 @@ function render_leads(frm) {
                                         <td style="padding:10px;">${company}</td>
                                         <td style="padding:10px; font-weight:500; color:#333;">
                                             <span style="background:#eef5ff; padding:4px 10px; border-radius:12px; font-size:12px;">
-                                                🏷️ ${lead_category}
+                                                🏷️ ${category}
                                             </span>
                                         </td>
                                     </tr>
@@ -174,21 +202,17 @@ function render_leads(frm) {
                             </table>
                         </div>
                     `;
-                    lead_section.html(html);
+                    section.html(html);
                 } else {
-                    lead_section.html(`
-                        <div class="no-leads-found" style="text-align:center; padding:20px; color:#666;">
-                            <p style="font-size:16px;">No leads found for this event. 😟</p>
-                        </div>
-                    `);
+                    section.html(`<div style="text-align:center; padding:20px; color:#666;">
+                        <p>No ${frm.doc.reference_type} found for this record. 😟</p>
+                    </div>`);
                 }
             }
         });
     } else {
-        lead_section.html(`
-            <div class="no-leads-found" style="text-align:center; padding:20px; color:#666;">
-                <p style="font-size:16px;">No leads linked with this event. 😟</p>
-            </div>
-        `);
+        section.html(`<div style="text-align:center; padding:20px; color:#666;">
+            <p>No reference linked with this record. 😟</p>
+        </div>`);
     }
 }

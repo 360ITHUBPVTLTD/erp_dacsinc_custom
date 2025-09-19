@@ -382,8 +382,8 @@ def share_event_with_user(doc):
 
 
 @frappe.whitelist()
-def get_lead_details(lead_id):
-    lead = frappe.get_doc("Lead", lead_id)
+def get_lead_details(id):
+    lead = frappe.get_doc("Lead", id)
     return {
         "lead_name": lead.lead_name,
         "email_id": lead.email_id,
@@ -393,7 +393,28 @@ def get_lead_details(lead_id):
         "link": f"/app/lead/{lead.name}"
     }
 
+@frappe.whitelist()
+def get_customer_details(id):
+    customer = frappe.get_doc("Customer", id)
+    return {
+        "name": customer.customer_name,
+        "email_id": customer.email_id,
+        "mobile_no": customer.mobile_no,
+        "company_name": customer.customer_group,  # or company_name if you have it
+        "link": f"/app/customer/{customer.name}"
+    }
 
+
+@frappe.whitelist()
+def get_supplier_details(id):
+    supplier = frappe.get_doc("Supplier", id)
+    return {
+        "name": supplier.supplier_name,
+        "email_id": supplier.email_id,
+        "mobile_no": supplier.mobile_no,
+        "company_name": supplier.supplier_type,  # or company_name if you have it
+        "link": f"/app/supplier/{supplier.name}"
+    }
 
 
 

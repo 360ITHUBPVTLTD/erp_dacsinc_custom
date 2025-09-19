@@ -5,7 +5,7 @@ import frappe
 from frappe.model.document import Document
 from frappe.utils import now_datetime
 from frappe.share import add, remove
-
+from bs4 import BeautifulSoup
 class EventActivity(Document):
 	def before_save(self):
 		# Handle user sharing before save (only for existing docs)
@@ -22,10 +22,13 @@ class EventActivity(Document):
 
 			if ref_type == "Lead":
 				self.reference_doc_name = ref_doc.company_name or ref_doc.lead_name
-			elif ref_type == "Customer":
-				self.reference_doc_name = ref_doc.customer_name
-			elif ref_type == "Supplier":
-				self.reference_doc_name = ref_doc.supplier_name
+				self.address = ref_doc.custom_address
+			elif self.reference_type in ["Customer", "Supplier"]:
+				self.reference_doc_name = ref_doc.customer_name if self.reference_type=="Customer" else ref_doc.supplier_name
+				raw_html = ref_doc.primary_address or ""
+				# Strip <br> and other HTML tags
+				self.address = BeautifulSoup(raw_html, "html.parser").get_text(separator=", ")
+    
 			else:
 				self.reference_doc_name = ref_name
 		else:

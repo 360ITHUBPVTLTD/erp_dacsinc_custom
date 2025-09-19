@@ -28,6 +28,7 @@
   "reference_type",
   "reference_name",
   "reference_doc_name",
+  "address",
   "section_break_ytpz",
   "actual_visit_at",
   "column_break_rzqk",
@@ -105,7 +106,8 @@
    "default": "Now",
    "fieldname": "created_on",
    "fieldtype": "Datetime",
-   "label": "Created On"
+   "label": "Created On",
+   "read_only": 1
   },
   {
    "default": "__user",
@@ -203,12 +205,17 @@
    "fieldname": "lead_html",
    "fieldtype": "HTML",
    "label": "Lead HTML"
+  },
+  {
+   "fieldname": "address",
+   "fieldtype": "Small Text",
+   "label": "Address"
   }
  ],
  "grid_page_length": 50,
  "icon": "fa fa-calendar",
  "links": [],
- "modified": "2025-09-19 11:50:56.061840",
+ "modified": "2025-09-19 15:00:11.045772",
  "modified_by": "Administrator",
  "module": "Erp Dacsinc Custom",
  "name": "Event Activity",
