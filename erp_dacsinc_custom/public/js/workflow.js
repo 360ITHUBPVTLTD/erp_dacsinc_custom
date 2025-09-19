@@ -30,7 +30,7 @@ class WorkflowOverride extends frappe.ui.form.States {
 
 
                                     if (d.action === "Move to Order") {
-                                        frappe.prompt([
+                                        frappe.prompt([ 
                                             {
                                                 fieldtype: 'Currency',
                                                 label: __('PO Value'),
@@ -85,7 +85,7 @@ class WorkflowOverride extends frappe.ui.form.States {
 
                                         }, __('Enter Lost Enquiry Reason'));  // Title for the prompt
                                     }
-
+   
                                     else if (d.action === "Lost Pipeline") {
                                         frappe.prompt([
                                             {
