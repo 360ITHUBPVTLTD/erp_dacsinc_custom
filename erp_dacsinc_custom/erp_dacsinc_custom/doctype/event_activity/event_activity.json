@@ -105,8 +105,7 @@
    "default": "Now",
    "fieldname": "created_on",
    "fieldtype": "Datetime",
-   "label": "Created On",
-   "read_only": 1
+   "label": "Created On"
   },
   {
    "default": "__user",
@@ -209,7 +208,7 @@
  "grid_page_length": 50,
  "icon": "fa fa-calendar",
  "links": [],
- "modified": "2025-09-19 09:59:38.534571",
+ "modified": "2025-09-19 11:50:56.061840",
  "modified_by": "Administrator",
  "module": "Erp Dacsinc Custom",
  "name": "Event Activity",

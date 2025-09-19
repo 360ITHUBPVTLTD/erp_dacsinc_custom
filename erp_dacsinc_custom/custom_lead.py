@@ -500,9 +500,8 @@ def get_lead_details(lead_id):
 #     }
 
 
-
 import frappe
-from frappe.utils import nowdate
+from frappe.utils import getdate, nowdate
 
 @frappe.whitelist()
 def get_lead_dashboard_data():
@@ -518,50 +517,232 @@ def get_lead_dashboard_data():
 
     return data
 
+
+# -----------------------
+# Utility: role-based filters
+# -----------------------
+def get_filters_for(doctype):
+    """Return role-based filters for the given doctype."""
+    if "DAC CRM Head" in frappe.get_roles(frappe.session.user):
+        return {}  # no restrictions
+
+    if doctype == "Lead":
+        return {"lead_owner": frappe.session.user}
+
+    if doctype == "Event Activity":
+        return {"assigned_to": frappe.session.user}
+
+    return {}
+
+
+
+# -----------------------
+# Counts
+# -----------------------
 def get_leads_without_activity_count():
-    """
-    Counts Leads that do not have any associated Event Activity.
-    """
-    return frappe.db.count(
-        "Lead",
-        filters={
-            "name": ("not in", frappe.db.get_list("Event Activity", pluck="reference_docname"))
-        }
+    """Counts Leads that do not have any associated Event Activity."""
+    filters = get_filters_for("Lead")
+
+    leads_with_activity = frappe.db.get_list(
+        "Event Activity", pluck="reference_name", filters=get_filters_for("Event Activity")
     )
+
+    filters["name"] = ("not in", leads_with_activity or [])
+
+    return frappe.db.count("Lead", filters=filters)
+
 
 def get_today_follow_ups_count():
-    """
-    Counts Lead Activities scheduled for today.
-    """
-    return frappe.db.count(
-        "Event Activity",
-        filters={
-            "starts_on": nowdate()
-        }
-    )
+    """Counts Lead Activities scheduled for today."""
+    today = getdate(nowdate())
+    start = f"{today} 00:00:00"
+    end = f"{today} 23:59:59"
+
+    filters = get_filters_for("Event Activity")
+    filters.update({
+        "status": "Open",
+        "starts_on": ["between", [start, end]]
+    })
+
+    return frappe.db.count("Event Activity", filters=filters)
+
 
 def get_open_activities_count():
-    """
-    Counts Lead Activities with a status of 'Open'.
-    """
-    return frappe.db.count(
-        "Event Activity",
-        filters={
-            "status": "Open"
-        }
-    )
+    """Counts Lead Activities with a status of 'Open'."""
+    filters = get_filters_for("Event Activity")
+    filters["status"] = "Open"
+
+    return frappe.db.count("Event Activity", filters=filters)
+
 
 def get_lead_category_counts():
-    """
-    Counts Leads grouped by their custom_lead_category.
-    """
+    """Counts Leads grouped by their custom_lead_category."""
     categories = [
         'Enquiry', 'Pipeline', 'Order', 'Lost Enquiry', 'Lost Pipeline'
     ]
     counts = {}
     for category in categories:
-        counts[category] = frappe.db.count(
-            "Lead",
-            filters={"custom_lead_category": category}
-        )
+        filters = get_filters_for("Lead")
+        filters["custom_lead_category"] = category
+        counts[category] = frappe.db.count("Lead", filters=filters)
+
     return counts
+
+
+
+@frappe.whitelist()
+def get_followup_summary(session_user=None):
+    user = session_user or frappe.session.user
+    roles = frappe.get_roles(user)
+    is_admin = "DAC CRM Head" in roles
+
+    # Get today's start and end datetime
+    today = frappe.utils.today()
+    start = f"{today} 00:00:00"
+    end = f"{today} 23:59:59"
+
+    filters = {
+        "starts_on": ["between", [start, end]],
+        "status": "Open"
+    }
+
+    if not is_admin:
+        filters["assigned_to"] = user
+
+    activities = frappe.get_all(
+        "Event Activity",
+        filters=filters,
+        fields=["category", "assigned_to"]
+    )
+
+    summary = {}
+    all_categories = set()
+
+    for a in activities:
+        # Convert user id → full name
+        u = frappe.utils.get_fullname(a.assigned_to) if a.assigned_to else "Unassigned"
+        cat = a.category or "Uncategorized"
+        all_categories.add(cat)
+
+        if u not in summary:
+            summary[u] = {}
+        summary[u][cat] = summary[u].get(cat, 0) + 1
+
+    return {
+        "users": list(summary.keys()),          # full names now
+        "categories": sorted(c for c in all_categories if c),
+        "matrix": summary                       # keyed by full name
+    }
+
+
+
+
+import frappe
+from frappe.utils import nowdate
+
+@frappe.whitelist()
+def get_followup_report(from_date=None, to_date=None):
+    """
+    Returns user-wise summary of Event Activity with Open/Closed counts,
+    filterable by custom date range.
+    """
+    try:
+        user = frappe.session.user
+        roles = frappe.get_roles(user)
+        is_admin = "DAC CRM Head" in roles
+
+        # Default: show all records if no date range
+        filters = {}
+        if from_date and to_date:
+            filters["created_on"] = ["between", [from_date, to_date]]
+
+        # Non-admin users see only their assigned activities
+        if not is_admin:
+            filters["assigned_to"] = user
+
+        activities = frappe.get_all(
+            "Event Activity",
+            filters=filters,
+            fields=["category", "assigned_to", "status"]
+        )
+
+        summary = {}
+        all_categories = set()
+
+        for a in activities:
+            u = a.assigned_to or "Unassigned"
+            cat = a.category or "Uncategorized"
+            all_categories.add(cat)
+
+            if u not in summary:
+                full_name = frappe.db.get_value("User", u, "full_name") if u != "Unassigned" else "Unassigned"
+                summary[u] = {"name": full_name, "categories": {}}
+
+            if cat not in summary[u]["categories"]:
+                summary[u]["categories"][cat] = {"Open": 0, "Closed": 0}
+
+            status = a.status if a.status in ["Open", "Closed"] else "Open"
+            summary[u]["categories"][cat][status] += 1
+
+        return {
+            "users": [
+                {"id": uid, "name": data["name"], "categories": data["categories"]}
+                for uid, data in summary.items()
+            ],
+            "activity_categories": sorted(all_categories),
+            "is_admin": is_admin
+        }
+
+    except Exception as e:
+        frappe.log_error(frappe.get_traceback(), "get_followup_report Error")
+        frappe.throw(f"Error fetching followup report: {str(e)}")
+
+
+
+import frappe
+
+@frappe.whitelist()
+def get_lead_category_report(from_date=None, to_date=None):
+    """
+    Returns lead counts per user, categorized by custom_lead_category,
+    filtered by custom_created_at.
+    """
+    user = frappe.session.user
+    roles = frappe.get_roles(user)
+    is_admin = "DAC CRM Head" in roles
+
+    filters = {}
+    if from_date and to_date:
+        filters["custom_created_at"] = ["between", [from_date, to_date]]
+
+    if not is_admin:
+        filters["owner"] = user
+
+    leads = frappe.get_all(
+        "Lead",
+        filters=filters,
+        fields=["owner", "custom_lead_category"]
+    )
+
+    summary = {}
+    all_categories = set()
+
+    for l in leads:
+        u = l.owner
+        cat = l.custom_lead_category or "Uncategorized"
+        all_categories.add(cat)
+
+        if u not in summary:
+            full_name = frappe.db.get_value("User", u, "full_name") if u != "Guest" else "Guest"
+            summary[u] = {"name": full_name, "categories": {}}
+
+        summary[u]["categories"][cat] = summary[u]["categories"].get(cat, 0) + 1
+
+    return {
+        "users": [
+            {"id": uid, "name": data["name"], "categories": data["categories"]}
+            for uid, data in summary.items()
+        ],
+        "lead_categories": sorted(all_categories),
+        "is_admin": is_admin
+    }
