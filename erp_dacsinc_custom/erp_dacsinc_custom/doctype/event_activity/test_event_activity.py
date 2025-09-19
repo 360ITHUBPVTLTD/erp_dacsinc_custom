@@ -5,5 +5,5 @@
 from frappe.tests.utils import FrappeTestCase
 
 
-class TestLeadActivity(FrappeTestCase):
+class TestEventActivity(FrappeTestCase):
 	pass

@@ -295,9 +295,9 @@ def get_tasks_for_lead(lead_name):
 
 @frappe.whitelist()
 def get_lead_activity_status(lead_id):
-    open_count = frappe.db.count("Lead Activity", {"reference_type":"Lead","reference_name": lead_id, "status": "Open"})
-    closed_count = frappe.db.count("Lead Activity", {"reference_type":"Lead","reference_name": lead_id, "status": "Completed"})
-    total_count = frappe.db.count("Lead Activity", {"reference_type":"Lead","reference_name": lead_id})  # Total activities regardless of status
+    open_count = frappe.db.count("Event Activity", {"reference_type":"Lead","reference_name": lead_id, "status": "Open"})
+    closed_count = frappe.db.count("Event Activity", {"reference_type":"Lead","reference_name": lead_id, "status": "Completed"})
+    total_count = frappe.db.count("Event Activity", {"reference_type":"Lead","reference_name": lead_id})  # Total activities regardless of status
 
     return {"open": open_count, "closed": closed_count, "total": total_count}
 
@@ -319,7 +319,7 @@ def before_save_event(doc, method):
 
 # Lead after insertion
 def after_insert_lead(doc, method):
-    print("After Insert Lead Triggered")  # Debugging line to check if the function is called
+    # print("After Insert Lead Triggered")  # Debugging line to check if the function is called
     if doc.lead_owner:
         print(f"Lead Owner: {doc.lead_owner}")  # Debugging line to check if lead_owner is set
         remove_existing_shares(doc)
@@ -363,6 +363,7 @@ def remove_existing_shares(doc):
 
 # Function to share event or lead with the appropriate user
 def share_event_with_user(doc):
+    print('sssssssssssssss',doc)
     try:
         # Check for Event or Lead and share accordingly
         if doc.doctype == "Event" and doc.custom_allocated_to:
@@ -370,6 +371,8 @@ def share_event_with_user(doc):
             # frappe.msgprint(f"Event shared with {doc.custom_allocated_to}")
         elif doc.doctype == "Lead" and doc.lead_owner:
             add(doc.doctype, doc.name, doc.lead_owner, write=1, share=1, everyone=0)
+        elif doc.doctype == "Event Activity" and not doc.assigned_to:
+            add(doc.doctype, doc.name, doc.assigned_to, write=1, share=1, everyone=0)
             # frappe.msgprint(f"Lead shared with {doc.lead_owner}")
     except Exception as e:
         frappe.log_error(f"Failed to share {doc.doctype} {doc.name} with {doc.custom_allocated_to if doc.doctype == 'Event' else doc.lead_owner}: {str(e)}")
@@ -389,3 +392,176 @@ def get_lead_details(lead_id):
         "custom_lead_category": getattr(lead, "custom_lead_category", None),
         "link": f"/app/lead/{lead.name}"
     }
+
+
+
+
+
+############### lead Dashboard ###############################
+
+
+# import frappe
+# from frappe.utils import getdate, today, add_days
+
+# @frappe.whitelist()
+# def get_user_roles():
+#     return {"roles": frappe.get_roles(frappe.session.user)}
+
+# @frappe.whitelist()
+# def get_lead_dashboard_data(user=None):
+#     filters = {}
+#     if user:
+#         filters["assign_to"] = user
+
+#     leads = frappe.get_all(
+#         "Lead",
+#         filters=filters,
+#         fields=["name", "lead_name", "creation", "custom_lead_category", "assign_to"]
+#     )
+
+#     return {"leads": leads, "is_admin": "DAC CRM Head" in frappe.get_roles()}
+
+# @frappe.whitelist()
+# def get_lead_activities(user=None):
+#     filters = {}
+#     if user:
+#         filters["assigned_to"] = user
+
+#     activities = frappe.get_all(
+#         "Event Activity",
+#         filters=filters,
+#         fields=["name", "subject", "status", "starts_on", "due_date", "assigned_to", "reference_name"]
+#     )
+
+#     return {"activities": activities}
+
+
+
+# file: your_app/your_app/doctype/lead_dashboard/lead_dashboard.py
+
+# import frappe
+
+# @frappe.whitelist()
+# def get_lead_dashboard_data():
+#     """
+#     Returns:
+#     {
+#         "lead_counts": {
+#             "Category A": 10,
+#             "Category B": 5
+#         },
+#         "activity_counts": {
+#             "Lead": {
+#                 "Category A": 15,
+#                 "Category B": 8
+#             },
+#             "Customer": {
+#                 "Category A": 3,
+#                 "Category B": 5
+#             },
+#             "Supplier": {
+#                 "Category A": 2,
+#                 "Category B": 1
+#             }
+#         }
+#     }
+#     """
+
+#     # 1. Lead counts by custom_lead_category
+#     lead_counts = frappe.db.sql("""
+#         SELECT custom_lead_category, COUNT(name) as cnt
+#         FROM `tabLead`
+#         GROUP BY custom_lead_category
+#     """, as_dict=True)
+
+#     lead_counts_dict = {row.custom_lead_category or "Uncategorized": row.cnt for row in lead_counts}
+
+#     # 2. Event Activity counts by reference_type and category
+#     activity_counts = frappe.db.sql("""
+#         SELECT la.reference_type, l.custom_lead_category, COUNT(la.name) as cnt
+#         FROM `tabEvent Activity` la
+#         LEFT JOIN `tabLead` l ON la.reference_name = l.name
+#         WHERE la.reference_type IN ('Lead', 'Customer', 'Supplier')
+#         GROUP BY la.reference_type, l.custom_lead_category
+#     """, as_dict=True)
+
+#     # Convert to nested dict: {reference_type: {category: count}}
+#     activity_counts_dict = {}
+#     for row in activity_counts:
+#         reference_type = row.reference_type or "Unknown"
+#         category = row.custom_lead_category or "Uncategorized"
+#         if reference_type not in activity_counts_dict:
+#             activity_counts_dict[reference_type] = {}
+#         activity_counts_dict[reference_type][category] = row.cnt
+
+#     return {
+#         "lead_counts": lead_counts_dict,
+#         "activity_counts": activity_counts_dict
+#     }
+
+
+
+import frappe
+from frappe.utils import nowdate
+
+@frappe.whitelist()
+def get_lead_dashboard_data():
+    data = frappe._dict()
+
+    # Get data for the top summary cards
+    data.leads_without_activity = get_leads_without_activity_count()
+    data.total_follow_ups_today = get_today_follow_ups_count()
+    data.total_open_activities = get_open_activities_count()
+
+    # Get data for the Lead Dashboard Summary based on custom_lead_category
+    data.lead_counts = get_lead_category_counts()
+
+    return data
+
+def get_leads_without_activity_count():
+    """
+    Counts Leads that do not have any associated Event Activity.
+    """
+    return frappe.db.count(
+        "Lead",
+        filters={
+            "name": ("not in", frappe.db.get_list("Event Activity", pluck="reference_docname"))
+        }
+    )
+
+def get_today_follow_ups_count():
+    """
+    Counts Lead Activities scheduled for today.
+    """
+    return frappe.db.count(
+        "Event Activity",
+        filters={
+            "starts_on": nowdate()
+        }
+    )
+
+def get_open_activities_count():
+    """
+    Counts Lead Activities with a status of 'Open'.
+    """
+    return frappe.db.count(
+        "Event Activity",
+        filters={
+            "status": "Open"
+        }
+    )
+
+def get_lead_category_counts():
+    """
+    Counts Leads grouped by their custom_lead_category.
+    """
+    categories = [
+        'Enquiry', 'Pipeline', 'Order', 'Lost Enquiry', 'Lost Pipeline'
+    ]
+    counts = {}
+    for category in categories:
+        counts[category] = frappe.db.count(
+            "Lead",
+            filters={"custom_lead_category": category}
+        )
+    return counts

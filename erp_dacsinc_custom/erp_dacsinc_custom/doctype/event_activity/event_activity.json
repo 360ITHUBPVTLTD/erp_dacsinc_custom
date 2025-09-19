@@ -1,12 +1,13 @@
 {
  "actions": [],
  "allow_import": 1,
- "autoname": "LD-ACT-.#####",
- "creation": "2025-09-18 16:13:26.880451",
+ "autoname": "EVT-ACT-.#####",
+ "creation": "2025-09-19 09:43:40.818060",
  "doctype": "DocType",
  "document_type": "Document",
  "engine": "InnoDB",
  "field_order": [
+  "lead_html",
   "details",
   "subject",
   "category",
@@ -21,14 +22,18 @@
   "section_break_8",
   "description",
   "section_break_wgnf",
-  "actual_visit_at",
-  "location",
-  "actual_checked_out_at",
   "column_break_rrca",
   "notes",
+  "column_break_bkty",
   "reference_type",
   "reference_name",
-  "reference_doc_name"
+  "reference_doc_name",
+  "section_break_ytpz",
+  "actual_visit_at",
+  "column_break_rzqk",
+  "location",
+  "column_break_kmey",
+  "actual_checked_out_at"
  ],
  "fields": [
   {
@@ -42,23 +47,22 @@
    "fieldtype": "Small Text",
    "in_global_search": 1,
    "in_list_view": 1,
+   "in_standard_filter": 1,
    "label": "Subject",
    "reqd": 1
   },
   {
+   "default": "Initial Call",
+   "fieldname": "category",
+   "fieldtype": "Select",
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "label": "Category",
+   "options": "Initial Call\nFollow up Call\nInitial Meeting\nFollow up meetings\nMeeting (Sample)\nProposal/Quotation\nOrder Closure"
+  },
+  {
    "fieldname": "column_break_4",
    "fieldtype": "Column Break"
-  },
-  {
-   "fieldname": "starts_on",
-   "fieldtype": "Datetime",
-   "label": "Starts on",
-   "reqd": 1
-  },
-  {
-   "fieldname": "ends_on",
-   "fieldtype": "Datetime",
-   "label": "Ends on"
   },
   {
    "default": "Open",
@@ -67,7 +71,50 @@
    "in_list_view": 1,
    "in_standard_filter": 1,
    "label": "Status",
-   "options": "Open\nCompleted\nCancelled"
+   "options": "Open\nCompleted\nCancelled",
+   "read_only": 1
+  },
+  {
+   "fieldname": "starts_on",
+   "fieldtype": "Datetime",
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "label": "Starts on",
+   "reqd": 1
+  },
+  {
+   "fieldname": "ends_on",
+   "fieldtype": "Datetime",
+   "label": "Ends on",
+   "read_only": 1
+  },
+  {
+   "fieldname": "column_break_myhe",
+   "fieldtype": "Column Break"
+  },
+  {
+   "default": "__user",
+   "fieldname": "assigned_to",
+   "fieldtype": "Link",
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "label": "Assigned To",
+   "options": "User"
+  },
+  {
+   "default": "Now",
+   "fieldname": "created_on",
+   "fieldtype": "Datetime",
+   "label": "Created On",
+   "read_only": 1
+  },
+  {
+   "default": "__user",
+   "fieldname": "created_by",
+   "fieldtype": "Link",
+   "label": "Created By",
+   "options": "User",
+   "read_only": 1
   },
   {
    "fieldname": "section_break_8",
@@ -84,56 +131,8 @@
    "width": "300px"
   },
   {
-   "default": "Initial Call",
-   "fieldname": "category",
-   "fieldtype": "Select",
-   "label": "Category",
-   "options": "Initial Call\nFollow up Call\nInitial Meeting\nFollow up meetings\nMeeting (Sample)\nProposal/Quotation\nOrder Closure"
-  },
-  {
-   "default": "__user",
-   "fieldname": "assigned_to",
-   "fieldtype": "Link",
-   "label": "Assigned To",
-   "options": "User"
-  },
-  {
-   "default": "Now",
-   "fieldname": "created_on",
-   "fieldtype": "Datetime",
-   "label": "Created On",
-   "read_only": 1
-  },
-  {
-   "fieldname": "column_break_myhe",
-   "fieldtype": "Column Break"
-  },
-  {
-   "default": "__user",
-   "fieldname": "created_by",
-   "fieldtype": "Link",
-   "label": "Created By",
-   "options": "User",
-   "read_only": 1
-  },
-  {
    "fieldname": "section_break_wgnf",
    "fieldtype": "Section Break"
-  },
-  {
-   "fieldname": "actual_visit_at",
-   "fieldtype": "Datetime",
-   "label": "Actual Visit At"
-  },
-  {
-   "fieldname": "location",
-   "fieldtype": "Data",
-   "label": "Location"
-  },
-  {
-   "fieldname": "actual_checked_out_at",
-   "fieldtype": "Datetime",
-   "label": "Actual Checked Out At"
   },
   {
    "fieldname": "column_break_rrca",
@@ -145,30 +144,75 @@
    "label": "Notes"
   },
   {
+   "fieldname": "column_break_bkty",
+   "fieldtype": "Column Break"
+  },
+  {
    "fieldname": "reference_type",
    "fieldtype": "Link",
+   "in_list_view": 1,
+   "in_standard_filter": 1,
    "label": "Reference Type",
-   "options": "DocType"
+   "link_filters": "[]",
+   "options": "DocType",
+   "read_only": 1
   },
   {
    "fieldname": "reference_name",
    "fieldtype": "Dynamic Link",
    "label": "Reference Name",
-   "options": "reference_type"
+   "options": "reference_type",
+   "read_only": 1
   },
   {
    "fieldname": "reference_doc_name",
    "fieldtype": "Data",
-   "label": "Reference Doc Name"
+   "label": "Reference Doc Name",
+   "read_only": 1
+  },
+  {
+   "fieldname": "section_break_ytpz",
+   "fieldtype": "Section Break"
+  },
+  {
+   "fieldname": "actual_visit_at",
+   "fieldtype": "Datetime",
+   "label": "Actual Visit At",
+   "read_only": 1
+  },
+  {
+   "fieldname": "column_break_rzqk",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "location",
+   "fieldtype": "Data",
+   "label": "Location",
+   "read_only": 1
+  },
+  {
+   "fieldname": "column_break_kmey",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "actual_checked_out_at",
+   "fieldtype": "Datetime",
+   "label": "Actual Checked Out At",
+   "read_only": 1
+  },
+  {
+   "fieldname": "lead_html",
+   "fieldtype": "HTML",
+   "label": "Lead HTML"
   }
  ],
  "grid_page_length": 50,
  "icon": "fa fa-calendar",
  "links": [],
- "modified": "2025-09-18 18:27:06.631694",
+ "modified": "2025-09-19 09:59:38.534571",
  "modified_by": "Administrator",
  "module": "Erp Dacsinc Custom",
- "name": "Lead Activity",
+ "name": "Event Activity",
  "naming_rule": "Expression (old style)",
  "owner": "Administrator",
  "permissions": [
