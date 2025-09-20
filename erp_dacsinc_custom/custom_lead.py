@@ -787,3 +787,39 @@ def get_lead_category_report(from_date=None, to_date=None):
         "direction_types": sorted(all_direction_types, key=lambda x: ["Inbound", "Outbound"].index(x) if x in ["Inbound", "Outbound"] else 99),
         "is_admin": is_admin
     }
+
+
+
+
+
+@frappe.whitelist()
+def get_quotations_for_lead(lead_name):
+    if not frappe.has_permission('Quotation', 'read'):
+        frappe.throw(_("You do not have permission to access Quotation records."), frappe.PermissionError)
+    
+    quotations = frappe.get_all(
+        'Quotation',
+        fields=['name', 'quotation_to', 'customer_name', 'transaction_date', 'grand_total','status'],
+        filters={'party_name': lead_name}
+    )
+    
+    quotation_data = []
+    
+    for quotation in quotations:
+        items = frappe.get_all(
+            'Quotation Item',
+            fields=['item_code'],
+            filters={'parent': quotation.name}
+        )
+        print(items)
+        # Append the data as a dictionary
+        quotation_data.append({
+            'quotation_id': quotation.name,
+            'status': quotation.status,
+            'customer_name': quotation.customer_name,
+            'transaction_date': quotation.transaction_date,
+            'grand_total': quotation.grand_total,
+            'items': [item.item_code for item in items]
+        })
+    
+    return quotation_data
