@@ -1,0 +1,64 @@
+{
+ "actions": [],
+ "allow_rename": 1,
+ "creation": "2025-10-01 16:29:41.391961",
+ "doctype": "DocType",
+ "editable_grid": 1,
+ "engine": "InnoDB",
+ "field_order": [
+  "from_lead_owner",
+  "to_lead_owner",
+  "column_break_uhtz",
+  "changed_by",
+  "change_on"
+ ],
+ "fields": [
+  {
+   "fieldname": "from_lead_owner",
+   "fieldtype": "Link",
+   "in_list_view": 1,
+   "label": "From Lead Owner",
+   "options": "User"
+  },
+  {
+   "fieldname": "to_lead_owner",
+   "fieldtype": "Link",
+   "in_list_view": 1,
+   "label": "To Lead Owner",
+   "options": "User"
+  },
+  {
+   "default": "__user",
+   "fieldname": "changed_by",
+   "fieldtype": "Link",
+   "in_list_view": 1,
+   "label": "Changed By",
+   "options": "User"
+  },
+  {
+   "default": "Now",
+   "fieldname": "change_on",
+   "fieldtype": "Datetime",
+   "in_list_view": 1,
+   "label": "Change On"
+  },
+  {
+   "fieldname": "column_break_uhtz",
+   "fieldtype": "Column Break"
+  }
+ ],
+ "grid_page_length": 50,
+ "index_web_pages_for_search": 1,
+ "istable": 1,
+ "links": [],
+ "modified": "2025-10-01 16:33:02.035436",
+ "modified_by": "Administrator",
+ "module": "Erp Dacsinc Custom",
+ "name": "Lead Owner Change History",
+ "owner": "Administrator",
+ "permissions": [],
+ "row_format": "Dynamic",
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "states": []
+}

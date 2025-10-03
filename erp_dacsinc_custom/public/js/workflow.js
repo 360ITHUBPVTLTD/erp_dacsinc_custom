@@ -117,7 +117,7 @@ class WorkflowOverride extends frappe.ui.form.States {
                                     }
                                     
 
-                                    else if (d.action === "Reset") {
+                                    else if (d.action === "Reset Lead Status") {
                                         // Clear the specific fields
                                         me.frm.set_value('custom_po_value', '');
                                         me.frm.set_value('custom_lost_pipeline_reason', '');
