@@ -306,7 +306,7 @@ from frappe.share import add, get_users, remove
 # Event after insertion for Event
 def after_insert_event(doc, method):
     if doc.custom_allocated_to:
-        remove_existing_shares(doc)
+        # remove_existing_shares(doc)
         share_event_with_user(doc)
 
 # Event before saving for Event
@@ -314,35 +314,78 @@ def before_save_event(doc, method):
     if not doc.is_new():
         if doc.custom_allocated_to:
             if doc.get("name"):
-                remove_existing_shares(doc)
+                # remove_existing_shares(doc)
                 share_event_with_user(doc)
 
 # Lead after insertion
 def after_insert_lead(doc, method):
     # print("After Insert Lead Triggered")  # Debugging line to check if the function is called
     if doc.lead_owner:
-        print(f"Lead Owner: {doc.lead_owner}")  # Debugging line to check if lead_owner is set
-        remove_existing_shares(doc)
+        # print(f"Lead Owner: {doc.lead_owner}")  # Debugging line to check if lead_owner is set
+        # remove_existing_shares(doc)
         share_event_with_user(doc)
     else:
         print("No lead_owner set.")  # Debugging line if lead_owner is not set
 
-# Lead before saving
+import frappe
+
 def before_save_lead(doc, method):
-    old_status = doc.get_db_value('custom_lead_category')
-    new_status = doc.custom_lead_category
-    if old_status != new_status:
-        doc.append('custom_lead_status_change_history', {
-            'old_status': old_status,
-            'new_status': new_status,
-            'changed_by': frappe.session.user,
-            'updated_at': frappe.utils.now_datetime(),
-        })
     if not doc.is_new():
-        if doc.lead_owner:
-            if doc.get("name"):
-                remove_existing_shares(doc)
-                share_event_with_user(doc)
+        # Track Lead Category change
+        old_status = frappe.db.get_value("Lead", doc.name, "custom_lead_category")
+        new_status = doc.custom_lead_category
+        if old_status != new_status:
+            doc.append('custom_lead_status_change_history', {
+                'old_status': old_status,
+                'new_status': new_status,
+                'changed_by': frappe.session.user,
+                'updated_at': frappe.utils.now_datetime(),
+            })
+
+        # Track Lead Owner change
+        old_lead_owner = frappe.db.get_value("Lead", doc.name, "lead_owner")
+        new_lead_owner = doc.lead_owner
+        if old_lead_owner != new_lead_owner:
+            doc.append('custom_lead_owner_change_history', {
+                'from_lead_owner': old_lead_owner,
+                'to_lead_owner': new_lead_owner,
+                'changed_by': frappe.session.user,
+                'change_on': frappe.utils.now_datetime(),
+            })
+
+            # Update Share Permissions
+            if old_lead_owner:
+                # keep only read for old owner
+                frappe.share.add_docshare(
+                    doc.doctype, doc.name,
+                    old_lead_owner,
+                    read=1, write=0, share=0, notify=0
+                )
+
+            if new_lead_owner:
+                # give read + write + share to new owner (no submit!)
+                frappe.share.add_docshare(
+                    doc.doctype, doc.name,
+                    new_lead_owner,
+                    read=1, write=1, share=1, notify=1
+                )
+
+            # Also update sharing for related Event Activities
+            events = frappe.get_all(
+                "Event Activity", filters={"reference_type": "Lead", "reference_name": doc.name}, pluck="name"
+            )
+            for event in events:
+                if new_lead_owner:
+                    frappe.share.add_docshare(
+                        "Event Activity", event,
+                        new_lead_owner,
+                        read=1, write=0, share=0, notify=1
+                    )
+
+        # Handle sharing for new owner explicitly
+        if new_lead_owner:
+            share_event_with_user(doc)
+
 
 # Function to remove existing shares
 def remove_existing_shares(doc):
@@ -363,16 +406,16 @@ def remove_existing_shares(doc):
 
 # Function to share event or lead with the appropriate user
 def share_event_with_user(doc):
-    print('sssssssssssssss',doc)
+    # print('sssssssssssssss',doc)
     try:
         # Check for Event or Lead and share accordingly
         if doc.doctype == "Event" and doc.custom_allocated_to:
             add(doc.doctype, doc.name, doc.custom_allocated_to, write=1, share=1, everyone=0)
             # frappe.msgprint(f"Event shared with {doc.custom_allocated_to}")
         elif doc.doctype == "Lead" and doc.lead_owner:
-            add(doc.doctype, doc.name, doc.lead_owner, write=1, share=1, everyone=0)
+            add(doc.doctype, doc.name, doc.lead_owner, write=1, share=1, notify=1,everyone=0)
         elif doc.doctype == "Event Activity" and not doc.assigned_to:
-            add(doc.doctype, doc.name, doc.assigned_to, write=1, share=1, everyone=0)
+            add(doc.doctype, doc.name, doc.assigned_to, write=1, share=1, notify=1,everyone=0)
             # frappe.msgprint(f"Lead shared with {doc.lead_owner}")
     except Exception as e:
         frappe.log_error(f"Failed to share {doc.doctype} {doc.name} with {doc.custom_allocated_to if doc.doctype == 'Event' else doc.lead_owner}: {str(e)}")
@@ -522,22 +565,22 @@ def get_supplier_details(id):
 
 
 import frappe
-from frappe.utils import getdate, nowdate
+from frappe.utils import getdate, nowdate, add_days
 
 @frappe.whitelist()
 def get_lead_dashboard_data():
     data = frappe._dict()
 
-    # Get data for the top summary cards
+    # Top summary cards
     data.leads_without_activity = get_leads_without_activity_count()
-    data.total_follow_ups_today = get_today_follow_ups_count()
+    data.total_follow_ups_today_upcoming = get_today_upcoming_follow_ups_count()
+    data.total_overdue_activities = get_overdue_activities_count()
     data.total_open_activities = get_open_activities_count()
 
-    # Get data for the Lead Dashboard Summary based on custom_lead_category
+    # Lead counts by category
     data.lead_counts = get_lead_category_counts()
 
     return data
-
 
 # -----------------------
 # Utility: role-based filters
@@ -573,20 +616,31 @@ def get_leads_without_activity_count():
     return frappe.db.count("Lead", filters=filters)
 
 
-def get_today_follow_ups_count():
-    """Counts Lead Activities scheduled for today."""
+def get_today_upcoming_follow_ups_count():
+    """Counts Open Event Activities for today + next 3 days."""
     today = getdate(nowdate())
-    start = f"{today} 00:00:00"
-    end = f"{today} 23:59:59"
+    end_date = add_days(today, 3)
 
     filters = get_filters_for("Event Activity")
     filters.update({
         "status": "Open",
-        "starts_on": ["between", [start, end]]
+        "starts_on": ["between", [f"{today} 00:00:00", f"{end_date} 23:59:59"]]
     })
 
     return frappe.db.count("Event Activity", filters=filters)
 
+
+def get_overdue_activities_count():
+    """Counts Open Event Activities that are overdue (starts_on < today)."""
+    today = getdate(nowdate())
+
+    filters = get_filters_for("Event Activity")
+    filters.update({
+        "status": "Open",
+        "starts_on": ["<", f"{today} 00:00:00"]
+    })
+
+    return frappe.db.count("Event Activity", filters=filters)
 
 def get_open_activities_count():
     """Counts Lead Activities with a status of 'Open'."""
@@ -597,17 +651,34 @@ def get_open_activities_count():
 
 
 def get_lead_category_counts():
-    """Counts Leads grouped by their custom_lead_category."""
+    """Counts Leads grouped by their custom_lead_category and sums custom_expected_revenue."""
     categories = [
         'Enquiry', 'Pipeline', 'Order', 'Lost Enquiry', 'Lost Pipeline'
     ]
     counts = {}
+
     for category in categories:
         filters = get_filters_for("Lead")
         filters["custom_lead_category"] = category
-        counts[category] = frappe.db.count("Lead", filters=filters)
+
+        # Count the leads
+        lead_count = frappe.db.count("Lead", filters=filters)
+
+        # Sum the custom_expected_revenue
+        total_revenue = frappe.db.get_all(
+            "Lead",
+            filters=filters,
+            fields=["custom_expected_revenue"]
+        )
+        revenue_sum = sum([float(l.custom_expected_revenue or 0) for l in total_revenue])
+
+        counts[category] = {
+            "count": lead_count,
+            "revenue": revenue_sum
+        }
 
     return counts
+
 
 
 
@@ -718,58 +789,453 @@ def get_followup_report(from_date=None, to_date=None):
 import frappe
 import frappe
 
+# @frappe.whitelist()
+# def get_lead_category_report(from_date=None, to_date=None):
+#     """
+#     Returns lead counts per user:
+#     - categorized by custom_lead_category
+#     - lead type distribution (custom_lead_type)
+#     - direction type distribution (custom_direction_type)
+#     """
+#     user = frappe.session.user
+#     roles = frappe.get_roles(user)
+#     is_admin = "DAC CRM Head" in roles
+
+#     filters = {}
+#     if from_date and to_date:
+#         filters["custom_created_at"] = ["between", [from_date, to_date]]
+
+#     if not is_admin:
+#         filters["owner"] = user
+
+#     leads = frappe.get_all(
+#         "Lead",
+#         filters=filters,
+#         fields=["owner", "custom_lead_category", "custom_lead_type", "custom_direction_type"]
+#     )
+
+#     summary = {}
+#     all_categories = set()
+#     all_lead_types = set()
+#     all_direction_types = set()
+
+#     for l in leads:
+#         u = l.owner
+#         cat = l.custom_lead_category or "Uncategorized"
+#         lead_type = l.custom_lead_type or "Unknown"
+#         direction = l.custom_direction_type or "Unknown"
+
+#         all_categories.add(cat)
+#         all_lead_types.add(lead_type)
+#         all_direction_types.add(direction)
+
+#         if u not in summary:
+#             full_name = frappe.db.get_value("User", u, "full_name") if u != "Guest" else "Guest"
+#             summary[u] = {"name": full_name, "categories": {}, "lead_types": {}, "direction_types": {}}
+
+#         # Category counts
+#         summary[u]["categories"][cat] = summary[u]["categories"].get(cat, 0) + 1
+
+#         # Lead type counts
+#         summary[u]["lead_types"][lead_type] = summary[u]["lead_types"].get(lead_type, 0) + 1
+
+#         # Direction type counts
+#         summary[u]["direction_types"][direction] = summary[u]["direction_types"].get(direction, 0) + 1
+
+#     return {
+#         "users": [
+#             {
+#                 "id": uid,
+#                 "name": data["name"],
+#                 "categories": data["categories"],
+#                 "lead_types": data["lead_types"],
+#                 "direction_types": data["direction_types"]
+#             }
+#             for uid, data in summary.items()
+#         ],
+#         "lead_categories": sorted(all_categories),
+#         "lead_types": sorted(all_lead_types, key=lambda x: ["HOT", "WARM", "COLD", "WON", "LOST"].index(x) if x in ["HOT", "WARM", "COLD", "WON", "LOST"] else 99),
+#         "direction_types": sorted(all_direction_types, key=lambda x: ["Inbound", "Outbound"].index(x) if x in ["Inbound", "Outbound"] else 99),
+#         "is_admin": is_admin
+#     }
+
+
+
+
+# @frappe.whitelist()
+# def get_lead_category_report(from_date=None, to_date=None):
+#     user = frappe.session.user
+#     roles = frappe.get_roles(user)
+#     is_admin = "DAC CRM Head" in roles
+
+#     filters = {}
+#     if from_date and to_date:
+#         filters["custom_created_at"] = ["between", [from_date, to_date]]
+
+#     if not is_admin:
+#         filters["lead_owner"] = user
+
+#     leads = frappe.get_all(
+#         "Lead",
+#         filters=filters,
+#         fields=[
+#             "name", "lead_owner", "custom_lead_category", 
+#             "custom_lead_type", "custom_direction_type",
+#             "industry", "custom_expected_revenue"
+#         ]
+#     )
+
+#     summary = {}
+#     all_categories, all_lead_types, all_direction_types, all_industries, all_products = set(), set(), set(), set(), set()
+
+#     for l in leads:
+#         u = l.lead_owner
+#         cat = l.custom_lead_category or "Uncategorized"
+#         lead_type = l.custom_lead_type or "Unknown"
+#         direction = l.custom_direction_type or "Unknown"
+#         industry = l.industry or "Unknown"
+#         revenue = float(l.custom_expected_revenue) or 0
+
+#         all_categories.add(cat)
+#         all_lead_types.add(lead_type)
+#         all_direction_types.add(direction)
+#         all_industries.add(industry)
+
+#         if u not in summary:
+#             full_name = frappe.db.get_value("User", u, "full_name") if u != "Guest" else "Guest"
+#             summary[u] = {
+#                 "name": full_name, 
+#                 "categories": {}, 
+#                 "lead_types": {}, 
+#                 "direction_types": {},
+#                 "industries": {},
+#                 "products": {}
+#             }
+
+#         def add_count_and_revenue(bucket, key):
+#             if key not in summary[u][bucket]:
+#                 summary[u][bucket][key] = {"count": 0, "revenue": 0}
+#             summary[u][bucket][key]["count"] += 1
+#             summary[u][bucket][key]["revenue"] += revenue
+
+#         # Category counts
+#         add_count_and_revenue("categories", cat)
+#         # Lead type counts
+#         add_count_and_revenue("lead_types", lead_type)
+#         # Direction type counts
+#         add_count_and_revenue("direction_types", direction)
+#         # Industry counts
+#         add_count_and_revenue("industries", industry)
+
+#         # --- Multi Category Table ---
+#         product_rows = frappe.get_all(
+#             "Product Category Multiselect",  # child table doctype
+#             filters={"parent": l.name},
+#             fields=["product_category"]
+#         )
+#         for row in product_rows:
+#             if not row.product_category:
+#                 continue
+#             all_products.add(row.product_category)
+#             add_count_and_revenue("products", row.product_category)
+
+#     return {
+#         "users": [
+#             {
+#                 "id": uid,
+#                 "name": data["name"],
+#                 "categories": data["categories"],
+#                 "lead_types": data["lead_types"],
+#                 "direction_types": data["direction_types"],
+#                 "industries": data["industries"],
+#                 "products": data["products"]
+#             }
+#             for uid, data in summary.items()
+#         ],
+#         "lead_categories": sorted(all_categories),
+#         "lead_types": sorted(all_lead_types, key=lambda x: ["HOT", "WARM", "COLD", "WON", "LOST"].index(x) if x in ["HOT", "WARM", "COLD", "WON", "LOST"] else 99),
+#         "direction_types": sorted(all_direction_types, key=lambda x: ["Inbound", "Outbound"].index(x) if x in ["Inbound", "Outbound"] else 99),
+#         "industries": sorted(all_industries),
+#         "products": sorted(all_products),
+#         "is_admin": is_admin
+#     }
+
+
+# from datetime import datetime
+# import frappe
+
+# @frappe.whitelist()
+# def get_lead_category_report(from_date=None, to_date=None):
+#     user = frappe.session.user
+#     roles = frappe.get_roles(user)
+#     is_admin = "DAC CRM Head" in roles
+
+#     filters = {}
+#     if from_date and to_date:
+#         filters["custom_created_at"] = ["between", [from_date, to_date]]
+
+#     if not is_admin:
+#         filters["lead_owner"] = user
+
+#     leads = frappe.get_all(
+#         "Lead",
+#         filters=filters,
+#         fields=[
+#             "name",
+#             "lead_owner",
+#             "custom_lead_category",
+#             "custom_lead_type",
+#             "custom_direction_type",
+#             "industry",
+#             "custom_expected_revenue",
+#             "custom_expected_closure_date"
+#         ]
+#     )
+
+#     summary = {}
+#     all_categories, all_lead_types, all_direction_types, all_industries, all_products, all_closure_months = set(), set(), set(), set(), set(), set()
+
+#     for l in leads:
+#         u = l.lead_owner
+#         cat = l.custom_lead_category or "Uncategorized"
+#         lead_type = l.custom_lead_type or "Unknown"
+#         direction = l.custom_direction_type or "Unknown"
+#         industry = l.industry or "Unknown"
+#         revenue = float(l.custom_expected_revenue) or 0
+
+#         # Closure month-year
+#         closure_date = l.custom_expected_closure_date
+#         if closure_date:
+#             closure_label = closure_date.strftime("%b - %Y") if isinstance(closure_date, datetime) else datetime.strptime(str(closure_date), "%Y-%m-%d").strftime("%b - %Y")
+#         else:
+#             closure_label = "No Closure Date"
+
+#         all_categories.add(cat)
+#         all_lead_types.add(lead_type)
+#         all_direction_types.add(direction)
+#         all_industries.add(industry)
+#         all_closure_months.add(closure_label)
+
+#         if u not in summary:
+#             full_name = frappe.db.get_value("User", u, "full_name") if u != "Guest" else "Guest"
+#             summary[u] = {
+#                 "name": full_name,
+#                 "categories": {},
+#                 "lead_types": {},
+#                 "direction_types": {},
+#                 "industries": {},
+#                 "products": {},
+#                 "closures": {}
+#             }
+
+#         def add_count_and_revenue(bucket, key):
+#             if key not in summary[u][bucket]:
+#                 summary[u][bucket][key] = {"count": 0, "revenue": 0}
+#             summary[u][bucket][key]["count"] += 1
+#             summary[u][bucket][key]["revenue"] += revenue
+
+#         # Category counts
+#         add_count_and_revenue("categories", cat)
+#         # Lead type counts
+#         add_count_and_revenue("lead_types", lead_type)
+#         # Direction type counts
+#         add_count_and_revenue("direction_types", direction)
+#         # Industry counts
+#         add_count_and_revenue("industries", industry)
+#         # Closure month-year counts
+#         add_count_and_revenue("closures", closure_label)
+
+#         # --- Multi Category Table (Products) ---
+#         product_rows = frappe.get_all(
+#             "Product Category Multiselect",  # child table doctype
+#             filters={"parent": l.name},
+#             fields=["product_category"]
+#         )
+#         for row in product_rows:
+#             if not row.product_category:
+#                 continue
+#             all_products.add(row.product_category)
+#             add_count_and_revenue("products", row.product_category)
+
+#     # Sort closure months properly
+#     def month_year_sort_key(x):
+#         if x == "No Closure Date":
+#             return datetime.max
+#         return datetime.strptime(x, "%b - %Y")
+
+#     closure_labels = sorted(all_closure_months, key=month_year_sort_key)
+
+#     return {
+#         "users": [
+#             {
+#                 "id": uid,
+#                 "name": data["name"],
+#                 "categories": data["categories"],
+#                 "lead_types": data["lead_types"],
+#                 "direction_types": data["direction_types"],
+#                 "industries": data["industries"],
+#                 "products": data["products"],
+#                 "closures": data["closures"]
+#             }
+#             for uid, data in summary.items()
+#         ],
+#         "lead_categories": sorted(all_categories),
+#         "lead_types": sorted(all_lead_types, key=lambda x: ["HOT", "WARM", "COLD", "WON", "LOST"].index(x) if x in ["HOT", "WARM", "COLD", "WON", "LOST"] else 99),
+#         "direction_types": sorted(all_direction_types, key=lambda x: ["Inbound", "Outbound"].index(x) if x in ["Inbound", "Outbound"] else 99),
+#         "industries": sorted(all_industries),
+#         "products": sorted(all_products),
+#         "closure_labels": closure_labels,
+#         "is_admin": is_admin
+#     }
+
+import frappe
+from frappe.utils import getdate
+
 @frappe.whitelist()
-def get_lead_category_report(from_date=None, to_date=None):
+def get_lead_category_report(from_date=None, to_date=None, quotation_from_date=None, quotation_to_date=None):
     """
-    Returns lead counts per user:
-    - categorized by custom_lead_category
-    - lead type distribution (custom_lead_type)
-    - direction type distribution (custom_direction_type)
+    Returns a user-wise lead report including:
+    - Categories, Lead Types, Direction Types
+    - Industry, Product Categories
+    - Expected Closure Month-Year
+    - Quotations Sent (count & value, filtered separately)
     """
     user = frappe.session.user
     roles = frappe.get_roles(user)
     is_admin = "DAC CRM Head" in roles
 
-    filters = {}
+    # ------------------- Lead Filters -------------------
+    lead_filters = {}
     if from_date and to_date:
-        filters["custom_created_at"] = ["between", [from_date, to_date]]
+        lead_filters["custom_created_at"] = ["between", [from_date, to_date]]
 
     if not is_admin:
-        filters["owner"] = user
+        lead_filters["lead_owner"] = user
 
     leads = frappe.get_all(
         "Lead",
-        filters=filters,
-        fields=["owner", "custom_lead_category", "custom_lead_type", "custom_direction_type"]
+        filters=lead_filters,
+        fields=[
+            "name", "lead_owner", "custom_lead_category",
+            "custom_lead_type", "custom_direction_type",
+            "industry", "custom_expected_revenue", "custom_expected_closure_date"
+        ]
     )
 
+    # Prepare summary containers
     summary = {}
-    all_categories = set()
-    all_lead_types = set()
-    all_direction_types = set()
+    all_categories, all_lead_types, all_direction_types, all_industries, all_products, all_closure_months = set(), set(), set(), set(), set(), set()
 
     for l in leads:
-        u = l.owner
+        u = l.lead_owner
         cat = l.custom_lead_category or "Uncategorized"
         lead_type = l.custom_lead_type or "Unknown"
         direction = l.custom_direction_type or "Unknown"
+        industry = l.industry or "Unknown"
+        revenue = float(l.custom_expected_revenue or 0)
+
+        closure_date = l.custom_expected_closure_date
+        closure_month = getdate(closure_date).strftime("%b %Y") if closure_date else "No Closure Date"
 
         all_categories.add(cat)
         all_lead_types.add(lead_type)
         all_direction_types.add(direction)
+        all_industries.add(industry)
+        all_closure_months.add(closure_month)
 
         if u not in summary:
             full_name = frappe.db.get_value("User", u, "full_name") if u != "Guest" else "Guest"
-            summary[u] = {"name": full_name, "categories": {}, "lead_types": {}, "direction_types": {}}
+            summary[u] = {
+                "name": full_name,
+                "categories": {},
+                "lead_types": {},
+                "direction_types": {},
+                "industries": {},
+                "products": {},
+                "closures": {},
+                "quotations": {}
+            }
 
-        # Category counts
-        summary[u]["categories"][cat] = summary[u]["categories"].get(cat, 0) + 1
+        def add_count_and_revenue(bucket, key, rev=revenue):
+            if key not in summary[u][bucket]:
+                summary[u][bucket][key] = {"count": 0, "revenue": 0}
+            summary[u][bucket][key]["count"] += 1
+            summary[u][bucket][key]["revenue"] += rev
 
-        # Lead type counts
-        summary[u]["lead_types"][lead_type] = summary[u]["lead_types"].get(lead_type, 0) + 1
+        add_count_and_revenue("categories", cat)
+        add_count_and_revenue("lead_types", lead_type)
+        add_count_and_revenue("direction_types", direction)
+        add_count_and_revenue("industries", industry)
+        add_count_and_revenue("closures", closure_month)
 
-        # Direction type counts
-        summary[u]["direction_types"][direction] = summary[u]["direction_types"].get(direction, 0) + 1
+        # --- Products (child table) ---
+        product_rows = frappe.get_all(
+            "Product Category Multiselect",
+            filters={"parent": l.name},
+            fields=["product_category"]
+        )
+        for row in product_rows:
+            if row.product_category:
+                all_products.add(row.product_category)
+                add_count_and_revenue("products", row.product_category)
+
+    # ------------------- Quotation Table (Independent) -------------------
+    quotation_filters = {"docstatus": 1}  # only submitted
+    if quotation_from_date and quotation_to_date:
+        quotation_filters["transaction_date"] = ["between", [quotation_from_date, quotation_to_date]]
+
+    # Fetch all users
+    users_list = [u["name"] for u in frappe.get_all("User", fields=["name"])]
+
+    quotation_summary = {u: {} for u in users_list}
+
+    quotations = frappe.get_all(
+        "Quotation",
+        filters=quotation_filters,
+        fields=["name", "owner", "grand_total", "quotation_to", "party_name", "transaction_date"]
+    )
+
+    all_quotation_labels = set()
+
+    for q in quotations:
+        owner = q.owner
+        label = q.quotation_to  # only use quotation_to
+        all_quotation_labels.add(label)
+
+        if owner not in quotation_summary:
+            quotation_summary[owner] = {}
+
+        if label not in quotation_summary[owner]:
+            quotation_summary[owner][label] = {"count": 0, "revenue": 0}
+
+        quotation_summary[owner][label]["count"] += 1
+        quotation_summary[owner][label]["revenue"] += float(q.grand_total or 0)
+
+
+    # Merge quotation_summary into summary
+    for u, quotes in quotation_summary.items():
+        if u not in summary:
+            full_name = frappe.db.get_value("User", u, "full_name") if u != "Guest" else "Guest"
+            summary[u] = {
+                "name": full_name,
+                "categories": {},
+                "lead_types": {},
+                "direction_types": {},
+                "industries": {},
+                "products": {},
+                "closures": {},
+                "quotations": quotes
+            }
+        else:
+            summary[u]["quotations"] = quotes
+
+    # Sorting helpers
+    def sort_by_order(values, order):
+        return sorted(values, key=lambda x: order.index(x) if x in order else 99)
+
+    lead_category_order = ["Enquiry", "Pipeline", "Order", "Lost Enquiry", "Lost Pipeline"]
+    lead_type_order = ["HOT", "WARM", "COLD", "WON", "LOST"]
+    direction_order = ["Inbound", "Outbound"]
 
     return {
         "users": [
@@ -778,17 +1244,23 @@ def get_lead_category_report(from_date=None, to_date=None):
                 "name": data["name"],
                 "categories": data["categories"],
                 "lead_types": data["lead_types"],
-                "direction_types": data["direction_types"]
+                "direction_types": data["direction_types"],
+                "industries": data["industries"],
+                "products": data["products"],
+                "closures": data["closures"],
+                "quotations": data["quotations"]
             }
             for uid, data in summary.items()
         ],
-        "lead_categories": sorted(all_categories),
-        "lead_types": sorted(all_lead_types, key=lambda x: ["HOT", "WARM", "COLD", "WON", "LOST"].index(x) if x in ["HOT", "WARM", "COLD", "WON", "LOST"] else 99),
-        "direction_types": sorted(all_direction_types, key=lambda x: ["Inbound", "Outbound"].index(x) if x in ["Inbound", "Outbound"] else 99),
+        "lead_categories": sort_by_order(all_categories, lead_category_order),
+        "lead_types": sort_by_order(all_lead_types, lead_type_order),
+        "direction_types": sort_by_order(all_direction_types, direction_order),
+        "industries": sorted(all_industries),
+        "products": sorted(all_products),
+        "month_year_closure": sorted(all_closure_months, key=lambda x: getdate("01-" + x.split(" ")[0] + "-" + x.split(" ")[1]) if x != "No Closure Date" else getdate()),
+        "quotation_labels": sorted(all_quotation_labels),
         "is_admin": is_admin
     }
-
-
 
 
 
