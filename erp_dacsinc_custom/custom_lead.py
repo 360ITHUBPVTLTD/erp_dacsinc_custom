@@ -735,12 +735,12 @@ def get_lead_category_report(from_date=None, to_date=None):
         filters["custom_created_at"] = ["between", [from_date, to_date]]
 
     if not is_admin:
-        filters["owner"] = user
+        filters["lead_owner"] = user
 
     leads = frappe.get_all(
         "Lead",
         filters=filters,
-        fields=["owner", "custom_lead_category", "custom_lead_type", "custom_direction_type"]
+        fields=["lead_owner", "custom_lead_category", "custom_lead_type", "custom_direction_type"]
     )
 
     summary = {}
@@ -749,7 +749,7 @@ def get_lead_category_report(from_date=None, to_date=None):
     all_direction_types = set()
 
     for l in leads:
-        u = l.owner
+        u = l.lead_owner
         cat = l.custom_lead_category or "Uncategorized"
         lead_type = l.custom_lead_type or "Unknown"
         direction = l.custom_direction_type or "Unknown"
