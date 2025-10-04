@@ -102,9 +102,19 @@ def get_leads(filters=None):
         conditions.append("source = %(source)s")
         values["source"] = filters["source"]
 
+    # Get all roles of session user
+    session_roles = frappe.get_roles(frappe.session.user)
+
+    # Lead Owner filter
     if filters.get("lead_owner"):
-        conditions.append("lead_owner = %(lead_owner)s")
-        values["lead_owner"] = filters["lead_owner"]
+        conditions.append("l.lead_owner = %(lead_owner)s")
+        values["lead_owner"] = filters.get("lead_owner")
+    else:
+        # Restrict only if user has DAC CRM but NOT DAC CRM Head
+        if "DAC CRM" in session_roles and "DAC CRM Head" not in session_roles:
+            conditions.append("l.lead_owner = %(session_user)s")
+            values["session_user"] = frappe.session.user
+
 
     if filters.get("lead_type"):
         conditions.append("custom_lead_type = %(custom_lead_type)s")
@@ -183,10 +193,19 @@ def get_event_activity_with_reference(filters=None):
             conditions.append("ea.status = %(status)s")
             values["status"] = filters.get("status")
 
+        # Determine session user roles
+        session_roles = frappe.get_roles(frappe.session.user)
+
         # Assigned To filter
         if filters.get("assigned_to"):
             conditions.append("ea.assigned_to = %(assigned_to)s")
             values["assigned_to"] = filters.get("assigned_to")
+        else:
+            # Restrict only if user has DAC CRM but NOT DAC CRM Head
+            if "DAC CRM" in session_roles and "DAC CRM Head" not in session_roles:
+                conditions.append("ea.assigned_to = %(session_user)s")
+                values["session_user"] = frappe.session.user
+
 
         # Date filter options
         option = filters.get("custom_created_at_option")
@@ -399,7 +418,7 @@ def get_lead_activities_record(lead_id):
 
 def get_custom_custom_status_counts(filters=None):
     conditions, values = [], {}
-
+    session_roles = frappe.get_roles(frappe.session.user)
     if filters:
         if filters.get("mobile_no"):
             conditions.append("mobile_no = %(mobile_no)s")
@@ -412,6 +431,12 @@ def get_custom_custom_status_counts(filters=None):
         if filters.get("lead_owner"):
             conditions.append("lead_owner = %(lead_owner)s")
             values["lead_owner"] = filters["lead_owner"]
+        else:
+            # Restrict only if user has DAC CRM but NOT DAC CRM Head
+            if "DAC CRM" in session_roles and "DAC CRM Head" not in session_roles:
+                conditions.append("lead_owner = %(session_user)s")
+                values["session_user"] = frappe.session.user
+
 
         if filters.get("custom_created_at") and isinstance(filters["custom_created_at"], (list, tuple)):
             start_date, end_date = filters["custom_created_at"]
