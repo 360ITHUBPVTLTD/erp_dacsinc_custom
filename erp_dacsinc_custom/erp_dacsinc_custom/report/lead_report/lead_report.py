@@ -41,17 +41,17 @@ def get_columns(filters=None):
             {"label": "Email", "fieldname": "email_id", "fieldtype": "Data", "width": 120},
             {"label": "Mobile No", "fieldname": "mobile_no", "fieldtype": "Data", "width": 120},
             {"label": "Status", "fieldname": "custom_lead_category", "fieldtype": "Data", "width": 120},
+            {"label": "Quotation Count", "fieldname": "quotation_count", "fieldtype": "Int", "width": 120},
+            {"label": "Followup Count", "fieldname": "followup_count", "fieldtype": "Data", "width": 100},
+            {"label": "Next Followup Date", "fieldname": "custom_next_followup_date", "fieldtype": "Date", "width": 120},
+            {"label": "Next Followup Description", "fieldname": "latest_open_description", "fieldtype": "Data", "width": 200},
             {"label": "Lead Age", "fieldname": "lead_age", "fieldtype": "Int", "width": 100},
             {"label": "Source", "fieldname": "source", "fieldtype": "Data", "width": 120},
             {"label": "Revenue", "fieldname": "custom_expected_revenue", "fieldtype": "Currency", "width": 150},
             {"label": "Lead Type", "fieldname": "custom_lead_type", "fieldtype": "Data", "width": 100},
             {"label": "Direction Type", "fieldname": "custom_direction_type", "fieldtype": "Data", "width": 100},
 			{"label": "Industry", "fieldname": "industry", "fieldtype": "Link","options":"Industry Type", "width": 120},
-
             {"label": "Product Category", "fieldname": "custom_product_multi_category", "fieldtype": "Small Text", "width": 100},
-            {"label": "Next Followup Date", "fieldname": "custom_next_followup_date", "fieldtype": "Date", "width": 120},
-            {"label": "Followup Count", "fieldname": "followup_count", "fieldtype": "Data", "width": 100},
-            {"label": "Next Followup Description", "fieldname": "latest_open_description", "fieldtype": "Data", "width": 200},
             {"label": "Lead Owner", "fieldname": "lead_owner", "fieldtype": "Link", "options": "User", "width": 150},
             {"label": "Created At", "fieldname": "custom_created_at", "fieldtype": "Datetime", "width": 150},
         ]
@@ -154,17 +154,26 @@ def get_leads(filters=None):
             DATEDIFF(CURDATE(), DATE(l.creation)) AS lead_age,
             l.custom_created_at,
             l.lead_owner,
-            (SELECT COUNT(*) FROM `tabEvent Activity` la WHERE la.reference_name = l.name) AS followup_count,
+            (SELECT COUNT(*) 
+            FROM `tabEvent Activity` la 
+            WHERE la.reference_name = l.name) AS followup_count,
             (SELECT CONCAT(la.subject, ' | ', la.category) 
-             FROM `tabEvent Activity` la 
-             WHERE la.reference_name = l.name AND la.status='Open' 
-             ORDER BY la.creation DESC LIMIT 1) AS latest_open_description
+            FROM `tabEvent Activity` la 
+            WHERE la.reference_name = l.name AND la.status='Open' 
+            ORDER BY la.creation DESC LIMIT 1) AS latest_open_description,
+            (SELECT COUNT(*) 
+            FROM `tabQuotation` q 
+            WHERE q.quotation_to = 'Lead' 
+            AND q.party_name = l.name 
+            AND q.docstatus = 1) AS quotation_count
         FROM `tabLead` l
         LEFT JOIN `tabProduct Category Multiselect` msi 
             ON msi.parent = l.name AND msi.parentfield = 'custom_product_multi_category'
         WHERE {where_clause}
         GROUP BY l.name
     """, values, as_dict=True)
+
+
 
     # Wrap followup count as link
     for lead in leads:
