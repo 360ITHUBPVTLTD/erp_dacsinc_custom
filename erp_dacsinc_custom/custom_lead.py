@@ -359,7 +359,7 @@ def before_save_lead(doc, method):
                 frappe.share.add_docshare(
                     doc.doctype, doc.name,
                     old_lead_owner,
-                    read=1, write=0, share=0, notify=0
+                    read=1, write=0, share=1, notify=0
                 )
 
             if new_lead_owner:
@@ -379,7 +379,7 @@ def before_save_lead(doc, method):
                     frappe.share.add_docshare(
                         "Event Activity", event,
                         new_lead_owner,
-                        read=1, write=0, share=0, notify=1
+                        read=1, write=0, share=1, notify=1
                     )
 
         # Handle sharing for new owner explicitly
@@ -603,17 +603,41 @@ def get_filters_for(doctype):
 # -----------------------
 # Counts
 # -----------------------
-def get_leads_without_activity_count():
-    """Counts Leads that do not have any associated Event Activity."""
-    filters = get_filters_for("Lead")
+import frappe
+import frappe
 
-    leads_with_activity = frappe.db.get_list(
-        "Event Activity", pluck="reference_name", filters=get_filters_for("Event Activity")
+@frappe.whitelist()
+def get_leads_without_activity_count():
+    """Return count of Leads that do NOT have any associated Event Activity."""
+
+    # Get the current session user
+    user = frappe.session.user
+    roles = frappe.get_roles(user)
+
+    filters = {}
+
+    # If user has DAC CRM role, restrict to leads they own
+    if "DAC CRM" in roles:
+        filters["lead_owner"] = user
+
+    # Get all leads that are referenced in Event Activity
+    leads_with_activity = frappe.db.get_all(
+        "Event Activity",
+        fields=["reference_name"],
+        filters={"reference_type": "Lead"},
+        pluck="reference_name"
     )
 
-    filters["name"] = ("not in", leads_with_activity or [])
+    # If there are leads with activity, exclude them
+    if leads_with_activity:
+        filters["name"] = ["not in", leads_with_activity]
 
-    return frappe.db.count("Lead", filters=filters)
+    # Count leads with the applied filters
+    count = frappe.db.count("Lead", filters=filters)
+
+    return count
+
+
 
 
 def get_today_upcoming_follow_ups_count():
@@ -650,27 +674,65 @@ def get_open_activities_count():
     return frappe.db.count("Event Activity", filters=filters)
 
 
+# def get_lead_category_counts():
+#     """Counts Leads grouped by their custom_lead_category and sums custom_expected_revenue."""
+#     categories = [
+#         'Enquiry', 'Pipeline', 'Order', 'Lost Enquiry', 'Lost Pipeline'
+#     ]
+#     counts = {}
+
+#     for category in categories:
+#         filters = get_filters_for("Lead")
+#         filters["custom_lead_category"] = category
+
+#         # Count the leads
+#         lead_count = frappe.db.count("Lead", filters=filters)
+
+#         # Sum the custom_expected_revenue
+#         total_revenue = frappe.db.get_all(
+#             "Lead",
+#             filters=filters,
+#             fields=["custom_expected_revenue"]
+#         )
+#         revenue_sum = sum([float(l.custom_expected_revenue or 0) for l in total_revenue])
+
+#         counts[category] = {
+#             "count": lead_count,
+#             "revenue": revenue_sum
+#         }
+
+#     return counts
+
+import frappe
+
+@frappe.whitelist()
 def get_lead_category_counts():
-    """Counts Leads grouped by their custom_lead_category and sums custom_expected_revenue."""
-    categories = [
-        'Enquiry', 'Pipeline', 'Order', 'Lost Enquiry', 'Lost Pipeline'
-    ]
+    """Counts Leads grouped by their custom_lead_category and sums revenue fields.
+       For 'Order' category → sum custom_po_value
+       For others → sum custom_expected_revenue
+    """
+
+    categories = ['Enquiry', 'Pipeline', 'Order', 'Lost Enquiry', 'Lost Pipeline']
     counts = {}
 
     for category in categories:
         filters = get_filters_for("Lead")
         filters["custom_lead_category"] = category
 
-        # Count the leads
+        # Count total leads in this category
         lead_count = frappe.db.count("Lead", filters=filters)
 
-        # Sum the custom_expected_revenue
-        total_revenue = frappe.db.get_all(
+        # Choose revenue field dynamically
+        revenue_field = "custom_po_value" if category == "Order" else "custom_expected_revenue"
+
+        # Fetch and sum revenue
+        total_revenue_records = frappe.db.get_all(
             "Lead",
             filters=filters,
-            fields=["custom_expected_revenue"]
+            fields=[revenue_field]
         )
-        revenue_sum = sum([float(l.custom_expected_revenue or 0) for l in total_revenue])
+
+        revenue_sum = sum([float(l[revenue_field] or 0) for l in total_revenue_records])
 
         counts[category] = {
             "count": lead_count,
@@ -678,7 +740,6 @@ def get_lead_category_counts():
         }
 
     return counts
-
 
 
 
@@ -1087,24 +1148,15 @@ import frappe
 #         "closure_labels": closure_labels,
 #         "is_admin": is_admin
 #     }
-
 import frappe
 from frappe.utils import getdate
 
 @frappe.whitelist()
-def get_lead_category_report(from_date=None, to_date=None, quotation_from_date=None, quotation_to_date=None):
-    """
-    Returns a user-wise lead report including:
-    - Categories, Lead Types, Direction Types
-    - Industry, Product Categories
-    - Expected Closure Month-Year
-    - Quotations Sent (count & value, filtered separately)
-    """
+def get_lead_category_report(from_date=None, to_date=None):
     user = frappe.session.user
     roles = frappe.get_roles(user)
     is_admin = "DAC CRM Head" in roles
 
-    # ------------------- Lead Filters -------------------
     lead_filters = {}
     if from_date and to_date:
         lead_filters["custom_created_at"] = ["between", [from_date, to_date]]
@@ -1117,14 +1169,13 @@ def get_lead_category_report(from_date=None, to_date=None, quotation_from_date=N
         "Lead",
         filters=lead_filters,
         fields=[
-            "name", "lead_owner", "custom_lead_category",
+            "name", "lead_owner", "lead_name", "status", "custom_lead_category",
             "custom_lead_type", "custom_direction_type",
             "industry", "custom_expected_revenue", "custom_expected_closure_date"
         ]
 
     )
 
-    # Prepare summary containers
     summary = {}
     all_categories, all_lead_types, all_direction_types, all_industries, all_products, all_closure_months = set(), set(), set(), set(), set(), set()
 
@@ -1135,9 +1186,7 @@ def get_lead_category_report(from_date=None, to_date=None, quotation_from_date=N
         direction = l.custom_direction_type or "Unknown"
         industry = l.industry or "Unknown"
         revenue = float(l.custom_expected_revenue or 0)
-
-        closure_date = l.custom_expected_closure_date
-        closure_month = getdate(closure_date).strftime("%b %Y") if closure_date else "No Closure Date"
+        closure_month = getdate(l.custom_expected_closure_date).strftime("%b %Y") if l.custom_expected_closure_date else "No Closure Date"
 
         all_categories.add(cat)
         all_lead_types.add(lead_type)
@@ -1158,19 +1207,26 @@ def get_lead_category_report(from_date=None, to_date=None, quotation_from_date=N
                 "quotations": {}
             }
 
-        def add_count_and_revenue(bucket, key, rev=revenue):
+        def add_to_bucket(bucket, key):
             if key not in summary[u][bucket]:
-                summary[u][bucket][key] = {"count": 0, "revenue": 0}
+                summary[u][bucket][key] = {"count": 0, "revenue": 0, "leads": []}
             summary[u][bucket][key]["count"] += 1
-            summary[u][bucket][key]["revenue"] += rev
+            summary[u][bucket][key]["revenue"] += revenue
+            summary[u][bucket][key]["leads"].append({
+                "name": l.name,
+                "lead_name": l.lead_name,
+                "status": l.status,
+                "revenue": revenue,
+                "closure_month": closure_month
+            })
 
-        add_count_and_revenue("categories", cat)
-        add_count_and_revenue("lead_types", lead_type)
-        add_count_and_revenue("direction_types", direction)
-        add_count_and_revenue("industries", industry)
-        add_count_and_revenue("closures", closure_month)
+        add_to_bucket("categories", cat)
+        add_to_bucket("lead_types", lead_type)
+        add_to_bucket("direction_types", direction)
+        add_to_bucket("industries", industry)
+        add_to_bucket("closures", closure_month)
 
-        # --- Products (child table) ---
+        # Products (child table)
         product_rows = frappe.get_all(
             "Product Category Multiselect",
             filters={"parent": l.name},
@@ -1179,17 +1235,12 @@ def get_lead_category_report(from_date=None, to_date=None, quotation_from_date=N
         for row in product_rows:
             if row.product_category:
                 all_products.add(row.product_category)
-                add_count_and_revenue("products", row.product_category)
+                add_to_bucket("products", row.product_category)
 
-    # ------------------- Quotation Table (Independent) -------------------
-    quotation_filters = {"docstatus": 1}  # only submitted
-    if quotation_from_date and quotation_to_date:
-        quotation_filters["transaction_date"] = ["between", [quotation_from_date, quotation_to_date]]
-
-    # Fetch all users
-    users_list = [u["name"] for u in frappe.get_all("User", fields=["name"])]
-
-    quotation_summary = {u: {} for u in users_list}
+    # Quotations
+    quotation_filters = {"docstatus": 1}
+    if from_date and to_date:
+        quotation_filters["transaction_date"] = ["between", [from_date, to_date]]
 
     quotations = frappe.get_all(
         "Quotation",
@@ -1197,22 +1248,26 @@ def get_lead_category_report(from_date=None, to_date=None, quotation_from_date=N
         fields=["name", "owner", "grand_total", "quotation_to", "party_name", "transaction_date"]
     )
 
+    users_list = [u["name"] for u in frappe.get_all("User", fields=["name"])]
+    quotation_summary = {u: {} for u in users_list}
     all_quotation_labels = set()
 
     for q in quotations:
         owner = q.owner
-        label = q.quotation_to  # only use quotation_to
+        label = q.quotation_to
         all_quotation_labels.add(label)
-
         if owner not in quotation_summary:
             quotation_summary[owner] = {}
-
         if label not in quotation_summary[owner]:
-            quotation_summary[owner][label] = {"count": 0, "revenue": 0}
-
+            quotation_summary[owner][label] = {"count": 0, "revenue": 0, "quotations": []}
         quotation_summary[owner][label]["count"] += 1
         quotation_summary[owner][label]["revenue"] += float(q.grand_total or 0)
-
+        quotation_summary[owner][label]["quotations"].append({
+            "name": q.name,
+            "party_name": q.party_name,
+            "grand_total": q.grand_total,
+            "transaction_date": q.transaction_date
+        })
 
     # Merge quotation_summary into summary
     for u, quotes in quotation_summary.items():
@@ -1266,6 +1321,100 @@ def get_lead_category_report(from_date=None, to_date=None, quotation_from_date=N
 
 
 
+# # Separate PDF generation function
+# import frappe
+# from frappe.utils.pdf import get_pdf
+
+# @frappe.whitelist()
+# def generate_lead_report_pdf(from_date=None, to_date=None, quotation_from_date=None, quotation_to_date=None):
+#     # Get the data using your existing function
+#     report_data = get_lead_category_report(
+#         from_date=from_date,
+#         to_date=to_date,
+#         quotation_from_date=quotation_from_date,
+#         quotation_to_date=quotation_to_date
+#     )
+    
+#     # Prepare HTML from the data (simple table example)
+#     html = "<h2>Lead Report</h2><table border='1' cellspacing='0' cellpadding='4'>"
+#     html += "<tr><th>User</th><th>Category</th><th>Count</th><th>Revenue</th></tr>"
+#     for u in report_data["users"]:
+#         for cat, val in u["categories"].items():
+#             html += f"<tr><td>{u['name']}</td><td>{cat}</td><td>{val['count']}</td><td>{val['revenue']}</td></tr>"
+#     html += "</table>"
+
+#     # Generate PDF
+#     pdf = get_pdf(html)
+#     return pdf
+# import frappe
+# from frappe.utils import getdate
+
+# @frappe.whitelist()
+# def get_leads_by_user_and_label(user, label, fieldname):
+#     filters = {"lead_owner": user}
+
+#     lead_fields = [
+#         "name", "lead_name", "status", "custom_lead_category",
+#         "custom_expected_revenue", "custom_expected_closure_date"
+#     ]
+
+#     if fieldname == "categories":
+#         filters["custom_lead_category"] = label
+#     elif fieldname == "lead_types":
+#         filters["custom_lead_type"] = label
+#     elif fieldname == "industries":
+#         filters["industry"] = label
+#     elif fieldname == "direction_types":
+#         filters["custom_direction_type"] = label
+#     elif fieldname == "products":
+#         # Fetch leads which have this product category in child table
+#         product_links = frappe.get_all(
+#             "Product Category Multiselect",
+#             filters={"product_category": label},
+#             fields=["parent"]
+#         )
+#         lead_names = [p["parent"] for p in product_links]
+#         if lead_names:
+#             filters = {"name": ["in", lead_names], "lead_owner": user}
+#         else:
+#             return []  # No leads found
+#     else:
+#         return []
+
+#     leads = frappe.get_all(
+#         "Lead",
+#         filters=filters,
+#         fields=lead_fields
+#     )
+
+#     for l in leads:
+#         # Add products (child table)
+#         l["products"] = frappe.get_all(
+#             "Product Category Multiselect",
+#             filters={"parent": l["name"]},
+#             fields=["product_category"]
+#         )
+
+#         # Format expected closure month
+#         closure_date = l.get("custom_expected_closure_date")
+#         if closure_date:
+#             # Convert string to date and format as "Mon YYYY"
+#             l["closure_month"] = getdate(closure_date).strftime("%b %Y")
+#         else:
+#             l["closure_month"] = "No Closure Date"
+
+#         # Fetch related Quotations for this lead (optional)
+#         quotations = frappe.get_all(
+#             "Quotation",
+#             filters={"quotation_to": l.name, "docstatus": 1},
+#             fields=["name", "grand_total", "transaction_date"]
+#         )
+#         l["quotations"] = quotations
+
+#     return leads
+
+
+
 @frappe.whitelist()
 def get_quotations_for_lead(lead_name):
     if not frappe.has_permission('Quotation', 'read'):
@@ -1297,3 +1446,107 @@ def get_quotations_for_lead(lead_name):
         })
     
     return quotation_data
+from frappe.utils.pdf import get_pdf
+from frappe.utils import now_datetime
+import frappe
+
+@frappe.whitelist()
+def generate_combined_report_pdf(from_date=None, to_date=None):
+    try:
+        # Render HTML using existing functions
+        followup_html = render_followup_html(from_date, to_date)
+        lead_html = render_lead_html(from_date, to_date)
+
+        # Full HTML
+        full_html = f"""
+        <html>
+        <head>
+            <style>
+                body {{ font-family: 'Segoe UI', sans-serif; font-size: 11pt; }}
+                .summary-header {{ font-size: 16pt; font-weight: 600; margin: 15px 0; color: #333; }}
+                table {{ width: 100%; border-collapse: collapse; margin-bottom: 20px; }}
+                th, td {{ border: 1px solid #ddd; padding: 8px; text-align: center; }}
+                th {{ background: #1976d2; color: white; }}
+                tbody tr:nth-child(even) {{ background: #f9f9f9; }}
+                tbody tr:hover {{ background: #f1faff; }}
+                tfoot td {{ font-weight: bold; background: #e0e0e0; }}
+            </style>
+        </head>
+        <body>
+            <h2>Event Activities Report</h2>
+            {followup_html}
+            <h2>Lead Report</h2>
+            {lead_html}
+        </body>
+        </html>
+        """
+
+        pdf = get_pdf(full_html)
+
+        # Save PDF
+        filename = f"Lead_Followup_Report_{now_datetime().strftime('%Y%m%d_%H%M%S')}.pdf"
+        file_path = frappe.get_site_path("public", "files", filename)
+        with open(file_path, "wb") as f:
+            f.write(pdf)
+
+        # Return public URL
+        return {"pdf_file": f"/files/{filename}"}
+
+    except Exception as e:
+        frappe.log_error(frappe.get_traceback(), "generate_combined_report_pdf Error")
+        frappe.throw(f"Error generating PDF: {str(e)}")
+
+
+def render_followup_html(from_date=None, to_date=None):
+    data = get_followup_report(from_date, to_date)
+    users = data.get("users", [])
+    categories = data.get("activity_categories", [])
+
+    if not users:
+        return "<p>No Event Activities found.</p>"
+
+    html = "<table><thead><tr><th>User</th>"
+    for c in categories:
+        html += f"<th>{c}</th>"
+    html += "<th>Total</th></tr></thead><tbody>"
+
+    for u in users:
+        row = f"<tr><td>{u['name']}</td>"
+        total = 0
+        for c in categories:
+            val = u["categories"].get(c, {"Open": 0, "Closed": 0})
+            count = val.get("Open", 0) + val.get("Closed", 0)
+            total += count
+            row += f"<td>{count}</td>"
+        row += f"<td>{total}</td></tr>"
+        html += row
+
+    html += "</tbody></table>"
+    return html
+
+
+def render_lead_html(from_date=None, to_date=None):
+    data = get_lead_category_report(from_date, to_date)
+    users = data.get("users", [])
+    categories = data.get("lead_categories", [])
+
+    if not users:
+        return "<p>No Lead records found.</p>"
+
+    html = "<table><thead><tr><th>User</th>"
+    for c in categories:
+        html += f"<th>{c}</th>"
+    html += "<th>Total</th></tr></thead><tbody>"
+
+    for u in users:
+        row = f"<tr><td>{u['name']}</td>"
+        total = 0
+        for c in categories:
+            val = u["categories"].get(c, {"count": 0})
+            total += val.get("count", 0)
+            row += f"<td>{val.get('count', 0)}</td>"
+        row += f"<td>{total}</td></tr>"
+        html += row
+
+    html += "</tbody></table>"
+    return html
