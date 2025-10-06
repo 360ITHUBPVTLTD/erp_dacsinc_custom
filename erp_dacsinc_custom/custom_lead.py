@@ -1150,7 +1150,6 @@ import frappe
 #     }
 import frappe
 from frappe.utils import getdate
-
 @frappe.whitelist()
 def get_lead_category_report(from_date=None, to_date=None):
     user = frappe.session.user
@@ -1164,13 +1163,14 @@ def get_lead_category_report(from_date=None, to_date=None):
     if not is_admin:
         lead_filters["lead_owner"] = user
 
+    # --- Fetch Leads ---
     leads = frappe.get_all(
         "Lead",
         filters=lead_filters,
         fields=[
             "name", "lead_owner", "lead_name", "status", "custom_lead_category",
-            "custom_lead_type", "custom_direction_type",
-            "industry", "custom_expected_revenue", "custom_expected_closure_date"
+            "custom_lead_type", "custom_direction_type", "company_name",
+            "industry", "custom_expected_revenue", "custom_expected_closure_date", "mobile_no"
         ]
     )
 
@@ -1193,7 +1193,7 @@ def get_lead_category_report(from_date=None, to_date=None):
         all_closure_months.add(closure_month)
 
         if u not in summary:
-            full_name = frappe.db.get_value("User", u, "full_name") if u != "Guest" else "Guest"
+            full_name = frappe.db.get_value("User", u, "full_name") or "Unknown"
             summary[u] = {
                 "name": full_name,
                 "categories": {},
@@ -1211,11 +1211,13 @@ def get_lead_category_report(from_date=None, to_date=None):
             summary[u][bucket][key]["count"] += 1
             summary[u][bucket][key]["revenue"] += revenue
             summary[u][bucket][key]["leads"].append({
-                "name": l.name,
-                "lead_name": l.lead_name,
-                "status": l.status,
-                "revenue": revenue,
-                "closure_month": closure_month
+                "Lead ID": l.name,
+                "Full Name": l.lead_name,
+                "Organization Name": l.company_name or "",
+                "Lead Category": l.custom_lead_category or "",
+                "Expected Revenue": revenue,
+                "Mobile No": l.mobile_no or "",
+                "Expected Closure Month": closure_month
             })
 
         add_to_bucket("categories", cat)
@@ -1224,7 +1226,7 @@ def get_lead_category_report(from_date=None, to_date=None):
         add_to_bucket("industries", industry)
         add_to_bucket("closures", closure_month)
 
-        # Products (child table)
+        # --- Products child table ---
         product_rows = frappe.get_all(
             "Product Category Multiselect",
             filters={"parent": l.name},
@@ -1235,7 +1237,7 @@ def get_lead_category_report(from_date=None, to_date=None):
                 all_products.add(row.product_category)
                 add_to_bucket("products", row.product_category)
 
-    # Quotations
+    # --- Fetch Quotations ---
     quotation_filters = {"docstatus": 1}
     if from_date and to_date:
         quotation_filters["transaction_date"] = ["between", [from_date, to_date]]
@@ -1243,35 +1245,24 @@ def get_lead_category_report(from_date=None, to_date=None):
     quotations = frappe.get_all(
         "Quotation",
         filters=quotation_filters,
-        fields=["name", "owner", "grand_total", "quotation_to", "party_name", "transaction_date"]
+        fields=[
+            "name", "owner", "quotation_to", "party_name",
+            "grand_total", "transaction_date", "status"
+        ],
+        order_by="transaction_date desc"
     )
 
-    users_list = [u["name"] for u in frappe.get_all("User", fields=["name"])]
-    quotation_summary = {u: {} for u in users_list}
     all_quotation_labels = set()
 
     for q in quotations:
-        owner = q.owner
-        label = q.quotation_to
+        owner = q.owner or "Unknown"
+        label = q.quotation_to or "Unknown"
+        revenue = float(q.grand_total or 0)
         all_quotation_labels.add(label)
-        if owner not in quotation_summary:
-            quotation_summary[owner] = {}
-        if label not in quotation_summary[owner]:
-            quotation_summary[owner][label] = {"count": 0, "revenue": 0, "quotations": []}
-        quotation_summary[owner][label]["count"] += 1
-        quotation_summary[owner][label]["revenue"] += float(q.grand_total or 0)
-        quotation_summary[owner][label]["quotations"].append({
-            "name": q.name,
-            "party_name": q.party_name,
-            "grand_total": q.grand_total,
-            "transaction_date": q.transaction_date
-        })
 
-    # Merge quotation_summary into summary
-    for u, quotes in quotation_summary.items():
-        if u not in summary:
-            full_name = frappe.db.get_value("User", u, "full_name") if u != "Guest" else "Guest"
-            summary[u] = {
+        if owner not in summary:
+            full_name = frappe.db.get_value("User", owner, "full_name") or "Unknown"
+            summary[owner] = {
                 "name": full_name,
                 "categories": {},
                 "lead_types": {},
@@ -1279,12 +1270,24 @@ def get_lead_category_report(from_date=None, to_date=None):
                 "industries": {},
                 "products": {},
                 "closures": {},
-                "quotations": quotes
+                "quotations": {}
             }
-        else:
-            summary[u]["quotations"] = quotes
 
-    # Sorting helpers
+        if label not in summary[owner]["quotations"]:
+            summary[owner]["quotations"][label] = {"count": 0, "revenue": 0, "quotations": []}
+
+        summary[owner]["quotations"][label]["count"] += 1
+        summary[owner]["quotations"][label]["revenue"] += revenue
+        summary[owner]["quotations"][label]["quotations"].append({
+            "Quotation ID": q.name,
+            "Party Name": q.party_name or "",
+            "Quotation Type": q.quotation_to or "",
+            "Grand Total": revenue,
+            "Status": q.status or "",
+            "Transaction Date": q.transaction_date.strftime("%d-%b-%Y") if q.transaction_date else ""
+        })
+    print(summary)
+    # --- Sorting ---
     def sort_by_order(values, order):
         return sorted(values, key=lambda x: order.index(x) if x in order else 99)
 
@@ -1312,7 +1315,11 @@ def get_lead_category_report(from_date=None, to_date=None):
         "direction_types": sort_by_order(all_direction_types, direction_order),
         "industries": sorted(all_industries),
         "products": sorted(all_products),
-        "month_year_closure": sorted(all_closure_months, key=lambda x: getdate("01-" + x.split(" ")[0] + "-" + x.split(" ")[1]) if x != "No Closure Date" else getdate()),
+        "month_year_closure": sorted(
+            all_closure_months,
+            key=lambda x: getdate("01-" + x.split(" ")[0] + "-" + x.split(" ")[1])
+            if x != "No Closure Date" else getdate()
+        ),
         "quotation_labels": sorted(all_quotation_labels),
         "is_admin": is_admin
     }
