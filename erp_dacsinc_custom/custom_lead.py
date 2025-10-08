@@ -1170,7 +1170,7 @@ def get_lead_category_report(from_date=None, to_date=None):
         fields=[
             "name", "lead_owner", "lead_name", "status", "custom_lead_category",
             "custom_lead_type", "custom_direction_type", "company_name",
-            "industry", "custom_expected_revenue", "custom_expected_closure_date", "mobile_no"
+            "industry", "custom_expected_revenue", "custom_expected_closure_date", "mobile_no","custom_po_value",
         ]
     )
 
@@ -1183,7 +1183,12 @@ def get_lead_category_report(from_date=None, to_date=None):
         lead_type = l.custom_lead_type or "Unknown"
         direction = l.custom_direction_type or "Unknown"
         industry = l.industry or "Unknown"
-        revenue = float(l.custom_expected_revenue or 0)
+
+        # ✅ Revenue logic
+        if cat == "Order":
+            revenue = float(l.custom_po_value or 0)
+        else:
+            revenue = float(l.custom_expected_revenue or 0)
         closure_month = getdate(l.custom_expected_closure_date).strftime("%b %Y") if l.custom_expected_closure_date else "No Closure Date"
 
         all_categories.add(cat)
@@ -1247,7 +1252,7 @@ def get_lead_category_report(from_date=None, to_date=None):
         filters=quotation_filters,
         fields=[
             "name", "owner", "quotation_to", "party_name",
-            "grand_total", "transaction_date", "status"
+            "grand_total", "transaction_date", "status","customer_name"
         ],
         order_by="transaction_date desc"
     )
@@ -1281,12 +1286,13 @@ def get_lead_category_report(from_date=None, to_date=None):
         summary[owner]["quotations"][label]["quotations"].append({
             "Quotation ID": q.name,
             "Party Name": q.party_name or "",
+            "Customer Name":q.customer_name or "",
             "Quotation Type": q.quotation_to or "",
             "Grand Total": revenue,
             "Status": q.status or "",
             "Transaction Date": q.transaction_date.strftime("%d-%b-%Y") if q.transaction_date else ""
         })
-    print(summary)
+    # print(summary)
     # --- Sorting ---
     def sort_by_order(values, order):
         return sorted(values, key=lambda x: order.index(x) if x in order else 99)
@@ -1439,7 +1445,7 @@ def get_quotations_for_lead(lead_name):
             fields=['item_code'],
             filters={'parent': quotation.name}
         )
-        print(items)
+        # print(items)
         # Append the data as a dictionary
         quotation_data.append({
             'quotation_id': quotation.name,
