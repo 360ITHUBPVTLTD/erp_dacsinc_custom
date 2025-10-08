@@ -459,7 +459,12 @@ def get_custom_custom_status_counts(filters=None):
         SELECT 
             custom_lead_category, 
             COUNT(*) AS count,
-            COALESCE(SUM(custom_expected_revenue), 0) AS total_revenue
+            SUM(
+            CASE 
+                WHEN custom_lead_category = 'Order' THEN IFNULL(custom_po_value, 0)
+                ELSE IFNULL(custom_expected_revenue, 0)
+            END
+        ) AS total_revenue
         FROM `tabLead`
         WHERE {where_clause}
         GROUP BY custom_lead_category
@@ -467,7 +472,12 @@ def get_custom_custom_status_counts(filters=None):
 
     # Get overall total revenue
     total_revenue = frappe.db.sql(f"""
-        SELECT COALESCE(SUM(custom_expected_revenue), 0) AS total_revenue
+        SELECT SUM(
+            CASE 
+                WHEN custom_lead_category = 'Order' THEN IFNULL(custom_po_value, 0)
+                ELSE IFNULL(custom_expected_revenue, 0)
+            END
+        ) AS total_revenue
         FROM `tabLead`
         WHERE {where_clause}
     """, values, as_dict=True)
