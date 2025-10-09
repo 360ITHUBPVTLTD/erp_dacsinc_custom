@@ -488,7 +488,10 @@ def get_custom_custom_status_cards_html(status_counts):
     status_counts, total_revenue = status_counts
 
     def format_currency(value):
-        return "{:,.2f}".format(value)  # adds commas and 2 decimal places
+        if not value:
+            value = 0
+        return "{:,.2f}".format(float(value))  # adds commas and 2 decimal places
+
 
     # Desired fixed order
     fixed_order = ["Enquiry", "Pipeline", "Order", "Lost Enquiry", "Lost Pipeline"]

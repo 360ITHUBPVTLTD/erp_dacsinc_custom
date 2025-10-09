@@ -1184,6 +1184,11 @@ def get_lead_category_report(from_date=None, to_date=None):
         direction = l.custom_direction_type or "Unknown"
         industry = l.industry or "Unknown"
 
+        if lead_type == "WON":
+            revenue = float(l.custom_po_value or 0)
+        else:
+            revenue = float(l.custom_expected_revenue or 0)
+
         # ✅ Revenue logic
         if cat == "Order":
             revenue = float(l.custom_po_value or 0)
