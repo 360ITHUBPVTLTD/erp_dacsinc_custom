@@ -102,113 +102,93 @@ frappe.query_reports["Lead Report"] = {
 	],
 
 	onload: function (report) {
-		// Lead Owner Filter
-		let lead_owner_filter = report.get_filter("lead_owner");
+	// Lead Owner Filter
+	let lead_owner_filter = report.get_filter("lead_owner");
+	let assigned_to_filter = report.get_filter("assigned_to");
 
-		// Always set session user as default
+	// Check if user is DAC CRM Head
+	let is_crm_head = frappe.user.has_role("DAC CRM Head");
+
+	if (!is_crm_head) {
+		// For non-CRM Head users → set session user as default and lock
 		lead_owner_filter.set_value(frappe.session.user);
-
-		// Make it read-only by default
 		$(lead_owner_filter.$input).attr("disabled", true);
 
-		// If user has DAC CRM role → allow editing
-		if (frappe.user.has_role("DAC CRM Head")) {
-			$(lead_owner_filter.$input).attr("disabled", false);
-		}
-
-		// Assigned To Filter
-		let assigned_to_filter = report.get_filter("assigned_to");
-
-		// Always set session user as default
 		assigned_to_filter.set_value(frappe.session.user);
-
-		// Make it read-only by default
 		$(assigned_to_filter.$input).attr("disabled", true);
+	} else {
+		// For CRM Head → keep empty and editable
+		$(lead_owner_filter.$input).attr("disabled", false);
+		$(assigned_to_filter.$input).attr("disabled", false);
+	}
 
-		// If user has DAC CRM role → allow editing
-		if (frappe.user.has_role("DAC CRM Head")) {
-			$(assigned_to_filter.$input).attr("disabled", false);
-		}
+	function toggle_filters_visibility() {
+		const inverse = report.get_filter_value("inverse_report");
 
-		function toggle_filters_visibility() {
-			const inverse = report.get_filter_value("inverse_report");
+		const lead_filters = [
+			"custom_lead_category",
+			"lead_owner",
+			"mobile_no",
+			"source",
+			"lead_activity_status",
+			"lead_type",
+			"direction_type",
+			"industry",
+		];
 
-			// Lead related filters
-			const lead_filters = [
-				"custom_lead_category",
-				"lead_owner",
-				"mobile_no",
-				"source",
-				"lead_activity_status",
-				"lead_type",
-				"direction_type",
-				"industry",
-			];
+		const inverse_filters = ["category", "status"];
+		const assigned_to = report.get_filter("assigned_to");
 
-			// Inverse filters
-			const inverse_filters = ["category", "status"];
+		if (inverse) {
+			lead_filters.forEach(f => {
+				const df = report.get_filter(f);
+				if (df) $(df.wrapper).hide();
+			});
 
-			const assigned_to = report.get_filter("assigned_to");
+			inverse_filters.forEach(f => {
+				const df = report.get_filter(f);
+				if (df) $(df.wrapper).show();
+			});
 
-			if (inverse) {
-				// Hide lead filters
-				lead_filters.forEach((f) => {
-					const df = report.get_filter(f);
-					if (df) $(df.wrapper).hide();
-				});
+			if (assigned_to) $(assigned_to.wrapper).show();
 
-				// Show inverse filters
-				inverse_filters.forEach((f) => {
-					const df = report.get_filter(f);
-					if (df) $(df.wrapper).show();
-				});
+			const custom_option = report.get_filter("custom_created_at_option");
+			if (custom_option) $(custom_option.wrapper).show();
 
-				// Show assigned_to
-				if (assigned_to) $(assigned_to.wrapper).show();
+			const custom_range = report.get_filter("custom_created_at");
+			if (custom_range) $(custom_range.wrapper).show();
+		} else {
+			lead_filters.forEach(f => {
+				const df = report.get_filter(f);
+				if (df) $(df.wrapper).show();
+			});
 
-				// Show custom_created_at_option
-				const custom_option = report.get_filter("custom_created_at_option");
-				if (custom_option) $(custom_option.wrapper).show();
+			inverse_filters.forEach(f => {
+				const df = report.get_filter(f);
+				if (df) $(df.wrapper).hide();
+			});
 
-				// Show custom_created_at range
-				const custom_range = report.get_filter("custom_created_at");
-				if (custom_range) $(custom_range.wrapper).show();
-			} else {
-				// Show lead filters
-				lead_filters.forEach((f) => {
-					const df = report.get_filter(f);
-					if (df) $(df.wrapper).show();
-				});
+			if (assigned_to) $(assigned_to.wrapper).hide();
 
-				// Hide inverse filters
-				inverse_filters.forEach((f) => {
-					const df = report.get_filter(f);
-					if (df) $(df.wrapper).hide();
-				});
-
-				// Hide assigned_to when inverse = 0
-				if (assigned_to) $(assigned_to.wrapper).hide();
-
-				// Hide custom_created_at_option and force "Custom"
-				const custom_option = report.get_filter("custom_created_at_option");
-				if (custom_option) {
-					$(custom_option.wrapper).hide();
-					custom_option.set_value("Custom");
-				}
-
-				// Show only custom_created_at
-				const custom_range = report.get_filter("custom_created_at");
-				if (custom_range) $(custom_range.wrapper).show();
+			const custom_option = report.get_filter("custom_created_at_option");
+			if (custom_option) {
+				$(custom_option.wrapper).hide();
+				custom_option.set_value("Custom");
 			}
-		}
 
-		toggle_filters_visibility();
-
-		const inverse_filter = report.get_filter("inverse_report");
-		if (inverse_filter) {
-			$(inverse_filter.input).on("change", toggle_filters_visibility);
+			const custom_range = report.get_filter("custom_created_at");
+			if (custom_range) $(custom_range.wrapper).show();
 		}
-	},
+	}
+
+	toggle_filters_visibility();
+
+	const inverse_filter = report.get_filter("inverse_report");
+	if (inverse_filter) {
+		$(inverse_filter.input).on("change", toggle_filters_visibility);
+	}
+},
+
 };
 
 // Lead Activity Dialog
