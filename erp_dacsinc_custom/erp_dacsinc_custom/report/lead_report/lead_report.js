@@ -112,7 +112,7 @@ frappe.query_reports["Lead Report"] = {
 		$(lead_owner_filter.$input).attr("disabled", true);
 
 		// If user has DAC CRM role → allow editing
-		if (frappe.user.has_role("DAC CRM")) {
+		if (frappe.user.has_role("DAC CRM Head")) {
 			$(lead_owner_filter.$input).attr("disabled", false);
 		}
 
@@ -126,7 +126,7 @@ frappe.query_reports["Lead Report"] = {
 		$(assigned_to_filter.$input).attr("disabled", true);
 
 		// If user has DAC CRM role → allow editing
-		if (frappe.user.has_role("DAC CRM")) {
+		if (frappe.user.has_role("DAC CRM Head")) {
 			$(assigned_to_filter.$input).attr("disabled", false);
 		}
 
