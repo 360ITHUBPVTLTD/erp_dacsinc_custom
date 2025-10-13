@@ -447,7 +447,6 @@ def get_material_request_stock_html(items):
     html += "</tbody></table>"
     return html
 
-import frappe
 
 def before_insert(doc, method):
     # ✅ 1. Auto-fetch terms
@@ -456,16 +455,12 @@ def before_insert(doc, method):
 
     # ✅ 2. Handle tax category for Lead-based quotations
     if doc.quotation_to == "Lead" and doc.party_name:
-        lead = frappe.db.get_value(
-            "Lead",
-            doc.party_name,
-            ["state"],
-            as_dict=True
-        )
+        lead_state = frappe.db.get_value("Lead", doc.party_name, "state")
 
-        if lead:
-            lead_state = lead.get("state")
-
+        # If Lead state not found or empty, default to In-State
+        if not lead_state:
+            doc.tax_category = "In-State"
+        else:
             # ✅ Get the primary company address
             company_address = frappe.db.get_value(
                 "Dynamic Link",
@@ -477,13 +472,10 @@ def before_insert(doc, method):
                 "parent"
             )
 
-            company_state = None
-            if company_address:
-                company_state = frappe.db.get_value("Address", company_address, "state")
+            company_state = frappe.db.get_value("Address", company_address, "state") if company_address else None
 
-            # ✅ Compare lead and company states
-            if lead_state and company_state:
-                if lead_state.strip().lower() == company_state.strip().lower():
-                    doc.tax_category = "In-State"
-                else:
-                    doc.tax_category = "Out-State"
+            # Compare Lead and Company states
+            if company_state and lead_state.strip().lower() == company_state.strip().lower():
+                doc.tax_category = "In-State"
+            else:
+                doc.tax_category = "Out-State"
