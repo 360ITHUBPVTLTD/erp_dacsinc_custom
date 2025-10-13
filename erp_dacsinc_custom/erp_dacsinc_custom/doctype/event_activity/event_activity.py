@@ -43,7 +43,10 @@ class EventActivity(Document):
 			# remove_existing_shares(self)
 			share_event_with_user(self)
 
-			# ✅ Mark lead as "Activity Created" using direct DB update
+		# Recalculate next follow-up for Lead
+		if self.reference_type == "Lead" and self.reference_name:
+			self.update_lead_next_followup()
+
 			activity_count = frappe.db.count(
 				"Event Activity",
 				filters={
@@ -59,6 +62,7 @@ class EventActivity(Document):
 					"custom_is_activity_created",
 					1,
 				)
+
 	def on_update(self):
 		"""Recalculate whenever status changes"""
 		if self.reference_type == "Lead" and self.reference_name:
