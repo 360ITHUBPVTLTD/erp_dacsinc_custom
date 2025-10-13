@@ -154,9 +154,19 @@ doc_events = {
     "Lead": {
         "after_insert": "erp_dacsinc_custom.custom_lead.after_insert_lead",
         "before_save": "erp_dacsinc_custom.custom_lead.before_save_lead"
-    }
+    },
+    "Quotation": {
+        "before_insert": "erp_dacsinc_custom.custom_script.before_insert"
+    },
 }
 
+
+
+# jinjafiles = [
+#     "erp_dacsinc_custom.custom_lead.sort_by_order",
+#     "erp_dacsinc_custom.custom_lead.sort_closure_months", # Add this line
+#     # Add other filters if you have them
+# ]
 # Scheduled Tasks
 # ---------------
 
