@@ -41,11 +41,11 @@ def update_tax_child(doc):
                 "item_tax_template": tax_rate
             })
 
-        # Always add Non-GST entry
-        doc.append('taxes', {
-            # "tax_category": "Non-GST",
-            "item_tax_template": "Non-GST - IND"
-        })
+        # # Always add Non-GST entry
+        # doc.append('taxes', {
+        #     # "tax_category": "Non-GST",
+        #     "item_tax_template": "Non-GST - IND"
+        # })
         doc.save()
     except Exception as e:
         frappe.log_error(f"Error in updating taxes: {str(e)}")
@@ -447,8 +447,43 @@ def get_material_request_stock_html(items):
     html += "</tbody></table>"
     return html
 
-
+import frappe
 
 def before_insert(doc, method):
+    # ✅ 1. Auto-fetch terms
     if doc.tc_name and not doc.terms:
         doc.terms = frappe.db.get_value("Terms and Conditions", doc.tc_name, "terms")
+
+    # ✅ 2. Handle tax category for Lead-based quotations
+    if doc.quotation_to == "Lead" and doc.party_name:
+        lead = frappe.db.get_value(
+            "Lead",
+            doc.party_name,
+            ["state"],
+            as_dict=True
+        )
+
+        if lead:
+            lead_state = lead.get("state")
+
+            # ✅ Get the primary company address
+            company_address = frappe.db.get_value(
+                "Dynamic Link",
+                {
+                    "link_doctype": "Company",
+                    "link_name": doc.company,
+                    "parenttype": "Address"
+                },
+                "parent"
+            )
+
+            company_state = None
+            if company_address:
+                company_state = frappe.db.get_value("Address", company_address, "state")
+
+            # ✅ Compare lead and company states
+            if lead_state and company_state:
+                if lead_state.strip().lower() == company_state.strip().lower():
+                    doc.tax_category = "In-State"
+                else:
+                    doc.tax_category = "Out-State"
