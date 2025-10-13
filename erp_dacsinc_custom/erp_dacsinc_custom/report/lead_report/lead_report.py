@@ -23,6 +23,9 @@ def get_columns(filters=None):
             {"label": "Starts On", "fieldname": "starts_on", "fieldtype": "Datetime", "width": 150},
             {"label": "Ends On", "fieldname": "ends_on", "fieldtype": "Datetime", "width": 150},
             {"label": "Assigned To", "fieldname": "assigned_to", "fieldtype": "Link", "options": "User", "width": 120},
+            {"label": "Actual Visit At", "fieldname": "actual_visit_at", "fieldtype": "Datetime", "width": 150},
+            {"label": "Actual Checked Out At", "fieldname": "actual_checked_out_at", "fieldtype": "Datetime", "width": 150},
+            {"label": "Notes", "fieldname": "notes", "fieldtype": "Data", "width": 200},
             {"label": "Reference Type", "fieldname": "reference_type", "fieldtype": "Data", "width": 120},
             {"label": "Reference Name", "fieldname": "reference_name", "fieldtype": "Dynamic Link", "options": "reference_type", "width": 150},
             {"label": "Lead ID", "fieldname": "lead_id", "fieldtype": "Link", "options": "Lead", "width": 100},
@@ -257,13 +260,16 @@ def get_event_activity_with_reference(filters=None):
             ea.starts_on,
             ea.ends_on,
             ea.assigned_to,
+            ea.actual_visit_at,
+            ea.actual_checked_out_at,
+            ea.notes,
             ea.reference_type,
             ea.reference_name
         FROM `tabEvent Activity` ea
         WHERE {where_clause}
         ORDER BY ea.starts_on DESC
     """, values, as_dict=True)
-
+    # print("ddddddddddddddddddddddddddd",activities)
     # Add reference info dynamically
     for row in activities:
         reference_type = row.get("reference_type")
@@ -287,18 +293,28 @@ def get_event_activity_with_reference(filters=None):
         # Format datetime fields to DD-MM-YYYY HH:MM:SS
         for field in ["starts_on", "ends_on", "custom_created_at"]:
             value = row.get(field)
-            if value:
-                if isinstance(value, str):
+
+            if not value:
+                row[field] = ""
+                continue
+
+            if isinstance(value, datetime):
+                valid_datetime = value
+            else:
+                valid_datetime = None
+                for fmt in ("%Y-%m-%d %H:%M:%S", "%Y-%m-%d", "%d-%m-%Y %H:%M:%S", "%d-%m-%Y"):
                     try:
-                        value = datetime.strptime(value, "%Y-%m-%d %H:%M:%S")
-                    except ValueError:
-                        try:
-                            value = datetime.strptime(value, "%Y-%m-%d")
-                        except ValueError:
-                            value = None
-                row[field] = value.strftime("%d-%m-%Y %H:%M:%S") if value else ""
+                        valid_datetime = datetime.strptime(str(value), fmt)
+                        break
+                    except (ValueError, TypeError):
+                        continue
+
+            if valid_datetime:
+                # Send in ISO format for JS
+                row[field] = valid_datetime.strftime("%Y-%m-%dT%H:%M:%S")
             else:
                 row[field] = ""
+
 
     return activities
 
