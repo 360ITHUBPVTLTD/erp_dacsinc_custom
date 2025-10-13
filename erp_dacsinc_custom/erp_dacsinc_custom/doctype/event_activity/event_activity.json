@@ -215,13 +215,14 @@
   {
    "fieldname": "reference_doc_mobile_no",
    "fieldtype": "Data",
-   "label": "Reference Doc Mobile No"
+   "label": "Reference Doc Mobile No",
+   "read_only": 1
   }
  ],
  "grid_page_length": 50,
  "icon": "fa fa-calendar",
  "links": [],
- "modified": "2025-10-10 09:59:26.731001",
+ "modified": "2025-10-10 10:14:24.427217",
  "modified_by": "Administrator",
  "module": "Erp Dacsinc Custom",
  "name": "Event Activity",
