@@ -156,8 +156,15 @@ doc_events = {
         "before_save": "erp_dacsinc_custom.custom_lead.before_save_lead"
     },
     "Quotation": {
-        "before_insert": "erp_dacsinc_custom.custom_script.before_insert"
+        "before_insert": "erp_dacsinc_custom.custom_script.before_insert",
+        "on_submit": "erp_dacsinc_custom.custom_script.quotation_on_submit",
+        # "on_cancel": "erp_dacsinc_custom.custom_script.quotation_on_cancel"
     },
+    "Sales Order": {
+        "on_submit": "erp_dacsinc_custom.custom_script.sales_order_on_submit",
+        "on_cancel": "erp_dacsinc_custom.custom_script.sales_order_on_cancel"
+
+    }
 }
 
 
