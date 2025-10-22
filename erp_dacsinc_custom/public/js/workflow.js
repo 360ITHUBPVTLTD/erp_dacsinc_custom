@@ -13,6 +13,18 @@ class WorkflowOverride extends frappe.ui.form.States {
             // console.log("Available transitions:", transitions);
             this.frm.page.clear_actions_menu();
             transitions.forEach((d) => {
+                // 🔹 Restrict specific actions only for System Manager
+                const restricted_actions = ["Move to Pipeline", "Move to Order", "Move Back"];
+                const user_is_system_manager = frappe.user.has_role("System Manager");
+
+                if (
+                    restricted_actions.includes(d.action) &&
+                    !user_is_system_manager
+                ) {
+                    // Skip showing this transition if user is not System Manager
+                    return;
+                }
+
                 // console.log("Checking transition:", d.action);
                 if (frappe.user_roles.includes(d.allowed)) {
                     // console.log("User has access to transition:", d.action);
