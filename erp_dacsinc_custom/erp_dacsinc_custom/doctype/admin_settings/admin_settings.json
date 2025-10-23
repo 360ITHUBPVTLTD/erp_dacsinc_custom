@@ -1,0 +1,71 @@
+{
+ "actions": [],
+ "allow_rename": 1,
+ "creation": "2025-10-22 15:36:27.852014",
+ "doctype": "DocType",
+ "engine": "InnoDB",
+ "field_order": [
+  "email_account",
+  "send_email",
+  "notify_creator",
+  "column_break_vuzp",
+  "to_mail_ids"
+ ],
+ "fields": [
+  {
+   "fieldname": "email_account",
+   "fieldtype": "Link",
+   "label": "Email Account",
+   "options": "Email Account"
+  },
+  {
+   "default": "0",
+   "description": "send email for creating the sales order",
+   "fieldname": "send_email",
+   "fieldtype": "Check",
+   "label": "Send Email"
+  },
+  {
+   "fieldname": "to_mail_ids",
+   "fieldtype": "Small Text",
+   "label": "To Mail IDs",
+   "options": "Multiselect User"
+  },
+  {
+   "fieldname": "column_break_vuzp",
+   "fieldtype": "Column Break"
+  },
+  {
+   "default": "0",
+   "fieldname": "notify_creator",
+   "fieldtype": "Check",
+   "label": "Send Mail For Owner"
+  }
+ ],
+ "grid_page_length": 50,
+ "index_web_pages_for_search": 1,
+ "issingle": 1,
+ "links": [],
+ "modified": "2025-10-22 17:42:01.117025",
+ "modified_by": "Administrator",
+ "module": "Erp Dacsinc Custom",
+ "name": "Admin Settings",
+ "owner": "Administrator",
+ "permissions": [
+  {
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "print": 1,
+   "read": 1,
+   "role": "System Manager",
+   "share": 1,
+   "write": 1
+  }
+ ],
+ "row_format": "Dynamic",
+ "rows_threshold_for_grid_search": 20,
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "states": []
+}
