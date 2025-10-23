@@ -162,7 +162,8 @@ doc_events = {
     },
     "Sales Order": {
         "on_submit": "erp_dacsinc_custom.custom_script.sales_order_on_submit",
-        "on_cancel": "erp_dacsinc_custom.custom_script.sales_order_on_cancel"
+        "on_cancel": "erp_dacsinc_custom.custom_script.sales_order_on_cancel",
+        "after_insert": "erp_dacsinc_custom.notifications.notify_on_new_so"
 
     }
 }

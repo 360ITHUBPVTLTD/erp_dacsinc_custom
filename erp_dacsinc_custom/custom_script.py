@@ -793,9 +793,9 @@ def get_item_details_for_po(item_code):
     factor = frappe.db.get_value("UOM Conversion Detail", {"parent": item_code, "uom": uom}, "conversion_factor") or 1.0
     return {"uom": uom, "stock_uom": details.stock_uom, "description": details.description, "item_name": details.item_name, "conversion_factor": factor}
 
-def get_stock_reservations(sales_order, item_code):
-    if not sales_order or not item_code: return []
-    return frappe.db.get_all("Stock Reservation Entry", filters={"voucher_no": sales_order, "item_code": item_code, "docstatus": 1}, fields=["name", "reserved_qty"])
+# def get_stock_reservations(sales_order, item_code):
+#     if not sales_order or not item_code: return []
+#     return frappe.db.get_all("Stock Reservation Entry", filters={"voucher_no": sales_order, "item_code": item_code, "docstatus": 1}, fields=["name", "reserved_qty"])
 
 def _get_bom_stock_details(bom_name, required_fg_qty):
     if not bom_name or not required_fg_qty: return []
@@ -1123,3 +1123,94 @@ def create_receipt_documents(sco_name, items_to_receive):
 
     # Return the names of ALL documents created
     return {"scr_name": scr.name, "pr_name": pr.name, "pi_name": pi.name}
+
+
+
+@frappe.whitelist()
+def get_linked_subcontracting_docs(purchase_order_name):
+    """
+    Finds all subcontracting documents linked to a Purchase Order and returns
+    a dictionary of lists, where each item in the list is a dictionary of details.
+    This version ensures that each document appears only once.
+    """
+    docs = {"sco": [], "ste": [], "scr": [], "pr": [], "pi": []}
+
+    # 1. Get unique Subcontracting Order (SCO) names first, then their details
+    sco_names = frappe.db.get_all(
+        "Subcontracting Order",
+        filters={"purchase_order": purchase_order_name, "docstatus": 1},
+        pluck="name",
+        distinct=True
+    )
+    if sco_names:
+        docs["sco"] = frappe.db.get_all(
+            "Subcontracting Order",
+            filters={"name": ["in", sco_names]},
+            fields=["name", "transaction_date", "total", "status"],
+        )
+
+        # 2. Get unique Material Transfer (STE) names, then their details
+        ste_names = frappe.db.get_all(
+            "Stock Entry",
+            filters={"subcontracting_order": ["in", sco_names], "docstatus": 1},
+            pluck="name",
+            distinct=True
+        )
+        if ste_names:
+            docs["ste"] = frappe.db.get_all(
+                "Stock Entry",
+                filters={"name": ["in", ste_names]},
+                fields=["name", "posting_date", "stock_entry_type"],
+            )
+
+        # 3. Get unique Subcontracting Receipt (SCR) names, then their details
+        scr_names = frappe.db.get_all(
+            "Subcontracting Receipt",
+            filters={"subcontracting_order": ["in", sco_names], "docstatus": 1},
+            pluck="name",
+            distinct=True
+        )
+        if scr_names:
+            docs["scr"] = frappe.db.get_all(
+                "Subcontracting Receipt",
+                filters={"name": ["in", scr_names]},
+                fields=["name", "posting_date", "status"],
+            )
+
+    # 4. Get unique Purchase Receipt (PR) names, then their details
+    pr_names = frappe.db.get_all(
+        "Purchase Receipt Item", filters={"purchase_order": purchase_order_name},
+        pluck="parent", distinct=True
+    )
+    if pr_names:
+        pr_names = frappe.db.get_all(
+            "Purchase Receipt", filters={"name": ["in", pr_names], "docstatus": 1},
+            pluck="name", distinct=True
+        )
+        if pr_names:
+            docs["pr"] = frappe.db.get_all(
+                "Purchase Receipt",
+                filters={"name": ["in", pr_names]},
+                fields=["name", "posting_date", "rounded_total", "status"],
+            )
+
+    # 5. Get unique Purchase Invoice (PI) names, then their details
+    pi_names = frappe.db.get_all(
+        "Purchase Invoice Item", filters={"purchase_order": purchase_order_name},
+        pluck="parent", distinct=True
+    )
+    if pi_names:
+        pi_names = frappe.db.get_all(
+            "Purchase Invoice", filters={"name": ["in", pi_names], "docstatus": 1},
+            pluck="name", distinct=True
+        )
+        if pi_names:
+            docs["pi"] = frappe.db.get_all(
+                "Purchase Invoice",
+                filters={"name": ["in", pi_names]},
+                fields=["name", "posting_date", "rounded_total", "due_date", "status"],
+            )
+
+    return docs
+
+
