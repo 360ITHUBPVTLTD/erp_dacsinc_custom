@@ -30,7 +30,6 @@
   "reference_doc_name",
   "address",
   "reference_doc_mobile_no",
-  "test",
   "section_break_ytpz",
   "actual_visit_at",
   "column_break_rzqk",
@@ -218,18 +217,12 @@
    "fieldtype": "Data",
    "label": "Reference Doc Mobile No",
    "read_only": 1
-  },
-  {
-   "default": "0",
-   "fieldname": "test",
-   "fieldtype": "Check",
-   "label": "test"
   }
  ],
  "grid_page_length": 50,
  "icon": "fa fa-calendar",
  "links": [],
- "modified": "2025-10-10 10:09:17.387445",
+ "modified": "2025-10-10 10:14:24.427217",
  "modified_by": "Administrator",
  "module": "Erp Dacsinc Custom",
  "name": "Event Activity",

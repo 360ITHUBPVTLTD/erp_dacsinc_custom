@@ -1161,6 +1161,7 @@ def get_lead_category_report(from_date=None, to_date=None):
         lead_filters["custom_created_at"] = ["between", [from_date, to_date]]
 
     if not is_admin:
+
         lead_filters["lead_owner"] = user
 
     # --- Fetch Leads ---
@@ -1172,6 +1173,7 @@ def get_lead_category_report(from_date=None, to_date=None):
             "custom_lead_type", "custom_direction_type", "company_name",
             "industry", "custom_expected_revenue", "custom_expected_closure_date", "mobile_no","custom_po_value",
         ]
+
     )
 
     summary = {}
