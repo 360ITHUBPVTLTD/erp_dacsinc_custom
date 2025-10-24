@@ -10,15 +10,82 @@ def copy_custom_fields(doc, method):
 
 
 
-def item_after_insert(doc, method):  
+def item_after_insert(doc, method):
     doc.description = ''
     if doc.custom_tax_rate:
         update_tax_child(doc)
+
+    # Create Item Price on new item creation
+    if doc.custom_standard_selling_price:
+        create_or_update_item_price(doc, "Selling", doc.custom_standard_selling_price)
+    if doc.custom_standard_buying_price:
+        create_or_update_item_price(doc, "Buying", doc.custom_standard_buying_price)
+
+def item_on_update(doc, method):
+    # Check if the standard prices have been changed
+    doc_before_save = doc.get_doc_before_save()
+    if doc_before_save:
+        if doc.custom_standard_selling_price != doc_before_save.custom_standard_selling_price:
+            create_or_update_item_price(doc, "Selling", doc.custom_standard_selling_price)
+        if doc.custom_standard_buying_price != doc_before_save.custom_standard_buying_price:
+            create_or_update_item_price(doc, "Buying", doc.custom_standard_buying_price)
+
+def create_or_update_item_price(doc, price_type, rate):
+    price_list_name = f"Standard {price_type}"
+
+    # Check if an Item Price already exists for this item and price list
+    item_price = frappe.db.get_value("Item Price", {"item_code": doc.name, "price_list": price_list_name}, "name")
+
+    if item_price:
+        # If it exists, update it
+        ip = frappe.get_doc("Item Price", item_price)
+        ip.price_list_rate = rate
+        ip.save()
+        # frappe.msgprint(f"Item Price for {price_list_name} updated to {rate}")
+    else:
+        # If it doesn't exist, create a new one
+        ip = frappe.new_doc("Item Price")
+        ip.item_code = doc.name
+        ip.price_list = price_list_name
+        ip.price_list_rate = rate
+        ip.insert()
+        # frappe.msgprint(f"Item Price for {price_list_name} created with rate {rate}")
 
 def item_before_save(doc, method):
     if doc.custom_tax_rate:
         update_tax_child(doc)
 
+
+
+
+import frappe
+
+@frappe.whitelist()
+def get_bom_data_for_item(item_code):
+    """
+    Fetches raw BOM data for a given item_code, including child items with extended details,
+    and returns it as a list of dictionaries.
+    """
+    boms = frappe.get_all(
+        "BOM",
+        filters={"item": item_code,"docstatus": 1},
+        fields=["name", "is_active", "is_default"]
+    )
+
+    if not boms:
+        return []
+
+    for bom in boms:
+        # --- MODIFICATION ---
+        # Added 'item_name', 'rate', and 'amount' to the fields list.
+        bom['items'] = frappe.get_all(
+            "BOM Item", 
+            filters={"parent": bom.name},
+            fields=["item_code", "item_name", "qty", "uom", "rate", "amount"]
+        )
+        # --- END MODIFICATION ---
+
+    return boms
 
 def update_tax_child(doc):
     try:
@@ -479,3 +546,779 @@ def before_insert(doc, method):
                 doc.tax_category = "In-State"
             else:
                 doc.tax_category = "Out-State"
+
+
+
+# def quotation_on_cancel(doc, method):
+#     """If the last quotation of a lead is cancelled, revert Lead.custom_lead_category"""
+#     if doc.quotation_to == "Lead" and doc.party_name:
+#         # ✅ Get last active (non-cancelled) quotation for this lead
+#         latest_quotation = frappe.db.sql("""
+#             SELECT name FROM `tabQuotation`
+#             WHERE quotation_to='Lead' AND party_name=%s AND docstatus=1
+#             ORDER BY creation DESC LIMIT 1
+#         """, (doc.party_name,), as_dict=True)
+
+#         # ✅ If the cancelled one is the latest, revert category
+#         if not latest_quotation or latest_quotation[0].name == doc.name:
+#             lead = frappe.get_doc("Lead", doc.party_name)
+#             lead.custom_lead_category = "Enquiry"
+#             lead.save(ignore_permissions=True)
+import frappe
+
+def quotation_on_submit(doc, method):
+    """When Quotation submitted → if linked Lead is 'Enquiry', change to 'Pipeline'."""
+    if doc.quotation_to == "Lead" and doc.party_name:
+        lead = frappe.get_doc("Lead", doc.party_name)
+        if lead.custom_lead_category == "Enquiry":
+            lead.custom_lead_category = "Pipeline"
+            lead.save(ignore_permissions=True)
+        if hasattr(lead, "lead_owner"):
+            doc.custom_lead_owner = lead.lead_owner
+            frappe.db.set_value("Quotation", doc.name, "custom_lead_owner", lead.lead_owner)
+        
+def sales_order_on_submit(doc, method):
+    """When Sales Order is submitted:
+    - If created from a Quotation linked to a Lead → update Lead to 'Order' & custom_po_value
+    """
+    lead_name = None
+
+    # ✅ CASE: Sales Order created from Quotation linked to a Lead
+    if doc.items and doc.items[0].prevdoc_docname:
+        quotation_name = doc.items[0].prevdoc_docname
+        quotation_to, party_name = frappe.db.get_value(
+            "Quotation", quotation_name, ["quotation_to", "party_name"]
+        ) or (None, None)
+
+        if quotation_to == "Lead" and party_name:
+            lead_name = party_name
+
+    # ✅ Only proceed if Lead found via Quotation
+    if lead_name:
+        lead = frappe.get_doc("Lead", lead_name)
+
+        # Update lead category
+        if lead.custom_lead_category == "Pipeline":
+            lead.custom_lead_category = "Order"
+
+        # Update custom_po_value with the latest SO amount for this lead (from any quotation-based SO)
+        latest_so = frappe.db.sql("""
+            SELECT so.grand_total
+            FROM `tabSales Order Item` soi
+            INNER JOIN `tabSales Order` so ON soi.parent = so.name
+            INNER JOIN `tabQuotation` q ON soi.prevdoc_docname = q.name
+            WHERE q.quotation_to = 'Lead'
+              AND q.party_name = %s
+              AND so.docstatus = 1
+            ORDER BY so.creation DESC
+            LIMIT 1
+        """, (lead_name,), as_dict=True)
+
+        if latest_so:
+            lead.custom_po_value = latest_so[0].grand_total
+
+        # ✅ Update Lead Owner into Sales Order
+        if hasattr(lead, "lead_owner"):
+            frappe.db.set_value("Sales Order", doc.name, "custom_lead_owner", lead.lead_owner)
+
+
+        lead.save(ignore_permissions=True)
+
+
+def sales_order_on_cancel(doc, method):
+    """When Sales Order is cancelled:
+    - If it was created from a Quotation linked to a Lead → revert or update PO value
+    """
+    lead_name = None
+
+    # ✅ CASE: Cancelled SO created from Quotation linked to a Lead
+    if doc.items and doc.items[0].prevdoc_docname:
+        quotation_name = doc.items[0].prevdoc_docname
+        quotation_to, party_name = frappe.db.get_value(
+            "Quotation", quotation_name, ["quotation_to", "party_name"]
+        ) or (None, None)
+
+        if quotation_to == "Lead" and party_name:
+            lead_name = party_name
+
+    # ✅ Only proceed if Lead found via Quotation
+    if lead_name:
+        lead = frappe.get_doc("Lead", lead_name)
+
+        # Check if there are other active Sales Orders created from Quotations for this Lead
+        active_so = frappe.db.sql("""
+            SELECT so.name, so.grand_total
+            FROM `tabSales Order Item` soi
+            INNER JOIN `tabSales Order` so ON soi.parent = so.name
+            INNER JOIN `tabQuotation` q ON soi.prevdoc_docname = q.name
+            WHERE q.quotation_to = 'Lead'
+              AND q.party_name = %s
+              AND so.docstatus = 1
+            ORDER BY so.creation DESC
+            LIMIT 1
+        """, (lead_name,), as_dict=True)
+
+        if active_so:
+            # ✅ Update latest active SO value
+            lead.custom_po_value = active_so[0].grand_total
+        else:
+            # ✅ No active SO → revert Lead category & clear PO value
+            lead.custom_lead_category = "Pipeline"
+            lead.custom_po_value = 0
+
+        lead.save(ignore_permissions=True)
+
+
+# import frappe
+
+# @frappe.whitelist()
+# def get_pending_sales_orders(is_subcontracted=False):
+#     print("Fetching pending Sales sssssssssssssssssssssOrders. is_subcontracted =", is_subcontracted)
+#     """
+#     Fetch pending Sales Orders and their items.
+#     - If is_subcontracted = 1 → only include items WITH BOM
+#     - If is_subcontracted = 0 → only include items WITHOUT BOM
+#     """
+#     is_subcontracted = frappe.utils.cint(is_subcontracted)
+
+#     # ✅ This condition is the key
+#     if is_subcontracted:
+#         condition = "AND soi.bom_no IS NOT NULL AND soi.bom_no != ''"
+#     else:
+#         condition = "AND (soi.bom_no IS NULL OR soi.bom_no = '')"
+
+#     query = f"""
+#         SELECT 
+#             so.name AS sales_order,
+#             soi.item_code,
+#             soi.item_name,
+#             soi.qty,
+#             soi.bom_no,
+#             (soi.qty - IFNULL(soi.delivered_qty, 0)) AS pending_qty
+#         FROM `tabSales Order` so
+#         INNER JOIN `tabSales Order Item` soi ON soi.parent = so.name
+#         WHERE so.docstatus = 1
+#             AND so.status NOT IN ('Closed', 'Completed', 'Cancelled')
+#             AND (soi.qty - IFNULL(soi.delivered_qty, 0)) > 0
+#             {condition}
+#         ORDER BY so.transaction_date DESC
+#     """
+
+#     return frappe.db.sql(query, as_dict=True)
+from collections import defaultdict
+import frappe
+from collections import defaultdict
+import frappe
+from frappe.utils import cint
+from collections import defaultdict
+
+# This is the main function called by the UI.
+@frappe.whitelist()
+def get_pending_so_with_material_stock(is_subcontracted=False):
+    is_subcontracted = cint(is_subcontracted)
+    item_code_field = "fg_item" if is_subcontracted else "item_code"
+    
+    # Define the condition to filter for subcontracted vs. regular items
+    condition = "AND soi.bom_no IS NOT NULL AND soi.bom_no != ''" if is_subcontracted else "AND (soi.bom_no IS NULL OR soi.bom_no = '')"
+
+    # Fetch all potentially pending Sales Order Items
+    pending_orders_raw = frappe.db.sql(f"""
+        SELECT
+            soi.name AS so_item_name, soi.parent AS sales_order, so.customer AS customer,
+            soi.item_code, soi.item_name, soi.qty, soi.bom_no AS bom,
+            soi.delivered_qty
+        FROM `tabSales Order Item` AS soi JOIN `tabSales Order` AS so ON so.name = soi.parent
+        WHERE so.docstatus = 1 AND so.status NOT IN ('Closed', 'On Hold', 'Completed')
+        AND soi.qty > soi.delivered_qty {condition}
+        ORDER BY so.transaction_date ASC, soi.item_code ASC
+    """, as_dict=True)
+
+    if not pending_orders_raw:
+        return {}
+
+    final_pending_orders = []
+    for so_item in pending_orders_raw:
+        # 1. Calculate the quantity already ordered on other submitted Purchase Orders.
+        ordered_on_pos_raw = frappe.db.sql("""
+            SELECT SUM(poi.qty) FROM `tabPurchase Order Item` AS poi
+            JOIN `tabPurchase Order` AS po ON po.name = poi.parent
+            WHERE po.docstatus = 1 AND poi.sales_order = %(sales_order)s AND poi.{field} = %(item_code)s
+        """.format(field=item_code_field), {'sales_order': so_item.sales_order, 'item_code': so_item.item_code})
+        ordered_on_pos = (ordered_on_pos_raw[0][0] or 0) if ordered_on_pos_raw else 0
+
+        # 2. NEW: Calculate the finished good quantity reserved from stock specifically for this Sales Order.
+        reserved_for_so_raw = frappe.db.sql("""
+            SELECT SUM(reserved_qty) FROM `tabStock Reservation Entry`
+            WHERE voucher_no = %(sales_order)s AND item_code = %(item_code)s AND docstatus = 1
+        """, {'sales_order': so_item.sales_order, 'item_code': so_item.item_code})
+        reserved_for_so = (reserved_for_so_raw[0][0] or 0) if reserved_for_so_raw and reserved_for_so_raw[0] else 0
+
+        # 3. FINAL PENDING CALCULATION: Total Qty - Delivered - Already Ordered - Reserved from Stock
+        qty_pending_purchase = so_item.qty - so_item.delivered_qty - ordered_on_pos - reserved_for_so
+        
+        # Only add the item to the list if there is a quantity that truly needs to be purchased.
+        if qty_pending_purchase > 0.001:
+            so_item['pending_qty'] = qty_pending_purchase
+            
+            # --- Fetching stock levels for display (logic is unchanged) ---
+            fg_stock_data = frappe.db.sql("SELECT SUM(actual_qty) FROM `tabBin` WHERE item_code = %s", (so_item.item_code), as_list=True)
+            fg_actual = (fg_stock_data[0][0] or 0) if fg_stock_data and fg_stock_data[0] else 0
+            
+            total_reserved_for_item_raw = frappe.db.sql("""
+                SELECT SUM(reserved_qty) FROM `tabStock Reservation Entry` WHERE item_code = %s AND docstatus = 1
+            """, (so_item.item_code))
+            total_reserved_for_item = (total_reserved_for_item_raw[0][0] or 0) if total_reserved_for_item_raw and total_reserved_for_item_raw[0] else 0
+            
+            so_item['fg_total_reserved_qty'] = total_reserved_for_item
+            so_item['fg_available_qty'] = fg_actual - total_reserved_for_item
+            so_item['fg_reserved_for_so_qty'] = reserved_for_so # Display the specific reservation amount
+
+            # Raw material calculation is now based on the true pending purchase quantity.
+            so_item['raw_materials'] = _get_bom_stock_details(so_item.bom, qty_pending_purchase)
+            final_pending_orders.append(so_item)
+
+    if not final_pending_orders:
+        return {}
+
+    # --- Building the summary (This part is correct and uses the newly calculated pending_qty) ---
+    item_summary_dict = defaultdict(lambda: {"total_qty": 0, "order_count": 0, "boms": set(), "item_name": ""})
+    for so in final_pending_orders:
+        item_code = so.item_code
+        item_summary_dict[item_code]["total_qty"] += so.pending_qty
+        item_summary_dict[item_code]["order_count"] += 1
+        item_summary_dict[item_code]["item_name"] = so.item_name
+        if so.bom: item_summary_dict[item_code]["boms"].add(so.bom)
+    
+    item_summary = []
+    for item_code, data in item_summary_dict.items():
+        bom = next(iter(data["boms"]), None)
+        materials = _get_bom_stock_details(bom, data["total_qty"]) if bom else []
+        total_reserved_raw = frappe.db.sql("""
+            SELECT SUM(reserved_qty) FROM `tabStock Reservation Entry` WHERE item_code = %s AND docstatus = 1
+        """, (item_code))
+        total_reserved = (total_reserved_raw[0][0] or 0) if total_reserved_raw and total_reserved_raw[0] else 0
+        
+        item_summary.append({
+            "item_code": item_code, "item_name": data["item_name"],
+            "total_pending_qty": data["total_qty"], "order_count": data["order_count"],
+            "total_reserved_qty": total_reserved, "raw_materials": materials
+        })
+        
+    return {
+        "item_summary": sorted(item_summary, key=lambda x: x['total_pending_qty'], reverse=True),
+        "sales_orders": final_pending_orders
+    }
+
+
+# The validation function is updated with the exact same logic for consistency.
+@frappe.whitelist()
+def validate_and_get_items_for_po(selected_items, is_subcontracted=False):
+    selected_items = frappe.parse_json(selected_items)
+    is_subcontracted = cint(is_subcontracted)
+    item_code_field = 'fg_item' if is_subcontracted else 'item_code'
+    
+    valid_items = []
+    rejected_items = []
+    
+    for item in selected_items:
+        # print("Validating itcccccccccccccccccccccem:", item)
+        qty_to_add = item.get('pendingQty', 0)
+
+        # Get original SO details.
+        so_item_details = frappe.db.get_value("Sales Order Item", 
+            {'parent': item.get('salesOrder'), 'item_code': item.get('itemCode')}, 
+            ['qty', 'delivered_qty'], 
+            as_dict=True
+        )
+        if not so_item_details:
+            rejected_items.append({"sales_order": item.get('salesOrder'), "item_name": item.get('itemName'), "reason": "Sales Order Item not found."})
+            continue
+
+        # 1. Calculate quantity already on other Purchase Orders.
+        ordered_on_pos_raw = frappe.db.sql("""
+            SELECT SUM(poi.qty) FROM `tabPurchase Order Item` AS poi
+            JOIN `tabPurchase Order` AS po ON po.name = poi.parent
+            WHERE po.docstatus = 1 AND poi.sales_order = %(sales_order)s AND poi.{field} = %(item_code)s
+        """.format(field=item_code_field), {'sales_order': item.get('salesOrder'),'item_code': item.get('itemCode')})
+        ordered_on_pos = (ordered_on_pos_raw[0][0] or 0) if ordered_on_pos_raw else 0
+
+        # 2. NEW: Calculate quantity reserved from stock for this SO.
+        reserved_for_so_raw = frappe.db.sql("""
+            SELECT SUM(reserved_qty) FROM `tabStock Reservation Entry`
+            WHERE voucher_no = %(sales_order)s AND item_code = %(item_code)s AND docstatus = 1
+        """, {'sales_order': item.get('salesOrder'), 'item_code': item.get('itemCode')})
+        reserved_for_so = (reserved_for_so_raw[0][0] or 0) if reserved_for_so_raw and reserved_for_so_raw[0] else 0
+        
+        # 3. The true maximum allowable quantity for a new PO.
+        max_allowable_qty = so_item_details.qty - so_item_details.delivered_qty - ordered_on_pos - reserved_for_so
+        
+        # The Core Validation.
+        if qty_to_add > (max_allowable_qty + 0.001):
+            rejected_items.append({
+                "sales_order": item.get('salesOrder'),
+                "item_name": item.get('itemName'),
+                "reason": f"Cannot add {qty_to_add} units. Only {max_allowable_qty:.2f} are pending procurement."
+            })
+        elif max_allowable_qty <= 0:
+             rejected_items.append({
+                "sales_order": item.get('salesOrder'),
+                "item_name": item.get('itemName'),
+                "reason": "This item's requirement is fully met by other POs or reserved stock."
+            })
+        else:
+            # Item is valid, add it to the list.
+            if is_subcontracted:
+                service_item_code = "Order Charges" # Or get from settings
+                details = get_item_details_for_po(service_item_code)
+                if details:
+                    details['description'] = f"{details.get('description', '')}\n\nManufacturing of: {item.get('itemName')} ({item.get('itemCode')})\nRef SO: {item.get('salesOrder')}"
+                    details['fg_item'] = item.get('itemCode')
+                    details['fg_item_qty'] = item.get('pendingQty')
+                    details['sales_order'] = item.get('salesOrder')
+                    details['qty'] = item.get('pendingQty')
+                    details['item_code'] = service_item_code
+                    valid_items.append(details)
+            else:
+                details = get_item_details_for_po(item.get('itemCode'))
+                if details:
+                    details['item_code'] = item.get('itemCode')
+                    details['qty'] = item.get('pendingQty')
+                    details['sales_order'] = item.get('salesOrder')
+                    valid_items.append(details)
+
+    return {
+        "valid_items": valid_items,
+        "rejected_items": rejected_items
+    }
+
+# --- HELPER FUNCTIONS (No changes below) ---
+
+def get_item_details_for_po(item_code):
+    if not item_code: return {}
+    details = frappe.db.get_value("Item", item_code, ["purchase_uom", "stock_uom", "description", "item_name"], as_dict=True)
+    if not details: return {}
+    uom = details.purchase_uom or details.stock_uom
+    factor = frappe.db.get_value("UOM Conversion Detail", {"parent": item_code, "uom": uom}, "conversion_factor") or 1.0
+    return {"uom": uom, "stock_uom": details.stock_uom, "description": details.description, "item_name": details.item_name, "conversion_factor": factor}
+
+# def get_stock_reservations_other(sales_order, item_code):
+#     if not sales_order or not item_code: return []
+#     return frappe.db.get_all("Stock Reservation Entry", filters={"voucher_no": sales_order, "item_code": item_code, "docstatus": 1}, fields=["name", "reserved_qty"])
+
+def _get_bom_stock_details(bom_name, required_fg_qty):
+    if not bom_name or not required_fg_qty: return []
+    bom_items = frappe.db.get_all("BOM Item", filters={"parent": bom_name}, fields=["item_code", "item_name", "qty", "stock_uom"])
+    results = []
+    for item in bom_items:
+        required_qty = item.qty * required_fg_qty
+        stock_data = frappe.db.sql("SELECT SUM(actual_qty), SUM(reserved_qty) FROM `tabBin` WHERE item_code = %s", (item.item_code), as_list=True)
+        actual_qty = (stock_data[0][0] or 0)
+        reserved_qty = (stock_data[0][1] or 0)
+        results.append({ "item_code": item.item_code, "item_name": item.item_name, "required_qty": required_qty, "actual_qty": actual_qty, "reserved_qty": reserved_qty, "available_qty": actual_qty - reserved_qty, "stock_uom": item.stock_uom })
+    return results
+
+
+
+
+
+import frappe
+from frappe import _
+from frappe.utils import flt, get_abbr, nowdate
+from collections import defaultdict
+
+# --- NEW FUNCTION TO GET REQUIRED MATERIALS ---
+@frappe.whitelist()
+def get_required_raw_materials_for_po(purchase_order_name):
+    """
+    Aggregates all required raw materials for a subcontracting Purchase Order.
+    Fetches FG Items from PO, finds their default BOMs, and calculates total RM requirements.
+    """
+    po = frappe.get_doc("Purchase Order", purchase_order_name)
+    if not po.is_subcontracted:
+        frappe.throw(_("This action is only available for Subcontracting Purchase Orders."))
+
+    # Aggregate required FG quantities from the PO
+    fg_requirements = defaultdict(float)
+    for item in po.items:
+        if item.fg_item and item.fg_item_qty > 0:
+            fg_requirements[item.fg_item] += flt(item.fg_item_qty)
+    
+    if not fg_requirements:
+        return []
+
+    # Aggregate raw material requirements based on the BOM of each FG
+    rm_requirements = defaultdict(float)
+    for fg_item_code, total_fg_qty in fg_requirements.items():
+        # Get the default BOM for the finished good
+        default_bom = frappe.db.get_value("Item", fg_item_code, "default_bom")
+        if not default_bom:
+            frappe.throw(_("Please set a default BOM for Finished Good: {0}").format(fg_item_code))
+        
+        # Get BOM items (raw materials)
+        bom_items = frappe.get_all("BOM Item", filters={"parent": default_bom}, fields=["item_code", "qty"])
+        for bom_item in bom_items:
+            required_qty = flt(bom_item.qty) * flt(total_fg_qty)
+            rm_requirements[bom_item.item_code] += required_qty
+            
+    # Get stock levels for each required raw material
+    results = []
+    for rm_code, req_qty in rm_requirements.items():
+        item_details = frappe.db.get_value("Item", rm_code, ["item_name", "stock_uom"], as_dict=1)
+        
+        # Get available quantity from Bin
+        stock_data = frappe.db.sql("""
+            SELECT SUM(actual_qty), SUM(reserved_qty)
+            FROM `tabBin` WHERE item_code = %s
+        """, (rm_code), as_list=True)
+        
+        actual_qty = flt(stock_data[0][0])
+        reserved_qty = flt(stock_data[0][1])
+        available_qty = actual_qty - reserved_qty
+        
+        results.append({
+            "item_code": rm_code,
+            "item_name": item_details.item_name,
+            "uom": item_details.stock_uom,
+            "required_qty": req_qty,
+            "available_qty": available_qty
+        })
+        
+    return sorted(results, key=lambda x: x['item_name'])
+
+
+
+from erpnext.buying.doctype.purchase_order.purchase_order import make_subcontracting_order
+from erpnext.controllers.subcontracting_controller import make_rm_stock_entry
+
+@frappe.whitelist()
+# @frappe.db.transaction
+def create_subcontracting_docs(purchase_order_name):
+    """
+    Creates and submits a Subcontracting Order, and then immediately creates and
+    submits the corresponding Material Transfer Stock Entry to a common warehouse.
+    This is a single, atomic transaction.
+    """
+    po = frappe.get_doc("Purchase Order", purchase_order_name)
+
+    subcontractor_warehouse = "Jobers Warehouse - IND"
+
+    if not frappe.db.exists("Warehouse", subcontractor_warehouse):
+        frappe.throw(_("The common subcontracting warehouse '{0}' does not exist. Please create it before proceeding.").format(subcontractor_warehouse))
+
+    # Create the Subcontracting Order
+    sco = make_subcontracting_order(purchase_order_name)
+    
+    # Set custom/required values before saving
+    sco.supplier = po.supplier
+    target_warehouse = "VV Puram - IND"
+    sco.set_warehouse = target_warehouse
+    for item in sco.items:
+        item.warehouse = target_warehouse
+    
+    # Save and submit the SCO
+    sco.insert(ignore_permissions=True)
+    sco.submit()
+    po.add_comment("Comment", _("Created Subcontracting Order: {0}").format(sco.name))
+
+    # --- START OF FIX ---
+
+    # 1. Get the doclist from the controller function
+    # The name is changed to `ste_doclist` for clarity.
+    ste_doclist = make_rm_stock_entry(subcontract_order=sco.name, order_doctype=sco.doctype)
+    
+    # 2. Convert the returned doclist (list of dicts) into a proper Document object.
+    ste_doc = frappe.get_doc(ste_doclist)
+    
+    # --- END OF FIX ---
+    
+    # Now, `ste_doc` is a proper Document object, and the rest of the code will work.
+    for item in ste_doc.items:
+        item.t_warehouse = subcontractor_warehouse
+    
+    # Save and submit the now-corrected Stock Entry
+    ste_doc.insert(ignore_permissions=True)
+    ste_doc.submit()
+    po.add_comment("Comment", _("Created Material Transfer: {0}").format(ste_doc.name))
+    
+    return {
+        "sco_name": sco.name,
+        "ste_name": ste_doc.name
+    }
+@frappe.whitelist()
+# @frappe.db.transaction
+def create_material_request_for_shortage(purchase_order_name):
+    """
+    Creates a Material Request of type 'Purchase' for raw materials that have a stock shortfall
+    for a given subcontracting Purchase Order.
+    """
+    po = frappe.get_doc("Purchase Order", purchase_order_name)
+
+    # Get the list of all required materials and their availability
+    all_materials = get_required_raw_materials_for_po(purchase_order_name)
+
+    # Filter for only the materials with a shortage
+    shortage_materials = [
+        item for item in all_materials if flt(item.get("available_qty")) < flt(item.get("required_qty"))
+    ]
+
+    if not shortage_materials:
+        frappe.msgprint(_("No material shortage found. Material Request not created."))
+        return None
+
+    # Create the Material Request document
+    mr = frappe.new_doc("Material Request")
+    mr.material_request_type = "Purchase"
+    mr.company = po.company
+    mr.schedule_date = nowdate() # Or set based on your lead times
+    # Optional: Set a warehouse where the material is required
+    mr.set_warehouse = frappe.get_cached_value('Company', po.company, 'default_inventory_wh')
+
+    # Add items that are short to the Material Request
+    for item in shortage_materials:
+        required_qty = flt(item.get("required_qty"))
+        available_qty = flt(item.get("available_qty"))
+        shortage_qty = required_qty - available_qty
+
+        if shortage_qty > 0:
+            mr.append("items", {
+                "item_code": item.get("item_code"),
+                "qty": shortage_qty,
+                "uom": item.get("uom"),
+                "warehouse": mr.set_warehouse
+                # Add a reference back to the original PO
+                # You might need a custom field in 'Material Request Item' for this.
+                # 'custom_purchase_order_ref': po.name 
+            })
+
+    if not mr.items:
+        frappe.msgprint(_("Calculated shortage quantity is zero. Material Request not created."))
+        return None
+
+    try:
+        mr.insert(ignore_permissions=True)
+        mr.submit()
+        po.add_comment("Comment", _("Created Material Request for shortage: {0}").format(mr.name))
+        return { "mr_name": mr.name }
+    except Exception as e:
+        frappe.log_error(frappe.get_traceback(), "Material Request Creation Failed")
+        frappe.throw(_("Failed to create Material Request: {0}").format(e))
+
+
+
+@frappe.whitelist()
+def check_for_existing_subcontracting_order(purchase_order_name):
+    """
+    Checks if a non-cancelled Subcontracting Order already exists for the given Purchase Order.
+    Returns True if an active SCO exists, False otherwise.
+    """
+    exists = frappe.db.exists(
+        "Subcontracting Order",
+        {
+            "purchase_order": purchase_order_name,
+            "docstatus": ["!=", 2]  # Checks for Submitted (1) or Draft (0)
+        }
+    )
+    return bool(exists)
+
+
+
+
+
+from erpnext.subcontracting.doctype.subcontracting_order.subcontracting_order import make_subcontracting_receipt
+from erpnext.subcontracting.doctype.subcontracting_receipt.subcontracting_receipt import make_purchase_receipt as make_purchase_receipt_from_scr
+from erpnext.stock.doctype.purchase_receipt.purchase_receipt import make_purchase_invoice
+
+
+@frappe.whitelist()
+def get_sco_status_for_po(purchase_order_name):
+    """
+    Checks the status of the Subcontracting Order linked to a Purchase Order.
+    Returns the SCO name and whether there are items pending receipt.
+    """
+    sco_info = frappe.db.get_value(
+        "Subcontracting Order",
+        {"purchase_order": purchase_order_name, "docstatus": 1},
+        ["name", "per_received"],
+        as_dict=True
+    )
+
+    if not sco_info:
+        return {"sco_exists": False, "items_pending": False}
+
+    return {
+        "sco_exists": True,
+        "sco_name": sco_info.name,
+        "items_pending": flt(sco_info.per_received) < 100
+    }
+
+@frappe.whitelist()
+def get_pending_sco_items(sco_name):
+    """
+    Gets items from a Subcontracting Order that are pending to be received.
+    """
+    sco = frappe.get_doc("Subcontracting Order", sco_name)
+    pending_items = []
+    for item in sco.items:
+        pending_qty = flt(item.qty) - flt(item.received_qty)
+        if pending_qty > 0:
+            pending_items.append({
+                "name": item.name, # Child Doc ID is important
+                "item_code": item.item_code,
+                "item_name": item.item_name,
+                "ordered_qty": item.qty,
+                "received_qty": item.received_qty,
+                "pending_qty": pending_qty,
+                
+                # --- THIS IS THE FIX ---
+                # The correct field name is 'stock_uom' not 'uom'
+                "uom": item.stock_uom
+            })
+    return pending_items
+@frappe.whitelist()
+def create_receipt_documents(sco_name, items_to_receive):
+    """
+    1. Creates and submits a Subcontracting Receipt (SCR).
+    2. Creates and submits a Purchase Receipt (PR) from the SCR.
+    3. Creates and submits a Purchase Invoice (PI) from the PR.
+    """
+    items_to_receive = frappe.parse_json(items_to_receive)
+
+    # 1. Create Subcontracting Receipt (SCR)
+    scr = make_subcontracting_receipt(sco_name)
+    
+    # Filter items and update quantities based on user input
+    final_items = []
+    for item_in_scr in scr.items:
+        matching_item = next((i for i in items_to_receive if i.get("name") == item_in_scr.subcontracting_order_item), None)
+        if matching_item:
+            qty_to_receive = flt(matching_item.get("qty_to_receive"))
+            if qty_to_receive > 0:
+                item_in_scr.qty = qty_to_receive
+                final_items.append(item_in_scr)
+
+    if not final_items:
+        frappe.throw(_("No items with a quantity greater than zero were selected for receipt."))
+        
+    scr.items = final_items
+    scr.insert(ignore_permissions=True)
+    scr.submit()
+    
+    # 2. Create Purchase Receipt (PR) from the SCR
+    pr = make_purchase_receipt_from_scr(scr.name)
+    pr.insert(ignore_permissions=True)
+    pr.submit()
+    
+    # --- START OF NEW LOGIC ---
+    # 3. Create Purchase Invoice (PI) from the PR
+    pi = make_purchase_invoice(pr.name)
+    pi.insert(ignore_permissions=True)
+    # Note: Depending on your company's process, you may want to leave the PI in Draft.
+    # To save as draft, comment out the line below.
+    pi.submit()
+    # --- END OF NEW LOGIC ---
+
+    # Add comments back to the original Purchase Order for full traceability
+    po_name = None
+    if scr.items:
+        source_sco_name = scr.items[0].subcontracting_order
+        if source_sco_name:
+            po_name = frappe.db.get_value("Subcontracting Order", source_sco_name, "purchase_order")
+            
+    if po_name:
+        po = frappe.get_doc("Purchase Order", po_name)
+        po.add_comment("Comment", _("Created Purchase Receipt: {0}").format(pr.name))
+        po.add_comment("Comment", _("Created Purchase Invoice: {0}").format(pi.name))
+
+    # Return the names of ALL documents created
+    return {"scr_name": scr.name, "pr_name": pr.name, "pi_name": pi.name}
+
+
+
+@frappe.whitelist()
+def get_linked_subcontracting_docs(purchase_order_name):
+    """
+    Finds all subcontracting documents linked to a Purchase Order and returns
+    a dictionary of lists, where each item in the list is a dictionary of details.
+    This version ensures that each document appears only once.
+    """
+    docs = {"sco": [], "ste": [], "scr": [], "pr": [], "pi": []}
+
+    # 1. Get unique Subcontracting Order (SCO) names first, then their details
+    sco_names = frappe.db.get_all(
+        "Subcontracting Order",
+        filters={"purchase_order": purchase_order_name, "docstatus": 1},
+        pluck="name",
+        distinct=True
+    )
+    if sco_names:
+        docs["sco"] = frappe.db.get_all(
+            "Subcontracting Order",
+            filters={"name": ["in", sco_names]},
+            fields=["name", "transaction_date", "total", "status"],
+        )
+
+        # 2. Get unique Material Transfer (STE) names, then their details
+        ste_names = frappe.db.get_all(
+            "Stock Entry",
+            filters={"subcontracting_order": ["in", sco_names], "docstatus": 1},
+            pluck="name",
+            distinct=True
+        )
+        if ste_names:
+            docs["ste"] = frappe.db.get_all(
+                "Stock Entry",
+                filters={"name": ["in", ste_names]},
+                fields=["name", "posting_date", "stock_entry_type"],
+            )
+
+        # 3. Get unique Subcontracting Receipt (SCR) names, then their details
+        scr_names = frappe.db.get_all(
+            "Subcontracting Receipt",
+            filters={"subcontracting_order": ["in", sco_names], "docstatus": 1},
+            pluck="name",
+            distinct=True
+        )
+        if scr_names:
+            docs["scr"] = frappe.db.get_all(
+                "Subcontracting Receipt",
+                filters={"name": ["in", scr_names]},
+                fields=["name", "posting_date", "status"],
+            )
+
+    # 4. Get unique Purchase Receipt (PR) names, then their details
+    pr_names = frappe.db.get_all(
+        "Purchase Receipt Item", filters={"purchase_order": purchase_order_name},
+        pluck="parent", distinct=True
+    )
+    if pr_names:
+        pr_names = frappe.db.get_all(
+            "Purchase Receipt", filters={"name": ["in", pr_names], "docstatus": 1},
+            pluck="name", distinct=True
+        )
+        if pr_names:
+            docs["pr"] = frappe.db.get_all(
+                "Purchase Receipt",
+                filters={"name": ["in", pr_names]},
+                fields=["name", "posting_date", "rounded_total", "status"],
+            )
+
+    # 5. Get unique Purchase Invoice (PI) names, then their details
+    pi_names = frappe.db.get_all(
+        "Purchase Invoice Item", filters={"purchase_order": purchase_order_name},
+        pluck="parent", distinct=True
+    )
+    if pi_names:
+        pi_names = frappe.db.get_all(
+            "Purchase Invoice", filters={"name": ["in", pi_names], "docstatus": 1},
+            pluck="name", distinct=True
+        )
+        if pi_names:
+            docs["pi"] = frappe.db.get_all(
+                "Purchase Invoice",
+                filters={"name": ["in", pi_names]},
+                fields=["name", "posting_date", "rounded_total", "due_date", "status"],
+            )
+
+    return docs
+
+

@@ -145,7 +145,7 @@ app_include_css = "/assets/erp_dacsinc_custom/style.css"
 doc_events = {
     "Item": {
         "after_insert": "erp_dacsinc_custom.custom_script.item_after_insert",
-        #"before_save": "erp_dacsinc_custom.custom_script.item_before_save"
+        "on_update": "erp_dacsinc_custom.custom_script.item_on_update",
     },
     "Event": {
         "after_insert": "erp_dacsinc_custom.custom_lead.after_insert_event",
@@ -156,7 +156,20 @@ doc_events = {
         "before_save": "erp_dacsinc_custom.custom_lead.before_save_lead"
     },
     "Quotation": {
-        "before_insert": "erp_dacsinc_custom.custom_script.before_insert"
+        "before_insert": "erp_dacsinc_custom.custom_script.before_insert",
+        "on_submit": "erp_dacsinc_custom.custom_script.quotation_on_submit",
+        # "on_cancel": "erp_dacsinc_custom.custom_script.quotation_on_cancel"
+    },
+    "Sales Order": {
+        "on_submit": "erp_dacsinc_custom.custom_script.sales_order_on_submit",
+        "on_cancel": "erp_dacsinc_custom.custom_script.sales_order_on_cancel",
+        "after_insert": "erp_dacsinc_custom.notifications.notify_on_new_so"
+
+    },
+    "BOM": {
+        "on_submit": "erp_dacsinc_custom.bom_events.after_submit",
+        "on_update_after_submit": "erp_dacsinc_custom.bom_events.on_update_after_submit",
+        "on_cancel": "erp_dacsinc_custom.bom_events.on_cancel"
     },
 }
 
