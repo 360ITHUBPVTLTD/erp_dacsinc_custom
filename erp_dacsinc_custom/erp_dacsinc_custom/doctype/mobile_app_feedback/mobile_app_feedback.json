@@ -1,6 +1,7 @@
 {
  "actions": [],
  "allow_rename": 1,
+ "autoname": "format:MF-{MM}-{YYYY}-{###}",
  "creation": "2025-10-17 11:23:44.839461",
  "doctype": "DocType",
  "engine": "InnoDB",
@@ -13,6 +14,7 @@
  ],
  "fields": [
   {
+   "default": "Now",
    "fieldname": "created_on",
    "fieldtype": "Datetime",
    "label": "Created On"
@@ -22,6 +24,7 @@
    "fieldtype": "Column Break"
   },
   {
+   "default": "__user",
    "fieldname": "created_by",
    "fieldtype": "Link",
    "label": "Created By",
@@ -40,10 +43,11 @@
  "grid_page_length": 50,
  "index_web_pages_for_search": 1,
  "links": [],
- "modified": "2025-10-17 11:23:58.421846",
+ "modified": "2025-10-24 14:51:28.710324",
  "modified_by": "Administrator",
  "module": "Erp Dacsinc Custom",
  "name": "Mobile App Feedback",
+ "naming_rule": "Expression",
  "owner": "Administrator",
  "permissions": [
   {
