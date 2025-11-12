@@ -1906,6 +1906,7 @@ def validate_and_get_items_for_po(selected_items, is_subcontracted=False):
     rejected_items = []
     
     for item in selected_items:
+        # pendingQty is the Quantity to Purchase/Manufacture as entered by the user
         qty_to_add = item.get('pendingQty', 0)
 
         # Get original SO details.
@@ -1945,16 +1946,34 @@ def validate_and_get_items_for_po(selected_items, is_subcontracted=False):
             item_details_data = {}
             if is_subcontracted:
                 service_item_code = "Order Charges" # Placeholder for service item logic
+                
+                # Fetch details for the Service Item
                 item_details_data = get_item_details_for_po(service_item_code) or {}
                 
-                item_details_data['description'] = f"{item_details_data.get('description', '')}\n\nManufacturing of: {item.get('itemName')} ({item.get('itemCode')})\nRef SO: {item.get('salesOrder')}"
-                item_details_data['fg_item'] = item.get('itemCode')
-                item_details_data['fg_item_qty'] = item.get('pendingQty')
-                item_details_data['sales_order'] = item.get('salesOrder')
-                item_details_data['qty'] = item.get('pendingQty')
+                # Set Purchase Order Item standard fields (The Service Item):
                 item_details_data['item_code'] = service_item_code
+                
+                # ----------------- QTY is SYNCHRONIZED WITH fg_item_qty -----------------
+                # Service Item Qty
+                item_details_data['qty'] = qty_to_add 
 
+                # Set Subcontracting specific fields:
+                # fg_item is set to BOM ID per previous request
+                item_details_data['fg_item'] = item.get('bom')           
+                # Finished Good QTY is set to user input Qty
+                item_details_data['fg_item_qty'] = qty_to_add            
+                # -----------------------------------------------------------------------
+
+                item_details_data['sales_order'] = item.get('salesOrder') 
+                item_details_data['bom'] = item.get('bom')                
+
+                # Update description to be informative
+                description = item_details_data.get('description', '')
+                new_description_line = f"\n\nManufacturing of: {item.get('itemName')} ({item.get('itemCode')})\nRef SO: {item.get('salesOrder')}"
+                item_details_data['description'] = (description + new_description_line).strip()
+            
             else:
+                # Standard procurement (remains unchanged)
                 item_details_data = get_item_details_for_po(item.get('itemCode')) or {}
                 
                 item_details_data['item_code'] = item.get('itemCode')
@@ -1967,7 +1986,6 @@ def validate_and_get_items_for_po(selected_items, is_subcontracted=False):
         "valid_items": valid_items,
         "rejected_items": rejected_items
     }
-
 # --- HELPER FUNCTIONS (No changes below) ---
 
 def get_item_details_for_po(item_code):
