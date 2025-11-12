@@ -166,6 +166,9 @@ doc_events = {
         "after_insert": "erp_dacsinc_custom.notifications.notify_on_new_so"
 
     },
+    "Delivery Note": {
+        "on_submit": "erp_dacsinc_custom.custom_script.update_pick_lists_on_dn_submit"
+    },
     "BOM": {
         "on_submit": "erp_dacsinc_custom.bom_events.after_submit",
         "on_update_after_submit": "erp_dacsinc_custom.bom_events.on_update_after_submit",
