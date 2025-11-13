@@ -21,7 +21,7 @@ def after_submit(doc, method):
         sc_bom.finished_good_uom = doc.uom
         sc_bom.finished_good_qty = flt(doc.quantity)
         sc_bom.finished_good_bom = doc.name # Link to the source BOM
-
+        sc_bom.conversion_factor = flt(doc.quantity)
         sc_bom.service_item = "Order Charges"
         sc_bom.service_item_qty = 1
         sc_bom.service_item_uom = service_item_uom
