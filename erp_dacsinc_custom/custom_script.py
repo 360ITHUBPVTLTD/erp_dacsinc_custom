@@ -1945,13 +1945,13 @@ def validate_and_get_items_for_po(selected_items, is_subcontracted=False):
             # Item is valid, add it to the list.
             item_details_data = {}
             if is_subcontracted:
-                print("is_subcontracted",is_subcontracted)
-                print("item",item)
-                print("qty_to_add",qty_to_add)
-                print("max_allowable_qty",max_allowable_qty)
-                print("so_item_details",so_item_details)
-                print("ordered_on_pos",ordered_on_pos)
-                print("reserved_via_pick_list",reserved_via_pick_list)
+                # print("is_subcontracted",is_subcontracted)
+                # print("item",item)
+                # print("qty_to_add",qty_to_add)
+                # print("max_allowable_qty",max_allowable_qty)
+                # print("so_item_details",so_item_details)
+                # print("ordered_on_pos",ordered_on_pos)
+                # print("reserved_via_pick_list",reserved_via_pick_list)
                 service_item_code = "Order Charges" # Placeholder for service item logic
                 
                 # Fetch details for the Service Item
