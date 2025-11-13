@@ -1945,6 +1945,13 @@ def validate_and_get_items_for_po(selected_items, is_subcontracted=False):
             # Item is valid, add it to the list.
             item_details_data = {}
             if is_subcontracted:
+                print("is_subcontracted",is_subcontracted)
+                print("item",item)
+                print("qty_to_add",qty_to_add)
+                print("max_allowable_qty",max_allowable_qty)
+                print("so_item_details",so_item_details)
+                print("ordered_on_pos",ordered_on_pos)
+                print("reserved_via_pick_list",reserved_via_pick_list)
                 service_item_code = "Order Charges" # Placeholder for service item logic
                 
                 # Fetch details for the Service Item
@@ -1959,7 +1966,7 @@ def validate_and_get_items_for_po(selected_items, is_subcontracted=False):
 
                 # Set Subcontracting specific fields:
                 # fg_item is set to BOM ID per previous request
-                item_details_data['fg_item'] = item.get('bom')           
+                item_details_data['fg_item'] = item.get('itemCode')           
                 # Finished Good QTY is set to user input Qty
                 item_details_data['fg_item_qty'] = qty_to_add            
                 # -----------------------------------------------------------------------
@@ -2682,3 +2689,107 @@ def get_open_po_quantities(item_codes):
 
 
 
+################# delivery note#####################
+
+
+
+
+import frappe
+from frappe import _
+
+@frappe.whitelist()
+def get_eligible_pick_lists_for_so(sales_order):
+    """
+    Retrieves all Pick Lists linked to a Sales Order that are submitted 
+    and have an unfulfilled quantity, using only Pick List Item fields.
+    """
+    
+    # 1. Fetch relevant Pick Lists (Header Data - only non-quantity fields)
+    pick_lists = frappe.get_all(
+        'Pick List',
+        filters={'sales_order': sales_order, 'docstatus': ('in', [0, 1])}, # Draft or Submitted
+        # IMPORTANT: Remove 'picked_qty' and 'delivered_qty' from the header query!
+        fields=['name', 'docstatus'], 
+        order_by='docstatus desc, name desc',
+        as_list=0
+    )
+
+    eligible_pick_lists = []
+
+    for pl_header in pick_lists:
+        pl_name = pl_header.get('name')
+        
+        # 2. Fetch Pick List Items and all necessary quantities
+        pl_items = frappe.get_all(
+            'Pick List Item',
+            filters={
+                'parent': pl_name,
+                # Filter only by status (docstatus on the Pick List) if not delivered 
+                # Docstatus is handled by the parent loop for visibility.
+                'qty': ['>', 'delivered_qty'] # Crucially, filter for QTY > delivered_qty (still pending)
+            },
+            fields=[
+                'name', 'item_code', 'item_name', 'warehouse', 
+                'qty as picked_qty',           # Qty column in PL Item holds the quantity to be picked/reserved
+                'delivered_qty', 
+                'uom', 
+                'parent as pick_list_name', 
+                'parenttype', 
+                'docstatus as pl_item_docstatus', # This field doesn't exist but serves as a reminder to link if it did
+                'sales_order_item'               # The SO child row name
+            ],
+            as_list=0
+        )
+        
+        pl_header['items'] = []
+        pl_header['total_picked_qty'] = 0.0 # Renamed for clarity vs. header fields
+        pl_header['total_delivered_qty'] = 0.0
+        pl_header['total_pending_qty'] = 0.0
+        
+        has_submitted_pending = False
+        
+        for pl_item in pl_items:
+            pl_item_picked_qty = pl_item['picked_qty'] or 0.0
+            pl_item_delivered_qty = pl_item['delivered_qty'] or 0.0
+            
+            pl_item['pending_qty'] = pl_item_picked_qty - pl_item_delivered_qty
+            
+            # NOTE: We can't query parent docstatus inside a child query easily. 
+            # We rely on the parent docstatus fetched in step 1: pl_header['docstatus']
+
+            # If it's a Submitted PL (docstatus = 1) and there's a quantity pending
+            if pl_header['docstatus'] == 1 and pl_item['pending_qty'] > 0: 
+                 pl_header['items'].append(pl_item)
+                 pl_header['total_picked_qty'] += pl_item_picked_qty
+                 pl_header['total_delivered_qty'] += pl_item_delivered_qty
+                 pl_header['total_pending_qty'] += pl_item['pending_qty']
+                 has_submitted_pending = True
+            
+            # For Draft PLs (docstatus = 0), include the item for transparency 
+            # but mark pending QTY as effectively 0 on the client side display/checkbox
+            elif pl_header['docstatus'] == 0:
+                 # NOTE: Client will filter these items if checkbox logic relies on total_pending_qty
+                 pl_item['pending_qty'] = pl_item['picked_qty'] # Set to 'picked' for disabled list total visual
+                 pl_header['items'].append(pl_item)
+            # Cancelled PLs are automatically filtered out by 'qty > delivered_qty' check or header docstatus != 2
+
+
+        # 3. Only keep the PL header if it is submitted and has at least one pending item.
+        if has_submitted_pending:
+            # Transfer aggregated totals back to top level for client consumption
+            pl_header['picked_qty'] = pl_header.pop('total_picked_qty')
+            pl_header['delivered_qty'] = pl_header.pop('total_delivered_qty')
+            pl_header['pending_qty'] = pl_header.pop('total_pending_qty')
+            
+            eligible_pick_lists.append(pl_header)
+            
+    # 4. Fetch necessary header data for the Delivery Note
+    # Assuming 'default_shipping_address' covers 'customer_address' in this version
+    customer_data = frappe.db.get_value(
+        "Sales Order", 
+        sales_order, 
+        ["customer_name",  "company", "currency", "conversion_rate",  "party_account_currency", "default_billing_address", "default_shipping_address"],
+        as_dict=True
+    )
+
+    return {"pick_lists": eligible_pick_lists, "customer_data": customer_data}
