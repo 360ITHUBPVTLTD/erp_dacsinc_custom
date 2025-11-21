@@ -1570,166 +1570,202 @@ def _get_bom_stock_details(bom, fg_qty):
         })
     
     return materials
-
 import frappe
+import json
 from frappe import _
 from frappe.utils import flt, getdate
+
 @frappe.whitelist()
 def get_pending_so_with_raw_materials_summary():
     """
-    Fetch pending Sales Orders with a summary preview of required raw materials (all, not top 3).
-    Includes Pick List info: picked_draft, picked_submitted, effective_pending.
-    raw_materials now includes 'base_stock_qty' for dynamic calculation and 'available_qty' for stock preview.
-    Filter out SOs where effective_pending <= 0 (fully picked submitted) OR **no BOM is found.**
-    UPDATED: Sum picked_qty directly from `tabPick List Item` (no location join).
+    MODIFIED V8.1 (CORRECTED & FINAL):
+    - This is the full, unabbreviated version of the script.
+    - All SQL queries are complete, resolving the TypeError from the traceback.
+    - Contains all features: FG "In-Production" calculation, BOM-only SO item filtering,
+      and advanced raw material availability logic.
     """
     pending_sos = []
-    
-    # Fetch pending SO items: where delivered_qty < qty
+    company = frappe.defaults.get_user_default("Company") or frappe.get_doc("Global Defaults").default_company
+
+    # Step 1: Get pending Sales Order Items that have a BOM.
     so_items = frappe.db.sql("""
-        SELECT 
-            si.parent as sales_order,
-            si.item_code,
-            si.item_name,
-            si.qty,
+        SELECT
+            si.parent as sales_order, si.item_code, si.item_name, si.qty,
             COALESCE(si.delivered_qty, 0) as delivered_qty,
             (si.qty - COALESCE(si.delivered_qty, 0)) as pending_qty,
-            so.customer,
-            si.bom_no as bom
-        FROM `tabSales Order Item` si
-        INNER JOIN `tabSales Order` so ON si.parent = so.name
-        WHERE so.docstatus = 1 
-            AND so.status != 'Closed'
-            AND so.status != 'Cancelled'
-            AND (si.qty - COALESCE(si.delivered_qty, 0)) > 0
+            so.customer, si.bom_no as bom, si.uom
+        FROM `tabSales Order Item` si JOIN `tabSales Order` so ON si.parent = so.name
+        WHERE so.docstatus = 1 AND so.status NOT IN ('Closed', 'Cancelled', 'On Hold')
+          AND (si.qty - COALESCE(si.delivered_qty, 0)) > 0.001
+          AND si.bom_no IS NOT NULL AND si.bom_no != ''
         ORDER BY so.transaction_date DESC, so.name
     """, as_dict=1)
-    
-    for so_item in so_items:
-        if so_item.pending_qty <= 0:
-            continue
-        
-        sales_order = so_item.sales_order
-        item_code = so_item.item_code
-        
-        # Get Pick List info - UPDATED: Sum directly from tabPick List Item.picked_qty
-        # Handles multiple PLs via SUM across all matching Pick List Items
-        picked_submitted = frappe.db.sql("""
-            SELECT COALESCE(SUM(pll.picked_qty), 0)
-            FROM `tabPick List Item` pll
-            INNER JOIN `tabPick List` pl ON pll.parent = pl.name
-            WHERE pll.sales_order = %s AND pll.item_code = %s AND pl.docstatus = 1
-        """, (sales_order, item_code))[0][0]
-        
-        picked_draft = frappe.db.sql("""
-            SELECT COALESCE(SUM(pll.qty), 0)
-            FROM `tabPick List Item` pll
-            INNER JOIN `tabPick List` pl ON pll.parent = pl.name
-            WHERE pll.sales_order = %s AND pll.item_code = %s AND pl.docstatus = 0
-        """, (sales_order, item_code))[0][0]
-        
-        # Effective pending: subtract only submitted picked (draft picked is still available for fulfillment)
-        effective_pending = max(0, so_item.pending_qty - picked_submitted)
-        
-        # Filter out if fully picked submitted
-        if effective_pending <= 0:
-            continue
-        
-        so_item['picked_submitted'] = flt(picked_submitted)
-        so_item['picked_draft'] = flt(picked_draft)
-        so_item['effective_pending'] = effective_pending
-        
-        # Get default BOM if not specified
-        if not so_item.bom:
-            bom = frappe.db.get_value("BOM", {"item": so_item.item_code, "is_default": 1}, "name")
-            if bom:
-                so_item.bom = bom
-        
-        # --- NEW FILTER FOR R1 ---
-        # If no BOM is found after checking the line and the default, skip this SO Item.
-        if not so_item.bom:
-            continue
-        # ------------------------
 
-        # Get raw materials (ALL) from BOM with base_stock_qty and available_qty
-        raw_materials = []
-        # The BOM check is now guaranteed true, but we keep the structure
-        if so_item.bom: 
-            # Fetch ALL BOM items and calculate required qty based on effective_pending
-            bom_items = frappe.get_all(
-                "BOM Item",
-                filters={"parent": so_item.bom},
-                fields=["item_code", "item_name", "stock_uom", "stock_qty"],
-                order_by="idx asc"
-            )
-            
-            for bom_item in bom_items:  # All items
-                base_stock_qty = flt(bom_item.stock_qty)
-                required_qty = base_stock_qty * effective_pending  # Use effective_pending for preview
-                
-                # Get total available stock across all warehouses (projected_qty)
-                available_qty = frappe.db.sql("""
-                    SELECT COALESCE(SUM(projected_qty), 0)
-                    FROM `tabBin`
-                    WHERE item_code = %s
-                """, bom_item.item_code)[0][0]
-                available_qty = flt(available_qty)
-                
-                raw_materials.append({
-                    "item_code": bom_item.item_code,
-                    "item_name": bom_item.item_name,
-                    "uom": bom_item.stock_uom,
-                    "base_stock_qty": base_stock_qty,  # For dynamic update
-                    "required_qty": required_qty,
-                    "available_qty": available_qty  # Available stock preview
-                })
+    if not so_items:
+        return {"sales_orders": []}
+
+    # Step 2: Collect all unique item codes and BOMs.
+    all_bom_item_codes = set()
+    all_finished_good_codes = {item['item_code'] for item in so_items}
+    boms_to_fetch = {item['bom'] for item in so_items}
+
+    all_bom_items = {}
+    if boms_to_fetch:
+        db_bom_items = frappe.get_all("BOM Item", filters={"parent": ("in", list(boms_to_fetch))}, fields=["parent", "item_code", "item_name", "stock_uom", "stock_qty"])
+        for bom_item in db_bom_items:
+            all_bom_items.setdefault(bom_item.parent, []).append(bom_item)
+            all_bom_item_codes.add(bom_item.item_code)
+
+    stock_info = {}
+    unallocated_ordered_map = {}
+    so_rm_ordered_map = {}
+    existing_pos_map = {}
+    in_production_fg_map = {}
+
+    # Step 3: Get physical stock for ALL items (RMs and FGs).
+    all_items_to_check = tuple(all_bom_item_codes.union(all_finished_good_codes))
+    if all_items_to_check:
+        bin_data = frappe.db.sql("""
+            SELECT b.item_code, SUM(COALESCE(b.actual_qty, 0) - COALESCE(b.reserved_qty, 0)) as available_qty
+            FROM `tabBin` b JOIN `tabWarehouse` w ON b.warehouse = w.name
+            WHERE b.item_code IN %s AND w.company = %s GROUP BY b.item_code
+        """, (all_items_to_check, company), as_dict=True)
+        stock_info = {row['item_code']: max(0, row.get('available_qty', 0)) for row in bin_data}
+
+    # Step 4: Calculate "In-Production" quantity for Finished Goods.
+    if all_finished_good_codes:
+        fg_codes = tuple(all_finished_good_codes)
+        in_production_data = frappe.db.sql("""
+            SELECT fg_item, SUM(fg_qty) as total_in_production FROM (
+                SELECT DISTINCT rmb.source_finished_good as fg_item, rmb.order_for_fg as fg_qty,
+                                rmb.parent, rmb.source_sales_order
+                FROM `tabPurchase Order Raw Material Source` rmb
+                JOIN `tabPurchase Order` po ON rmb.parent = po.name
+                WHERE po.docstatus = 1 AND po.status NOT IN ('Closed', 'Cancelled')
+                  AND rmb.source_finished_good IN %s
+            ) as distinct_production_runs
+            GROUP BY fg_item
+        """, (fg_codes,), as_dict=1)
+        in_production_fg_map = {row['fg_item']: row['total_in_production'] for row in in_production_data}
+
+    # Step 5: Get all PO-related data for Raw Materials.
+    if all_bom_item_codes:
+        rm_item_codes = tuple(all_bom_item_codes)
         
-        pending_sos.append({
-            "sales_order": so_item.sales_order,
-            "item_code": so_item.item_code,
-            "item_name": so_item.item_name,
-            "qty": so_item.qty,
-            "pending_qty": so_item.pending_qty,
-            "effective_pending": effective_pending,
-            "picked_submitted": picked_submitted,
-            "picked_draft": picked_draft,
-            "customer": so_item.customer,
-            "bom": so_item.bom,
-            "raw_materials": raw_materials  # Enhanced with available_qty
+        total_ordered_items = frappe.db.sql("""
+            SELECT poi.item_code, SUM(poi.qty - COALESCE(poi.received_qty, 0)) AS total_ordered
+            FROM `tabPurchase Order Item` poi JOIN `tabPurchase Order` po ON poi.parent = po.name
+            WHERE poi.item_code IN %s AND po.docstatus = 1 AND po.status NOT IN ('Closed', 'Cancelled') AND po.company = %s
+            GROUP BY poi.item_code
+        """, (rm_item_codes, company), as_dict=True)
+        total_ordered_map = {row['item_code']: flt(row.get('total_ordered', 0)) for row in total_ordered_items}
+
+        linked_quantities = frappe.db.sql("""
+            SELECT rmb.raw_material_item, SUM(rmb.order_for_rm) as total_linked_qty
+            FROM `tabPurchase Order Raw Material Source` rmb JOIN `tabPurchase Order` po ON rmb.parent = po.name
+            WHERE rmb.raw_material_item IN %s AND po.docstatus = 1 AND po.status NOT IN ('Closed', 'Cancelled') AND po.company = %s
+            GROUP BY rmb.raw_material_item
+        """, (rm_item_codes, company), as_dict=1)
+        linked_map = {item['raw_material_item']: item['total_linked_qty'] for item in linked_quantities}
+
+        for item_code, total_ordered in total_ordered_map.items():
+            unallocated_ordered_map[item_code] = max(0, total_ordered - linked_map.get(item_code, 0))
+
+        sales_order_names = tuple(so['sales_order'] for so in so_items)
+        if sales_order_names:
+            so_rm_links = frappe.db.sql("""
+                SELECT rmb.source_sales_order, rmb.raw_material_item, SUM(rmb.order_for_rm) as ordered_qty
+                FROM `tabPurchase Order Raw Material Source` rmb JOIN `tabPurchase Order` po ON rmb.parent = po.name
+                WHERE rmb.source_sales_order IN %s AND po.docstatus = 1 AND po.status NOT IN ('Closed', 'Cancelled')
+                GROUP BY rmb.source_sales_order, rmb.raw_material_item
+            """, (sales_order_names,), as_dict=1)
+            so_rm_ordered_map = {(link['source_sales_order'], link['raw_material_item']): link['ordered_qty'] for link in so_rm_links}
+
+        pos_data = frappe.db.sql("""
+            SELECT po.name, po.supplier, poi.item_code FROM `tabPurchase Order Item` poi
+            JOIN `tabPurchase Order` po ON poi.parent = po.name
+            WHERE poi.item_code IN %s AND po.docstatus = 1 AND po.status NOT IN ('Closed', 'Cancelled') AND po.company = %s
+        """, (rm_item_codes, company), as_dict=True)
+        for pos in pos_data:
+            po_link_text = f"{pos['name']} ({pos['supplier'] or 'N/A'})"
+            existing_pos_map.setdefault(pos['item_code'], []).append(po_link_text)
+
+    # Step 6: Process each SO item and package the final data for the UI.
+    for so_item in so_items:
+        sales_order, item_code = so_item['sales_order'], so_item['item_code']
+        
+        picked_submitted_query = frappe.db.sql("""
+            SELECT COALESCE(SUM(pli.picked_qty), 0) as total FROM `tabPick List Item` pli
+            JOIN `tabPick List` pl ON pli.parent = pl.name
+            WHERE pli.sales_order = %s AND pli.item_code = %s AND pl.docstatus = 1
+        """, (sales_order, item_code), as_dict=True)
+        picked_submitted = picked_submitted_query[0].get('total', 0) if picked_submitted_query else 0
+
+        picked_draft_query = frappe.db.sql("""
+            SELECT COALESCE(SUM(pli.qty), 0) as total FROM `tabPick List Item` pli
+            JOIN `tabPick List` pl ON pli.parent = pl.name
+            WHERE pli.sales_order = %s AND pli.item_code = %s AND pl.docstatus = 0
+        """, (sales_order, item_code), as_dict=True)
+        picked_draft = picked_draft_query[0].get('total', 0) if picked_draft_query else 0
+        
+        qty_awaiting_pick = max(0, so_item['pending_qty'] - picked_submitted - picked_draft)
+        
+        if qty_awaiting_pick <= 0.001: 
+            continue
+        
+        physical_stock = flt(stock_info.get(item_code, 0))
+        in_production_qty = flt(in_production_fg_map.get(item_code, 0))
+
+        so_item.update({
+            'picked_submitted': picked_submitted,
+            'picked_draft': picked_draft,
+            'qty_awaiting_pick': qty_awaiting_pick,
+            'available_fg_qty': physical_stock + in_production_qty
         })
+
+        raw_materials = []
+        for bom_item in all_bom_items.get(so_item['bom'], []):
+            rm_code = bom_item['item_code']
+            raw_materials.append({
+                "item_code": rm_code,
+                "item_name": bom_item['item_name'],
+                "uom": bom_item['stock_uom'],
+                "base_stock_qty": flt(bom_item['stock_qty']),
+                "available_qty": flt(stock_info.get(rm_code, 0)),
+                "unallocated_ordered_qty": flt(unallocated_ordered_map.get(rm_code, 0)),
+                "ordered_for_this_so": flt(so_rm_ordered_map.get((sales_order, rm_code), 0)),
+                "existing_pos": ', '.join(existing_pos_map.get(rm_code, []))
+            })
+        
+        so_item["raw_materials"] = raw_materials
+        pending_sos.append(so_item)
     
     return {"sales_orders": pending_sos}
-
-import frappe
-from frappe import _
-import json
-from frappe.utils import flt
-
 @frappe.whitelist()
 def calculate_raw_materials_from_selected_sos(selected_sos):
     """
     Calculate consolidated raw materials required from selected Sales Orders and their fulfill quantities.
     Returns a list of dicts with consolidated RM data: item_code, item_name, uom, required_qty, sales_orders, customers.
+    NEW: Include material_requests aggregated from linked MRs for each RM across selected SOs.
     """
     selected_sos = json.loads(selected_sos)
     if not selected_sos:
         return []
-
     # Dictionary to consolidate raw materials: key=item_code, value=dict with sums and lists
     rm_consolidated = {}
-    
+   
     for so_data in selected_sos:
         sales_order = so_data.get('sales_order')
         item_code = so_data.get('item_code')
         bom = so_data.get('bom')
         qty_to_fulfill = flt(so_data.get('qty_to_fulfill', 0))
-        
+       
         if qty_to_fulfill <= 0 or not bom:
             continue
-        
+       
         # Get customer from SO
         customer = frappe.db.get_value("Sales Order", sales_order, "customer")
-        
+       
         # Get BOM items
         bom_items = frappe.get_all(
             "BOM Item",
@@ -1737,12 +1773,12 @@ def calculate_raw_materials_from_selected_sos(selected_sos):
             fields=["item_code", "item_name", "stock_uom", "stock_qty"],
             order_by="idx"
         )
-        
+       
         # Explode BOM for this qty
         for bom_item in bom_items:
             rm_item_code = bom_item.item_code
             required_for_this = flt(bom_item.stock_qty) * qty_to_fulfill
-            
+           
             if rm_item_code not in rm_consolidated:
                 rm_consolidated[rm_item_code] = {
                     'item_code': rm_item_code,
@@ -1750,20 +1786,33 @@ def calculate_raw_materials_from_selected_sos(selected_sos):
                     'uom': bom_item.stock_uom,
                     'required_qty': 0,
                     'sales_orders': [],
-                    'customers': []
+                    'customers': [],
+                    'material_requests': []
                 }
-            
+           
             cons = rm_consolidated[rm_item_code]
             cons['required_qty'] += required_for_this
-            
+           
             # Add SO if not already
             if sales_order not in cons['sales_orders']:
                 cons['sales_orders'].append(sales_order)
-            
+           
             # Add customer if not already
             if customer and customer not in cons['customers']:
                 cons['customers'].append(customer)
-    
+           
+            # NEW: Aggregate MR refs for this RM from this SO
+            material_requests = frappe.db.sql("""
+                SELECT GROUP_CONCAT(DISTINCT mri.parent SEPARATOR ', ')
+                FROM `tabMaterial Request Item` mri
+                INNER JOIN `tabMaterial Request` mr ON mri.parent = mr.name
+                WHERE mri.item_code = %s AND mri.reference_sales_order = %s AND mr.docstatus = 1 AND mr.status != 'Stopped'
+            """, (rm_item_code, sales_order))
+            mr_list = material_requests[0][0].split(', ') if material_requests and material_requests[0][0] else []
+            for mr in mr_list:
+                if mr and mr not in cons['material_requests']:
+                    cons['material_requests'].append(mr)
+   
     # Convert to list and format strings
     result = []
     for code, data in rm_consolidated.items():
@@ -1773,126 +1822,228 @@ def calculate_raw_materials_from_selected_sos(selected_sos):
             'uom': data['uom'],
             'required_qty': data['required_qty'],
             'sales_orders': ', '.join(data['sales_orders']),
-            'customers': ', '.join(data['customers'])
+            'customers': ', '.join(data['customers']),
+            'material_requests': ', '.join(data['material_requests'])
         })
-    
+   
     # Sort by required_qty descending
     result.sort(key=lambda x: x['required_qty'], reverse=True)
-    
+   
     return result
-
-
-
-
-
 
 @frappe.whitelist()
 def get_stock_for_calculated_raw_materials(raw_materials):
     import json
     from frappe.utils import flt
     import frappe
-    
+   
     raw_materials_list = json.loads(raw_materials)
     if not raw_materials_list:
         return []
-
     # Get the current default company
-    # This remains correct
     company = frappe.defaults.get_user_default("Company") or frappe.get_doc("Global Defaults").default_company
-    
+   
     # Pre-fetch ALL stock info for the items to minimize DB hits (more performant)
     item_codes = [rm.get('item_code') for rm in raw_materials_list if rm.get('item_code')]
     if not item_codes:
         return raw_materials_list
-        
+       
     stock_info = {}
-    
+   
     # 1. Fetch current total physical stock and committed/reserved quantities across all relevant bins/warehouses
     # FIX: Joined with tabWarehouse to correctly filter by company, as tabBin does not have a company field.
+    # Available: actual_qty - reserved_qty (uncommitted warehouse stock only)
     bin_data = frappe.db.sql("""
-        SELECT 
-            b.item_code, 
-            SUM(b.actual_qty) as actual_qty, 
-            SUM(b.reserved_qty) as reserved_qty, 
+        SELECT
+            b.item_code,
+            SUM(b.actual_qty) as actual_qty,
+            SUM(b.reserved_qty) as reserved_qty,
             SUM(b.projected_qty) as projected_qty
         FROM `tabBin` b
         JOIN `tabWarehouse` w ON b.warehouse = w.name
-        WHERE 
-            b.item_code IN %s 
+        WHERE
+            b.item_code IN %s
             AND w.company = %s
         GROUP BY b.item_code
     """, (item_codes, company), as_dict=True)
-
     for row in bin_data:
         # available_qty: the amount that is uncommitted in actual stock (actual_qty - reserved_qty).
-        row['uncommitted_stock'] = row['actual_qty'] - row['reserved_qty'] 
+        row['uncommitted_stock'] = row['actual_qty'] - row['reserved_qty']
         stock_info[row['item_code']] = row
-
-
     # 2. Fetch already ordered qty from open POs (to subtract from procurement need)
     already_ordered_map = {}
-    
+   
     # SQL query for sum of (qty - received_qty) in submitted POs that are NOT 'Closed' or 'Cancelled'
-    # NOTE: It's good practice to filter the POs by Company if a specific company's Purchase Need is required, 
-    # but based on ERPNext's PO logic, this typically defaults to the company creating the PO. 
-    # Adding a filter for the Company ensures it only considers open POs for the context company.
     ordered_items = frappe.db.sql("""
         SELECT poi.item_code, SUM(poi.qty - COALESCE(poi.received_qty, 0)) AS already_ordered
         FROM `tabPurchase Order Item` poi
         INNER JOIN `tabPurchase Order` po ON poi.parent = po.name
         WHERE poi.item_code IN %s
-            AND po.docstatus = 1 
+            AND po.docstatus = 1
             AND po.status NOT IN ('Closed', 'Cancelled')
-            AND po.company = %s  /* Filtering POs by the context company */
+            AND po.company = %s /* Filtering POs by the context company */
         GROUP BY poi.item_code
     """, (item_codes, company), as_dict=True)
     for row in ordered_items:
         already_ordered_map[row['item_code']] = flt(row['already_ordered'])
-    
-    
+   
+   
     # 3. Fetch existing PO names (similarly filtering by company)
     existing_pos_data = frappe.db.sql("""
         SELECT po.name, po.supplier, poi.item_code
         FROM `tabPurchase Order Item` poi
         INNER JOIN `tabPurchase Order` po ON poi.parent = po.name
         WHERE poi.item_code IN %s
-            AND po.docstatus = 1 
+            AND po.docstatus = 1
             AND po.status NOT IN ('Closed', 'Cancelled')
             AND po.company = %s /* Filtering POs by the context company */
         ORDER BY po.creation DESC
     """, (item_codes, company), as_dict=True)
-    
+   
     existing_pos_map = {}
     for pos in existing_pos_data:
         key = pos['item_code']
         # Concatenate PO name and supplier for client side display
         po_link_text = f"{pos['name']} ({pos['supplier'] or ''})"
         existing_pos_map.setdefault(key, []).append(po_link_text)
-
-
     # 4. Enrich raw materials list
     final_materials = []
     for rm in raw_materials_list:
         item_code = rm.get('item_code')
         info = stock_info.get(item_code, {'uncommitted_stock': 0})
-        
+       
         # New Stock values based on conservative (Actual - Reserved) method:
         rm['available_qty'] = flt(info.get('uncommitted_stock', 0))
         rm['already_ordered_qty'] = flt(already_ordered_map.get(item_code, 0))
-
         # FIX CALCULATION: max(0, Required - Uncommitted Stock - Already Ordered/Unreceived PO)
         required = flt(rm.get('required_qty', 0))
         rm['qty_to_purchase'] = max(0, required - rm['available_qty'] - rm['already_ordered_qty'])
-
-        # Set existing PO string
+        # Set existing PO string (not used in merged dialog, but retained)
         rm['existing_pos'] = ', '.join(existing_pos_map.get(item_code, []))
-        
+       
         final_materials.append(rm)
-
     # Sort by qty_to_purchase descending for prioritization
     final_materials.sort(key=lambda x: x.get('qty_to_purchase', 0), reverse=True)
-    
+   
     return final_materials
+
+# NEW: Server method to create MR with SO references (call this in secondary action if needed, or extend create_material_request_for_shortage)
+@frappe.whitelist()
+def create_material_request_with_so_references(items_data, selected_sos):
+    """
+    Create MR for raw materials with reference_sales_order set in MR Items.
+    items_data: list of RM needing MR
+    selected_sos: list of selected SOs for reference linking.
+    """
+    # Logic to create MR: aggregate items, set reference_sales_order = ', '.join(selected SO names) for traceability.
+    # Implementation similar to existing create_material_request_for_shortage, but add:
+    # In MR Item: frappe.db.set_value("Material Request Item", child.name, "reference_sales_order", ', '.join([so['sales_order'] for so in selected_sos]))
+    # Return MR name.
+    pass  # Placeholder - extend as per existing MR creation logic
+
+import frappe
+import json
+from frappe.utils import flt
+
+@frappe.whitelist()
+def get_unified_procurement_data():
+    """
+    Fetches:
+    1. Pending Sales Orders (Master).
+    2. Exploded BOM Items for those SOs (Detail).
+    3. Current Stock Levels for those BOM Items (Stock).
+    4. Existing Open PO logic.
+    """
+    company = frappe.defaults.get_user_default("Company") or frappe.get_doc("Global Defaults").default_company
+    
+    # 1. Get Pending Sales Orders
+    pending_sos = frappe.db.sql("""
+        SELECT 
+            si.parent as sales_order, si.item_code, si.item_name, si.qty,
+            COALESCE(si.delivered_qty, 0) as delivered_qty,
+            so.customer, si.bom_no
+        FROM `tabSales Order Item` si
+        INNER JOIN `tabSales Order` so ON si.parent = so.name
+        WHERE so.docstatus = 1 AND so.status NOT IN ('Closed', 'Cancelled')
+            AND (si.qty - COALESCE(si.delivered_qty, 0)) > 0
+        ORDER BY so.transaction_date DESC
+    """, as_dict=1)
+
+    # List of distinct FG items and SOs to process
+    fg_list = []
+    for row in pending_sos:
+        # Picked Logic (Simplified for speed: Check Pick List Item)
+        picked = frappe.db.sql("""
+            SELECT COALESCE(SUM(picked_qty), 0) FROM `tabPick List Item` 
+            WHERE sales_order=%s AND item_code=%s AND docstatus=1
+        """, (row.sales_order, row.item_code))[0][0]
+        
+        balance_qty = max(0, flt(row.qty) - flt(row.delivered_qty) - flt(picked))
+        
+        if balance_qty > 0:
+            # Find BOM
+            if not row.bom_no:
+                row.bom_no = frappe.db.get_value("BOM", {"item": row.item_code, "is_default": 1}, "name")
+
+            if row.bom_no:
+                row.balance_qty = balance_qty
+                fg_list.append(row)
+
+    if not fg_list:
+        return {"sales_orders": [], "bom_map": {}, "stock_map": {}}
+
+    # 2. Build BOM Map (Unique BOMs)
+    unique_boms = set([x.bom_no for x in fg_list])
+    bom_map = {} # Key: BOM Name, Value: List of Items
+    all_rm_codes = set()
+
+    for bom in unique_boms:
+        items = frappe.get_all("BOM Item", filters={"parent": bom}, 
+                               fields=["item_code", "item_name", "stock_uom", "stock_qty"])
+        bom_map[bom] = items
+        for i in items:
+            all_rm_codes.add(i.item_code)
+
+    # 3. Get Stock & Open POs for RMs
+    stock_map = {}
+    if all_rm_codes:
+        # Real Available = Actual - Reserved (per Company ideally via Warehouse)
+        bin_data = frappe.db.sql("""
+            SELECT b.item_code, 
+                   SUM(b.actual_qty) as total_actual, 
+                   SUM(b.reserved_qty) as total_reserved 
+            FROM `tabBin` b 
+            JOIN `tabWarehouse` w ON b.warehouse = w.name
+            WHERE b.item_code IN %s AND w.company = %s
+            GROUP BY b.item_code
+        """, (list(all_rm_codes), company), as_dict=1)
+
+        # Open POs (Ordered but not Received)
+        open_po_data = frappe.db.sql("""
+            SELECT poi.item_code, SUM(poi.qty - COALESCE(poi.received_qty,0)) as on_order
+            FROM `tabPurchase Order Item` poi
+            JOIN `tabPurchase Order` po ON poi.parent = po.name
+            WHERE poi.item_code IN %s AND po.docstatus=1 AND po.status NOT IN ('Closed','Cancelled')
+            GROUP BY poi.item_code
+        """, (list(all_rm_codes),), as_dict=1)
+
+        # Initialize Map
+        for c in all_rm_codes:
+            stock_map[c] = {"actual": 0, "reserved": 0, "available": 0, "on_order": 0}
+        
+        for b in bin_data:
+            stock_map[b.item_code]["actual"] = flt(b.total_actual)
+            stock_map[b.item_code]["reserved"] = flt(b.total_reserved)
+            stock_map[b.item_code]["available"] = flt(b.total_actual) - flt(b.total_reserved)
+        
+        for p in open_po_data:
+             stock_map[p.item_code]["on_order"] = flt(p.on_order)
+
+    return {
+        "sales_orders": fg_list,
+        "bom_map": bom_map, # { bom_id: [ {item_code, qty...} ] }
+        "stock_map": stock_map # { item_code: { available: 10, on_order: 5 } }
+    }
 
 
 # The validation function is updated with the exact same logic for consistency.
