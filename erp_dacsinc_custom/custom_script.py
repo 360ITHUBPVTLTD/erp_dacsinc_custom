@@ -478,26 +478,54 @@ def get_item_stock_details_bulk(item_codes, sales_order_name):
 
         # === 2. PURCHASE RECEIPTS AGAINST THIS SO (SO SPECIFIC STOCK) ===
         # FIX ADDED: Included 'pr.is_subcontracted' in SELECT
+        # === 2. COMPLETED RECEIPTS (Standard PR + Subcontracting SCR) ===
+        # FIXED: Returning distinct columns for PR, PO, SO, and SR
+        
         completed_receipt_docs = frappe.db.sql("""
-            SELECT 
-                pr.name,
-                pr.posting_date,
-                pr.supplier,
-                pr.is_subcontracted,
-                pri.warehouse,
-                pri.purchase_order AS ref_doc,
-                pri.received_qty
-            FROM `tabPurchase Receipt Item` pri
-            JOIN `tabPurchase Receipt` pr ON pri.parent = pr.name
-            WHERE pri.item_code = %s 
-              AND pri.sales_order = %s 
-              AND pr.docstatus = 1
-            ORDER BY pr.posting_date DESC
-        """, (item_code, sales_order_name), as_dict=1)
+            (
+                -- 1. STANDARD STOCK (From Purchase Receipt)
+                SELECT 
+                    pr.name AS pr_name,          -- The Billing PR
+                    '' AS sr_name,               -- No Subcontract Receipt for standard
+                    pri.purchase_order AS po_name,
+                    pri.sales_order AS so_name,
+                    pr.posting_date,
+                    pri.received_qty
+                FROM `tabPurchase Receipt Item` pri
+                JOIN `tabPurchase Receipt` pr ON pri.parent = pr.name
+                WHERE 
+                    pri.item_code = %(item)s 
+                    AND pri.sales_order = %(so_name)s
+                    AND pr.docstatus = 1
+                    AND pr.is_subcontracted = 0
+            )
+            UNION
+            (
+                -- 2. SUBCONTRACTED STOCK (From Subcontracting Receipt)
+                SELECT 
+                    '' AS pr_name,               -- PR is for billing, might not be linked yet
+                    scr.name AS sr_name,         -- The Subcontract Receipt Name
+                    scri.purchase_order AS po_name,
+                    %(so_name)s AS so_name,      -- Linked to this SO via logic below
+                    scr.posting_date,
+                    scri.qty AS received_qty     -- FG Qty
+                FROM `tabSubcontracting Receipt Item` scri
+                JOIN `tabSubcontracting Receipt` scr ON scri.parent = scr.name
+                WHERE 
+                    scri.item_code = %(item)s  -- This is the FG Item
+                    AND scr.docstatus = 1
+                    -- Logic: Ensure the PO used in this Receipt belongs to our SO
+                    AND scri.purchase_order IN (
+                        SELECT parent 
+                        FROM `tabPurchase Order Item` 
+                        WHERE sales_order = %(so_name)s
+                    )
+            )
+            ORDER BY posting_date DESC
+        """, {"so_name": sales_order_name, "item": item_code}, as_dict=1)
 
         received_for_so_qty = sum(flt(r.received_qty) for r in completed_receipt_docs)
         general_stock_qty = max(0, total_available_stock - received_for_so_qty)
-
         # === 3. PICK LISTS (THIS SO) ===
         picked_for_this_so_details = frappe.db.sql("""
             SELECT 
