@@ -16,19 +16,19 @@ def item_after_insert(doc, method):
         update_tax_child(doc)
 
     # Create Item Price on new item creation
-    if doc.custom_standard_selling_price:
-        create_or_update_item_price(doc, "Selling", doc.custom_standard_selling_price)
-    if doc.custom_standard_buying_price:
-        create_or_update_item_price(doc, "Buying", doc.custom_standard_buying_price)
+    # if doc.custom_standard_selling_price:
+    #     create_or_update_item_price(doc, "Selling", doc.custom_standard_selling_price)
+    # if doc.custom_standard_buying_price:
+    #     create_or_update_item_price(doc, "Buying", doc.custom_standard_buying_price)
 
-def item_on_update(doc, method):
+# def item_on_update(doc, method):
     # Check if the standard prices have been changed
-    doc_before_save = doc.get_doc_before_save()
-    if doc_before_save:
-        if doc.custom_standard_selling_price != doc_before_save.custom_standard_selling_price:
-            create_or_update_item_price(doc, "Selling", doc.custom_standard_selling_price)
-        if doc.custom_standard_buying_price != doc_before_save.custom_standard_buying_price:
-            create_or_update_item_price(doc, "Buying", doc.custom_standard_buying_price)
+    # doc_before_save = doc.get_doc_before_save()
+    # if doc_before_save:
+    #     if doc.custom_standard_selling_price != doc_before_save.custom_standard_selling_price:
+    #         create_or_update_item_price(doc, "Selling", doc.custom_standard_selling_price)
+    #     if doc.custom_standard_buying_price != doc_before_save.custom_standard_buying_price:
+    #         create_or_update_item_price(doc, "Buying", doc.custom_standard_buying_price)
 
 def create_or_update_item_price(doc, price_type, rate):
     price_list_name = f"Standard {price_type}"
@@ -429,182 +429,255 @@ def get_stock_reservations(sales_order, item_code=None):
 import frappe
 import json
 from frappe.utils import flt
-from frappe import _
+import frappe
+import json
+from frappe.utils import flt
+
+import frappe
+import json
+from frappe.utils import flt
 
 @frappe.whitelist()
 def get_item_stock_details_bulk(item_codes, sales_order_name):
     """
-    Combines submitted and draft pick lists (for both this Sales Order and others)
-    into unified data for accurate allocation and modal display.
-    Works reliably in ERPNext v15+ and v16.
-
-    Args:
-        item_codes (list | str): List or JSON string of item codes.
-        sales_order_name (str): Sales Order ID.
-
-    Returns:
-        dict: {item_code: {...stock details...}}
+    FINAL VERSION - Sales Order Stock Dashboard
+    FIXED: Added is_subcontracted field fetch for Incoming POs and Completed Receipts
     """
-    # Import needed inside the function is redundant if imported globally, but kept for safety
-    from frappe.utils import flt
-
-    # Ensure we have a Python list
     if isinstance(item_codes, str):
         item_codes = json.loads(item_codes)
-
     if not isinstance(item_codes, list):
-        frappe.throw("Invalid item_codes format")
+        frappe.throw("Invalid item_codes format. Expected a list.")
 
-    # Handle the case where the SO is new (temporary name)
-    if sales_order_name and sales_order_name.startswith('new-'):
-        so_doc = frappe.get_doc("Sales Order", sales_order_name) # Create a temporary Doc object for item data access
-        # Since it's a new document, the name should be treated as None for DB queries
-        sales_order_name = None 
-    elif sales_order_name:
-        try:
-            so_doc = frappe.get_doc("Sales Order", sales_order_name)
-        except frappe.DoesNotExistError:
-             # Handle case where SO name is passed but not found (e.g., from a quick save attempt)
-            so_doc = frappe.get_doc("Sales Order", sales_order_name)
-            sales_order_name = None # Treat as None for queries if not in DB
-    else:
-        # If sales_order_name is explicitly passed as None/null
-        so_doc = frappe.new_doc("Sales Order")
-    
-    # Use items from the Doc object, whether it's loaded or a temporary new one
-    so_items_map = {item.item_code: item for item in so_doc.items}
+    try:
+        so_doc = frappe.get_doc("Sales Order", sales_order_name) if sales_order_name else None
+    except frappe.DoesNotExistError:
+        so_doc = None
 
+    so_items_map = {i.item_code: i for i in so_doc.items} if so_doc else {}
     results = {}
 
     for item_code in item_codes:
-        so_item = so_items_map.get(item_code)
-        required_qty = flt(so_item.qty) if so_item else 0
-        delivered_qty = flt(so_item.delivered_qty) if so_item else 0
+        so_item = so_items_map.get(item_code, frappe._dict())
 
-        # --- PICK LISTS FOR THIS SALES ORDER ---
-        # Note: Must ensure sales_order_name is valid before running this query if it's new/None
-        if sales_order_name:
-            picked_for_this_so_details = frappe.db.sql("""
-                SELECT pl.name AS pick_list_name, pl.docstatus, pl.per_delivered,
-                       pl.delivery_status, pli.qty, pli.picked_qty
-                FROM `tabPick List Item` pli
-                JOIN `tabPick List` pl ON pli.parent = pl.name
-                WHERE pli.sales_order = %s AND pli.item_code = %s AND pl.docstatus < 2
-            """, (sales_order_name, item_code), as_dict=1)
-        else:
-            picked_for_this_so_details = []
+        # === BASIC INFO ===
+        required_qty = flt(so_item.qty or 0)
+        delivered_qty = flt(so_item.delivered_qty or 0)
+        warehouse = so_item.warehouse or (so_doc.set_warehouse if so_doc else None)
+        bom_no = so_item.bom_no if so_item else None
+        stock_uom = so_item.stock_uom or frappe.db.get_value("Item", item_code, "stock_uom")
+
+        # === 1. WAREHOUSE STOCK ===
+        warehouse_stock = frappe.db.sql("""
+            SELECT warehouse, actual_qty 
+            FROM `tabBin` 
+            WHERE item_code = %s AND actual_qty > 0
+            ORDER BY actual_qty DESC
+        """, item_code, as_dict=1)
+
+        total_available_stock = sum(flt(w.actual_qty) for w in warehouse_stock)
+
+        # === 2. PURCHASE RECEIPTS AGAINST THIS SO (SO SPECIFIC STOCK) ===
+        # FIX ADDED: Included 'pr.is_subcontracted' in SELECT
+        completed_receipt_docs = frappe.db.sql("""
+            SELECT 
+                pr.name,
+                pr.posting_date,
+                pr.supplier,
+                pr.is_subcontracted,
+                pri.warehouse,
+                pri.purchase_order AS ref_doc,
+                pri.received_qty
+            FROM `tabPurchase Receipt Item` pri
+            JOIN `tabPurchase Receipt` pr ON pri.parent = pr.name
+            WHERE pri.item_code = %s 
+              AND pri.sales_order = %s 
+              AND pr.docstatus = 1
+            ORDER BY pr.posting_date DESC
+        """, (item_code, sales_order_name), as_dict=1)
+
+        received_for_so_qty = sum(flt(r.received_qty) for r in completed_receipt_docs)
+        general_stock_qty = max(0, total_available_stock - received_for_so_qty)
+
+        # === 3. PICK LISTS (THIS SO) ===
+        picked_for_this_so_details = frappe.db.sql("""
+            SELECT 
+                pl.name AS pick_list_name,
+                pl.docstatus,
+                pl.per_delivered,
+                pl.delivery_status,
+                pli.qty,
+                pli.picked_qty
+            FROM `tabPick List Item` pli
+            JOIN `tabPick List` pl ON pli.parent = pl.name
+            WHERE pli.sales_order = %s AND pli.item_code = %s AND pl.docstatus < 2
+        """, (sales_order_name, item_code), as_dict=1)
 
         picked_draft_qty_so = sum(flt(p.qty) for p in picked_for_this_so_details if p.docstatus == 0)
-        picked_submitted_qty_actual = sum(flt(p.picked_qty) for p in picked_for_this_so_details if p.docstatus == 1)
+        picked_submitted_qty_so_actual = sum(flt(p.picked_qty) for p in picked_for_this_so_details if p.docstatus == 1)
         picked_submitted_undelivered_qty = sum(
-            flt(p.picked_qty) * (1 - (flt(p.per_delivered or 0) / 100))
+            flt(p.picked_qty) * (1 - flt(p.per_delivered or 0) / 100)
             for p in picked_for_this_so_details if p.docstatus == 1
         )
 
-        # --- AVAILABLE STOCK (BIN) ---
-        warehouse_stock = frappe.db.sql("""
-            SELECT warehouse, actual_qty
-            FROM `tabBin`
-            WHERE item_code = %s AND actual_qty > 0
-        """, (item_code,), as_dict=1)
-        total_available_stock = sum(flt(w.actual_qty) for w in warehouse_stock)
+        # === 4. INCOMING STOCK (Pending POs against this SO) ===
+        incoming_stock = []
+        total_incoming_qty = total_incoming_po_count = 0
 
-        # --- INCOMING STOCK (PURCHASE ORDER PENDING) ---
-        incoming_stock = frappe.db.sql("""
-            SELECT po.name AS po_name, po.supplier,po.status, po_item.schedule_date,
-                   (po_item.qty - po_item.received_qty) AS pending_qty, po_item.sales_order
-            FROM `tabPurchase Order Item` po_item
-            JOIN `tabPurchase Order` po ON po.name = po_item.parent
-            WHERE po_item.item_code = %s
-              AND po.docstatus = 1
-              AND po.status NOT IN ('Closed', 'Completed', 'Cancelled')
-              AND po_item.received_qty < po_item.qty
-        """, (item_code,), as_dict=1)
-        total_incoming_qty = sum(flt(po.pending_qty) for po in incoming_stock)
+        # FIX ADDED: Included 'po.is_subcontracted' in SELECT
+        # === 4. INCOMING STOCK (Pending POs against this SO) ===
+        incoming_stock = []
+        total_incoming_qty = total_incoming_po_count = 0
 
-        # <<<<<<<<<<<<<<<<<<<< THE FIX: Calculate the distinct PO count >>>>>>>>>>>>>>>>>>>>
-        total_incoming_po_count = len(set(po.po_name for po in incoming_stock))
-        # <<<<<<<<<<<<<<<<<<<< THE FIX ENDS HERE >>>>>>>>>>>>>>>>>>>>
+        # FIX ADDED: Dynamic check for Standard vs Subcontracted
+        # If Subcontracted: we compare SO Item Code against 'fg_item' and use 'fg_item_qty'
+        # If Standard: we compare SO Item Code against 'item_code' and use 'qty'
+        
+        po_data = frappe.db.sql("""
+            SELECT 
+                po.name, 
+                po.supplier, 
+                po.schedule_date, 
+                po.is_subcontracted, 
+                poi.warehouse,
+                CASE 
+                    WHEN po.is_subcontracted = 1 THEN (poi.fg_item_qty - poi.received_qty)
+                    ELSE (poi.qty - poi.received_qty)
+                END AS pending_qty
+            FROM `tabPurchase Order Item` poi
+            JOIN `tabPurchase Order` po ON poi.parent = po.name
+            WHERE 
+                poi.sales_order = %(so_name)s
+                AND po.docstatus = 1 
+                AND (
+                    -- Standard Logic
+                    (po.is_subcontracted = 0 AND poi.item_code = %(item)s AND (poi.qty - poi.received_qty) > 0)
+                    OR
+                    -- Subcontracting Logic (Target the FG Item)
+                    (po.is_subcontracted = 1 AND poi.fg_item = %(item)s AND (poi.fg_item_qty - poi.received_qty) > 0)
+                )
+        """, {"so_name": sales_order_name, "item": item_code}, as_dict=1)
 
+        for row in po_data:
+            incoming_stock.append({
+                "doc_type": "Purchase Order",
+                "name": row.name,
+                "supplier": row.supplier,
+                "schedule_date": row.schedule_date,
+                "is_subcontracted": row.is_subcontracted, 
+                "pending_qty": flt(row.pending_qty),
+                "warehouse": row.warehouse
+            })
+            total_incoming_qty += flt(row.pending_qty)
+            total_incoming_po_count += 1
 
-        # --- PICK LISTS FROM OTHER SALES ORDERS ---
-        # Note: Must ensure sales_order_name is valid before running this query if it's new/None
-        if sales_order_name:
-            picked_for_others_details = frappe.db.sql("""
-                SELECT pl.name AS pick_list_name, pl.customer, pli.sales_order,
-                       'Submitted' AS status,
-                       (pli.picked_qty * (100 - IFNULL(pl.per_delivered, 0)) / 100) AS qty
-                FROM `tabPick List` pl
-                JOIN `tabPick List Item` pli ON pl.name = pli.parent
-                WHERE pl.docstatus = 1
-                  AND pl.status NOT IN ('Completed', 'Cancelled')
-                  AND pli.item_code = %s
-                  AND pli.sales_order != %s
-            """, (item_code, sales_order_name), as_dict=1)
+        # === 5. RM PROCUREMENT (BOM ITEMS) ===
+        rm_procurement_status = {"rm_shortfall_exists": False, "rm_items_status": []}
 
-            draft_for_others_details = frappe.db.sql("""
-                SELECT pl.name AS pick_list_name, pl.customer, pli.sales_order,
-                       'Draft' AS status, pli.qty
-                FROM `tabPick List Item` pli
-                JOIN `tabPick List` pl ON pli.parent = pl.name
-                WHERE pl.docstatus = 0
-                  AND pli.item_code = %s
-                  AND pli.sales_order != %s
-            """, (item_code, sales_order_name), as_dict=1)
-        else:
-            # If Sales Order is new, everything is 'for others' by default (not linked to a name)
-            # You might need more complex logic here if you need to calculate conflicts on new docs
-            picked_for_others_details = frappe.db.sql("""
-                SELECT pl.name AS pick_list_name, pl.customer, pli.sales_order,
-                       'Submitted' AS status,
-                       (pli.picked_qty * (100 - IFNULL(pl.per_delivered, 0)) / 100) AS qty
-                FROM `tabPick List` pl
-                JOIN `tabPick List Item` pli ON pl.name = pli.parent
-                WHERE pl.docstatus = 1
-                  AND pl.status NOT IN ('Completed', 'Cancelled')
-                  AND pli.item_code = %s
-            """, (item_code,), as_dict=1)
+        if bom_no and required_qty > delivered_qty:
+            try:
+                bom_doc = frappe.get_doc("BOM", bom_no)
+                unfulfilled_fg = required_qty - delivered_qty
+                rm_map = {}
+                rm_codes = [i.item_code for i in bom_doc.items]
 
-            draft_for_others_details = frappe.db.sql("""
-                SELECT pl.name AS pick_list_name, pl.customer, pli.sales_order,
-                       'Draft' AS status, pli.qty
-                FROM `tabPick List Item` pli
-                JOIN `tabPick List` pl ON pli.parent = pl.name
-                WHERE pl.docstatus = 0
-                  AND pli.item_code = %s
-            """, (item_code,), as_dict=1)
+                for bi in bom_doc.items:
+                    rm_code = bi.item_code
+                    rm_qty_per_fg = flt(bi.stock_qty or bi.qty or 1)
+                    rm_map[rm_code] = {
+                        "rm_code": rm_code,
+                        "rm_required_total": unfulfilled_fg * rm_qty_per_fg,
+                        "rm_available_stock": 0,
+                        "rm_pending_so_linked_total": 0,
+                        "rm_shortfall_total": 0,
+                        "status": "No PO Linked",
+                        "po_documents": []
+                    }
 
+                # Available RM stock in warehouse
+                if rm_codes:
+                    stock_data = frappe.db.sql("""
+                        SELECT item_code, SUM(actual_qty) as qty
+                        FROM `tabBin`
+                        WHERE item_code IN %s AND warehouse = %s
+                        GROUP BY item_code
+                    """, (tuple(rm_codes), warehouse), as_dict=1)
+                    for s in stock_data:
+                        if s.item_code in rm_map:
+                            rm_map[s.item_code]["rm_available_stock"] = flt(s.qty)
 
-        picked_for_others_qty = sum(flt(r.qty) for r in picked_for_others_details)
-        draft_qty_for_others = sum(flt(r.qty) for r in draft_for_others_details)
+                    # Pending RM POs linked to this SO
+                    pending_rm = frappe.db.sql("""
+                        SELECT 
+                            source.raw_material_item,
+                            SUM(poi.qty - poi.received_qty) as pending_qty,
+                            GROUP_CONCAT(DISTINCT source.parent) as po_list
+                        FROM `tabPurchase Order Raw Material Source` source
+                        JOIN `tabPurchase Order Item` poi 
+                            ON poi.parent = source.parent 
+                            AND poi.item_code = source.raw_material_item -- <--- THIS FIXES THE 15 ISSUE
+                        WHERE source.source_sales_order = %s
+                          AND source.raw_material_item IN %s
+                          AND poi.docstatus = 1 
+                          AND (poi.qty - poi.received_qty) > 0
+                        GROUP BY source.raw_material_item
+                    """, (sales_order_name, tuple(rm_codes)), as_dict=1)
 
-        # --- COMBINE CONFLICT DETAILS FOR FRONTEND ---
-        conflict_details = picked_for_others_details + draft_for_others_details
+                    for pr in pending_rm:
+                        rm = rm_map.get(pr.raw_material_item)
+                        if rm:
+                            rm["rm_pending_so_linked_total"] = flt(pr.pending_qty)
+                            rm["po_documents"] = pr.po_list.split(",") if pr.po_list else []
 
-        # --- BUILD FINAL STRUCTURE ---
+                # Final status
+                for idx, rm in enumerate(rm_map.values(), 1):
+                    
+                    # === ADDED LINE: Assign Row Number ===
+                    rm["row_idx"] = idx 
+                    
+                    # Logic for shortfalls
+                    covered = rm["rm_available_stock"] + rm["rm_pending_so_linked_total"]
+                    shortfall = rm["rm_required_total"] - covered
+                    rm["rm_shortfall_total"] = max(0, shortfall)
+
+                    if shortfall <= 0:
+                        rm["status"] = "Procured/Covered"
+                    elif covered > 0:
+                        rm["status"] = "Partial Procured/On Order"
+                        rm_procurement_status["rm_shortfall_exists"] = True
+                    else:
+                        rm["status"] = "No PO Linked"
+                        rm_procurement_status["rm_shortfall_exists"] = True
+
+                    rm_procurement_status["rm_items_status"].append(rm)
+
+            except Exception as e:
+                frappe.log_error(f"RM Error for {item_code}", str(e))
+
+        # === FINAL RESULT ===
         results[item_code] = {
             "required_qty": required_qty,
             "delivered_qty": delivered_qty,
-            "warehouse": so_item.warehouse if so_item else None,
-            "customer": so_doc.customer if so_doc and so_doc.customer else None,
-            "sales_order_item_name": so_item.name if so_item else None,
-            "stock_uom": so_item.stock_uom if so_item else None,
             "total_available_stock": total_available_stock,
-            "picked_for_others_qty": picked_for_others_qty,
-            "draft_qty_for_others": draft_qty_for_others,
-            "picked_draft_qty_so": picked_draft_qty_so,
-            "picked_submitted_qty_so_actual": picked_submitted_qty_actual,
-            "picked_submitted_undelivered_qty": picked_submitted_undelivered_qty,
-            "total_incoming_qty": total_incoming_qty,
-            "total_incoming_po_count": total_incoming_po_count, # <<<< NEW FIELD
-            "incoming_stock": incoming_stock,
+            "received_for_so_qty": received_for_so_qty,
+            "general_stock_qty": general_stock_qty,
             "warehouse_stock": warehouse_stock,
+            "completed_receipt_docs": completed_receipt_docs,
             "picked_for_this_so_details": picked_for_this_so_details,
-            "conflict_details": conflict_details,
+            "picked_draft_qty_so": picked_draft_qty_so,
+            "picked_submitted_qty_so_actual": picked_submitted_qty_so_actual,
+            "picked_submitted_undelivered_qty": picked_submitted_undelivered_qty,
+            "incoming_stock": incoming_stock,
+            "total_incoming_qty": total_incoming_qty,
+            "total_incoming_po_count": total_incoming_po_count,
+            "total_incoming_se_count": 0,
+            "rm_procurement_status": rm_procurement_status,
+            "customer": so_doc.customer if so_doc else None,
+            "warehouse": warehouse,
+            "is_bom_item": bool(bom_no),
+            "stock_uom": stock_uom
         }
 
     return results
-
 
 @frappe.whitelist()
 def get_linked_delivery_notes(sales_order_name):
@@ -1257,16 +1330,24 @@ def _get_pl_yet_to_pick_qty_for_so_item(sales_order, item_code):
 # def _get_pick_list_total_committed_qty(sales_order, item_code): 
 #     return _get_pl_picked_qty_for_so_item(sales_order, item_code) + _get_pl_yet_to_pick_qty_for_so_item(sales_order, item_code)
 """
+# --- Place this code in your custom app's server-side script file ---
+
+import frappe
+from frappe import _
+from frappe.utils import flt, cint
+from collections import defaultdict
 
 @frappe.whitelist()
 def get_pending_so_with_material_stock(is_subcontracted=False):
+    """
+    Fetches pending Sales Order items, calculates their stock and procurement status,
+    and returns a consolidated summary and a detailed list.
+
+    This function now correctly identifies the GROSS procurement need and the NET
+    quantity to purchase by accounting for quantities already on open Purchase Orders.
+    """
     is_subcontracted = cint(is_subcontracted)
     item_code_field = "fg_item" if is_subcontracted else "item_code"
-    
-    # Existing helper is a placeholder - let's implement the specific logic in the loop for visibility
-    # We will rename the variable to what it actually represents: the total committed/reserved via Pick List
-    # We will assume you replace `frm.trigger('refresh');` with the necessary imports or logic
-    # if frappe's existing `_get_pick_list_reserved_qty` is not suitable/does not exist.
     
     condition = "AND soi.bom_no IS NOT NULL AND soi.bom_no != ''" if is_subcontracted else "AND (soi.bom_no IS NULL OR soi.bom_no = '')"
 
@@ -1287,18 +1368,20 @@ def get_pending_so_with_material_stock(is_subcontracted=False):
     final_pending_orders = []
     for so_item in pending_orders_raw:
         
-        # 1. Quantity of THIS Sales Order Item already accounted for on an open PO
-        ordered_on_pos_raw = frappe.db.sql("""
-            SELECT SUM(poi.qty) FROM `tabPurchase Order Item` AS poi
+        # 1. Find existing open Purchase Orders for this specific Sales Order Item.
+        existing_po_items = frappe.db.sql("""
+            SELECT poi.parent, poi.qty
+            FROM `tabPurchase Order Item` AS poi
             JOIN `tabPurchase Order` AS po ON po.name = poi.parent
-            WHERE po.docstatus = 1 AND po.status NOT IN ('Closed', 'Cancelled')
+            WHERE po.docstatus = 1 AND po.status NOT IN ('Closed', 'Cancelled', 'Completed')
             AND poi.sales_order = %(sales_order)s AND poi.{field} = %(item_code)s
-        """.format(field=item_code_field), {'sales_order': so_item.sales_order, 'item_code': so_item.item_code})
-        ordered_on_pos = flt(ordered_on_pos_raw[0][0])
+        """.format(field=item_code_field), {'sales_order': so_item.sales_order, 'item_code': so_item.item_code}, as_dict=True)
 
-        # 2. Pick List reservation for THIS SO (The total committed via PL: Draft (yet to pick) and Submitted (picked))
-        
-        # New: Get the submitted (picked) quantity
+        ordered_on_pos_qty = sum(flt(item.qty) for item in existing_po_items)
+        existing_po_info_list = [f"{item.parent} (Qty: {flt(item.qty)})" for item in existing_po_items]
+        existing_pos_info = ", ".join(existing_po_info_list)
+
+        # 2. Calculate quantities committed via Pick Lists for this Sales Order item.
         pl_picked_qty = flt(frappe.db.sql("""
             SELECT SUM(pli.picked_qty) FROM `tabPick List Item` pli 
             JOIN `tabPick List` pl ON pl.name = pli.parent
@@ -1306,67 +1389,55 @@ def get_pending_so_with_material_stock(is_subcontracted=False):
             AND pl.status NOT IN ('Completed', 'Cancelled')
         """, (so_item.sales_order, so_item.item_code))[0][0])
         
-        # New: Get the draft (yet to pick) quantity
         pl_yet_to_pick_qty = flt(frappe.db.sql("""
             SELECT SUM(pli.qty) FROM `tabPick List Item` pli 
             JOIN `tabPick List` pl ON pl.name = pli.parent
             WHERE pli.sales_order = %s AND pli.item_code = %s AND pl.docstatus = 0
         """, (so_item.sales_order, so_item.item_code))[0][0])
         
-        # Total committed by Pick List (Picked + Yet to Pick)
         total_pl_committed = pl_picked_qty + pl_yet_to_pick_qty
 
-        # --- KEY CALCULATION: Remaining SO Quantity - Committed to Pick Lists ---
+        # 3. Calculate the GROSS uncommitted quantity.
         qty_uncommitted = so_item.qty - so_item.delivered_qty - total_pl_committed
 
         if qty_uncommitted > 0.001:
-            # The SO item is not fully delivered AND has an uncommitted/unreserved quantity that needs procurement/picking.
+            so_item['gross_pending_qty'] = max(0, flt(qty_uncommitted))
+            so_item['already_ordered_qty'] = ordered_on_pos_qty
+            so_item['existing_pos_info'] = existing_pos_info
             
-            # 3. FINAL Qty to purchase (The procurement need): 
-            # (Total Required - Delivered - Committed by PL) - Ordered (on PO)
-            qty_pending_purchase = qty_uncommitted - ordered_on_pos
-            
-            # Use the procurement need as the item's main 'pending_qty'. Must not be negative.
+            # 4. Calculate the NET quantity to purchase.
+            qty_pending_purchase = qty_uncommitted - ordered_on_pos_qty
             so_item['pending_qty'] = max(0, flt(qty_pending_purchase)) 
             
-            # Detailed Breakdown for FE if needed (and total)
+            # Add detailed breakdown for the frontend UI.
             so_item['pl_picked_qty'] = pl_picked_qty
             so_item['pl_yet_to_pick_qty'] = pl_yet_to_pick_qty
-            so_item['fg_reserved_for_so_qty'] = total_pl_committed # Renamed in the UI from previous value
+            so_item['fg_reserved_for_so_qty'] = total_pl_committed
             
-            if so_item['pending_qty'] > 0: # Only add items that require procurement
-                 final_pending_orders.append(so_item)
-
+            final_pending_orders.append(so_item)
 
     if not final_pending_orders:
         return {}
 
-    # --- Building the summary and propagating item status (Aggregation remains the same) ---
+    # --- Build the summary and propagate overall item status ---
     item_summary_dict = defaultdict(lambda: {"total_qty": 0, "order_count": 0, "boms": set(), "item_name": ""})
     for so in final_pending_orders:
         item_code = so.item_code
-        item_summary_dict[item_code]["total_qty"] += so.pending_qty # Sum the procurement need
+        item_summary_dict[item_code]["total_qty"] += so.pending_qty
         item_summary_dict[item_code]["order_count"] += 1
         item_summary_dict[item_code]["item_name"] = so.item_name
         if so.bom: item_summary_dict[item_code]["boms"].add(so.bom)
     
     item_summary = []
     for item_code, data in item_summary_dict.items():
-        
-        # 1. Overall Total Stock (Actual) 
-        # Using a safer query if Bin doesn't have aggregate sum defined
         fg_actual_res = frappe.db.sql("SELECT SUM(actual_qty) FROM `tabBin` WHERE item_code = %s", item_code)
         fg_actual = flt(fg_actual_res[0][0])
         
-        # 2. Overall Reserved Quantity (from Stock Reservation Entry - the main commitment driver)
-        # SRE Total Committed
         total_reserved_res = frappe.db.sql("SELECT SUM(reserved_qty) FROM `tabStock Reservation Entry` WHERE item_code = %s AND docstatus = 1", item_code)
         total_reserved = flt(total_reserved_res[0][0])
         
-        # Available = Total Actual - Total Committed (from Stock Reservation)
         fg_available = fg_actual - total_reserved
         
-        # Pick List aggregation is for reference/display, no change needed as it is non-additive in calculation here
         total_picked_submitted = flt(frappe.db.sql("""
             SELECT SUM(pli.picked_qty) FROM `tabPick List Item` pli 
             JOIN `tabPick List` pl ON pl.name = pli.parent
@@ -1379,57 +1450,43 @@ def get_pending_so_with_material_stock(is_subcontracted=False):
             WHERE pli.item_code = %s AND pl.docstatus = 0
         """, (item_code))[0][0])
         
-        
         bom = next(iter(data["boms"]), None)
-        # You'll need an implementation for _get_bom_stock_details if this is not a standard helper
-        # materials = _get_bom_stock_details(bom, data["total_qty"]) if bom and data["total_qty"] > 0 else [] 
-        
-        # Temporarily removing the _get_bom_stock_details call as its logic is in the other Python function which you didn't provide.
-        # Ensure it's imported or defined if required. If not available, replace with []
-        materials = [] 
-        # Check if the needed BOM helper is a common one or defined below
-        try:
-             # Assume _get_bom_stock_details is a custom defined function like _get_pick_list_reserved_qty
-             materials = _get_bom_stock_details(bom, data["total_qty"]) if bom and data["total_qty"] > 0 else [] 
-        except NameError:
-             pass # Use empty list if helper is not defined in this scope
+        materials = []
+        # NOTE: You may need to implement a helper function like _get_bom_stock_details
+        # if you need to show raw material availability in the summary view.
+        # For now, it's an empty list.
 
-        
         item_summary.append({
             "item_code": item_code, 
             "item_name": data["item_name"],
-            
-            # --- POPULATED SUMMARY FIELDS ---
             "fg_total_stock": flt(fg_actual), 
-            "fg_available_qty": flt(fg_available), # Unrestricted/Uncommitted stock based on general SRE
+            "fg_available_qty": flt(fg_available),
             "fg_picked_submitted": flt(total_picked_submitted),
             "fg_picked_draft": flt(total_picked_draft),
-            
-            # --- OLD/GENERAL FIELDS ---
-            "total_pending_qty": data["total_qty"], # Total Procurement Need across all SOs for this item
+            "total_pending_qty": data["total_qty"],
             "order_count": data["order_count"],
-            "total_reserved_qty": flt(total_reserved), # General item reserved from SREs
+            "total_reserved_qty": flt(total_reserved),
             "raw_materials": materials
         })
         
-    # Final Propagation Loop 
+    # Final loop to propagate summary data to each individual SO item line
     for so_item in final_pending_orders:
-        summary = next(i for i in item_summary if i['item_code'] == so_item.item_code)
-        
-        # Attach *total* item data from the Summary back to the individual SO row
-        so_item['fg_total_stock'] = summary['fg_total_stock']
-        so_item['fg_total_reserved_qty'] = summary['total_reserved_qty']
-        so_item['fg_available_qty'] = summary['fg_available_qty'] 
-        so_item['fg_picked_submitted'] = summary['fg_picked_submitted']
-        so_item['fg_picked_draft'] = summary['fg_picked_draft']
-
+        summary = next((i for i in item_summary if i['item_code'] == so_item.item_code), None)
+        if summary:
+            so_item['fg_total_stock'] = summary['fg_total_stock']
+            so_item['fg_total_reserved_qty'] = summary['total_reserved_qty']
+            so_item['fg_available_qty'] = summary['fg_available_qty'] 
+            so_item['fg_picked_submitted'] = summary['fg_picked_submitted']
+            so_item['fg_picked_draft'] = summary['fg_picked_draft']
+    
     return {
         "item_summary": sorted(item_summary, key=lambda x: x['total_pending_qty'], reverse=True),
         "sales_orders": final_pending_orders
     }
 
-
-
+# NOTE: Make sure you have all other required backend functions like 
+# get_linked_subcontracting_docs, get_sco_status_for_po, validate_and_get_items_for_po, etc.
+# in your Python script file.
 
 import frappe
 from frappe.utils import flt, cint
@@ -1517,6 +1574,7 @@ def get_raw_materials_for_selected_so_items(selected_items, is_subcontracted=Fal
         "total_required_items": len([m for m in materials if m['required_qty'] > 0]),
         "shortage_items": len([m for m in materials if m['shortage'] > 0])
     }
+    
 def _get_bom_stock_details(bom, fg_qty):
     """
     Helper function to get raw materials with stock details for a single BOM and quantity.
@@ -2146,29 +2204,21 @@ def validate_and_get_items_for_po(selected_items, is_subcontracted=False):
     }
 # --- HELPER FUNCTIONS (No changes below) ---
 
-def get_item_details_for_po(item_code):
-    if not item_code: return {}
-    details = frappe.db.get_value("Item", item_code, ["purchase_uom", "stock_uom", "description", "item_name"], as_dict=True)
-    if not details: return {}
-    uom = details.purchase_uom or details.stock_uom
-    factor = frappe.db.get_value("UOM Conversion Detail", {"parent": item_code, "uom": uom}, "conversion_factor") or 1.0
-    return {"uom": uom, "stock_uom": details.stock_uom, "description": details.description, "item_name": details.item_name, "conversion_factor": factor}
-
 # def get_stock_reservations_other(sales_order, item_code):
 #     if not sales_order or not item_code: return []
 #     return frappe.db.get_all("Stock Reservation Entry", filters={"voucher_no": sales_order, "item_code": item_code, "docstatus": 1}, fields=["name", "reserved_qty"])
 
-def _get_bom_stock_details(bom_name, required_fg_qty):
-    if not bom_name or not required_fg_qty: return []
-    bom_items = frappe.db.get_all("BOM Item", filters={"parent": bom_name}, fields=["item_code", "item_name", "qty", "stock_uom"])
-    results = []
-    for item in bom_items:
-        required_qty = item.qty * required_fg_qty
-        stock_data = frappe.db.sql("SELECT SUM(actual_qty), SUM(reserved_qty) FROM `tabBin` WHERE item_code = %s", (item.item_code), as_list=True)
-        actual_qty = (stock_data[0][0] or 0)
-        reserved_qty = (stock_data[0][1] or 0)
-        results.append({ "item_code": item.item_code, "item_name": item.item_name, "required_qty": required_qty, "actual_qty": actual_qty, "reserved_qty": reserved_qty, "available_qty": actual_qty - reserved_qty, "stock_uom": item.stock_uom })
-    return results
+# def _get_bom_stock_details(bom_name, required_fg_qty):
+#     if not bom_name or not required_fg_qty: return []
+#     bom_items = frappe.db.get_all("BOM Item", filters={"parent": bom_name}, fields=["item_code", "item_name", "qty", "stock_uom"])
+#     results = []
+#     for item in bom_items:
+#         required_qty = item.qty * required_fg_qty
+#         stock_data = frappe.db.sql("SELECT SUM(actual_qty), SUM(reserved_qty) FROM `tabBin` WHERE item_code = %s", (item.item_code), as_list=True)
+#         actual_qty = (stock_data[0][0] or 0)
+#         reserved_qty = (stock_data[0][1] or 0)
+#         results.append({ "item_code": item.item_code, "item_name": item.item_name, "required_qty": required_qty, "actual_qty": actual_qty, "reserved_qty": reserved_qty, "available_qty": actual_qty - reserved_qty, "stock_uom": item.stock_uom })
+#     return results
 
 
 def _get_pick_list_reserved_qty(sales_order_name, item_code):
@@ -2208,129 +2258,8 @@ def _get_pick_list_reserved_qty(sales_order_name, item_code):
 
 
 
-import frappe
-from frappe import _
-from frappe.utils import flt, get_abbr, nowdate
-from collections import defaultdict
-
-# --- NEW FUNCTION TO GET REQUIRED MATERIALS ---
-@frappe.whitelist()
-def get_required_raw_materials_for_po(purchase_order_name):
-    """
-    Aggregates all required raw materials for a subcontracting Purchase Order.
-    Fetches FG Items from PO, finds their default BOMs, and calculates total RM requirements.
-    """
-    po = frappe.get_doc("Purchase Order", purchase_order_name)
-    if not po.is_subcontracted:
-        frappe.throw(_("This action is only available for Subcontracting Purchase Orders."))
-
-    # Aggregate required FG quantities from the PO
-    fg_requirements = defaultdict(float)
-    for item in po.items:
-        if item.fg_item and item.fg_item_qty > 0:
-            fg_requirements[item.fg_item] += flt(item.fg_item_qty)
-    
-    if not fg_requirements:
-        return []
-
-    # Aggregate raw material requirements based on the BOM of each FG
-    rm_requirements = defaultdict(float)
-    for fg_item_code, total_fg_qty in fg_requirements.items():
-        # Get the default BOM for the finished good
-        default_bom = frappe.db.get_value("Item", fg_item_code, "default_bom")
-        if not default_bom:
-            frappe.throw(_("Please set a default BOM for Finished Good: {0}").format(fg_item_code))
-        
-        # Get BOM items (raw materials)
-        bom_items = frappe.get_all("BOM Item", filters={"parent": default_bom}, fields=["item_code", "qty"])
-        for bom_item in bom_items:
-            required_qty = flt(bom_item.qty) * flt(total_fg_qty)
-            rm_requirements[bom_item.item_code] += required_qty
-            
-    # Get stock levels for each required raw material
-    results = []
-    for rm_code, req_qty in rm_requirements.items():
-        item_details = frappe.db.get_value("Item", rm_code, ["item_name", "stock_uom"], as_dict=1)
-        
-        # Get available quantity from Bin
-        stock_data = frappe.db.sql("""
-            SELECT SUM(actual_qty), SUM(reserved_qty)
-            FROM `tabBin` WHERE item_code = %s
-        """, (rm_code), as_list=True)
-        
-        actual_qty = flt(stock_data[0][0])
-        reserved_qty = flt(stock_data[0][1])
-        available_qty = actual_qty - reserved_qty
-        
-        results.append({
-            "item_code": rm_code,
-            "item_name": item_details.item_name,
-            "uom": item_details.stock_uom,
-            "required_qty": req_qty,
-            "available_qty": available_qty
-        })
-        
-    return sorted(results, key=lambda x: x['item_name'])
 
 
-
-from erpnext.buying.doctype.purchase_order.purchase_order import make_subcontracting_order
-from erpnext.controllers.subcontracting_controller import make_rm_stock_entry
-
-@frappe.whitelist()
-# @frappe.db.transaction
-def create_subcontracting_docs(purchase_order_name):
-    """
-    Creates and submits a Subcontracting Order, and then immediately creates and
-    submits the corresponding Material Transfer Stock Entry to a common warehouse.
-    This is a single, atomic transaction.
-    """
-    po = frappe.get_doc("Purchase Order", purchase_order_name)
-
-    subcontractor_warehouse = "Jobers Warehouse - IND"
-
-    if not frappe.db.exists("Warehouse", subcontractor_warehouse):
-        frappe.throw(_("The common subcontracting warehouse '{0}' does not exist. Please create it before proceeding.").format(subcontractor_warehouse))
-
-    # Create the Subcontracting Order
-    sco = make_subcontracting_order(purchase_order_name)
-    
-    # Set custom/required values before saving
-    sco.supplier = po.supplier
-    target_warehouse = "VV Puram - IND"
-    sco.set_warehouse = target_warehouse
-    for item in sco.items:
-        item.warehouse = target_warehouse
-    
-    # Save and submit the SCO
-    sco.insert(ignore_permissions=True)
-    sco.submit()
-    po.add_comment("Comment", _("Created Subcontracting Order: {0}").format(sco.name))
-
-    # --- START OF FIX ---
-
-    # 1. Get the doclist from the controller function
-    # The name is changed to `ste_doclist` for clarity.
-    ste_doclist = make_rm_stock_entry(subcontract_order=sco.name, order_doctype=sco.doctype)
-    
-    # 2. Convert the returned doclist (list of dicts) into a proper Document object.
-    ste_doc = frappe.get_doc(ste_doclist)
-    
-    # --- END OF FIX ---
-    
-    # Now, `ste_doc` is a proper Document object, and the rest of the code will work.
-    for item in ste_doc.items:
-        item.t_warehouse = subcontractor_warehouse
-    
-    # Save and submit the now-corrected Stock Entry
-    ste_doc.insert(ignore_permissions=True)
-    ste_doc.submit()
-    po.add_comment("Comment", _("Created Material Transfer: {0}").format(ste_doc.name))
-    
-    return {
-        "sco_name": sco.name,
-        "ste_name": ste_doc.name
-    }
 @frappe.whitelist()
 # @frappe.db.transaction
 def create_material_request_for_shortage(purchase_order_name):
@@ -2416,108 +2345,27 @@ from erpnext.subcontracting.doctype.subcontracting_receipt.subcontracting_receip
 from erpnext.stock.doctype.purchase_receipt.purchase_receipt import make_purchase_invoice
 
 
-@frappe.whitelist()
-def get_sco_status_for_po(purchase_order_name):
-    """
-    Checks the status of the Subcontracting Order linked to a Purchase Order.
-    Returns the SCO name and whether there are items pending receipt.
-    """
-    sco_info = frappe.db.get_value(
-        "Subcontracting Order",
-        {"purchase_order": purchase_order_name, "docstatus": 1},
-        ["name", "per_received"],
-        as_dict=True
-    )
+# @frappe.whitelist()
+# def get_sco_status_for_po(purchase_order_name):
+#     """
+#     Checks the status of the Subcontracting Order linked to a Purchase Order.
+#     Returns the SCO name and whether there are items pending receipt.
+#     """
+#     sco_info = frappe.db.get_value(
+#         "Subcontracting Order",
+#         {"purchase_order": purchase_order_name, "docstatus": 1},
+#         ["name", "per_received"],
+#         as_dict=True
+#     )
 
-    if not sco_info:
-        return {"sco_exists": False, "items_pending": False}
+#     if not sco_info:
+#         return {"sco_exists": False, "items_pending": False}
 
-    return {
-        "sco_exists": True,
-        "sco_name": sco_info.name,
-        "items_pending": flt(sco_info.per_received) < 100
-    }
-
-@frappe.whitelist()
-def get_pending_sco_items(sco_name):
-    """
-    Gets items from a Subcontracting Order that are pending to be received.
-    """
-    sco = frappe.get_doc("Subcontracting Order", sco_name)
-    pending_items = []
-    for item in sco.items:
-        pending_qty = flt(item.qty) - flt(item.received_qty)
-        if pending_qty > 0:
-            pending_items.append({
-                "name": item.name, # Child Doc ID is important
-                "item_code": item.item_code,
-                "item_name": item.item_name,
-                "ordered_qty": item.qty,
-                "received_qty": item.received_qty,
-                "pending_qty": pending_qty,
-                
-                # --- THIS IS THE FIX ---
-                # The correct field name is 'stock_uom' not 'uom'
-                "uom": item.stock_uom
-            })
-    return pending_items
-@frappe.whitelist()
-def create_receipt_documents(sco_name, items_to_receive):
-    """
-    1. Creates and submits a Subcontracting Receipt (SCR).
-    2. Creates and submits a Purchase Receipt (PR) from the SCR.
-    3. Creates and submits a Purchase Invoice (PI) from the PR.
-    """
-    items_to_receive = frappe.parse_json(items_to_receive)
-
-    # 1. Create Subcontracting Receipt (SCR)
-    scr = make_subcontracting_receipt(sco_name)
-    
-    # Filter items and update quantities based on user input
-    final_items = []
-    for item_in_scr in scr.items:
-        matching_item = next((i for i in items_to_receive if i.get("name") == item_in_scr.subcontracting_order_item), None)
-        if matching_item:
-            qty_to_receive = flt(matching_item.get("qty_to_receive"))
-            if qty_to_receive > 0:
-                item_in_scr.qty = qty_to_receive
-                final_items.append(item_in_scr)
-
-    if not final_items:
-        frappe.throw(_("No items with a quantity greater than zero were selected for receipt."))
-        
-    scr.items = final_items
-    scr.insert(ignore_permissions=True)
-    scr.submit()
-    
-    # 2. Create Purchase Receipt (PR) from the SCR
-    pr = make_purchase_receipt_from_scr(scr.name)
-    pr.insert(ignore_permissions=True)
-    pr.submit()
-    
-    # --- START OF NEW LOGIC ---
-    # 3. Create Purchase Invoice (PI) from the PR
-    pi = make_purchase_invoice(pr.name)
-    pi.insert(ignore_permissions=True)
-    # Note: Depending on your company's process, you may want to leave the PI in Draft.
-    # To save as draft, comment out the line below.
-    pi.submit()
-    # --- END OF NEW LOGIC ---
-
-    # Add comments back to the original Purchase Order for full traceability
-    po_name = None
-    if scr.items:
-        source_sco_name = scr.items[0].subcontracting_order
-        if source_sco_name:
-            po_name = frappe.db.get_value("Subcontracting Order", source_sco_name, "purchase_order")
-            
-    if po_name:
-        po = frappe.get_doc("Purchase Order", po_name)
-        po.add_comment("Comment", _("Created Purchase Receipt: {0}").format(pr.name))
-        po.add_comment("Comment", _("Created Purchase Invoice: {0}").format(pi.name))
-
-    # Return the names of ALL documents created
-    return {"scr_name": scr.name, "pr_name": pr.name, "pi_name": pi.name}
+#     return {
+#         "sco_exists": True,
+#         "sco_name": sco_info.name,
+#         "items_pending": flt(sco_info.per_received) < 100
+#     }
 
 
 

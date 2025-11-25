@@ -145,7 +145,7 @@ app_include_css = "/assets/erp_dacsinc_custom/style.css?v=1.0.3"
 doc_events = {
     "Item": {
         "after_insert": "erp_dacsinc_custom.custom_script.item_after_insert",
-        "on_update": "erp_dacsinc_custom.custom_script.item_on_update",
+        # "on_update": "erp_dacsinc_custom.custom_script.item_on_update",
     },
     "Event": {
         "after_insert": "erp_dacsinc_custom.custom_lead.after_insert_event",
