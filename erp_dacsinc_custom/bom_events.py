@@ -22,7 +22,7 @@ def after_submit(doc, method):
         sc_bom.finished_good_qty = flt(doc.quantity)
         sc_bom.finished_good_bom = doc.name # Link to the source BOM
         sc_bom.conversion_factor = flt(doc.quantity)
-        sc_bom.service_item = "Order Charges"
+        sc_bom.service_item = doc.custom_service_item
         sc_bom.service_item_qty = 1
         sc_bom.service_item_uom = service_item_uom
         sc_bom.is_active = doc.is_active
@@ -51,6 +51,7 @@ def on_update_after_submit(doc, method):
         if sc_bom_name:
             sc_bom = frappe.get_doc("Subcontracting BOM", sc_bom_name)
             sc_bom.is_active = doc.is_active
+            sc_bom.service_item = doc.custom_service_item
             sc_bom.save(ignore_permissions=True)
             frappe.msgprint(f"Subcontracting BOM {sc_bom.name} status updated to {'Active' if doc.is_active else 'Inactive'}.", indicator="green")
 

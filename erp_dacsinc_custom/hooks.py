@@ -48,7 +48,7 @@ app_include_css = "/assets/erp_dacsinc_custom/style.css?v=1.0.3"
 # page_js = {"page" : "public/js/file.js"}
 
 # include js in doctype views
-# doctype_js = {"doctype" : "public/js/doctype.js"}
+# doctype_js = {"Purchase Order" : "public/js/purchase_order.js"}
 # doctype_list_js = {"doctype" : "public/js/doctype_list.js"}
 # doctype_tree_js = {"doctype" : "public/js/doctype_tree.js"}
 # doctype_calendar_js = {"doctype" : "public/js/doctype_calendar.js"}
@@ -174,6 +174,10 @@ doc_events = {
         "on_update_after_submit": "erp_dacsinc_custom.bom_events.on_update_after_submit",
         "on_cancel": "erp_dacsinc_custom.bom_events.on_cancel"
     },
+    "Purchase Receipt": {
+        "on_submit": "erp_dacsinc_custom.purchase_order.create_putaway_picklist",
+        "on_cancel": "erp_dacsinc_custom.purchase_order.delete_putaway_picklist"
+    }
 }
 
 
