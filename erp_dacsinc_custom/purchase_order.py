@@ -1608,7 +1608,6 @@ def create_receipt_documents(sco_name, items_to_receive):
 
 
 
-
 @frappe.whitelist()
 def create_putaway_picklist(doc, method=None):
     from collections import defaultdict
@@ -1617,16 +1616,18 @@ def create_putaway_picklist(doc, method=None):
 
     try:
         for row in doc.items:
+            # 1. Basic Validation
             valid_qty = row.qty - (row.get("rejected_qty") or 0)
             if valid_qty <= 0:
                 continue
 
-            # Detect linked PO Item
+            # 2. Detect linked PO Item
             po_item_link = row.get("purchase_order_item") or row.get("po_detail")
             if not po_item_link:
                 continue
 
-            # Get PO Item details
+            # 3. Get PO Data
+            # We try to get sales_order_item here, but sometimes it is None in the DB
             po_data = frappe.db.get_value(
                 "Purchase Order Item",
                 po_item_link,
@@ -1637,15 +1638,10 @@ def create_putaway_picklist(doc, method=None):
             if not po_data or not po_data.sales_order:
                 continue
 
-            # -----------------------------------------------------------
-            # FIX: Ensure sales_order_item (Row ID) exists
-            # -----------------------------------------------------------
-            so_item_name = po_data.sales_order_item
-            
-            # Subcontracting or Normal Item Logic
+            # 4. Determine correct Item Code (Subcontracting vs Normal)
             if doc.is_subcontracted:
                 # Use FG Item logic
-                final_item_code = frappe.db.get_value("Purchase Order Item", po_item_link, "fg_item")
+                final_item_code = po_data.fg_item
                 if not final_item_code:
                     continue
                 final_item_name = frappe.db.get_value("Item", final_item_code, "item_name")
@@ -1653,9 +1649,14 @@ def create_putaway_picklist(doc, method=None):
                 final_item_code = row.item_code
                 final_item_name = row.item_name
 
-            # If PO didn't have the specific SO Row ID, search for it in the Sales Order
-            if not so_item_name:
-                so_item_name = frappe.db.get_value(
+            # -----------------------------------------------------------
+            # CRITICAL FIX: Find the Sales Order Row ID (sales_order_item)
+            # -----------------------------------------------------------
+            so_item_id = po_data.sales_order_item
+
+            # If the PO doesn't have the link, we must find it manually in the SO
+            if not so_item_id:
+                so_item_id = frappe.db.get_value(
                     "Sales Order Item",
                     {
                         "parent": po_data.sales_order, 
@@ -1664,12 +1665,12 @@ def create_putaway_picklist(doc, method=None):
                     "name"
                 )
 
-            # If we still can't find the link, we cannot add it to the map
-            if not so_item_name:
-                frappe.msgprint(f"Skipping {final_item_code}: Could not find matching item in Sales Order {po_data.sales_order}")
+            # If we still don't have a link, we can't create a valid Pick List item
+            if not so_item_id:
+                frappe.log_error(f"Skipping Item {final_item_code}: Linked Sales Order Item not found in {po_data.sales_order}")
                 continue
 
-            # Add to SO grouping
+            # 5. Add to Map
             so_items_map[po_data.sales_order].append({
                 "item_code": final_item_code,
                 "item_name": final_item_name,
@@ -1678,13 +1679,13 @@ def create_putaway_picklist(doc, method=None):
                 "uom": row.uom,
                 "stock_uom": row.stock_uom,
                 "conversion_factor": row.conversion_factor or 1,
-                "sales_order_item": so_item_name, # Use the robust variable
+                "sales_order_item": so_item_id, # <--- This is the variable that fixes the DN issue
                 "serial_no": row.serial_no,
                 "batch_no": row.batch_no
             })
 
         # -----------------------------------------------------------
-        # BUILD PICK LISTS
+        # BUILD PICK LISTS (Draft Mode)
         # -----------------------------------------------------------
         for so_name, items in so_items_map.items():
             customer = frappe.db.get_value("Sales Order", so_name, "customer")
@@ -1693,7 +1694,7 @@ def create_putaway_picklist(doc, method=None):
             pl.company = doc.company
             pl.purpose = "Delivery"
             pl.customer = customer
-            pl.warehouse = doc.set_warehouse # Ensure this is not None
+            pl.warehouse = doc.set_warehouse
             pl.custom_purchase_receipt = doc.name
             pl.custom_notes = f"Created from PR {doc.name}"
 
@@ -1708,23 +1709,18 @@ def create_putaway_picklist(doc, method=None):
                     "stock_qty": i["qty"] * i["conversion_factor"],
                     "conversion_factor": i["conversion_factor"],
                     "sales_order": so_name,
-                    "sales_order_item": i["sales_order_item"], # Critical for DN creation
+                    "sales_order_item": i["sales_order_item"], # Ensure this is populated
                     "serial_no": i["serial_no"],
                     "batch_no": i["batch_no"]
                 })
 
+            # Save as Draft (No Submit)
             pl.insert(ignore_permissions=True)
             
-            # OPTIONAL: Automatically Submit the Pick List
-            # If you don't submit, you cannot create a DN immediately.
-            try:
-                pl.submit()
-                frappe.msgprint(
-                    f"Pick List Created & Submitted: <a href='/app/pick-list/{pl.name}'><b>{pl.name}</b></a>", 
-                    indicator="green"
-                )
-            except Exception as e:
-                frappe.msgprint(f"Pick List saved (Draft) but failed to submit: {str(e)}", indicator="orange")
+            frappe.msgprint(
+                f"Pick List Created (Draft): <a href='/app/pick-list/{pl.name}'><b>{pl.name}</b></a>", 
+                indicator="green"
+            )
 
     except Exception as e:
         frappe.log_error(f"PL Creation Error: {str(e)}", "Pick List Automation")
