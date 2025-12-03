@@ -1694,7 +1694,7 @@ def create_putaway_picklist(doc, method=None):
             pl.company = doc.company
             pl.purpose = "Delivery"
             pl.customer = customer
-            pl.warehouse = doc.set_warehouse
+            pl.parent_warehouse = doc.set_warehouse
             pl.custom_purchase_receipt = doc.name
             pl.custom_notes = f"Created from PR {doc.name}"
 
