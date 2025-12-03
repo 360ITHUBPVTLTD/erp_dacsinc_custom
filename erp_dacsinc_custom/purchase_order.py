@@ -29,108 +29,218 @@ def _get_pick_list_reserved_qty(sales_order, item_code):
     return pl_picked_qty + pl_yet_to_pick_qty
 
 
-# The validation function is updated with the exact same logic for consistency.
+# # The validation function is updated with the exact same logic for consistency.
+# @frappe.whitelist()
+# def validate_and_get_items_for_po(selected_items, is_subcontracted=False):
+#     selected_items = frappe.parse_json(selected_items)
+#     is_subcontracted = cint(is_subcontracted)
+#     item_code_field = 'fg_item' if is_subcontracted else 'item_code'
+    
+#     valid_items = []
+#     rejected_items = []
+    
+#     for item in selected_items:
+#         # pendingQty is the Quantity to Purchase/Manufacture as entered by the user
+#         qty_to_add = item.get('pendingQty', 0)
+
+#         # Get original SO details.
+#         so_item_details = frappe.db.get_value("Sales Order Item", 
+#             {'parent': item.get('salesOrder'), 'item_code': item.get('itemCode')}, 
+#             ['qty', 'delivered_qty'], 
+#             as_dict=True
+#         )
+#         if not so_item_details:
+#             rejected_items.append({"sales_order": item.get('salesOrder'), "item_name": item.get('itemName'), "reason": "Sales Order Item not found."})
+#             continue
+
+#         # 1. Calculate quantity already on other Purchase Orders.
+#         ordered_on_pos_raw = frappe.db.sql("""
+#             SELECT SUM(poi.qty) FROM `tabPurchase Order Item` AS poi
+#             JOIN `tabPurchase Order` AS po ON po.name = poi.parent
+#             WHERE po.docstatus = 1 AND poi.sales_order = %(sales_order)s AND poi.{field} = %(item_code)s
+#         """.format(field=item_code_field), {'sales_order': item.get('salesOrder'),'item_code': item.get('itemCode')})
+#         ordered_on_pos = (ordered_on_pos_raw[0][0] or 0) if ordered_on_pos_raw else 0
+
+#         # 2. FIXED: Calculate the quantity reserved via Pick Lists for this Sales Order.
+#         reserved_via_pick_list = _get_pick_list_reserved_qty(item.get('salesOrder'), item.get('itemCode'))
+        
+#         # 3. The true maximum allowable quantity for a new PO.
+#         max_allowable_qty = so_item_details.qty - so_item_details.delivered_qty - ordered_on_pos - reserved_via_pick_list
+        
+#         # The Core Validation.
+#         if qty_to_add > (max_allowable_qty + 0.001) or max_allowable_qty <= 0:
+#             # We reject if quantity exceeds the max, or if max is effectively 0
+#              rejected_items.append({
+#                 "sales_order": item.get('salesOrder'),
+#                 "item_name": item.get('itemName'),
+#                 "reason": f"Cannot add {qty_to_add} units. {max_allowable_qty:.2f} pending procurement."
+#             })
+#         else:
+#             # Item is valid, add it to the list.
+#             item_details_data = {}
+#             if is_subcontracted:
+#                 service_item_code = None
+#                 bom_name = item.get('bom_no')
+#                 if bom_name:
+#                     service_item_code = frappe.db.get_value("BOM", bom_name, "custom_service_item")
+
+#                 # 2. If BOM not passed or custom_service_item is empty, try Default BOM of the Item
+#                 if not service_item_code:
+#                     default_bom = frappe.db.get_value("Item", item.get('itemCode'), "default_bom")
+#                     if default_bom:
+#                         service_item_code = frappe.db.get_value("BOM", default_bom, "custom_service_item")
+
+#                 # 3. Fallback if still not found
+#                 if not service_item_code:
+#                     service_item_code = "Order Charges"
+#                 # Fetch details for the Service Item
+#                 item_details_data = get_item_details_for_po(service_item_code) or {}
+                
+#                 # Set Purchase Order Item standard fields (The Service Item):
+#                 item_details_data['item_code'] = service_item_code
+                
+#                 # ----------------- QTY is SYNCHRONIZED WITH fg_item_qty -----------------
+#                 # Service Item Qty
+#                 item_details_data['qty'] = qty_to_add 
+
+#                 # Set Subcontracting specific fields:
+#                 # fg_item is set to BOM ID per previous request
+#                 item_details_data['fg_item'] = item.get('itemCode')           
+#                 # Finished Good QTY is set to user input Qty
+#                 item_details_data['fg_item_qty'] = qty_to_add            
+#                 # -----------------------------------------------------------------------
+
+#                 item_details_data['sales_order'] = item.get('salesOrder') 
+#                 item_details_data['bom'] = item.get('bom')                
+
+#                 # Update description to be informative
+#                 description = item_details_data.get('description', '')
+#                 new_description_line = f"\n\nManufacturing of: {item.get('itemName')} ({item.get('itemCode')})\nRef SO: {item.get('salesOrder')}"
+#                 item_details_data['description'] = (description + new_description_line).strip()
+            
+#             else:
+#                 # Standard procurement (remains unchanged)
+#                 item_details_data = get_item_details_for_po(item.get('itemCode')) or {}
+                
+#                 item_details_data['item_code'] = item.get('itemCode')
+#                 item_details_data['qty'] = item.get('pendingQty')
+#                 item_details_data['sales_order'] = item.get('salesOrder')
+                
+#             valid_items.append(item_details_data)
+#     print(valid_items)
+#     print(rejected_items)
+#     return {
+#         "valid_items": valid_items,
+#         "rejected_items": rejected_items
+#     }
+
+
 @frappe.whitelist()
 def validate_and_get_items_for_po(selected_items, is_subcontracted=False):
+    from frappe.utils import cint, flt
+
     selected_items = frappe.parse_json(selected_items)
     is_subcontracted = cint(is_subcontracted)
     item_code_field = 'fg_item' if is_subcontracted else 'item_code'
     
     valid_items = []
-    rejected_items = []
+    
+    # We collect rejected items to debug, though we aim to accept user input
+    rejected_items = [] 
     
     for item in selected_items:
-        # pendingQty is the Quantity to Purchase/Manufacture as entered by the user
-        qty_to_add = item.get('pendingQty', 0)
+        # pendingQty is the Quantity the user explicitly typed in the dialog
+        qty_to_add = flt(item.get('pendingQty', 0))
+        sales_order = item.get('salesOrder')
+        item_code = item.get('itemCode')
+        item_name = item.get('itemName')
 
-        # Get original SO details.
-        so_item_details = frappe.db.get_value("Sales Order Item", 
-            {'parent': item.get('salesOrder'), 'item_code': item.get('itemCode')}, 
-            ['qty', 'delivered_qty'], 
-            as_dict=True
-        )
-        if not so_item_details:
-            rejected_items.append({"sales_order": item.get('salesOrder'), "item_name": item.get('itemName'), "reason": "Sales Order Item not found."})
+        if qty_to_add <= 0:
             continue
 
-        # 1. Calculate quantity already on other Purchase Orders.
-        ordered_on_pos_raw = frappe.db.sql("""
-            SELECT SUM(poi.qty) FROM `tabPurchase Order Item` AS poi
-            JOIN `tabPurchase Order` AS po ON po.name = poi.parent
-            WHERE po.docstatus = 1 AND poi.sales_order = %(sales_order)s AND poi.{field} = %(item_code)s
-        """.format(field=item_code_field), {'sales_order': item.get('salesOrder'),'item_code': item.get('itemCode')})
-        ordered_on_pos = (ordered_on_pos_raw[0][0] or 0) if ordered_on_pos_raw else 0
+        # 1. Fetch SO Item Details
+        # We sum them up just in case the item appears twice in the SO (Split lines)
+        so_data = frappe.db.sql("""
+            SELECT SUM(qty) as qty, SUM(delivered_qty) as delivered_qty 
+            FROM `tabSales Order Item` 
+            WHERE parent = %s AND item_code = %s
+        """, (sales_order, item_code), as_dict=True)
 
-        # 2. FIXED: Calculate the quantity reserved via Pick Lists for this Sales Order.
-        reserved_via_pick_list = _get_pick_list_reserved_qty(item.get('salesOrder'), item.get('itemCode'))
-        
-        # 3. The true maximum allowable quantity for a new PO.
-        max_allowable_qty = so_item_details.qty - so_item_details.delivered_qty - ordered_on_pos - reserved_via_pick_list
-        
-        # The Core Validation.
-        if qty_to_add > (max_allowable_qty + 0.001) or max_allowable_qty <= 0:
-            # We reject if quantity exceeds the max, or if max is effectively 0
-             rejected_items.append({
-                "sales_order": item.get('salesOrder'),
-                "item_name": item.get('itemName'),
-                "reason": f"Cannot add {qty_to_add} units. {max_allowable_qty:.2f} pending procurement."
-            })
-        else:
-            # Item is valid, add it to the list.
-            item_details_data = {}
-            if is_subcontracted:
-                service_item_code = None
-                bom_name = item.get('bom_no')
-                if bom_name:
-                    service_item_code = frappe.db.get_value("BOM", bom_name, "custom_service_item")
-
-                # 2. If BOM not passed or custom_service_item is empty, try Default BOM of the Item
-                if not service_item_code:
-                    default_bom = frappe.db.get_value("Item", item.get('itemCode'), "default_bom")
-                    if default_bom:
-                        service_item_code = frappe.db.get_value("BOM", default_bom, "custom_service_item")
-
-                # 3. Fallback if still not found
-                if not service_item_code:
-                    service_item_code = "Order Charges"
-                # Fetch details for the Service Item
-                item_details_data = get_item_details_for_po(service_item_code) or {}
-                
-                # Set Purchase Order Item standard fields (The Service Item):
-                item_details_data['item_code'] = service_item_code
-                
-                # ----------------- QTY is SYNCHRONIZED WITH fg_item_qty -----------------
-                # Service Item Qty
-                item_details_data['qty'] = qty_to_add 
-
-                # Set Subcontracting specific fields:
-                # fg_item is set to BOM ID per previous request
-                item_details_data['fg_item'] = item.get('itemCode')           
-                # Finished Good QTY is set to user input Qty
-                item_details_data['fg_item_qty'] = qty_to_add            
-                # -----------------------------------------------------------------------
-
-                item_details_data['sales_order'] = item.get('salesOrder') 
-                item_details_data['bom'] = item.get('bom')                
-
-                # Update description to be informative
-                description = item_details_data.get('description', '')
-                new_description_line = f"\n\nManufacturing of: {item.get('itemName')} ({item.get('itemCode')})\nRef SO: {item.get('salesOrder')}"
-                item_details_data['description'] = (description + new_description_line).strip()
+        if not so_data or not so_data[0].qty:
+            rejected_items.append({"item_code": item_code, "reason": "Item not found in Sales Order"})
+            continue
             
-            else:
-                # Standard procurement (remains unchanged)
-                item_details_data = get_item_details_for_po(item.get('itemCode')) or {}
-                
-                item_details_data['item_code'] = item.get('itemCode')
-                item_details_data['qty'] = item.get('pendingQty')
-                item_details_data['sales_order'] = item.get('salesOrder')
-                
-            valid_items.append(item_details_data)
+        so_qty = flt(so_data[0].qty)
+        delivered_qty = flt(so_data[0].delivered_qty)
+
+        # 2. Prepare Item Data
+        item_details_data = {}
+
+        if is_subcontracted:
+            service_item_code = None
+            
+            # FIX: Use 'bom' from JSON, not 'bom_no'
+            bom_name = item.get('bom') 
+            
+            if bom_name:
+                service_item_code = frappe.db.get_value("BOM", bom_name, "custom_service_item")
+
+            # Fallback to Item Default BOM
+            if not service_item_code:
+                default_bom = frappe.db.get_value("Item", item_code, "default_bom")
+                if default_bom:
+                    service_item_code = frappe.db.get_value("BOM", default_bom, "custom_service_item")
+
+            # Final Fallback
+            if not service_item_code:
+                service_item_code = "Order Charges" # Ensure this Item exists in your system!
+
+            # Fetch basic details (UOM, Rate, etc) for the Service Item
+            # Using standard frappe call if your custom function doesn't exist
+            try:
+                # Try your custom function if it exists globally
+                item_details_data = get_item_details_for_po(service_item_code) or {}
+            except NameError:
+                # Fallback to standard fetch
+                item_details_data = frappe.db.get_value("Item", service_item_code, 
+                    ["item_name", "description", "stock_uom as uom", "purchase_uom"], as_dict=True) or {}
+                item_details_data['conversion_factor'] = 1
+
+            # --- Subcontracting Mapping ---
+            item_details_data['item_code'] = service_item_code
+            item_details_data['qty'] = qty_to_add 
+            
+            # Important: Map FG Item
+            item_details_data['fg_item'] = item_code
+            item_details_data['fg_item_qty'] = qty_to_add            
+            item_details_data['bom'] = bom_name
+            
+            # Description
+            desc = item_details_data.get('description', '')
+            item_details_data['description'] = f"{desc}\nManufacturing: {item_name}\nRef SO: {sales_order}".strip()
+
+        else:
+            # Standard Buying
+            try:
+                item_details_data = get_item_details_for_po(item_code) or {}
+            except NameError:
+                item_details_data = frappe.db.get_value("Item", item_code, 
+                    ["item_name", "description", "stock_uom as uom"], as_dict=True) or {}
+                item_details_data['conversion_factor'] = 1
+
+            item_details_data['item_code'] = item_code
+            item_details_data['qty'] = qty_to_add
+            item_details_data['description'] = item_details_data.get('description', item_name)
+
+        # Common Fields
+        item_details_data['sales_order'] = sales_order
+        
+        # Add to valid list (We trust the user input)
+        valid_items.append(item_details_data)
 
     return {
         "valid_items": valid_items,
-        "rejected_items": rejected_items
+        "rejected_items": rejected_items # Check this in console if list is still empty
     }
 
 # import frappe
