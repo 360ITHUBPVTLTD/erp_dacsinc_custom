@@ -23,6 +23,10 @@ def get_columns(filters=None):
             {"label": "Reference Type", "fieldname": "reference_type", "fieldtype": "Data", "width": 120},
             {"label": "Reference Name", "fieldname": "reference_name", "fieldtype": "Dynamic Link", "options": "reference_type", "width": 150},
             {"label": "Lead Name", "fieldname": "lead_name", "fieldtype": "Data", "width": 150},
+            {"label": "Lead Organization Name", "fieldname": "company_name", "fieldtype": "Data", "width": 150},
+            {"label": "Lead Mobile", "fieldname": "mobile_no", "fieldtype": "Data", "width": 150},
+
+            {"label": "Lead Email", "fieldname": "email_id", "fieldtype": "Data", "width": 150},
             # {"label": "Lead ID", "fieldname": "lead_id", "fieldtype": "Link", "options": "Lead", "width": 100},
             {"label": "Lead Owner", "fieldname": "lead_owner", "fieldtype": "Link", "options": "User", "width": 120},
             {"label": "Lead Category", "fieldname": "custom_lead_category", "fieldtype": "Data", "width": 120},
@@ -281,7 +285,10 @@ def get_event_activity_with_reference(filters=None):
                 if reference_type == "Lead":
                     row["lead_id"] = ref_doc.name
                     row["lead_name"] = ref_doc.lead_name
+                    row["company_name"] = ref_doc.company_name
                     row["lead_owner"] = ref_doc.lead_owner
+                    row["email_id"] = ref_doc.email_id
+                    row["mobile_no"] = ref_doc.mobile_no
                     row["custom_lead_category"] = getattr(ref_doc, "custom_lead_category", "")
                     row["custom_lead_type"] = getattr(ref_doc, "custom_lead_type", "")
                     row["custom_created_at"] = getattr(ref_doc, "custom_created_at", "")

@@ -27,11 +27,11 @@ app_license = "mit"
 # include js, css files in header of desk.html
 # app_include_css = "/assets/erp_dacsinc_custom/css/erp_dacsinc_custom.css"
 app_include_js = [
-    "/assets/erp_dacsinc_custom/js/workflow.js",
-    "/assets/erp_dacsinc_custom/js/toogle.js"
+    "/assets/erp_dacsinc_custom/js/workflow.js?v=1.0.3",
+    "/assets/erp_dacsinc_custom/js/toogle.js?v=1.0.3"
 ]
 
-app_include_css = "/assets/erp_dacsinc_custom/style.css"
+app_include_css = "/assets/erp_dacsinc_custom/style.css?v=1.0.3"
 
 # include js, css files in header of web template
 # web_include_css = "/assets/erp_dacsinc_custom/css/erp_dacsinc_custom.css"
@@ -48,7 +48,7 @@ app_include_css = "/assets/erp_dacsinc_custom/style.css"
 # page_js = {"page" : "public/js/file.js"}
 
 # include js in doctype views
-# doctype_js = {"doctype" : "public/js/doctype.js"}
+# doctype_js = {"Purchase Order" : "public/js/purchase_order.js"}
 # doctype_list_js = {"doctype" : "public/js/doctype_list.js"}
 # doctype_tree_js = {"doctype" : "public/js/doctype_tree.js"}
 # doctype_calendar_js = {"doctype" : "public/js/doctype_calendar.js"}
@@ -145,7 +145,7 @@ app_include_css = "/assets/erp_dacsinc_custom/style.css"
 doc_events = {
     "Item": {
         "after_insert": "erp_dacsinc_custom.custom_script.item_after_insert",
-        "on_update": "erp_dacsinc_custom.custom_script.item_on_update",
+        # "on_update": "erp_dacsinc_custom.custom_script.item_on_update",
     },
     "Event": {
         "after_insert": "erp_dacsinc_custom.custom_lead.after_insert_event",
@@ -166,11 +166,18 @@ doc_events = {
         "after_insert": "erp_dacsinc_custom.notifications.notify_on_new_so"
 
     },
+    "Delivery Note": {
+        "on_submit": "erp_dacsinc_custom.custom_script.update_pick_lists_on_dn_submit"
+    },
     "BOM": {
         "on_submit": "erp_dacsinc_custom.bom_events.after_submit",
         "on_update_after_submit": "erp_dacsinc_custom.bom_events.on_update_after_submit",
         "on_cancel": "erp_dacsinc_custom.bom_events.on_cancel"
     },
+    "Purchase Receipt": {
+        "on_submit": "erp_dacsinc_custom.purchase_order.create_putaway_picklist",
+        "on_cancel": "erp_dacsinc_custom.purchase_order.delete_putaway_picklist"
+    }
 }
 
 
