@@ -10,7 +10,12 @@
   "amended_from",
   "purchase_order",
   "subcontracting_order",
-  "supplier",
+  "panel_jobber",
+  "work_type",
+  "panel_stage",
+  "purchase_receipt",
+  "full_piece_stage",
+  "full_piece_jobber",
   "column_break_dwhu",
   "date",
   "status",
@@ -50,17 +55,12 @@
    "options": "Subcontracting Order"
   },
   {
-   "fieldname": "supplier",
-   "fieldtype": "Link",
-   "label": "Supplier",
-   "options": "Supplier"
-  },
-  {
    "fieldname": "date",
    "fieldtype": "Date",
    "label": "Date"
   },
   {
+   "allow_on_submit": 1,
    "fieldname": "notes",
    "fieldtype": "Small Text",
    "label": "Notes"
@@ -111,13 +111,52 @@
    "label": "Embroidery Stage",
    "options": "Pre-Receipt\nPost-Receipt",
    "read_only": 1
+  },
+  {
+   "fieldname": "work_type",
+   "fieldtype": "Select",
+   "label": "Work Type",
+   "options": "\nFull Piece Job Work\nPanel Job Work"
+  },
+  {
+   "allow_on_submit": 1,
+   "fieldname": "panel_stage",
+   "fieldtype": "Select",
+   "label": "Panel Stage",
+   "options": "\nPending Process Start\nReceived from Jobber (Internal)\nSent to Panel Jobber\nReceived from Panel Jobber\nReturned to Jobber (Closed)"
+  },
+  {
+   "allow_on_submit": 1,
+   "fieldname": "panel_jobber",
+   "fieldtype": "Link",
+   "label": "Panel Jobber",
+   "options": "Supplier"
+  },
+  {
+   "fieldname": "purchase_receipt",
+   "fieldtype": "Link",
+   "label": "Purchase Receipt",
+   "options": "Purchase Receipt"
+  },
+  {
+   "allow_on_submit": 1,
+   "fieldname": "full_piece_stage",
+   "fieldtype": "Select",
+   "label": "Full Piece Stage",
+   "options": "\nSent to Full Piece Jobber\nReceived from Full Piece Jobber"
+  },
+  {
+   "fieldname": "full_piece_jobber",
+   "fieldtype": "Link",
+   "label": "Full Piece Jobber",
+   "options": "Supplier"
   }
  ],
  "grid_page_length": 50,
  "index_web_pages_for_search": 1,
  "is_submittable": 1,
  "links": [],
- "modified": "2025-12-01 09:56:50.021239",
+ "modified": "2025-12-05 18:51:34.309470",
  "modified_by": "Administrator",
  "module": "Erp Dacsinc Custom",
  "name": "Embroidery Work Order",
