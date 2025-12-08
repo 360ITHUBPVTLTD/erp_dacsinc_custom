@@ -22,7 +22,7 @@ class EventActivity(Document):
 
 			if ref_type == "Lead":
 				self.reference_doc_name = ref_doc.company_name or ref_doc.lead_name
-				self.address = ref_doc.custom_address
+				# self.address = ref_doc.custom_address
 				self.reference_doc_mobile_no = ref_doc.mobile_no
 			elif self.reference_type in ["Customer", "Supplier"]:
 				self.reference_doc_name = ref_doc.customer_name if self.reference_type=="Customer" else ref_doc.supplier_name
