@@ -37,6 +37,7 @@ def get_columns(filters=None):
             {"label": "Notes", "fieldname": "notes", "fieldtype": "Data", "width": 200},
             {"label": "Actual Visit At", "fieldname": "actual_visit_at", "fieldtype": "Datetime", "width": 150},
             {"label": "Actual Checked Out At", "fieldname": "actual_checked_out_at", "fieldtype": "Datetime", "width": 150},
+
             # {"label": "Lead Name", "fieldname": "lead_name", "fieldtype": "Data", "width": 150},
             {"label": "Created At", "fieldname": "custom_created_at", "fieldtype": "Datetime", "width": 150},
         ]
@@ -51,6 +52,7 @@ def get_columns(filters=None):
             {"label": "Status", "fieldname": "custom_lead_category", "fieldtype": "Data", "width": 120},
             {"label": "Lead Owner", "fieldname": "lead_owner", "fieldtype": "Link", "options": "User", "width": 150},
             {"label": "Revenue", "fieldname": "custom_expected_revenue", "fieldtype": "Currency", "width": 150},
+            {"label": "PO Value", "fieldname": "custom_po_value", "fieldtype": "Currency", "width": 150},
             {"label": "Product Category", "fieldname": "custom_product_multi_category", "fieldtype": "Small Text", "width": 100},
             {"label": "Source", "fieldname": "source", "fieldtype": "Data", "width": 120},
 			{"label": "Industry", "fieldname": "industry", "fieldtype": "Link","options":"Industry Type", "width": 120},
@@ -159,6 +161,7 @@ def get_leads(filters=None):
             l.custom_next_followup_date,
             l.custom_expected_revenue,
             l.source,
+            l.custom_po_value,
             l.custom_lead_description,
             l.custom_lead_category,
             DATEDIFF(CURDATE(), DATE(l.creation)) AS lead_age,
