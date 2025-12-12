@@ -1568,3 +1568,199 @@ def render_lead_html(from_date=None, to_date=None):
 
     html += "</tbody></table>"
     return html
+
+
+
+import frappe
+from frappe import _
+
+@frappe.whitelist(allow_guest=True)
+def create_duplicate_lead(lead_name):
+    """
+    Duplicates the lead, resets Workflow/Status to 'Enquiry', 
+    and links the correct Customer.
+    """
+    if not lead_name:
+        return
+
+    # 1. Fetch the original Lead
+    original_doc = frappe.get_doc("Lead", lead_name)
+    
+    # 2. Determine the Customer to set
+    customer_id = original_doc.custom_lead_customer
+    if not customer_id:
+        customer_id = frappe.db.get_value("Customer", {"lead_name": lead_name}, "name")
+
+    # 3. Create the copy (this copies 'Order' status too!)
+    new_doc = frappe.copy_doc(original_doc)
+    
+    # --- FIX START ---
+    
+    # 4. Force Reset Status / Category to Initial State
+    # Change "Enquiry" to whatever your Workflow's actual Start State is (e.g., "Pipeline", "Open")
+    initial_state = "Enquiry" 
+    
+    new_doc.custom_lead_category = initial_state
+    new_doc.custom_duplicated_lead = 1
+    new_doc.custom_duplicate_lead_id = original_doc.name
+    # IMPORTANT: You must also reset the specific Workflow State field
+    # Standard field is 'workflow_state', but checking meta is safer
+    # workflow_state_field = frappe.get_meta("Lead").get_workflow_state_field()
+    # if workflow_state_field:
+    #     new_doc.set(workflow_state_field, initial_state)
+
+    # --- FIX END ---
+
+    # 5. Set the determined customer
+    new_doc.custom_lead_customer = customer_id
+
+    # 6. Insert the new document
+    new_doc.insert(ignore_permissions=True)
+    
+    return new_doc.name
+
+
+from erpnext.crm.doctype.lead.lead import make_quotation as original_make_quotation
+@frappe.whitelist()
+def make_quotation_custom(source_name, target_doc=None):
+    """
+    Custom mapper to create a Quotation.
+    1. Calls standard ERPNext mapper.
+    2. Checks if Lead has 'custom_lead_customer'.
+    3. If yes, changes Quotation To -> Customer.
+    4. Sets custom_lead_id on Quotation.
+    """
+    
+    # 1. Create the Quotation object using standard ERPNext logic
+    doc = original_make_quotation(source_name, target_doc)
+
+    # 2. Fetch Lead details
+    lead = frappe.db.get_value("Lead", source_name, ["custom_lead_customer"], as_dict=True)
+
+    # 3. Logic to switch to Customer
+    if lead and lead.custom_lead_customer:
+        doc.quotation_to = "Customer"
+        doc.party_name = lead.custom_lead_customer
+        
+        # Optional: Fetch and set the Customer Name for display purposes
+        doc.customer_name = frappe.db.get_value("Customer", lead.custom_lead_customer, "customer_name")
+        
+        # Clear fields that might conflict if mapped from Lead but now we are Customer
+        # (Optional, depending on your setup)
+        # doc.shipping_address_name = None 
+        # doc.customer_address = None
+
+    # 4. Set the Lead ID in the custom field on Quotation
+    # Make sure 'custom_lead_id' exists in Quotation DocType
+    doc.custom_lead_id = source_name
+
+    return doc
+import frappe
+from frappe.utils import flt, getdate
+import datetime
+
+@frappe.whitelist()
+def get_target_vs_actual(from_date, to_date):
+    """
+    Returns Sales Person wise Target vs Actuals.
+    Target: Based on Monthly Distribution 'percentage_allocation'.
+    Actual: Sum of 'allocated_amount' from Sales Team table in Sales Order.
+    """
+    from_date = getdate(from_date)
+    to_date = getdate(to_date)
+    
+    # 1. Fetch All Enabled Sales Persons
+    sales_persons = frappe.get_all("Sales Person", 
+                                   fields=["name", "sales_person_name"], 
+                                   filters={"enabled": 1})
+    
+    data = []
+
+    # Get English month names for the selected range
+    months_in_range = get_months_in_range(from_date, to_date)
+    months_str = ", ".join(months_in_range)
+
+    for sp in sales_persons:
+        target_amount = 0.0
+        
+        # --- A. Calculate Target ---
+        sp_targets = frappe.db.get_all("Target Detail", 
+                                       filters={"parent": sp.name}, 
+                                       fields=["fiscal_year", "target_amount", "distribution_id"])
+        
+        for t in sp_targets:
+            fy_doc = frappe.get_cached_doc("Fiscal Year", t.fiscal_year)
+            fy_start = getdate(fy_doc.year_start_date)
+            fy_end = getdate(fy_doc.year_end_date)
+
+            if fy_start <= to_date and fy_end >= from_date:
+                if t.distribution_id:
+                    distribution = frappe.get_cached_doc("Monthly Distribution", t.distribution_id)
+                    percentage_sum = 0.0
+                    
+                    for dist_row in distribution.percentages:
+                        if dist_row.month in months_in_range:
+                            p_val = getattr(dist_row, 'percentage_allocation', 0) or getattr(dist_row, 'percentage', 0)
+                            percentage_sum += flt(p_val)
+                    
+                    target_amount += (flt(t.target_amount) * percentage_sum) / 100.0
+                else:
+                    target_amount += flt(t.target_amount)
+
+        # --- B. Calculate Actuals (Submitted Sales Orders) ---
+        # UPDATED: Fetch 'allocated_amount' directly from 'tabSales Team'
+        actual_query = """
+            SELECT 
+                SUM(st.allocated_amount) as total
+            FROM 
+                `tabSales Order` so
+            INNER JOIN 
+                `tabSales Team` st ON st.parent = so.name
+            WHERE 
+                so.docstatus = 1 
+                AND st.sales_person = %s
+                AND so.transaction_date BETWEEN %s AND %s
+        """
+        actual_result = frappe.db.sql(actual_query, (sp.name, from_date, to_date))
+        actual_amount = flt(actual_result[0][0]) if actual_result else 0.0
+
+        # Only add to report if there is data
+        if target_amount > 0 or actual_amount > 0:
+            variance = actual_amount - target_amount
+            achievement = (actual_amount / target_amount * 100) if target_amount > 0 else 0.0
+            
+            data.append({
+                "sales_person": sp.sales_person_name,
+                "months": months_str,
+                "target": target_amount,
+                "actual": actual_amount,
+                "variance": variance,
+                "achievement": achievement
+            })
+
+    return data
+
+def get_months_in_range(start_date, end_date):
+    """Returns a list of English month names between two dates."""
+    month_map = {
+        1: "January", 2: "February", 3: "March", 4: "April",
+        5: "May", 6: "June", 7: "July", 8: "August",
+        9: "September", 10: "October", 11: "November", 12: "December"
+    }
+    
+    months = []
+    current = start_date
+    while current <= end_date:
+        m_name = month_map[current.month]
+        if m_name not in months:
+            months.append(m_name)
+        
+        # Logic to move to first day of next month
+        year = current.year + (current.month // 12)
+        month = (current.month % 12) + 1
+        try:
+            current = datetime.date(year, month, 1)
+        except ValueError:
+            current = datetime.date(year, month, 1)
+            
+    return months
