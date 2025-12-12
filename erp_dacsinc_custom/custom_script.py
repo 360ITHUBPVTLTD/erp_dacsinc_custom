@@ -3247,3 +3247,33 @@ def get_eligible_pick_lists_for_so(sales_order):
     )
 
     return {"pick_lists": eligible_pick_lists, "customer_data": customer_data}
+    
+    
+    
+    
+    
+    
+    
+@frappe.whitelist(allow_guest=True)
+def biomentric_login():
+    import json
+
+    # Get raw POST body
+    try:
+        data = json.loads(frappe.request.data) if frappe.request.data else {}
+    except:
+        data = {"error": "Invalid JSON"}
+
+    # Log full request for debugging
+    frappe.log_error(
+        title="Biometric Login Request",
+        message=frappe.as_json(data)
+    )
+
+    # Return response to API client
+    return {
+        "status": "success",
+        "message": "Data received",
+        "received_data": data
+    }
+
