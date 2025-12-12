@@ -163,7 +163,9 @@ doc_events = {
     "Sales Order": {
         "on_submit": "erp_dacsinc_custom.custom_script.sales_order_on_submit",
         "on_cancel": "erp_dacsinc_custom.custom_script.sales_order_on_cancel",
-        "after_insert": "erp_dacsinc_custom.notifications.notify_on_new_so"
+        "after_insert": "erp_dacsinc_custom.notifications.notify_on_new_so",
+        "on_update": "erp_dacsinc_custom.custom_script.sales_order_on_update",
+        "on_trash": "erp_dacsinc_custom.custom_script.sales_order_on_trash"
 
     },
     "Delivery Note": {
@@ -177,6 +179,10 @@ doc_events = {
     "Purchase Receipt": {
         "on_submit": "erp_dacsinc_custom.purchase_order.create_putaway_picklist",
         "on_cancel": "erp_dacsinc_custom.purchase_order.delete_putaway_picklist"
+    },
+    "Customer": {
+        "after_insert": "erp_dacsinc_custom.custom_customer.customer_after_insert",
+        "on_update": "erp_dacsinc_custom.custom_customer.update_customer_sharing"
     }
 }
 
