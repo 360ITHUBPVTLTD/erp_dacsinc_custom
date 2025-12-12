@@ -1619,14 +1619,15 @@ def create_duplicate_lead(lead_name):
     
     return new_doc.name
 
-
+import frappe
 from erpnext.crm.doctype.lead.lead import make_quotation as original_make_quotation
+
 @frappe.whitelist()
 def make_quotation_custom(source_name, target_doc=None):
     """
     Custom mapper to create a Quotation.
     1. Calls standard ERPNext mapper.
-    2. Checks if Lead has 'custom_lead_customer'.
+    2. Checks if 'custom_duplicated_lead' is checked AND 'custom_lead_customer' exists.
     3. If yes, changes Quotation To -> Customer.
     4. Sets custom_lead_id on Quotation.
     """
@@ -1634,24 +1635,19 @@ def make_quotation_custom(source_name, target_doc=None):
     # 1. Create the Quotation object using standard ERPNext logic
     doc = original_make_quotation(source_name, target_doc)
 
-    # 2. Fetch Lead details
-    lead = frappe.db.get_value("Lead", source_name, ["custom_lead_customer"], as_dict=True)
+    # 2. Fetch Lead details (Added 'custom_duplicated_lead' to the fetch list)
+    lead = frappe.db.get_value("Lead", source_name, ["custom_lead_customer", "custom_duplicated_lead"], as_dict=True)
 
     # 3. Logic to switch to Customer
-    if lead and lead.custom_lead_customer:
+    # Only proceed if customer exists AND the duplicate checkbox is checked (1)
+    if lead and lead.custom_lead_customer and lead.custom_duplicated_lead:
         doc.quotation_to = "Customer"
         doc.party_name = lead.custom_lead_customer
         
         # Optional: Fetch and set the Customer Name for display purposes
         doc.customer_name = frappe.db.get_value("Customer", lead.custom_lead_customer, "customer_name")
-        
-        # Clear fields that might conflict if mapped from Lead but now we are Customer
-        # (Optional, depending on your setup)
-        # doc.shipping_address_name = None 
-        # doc.customer_address = None
 
     # 4. Set the Lead ID in the custom field on Quotation
-    # Make sure 'custom_lead_id' exists in Quotation DocType
     doc.custom_lead_id = source_name
 
     return doc
