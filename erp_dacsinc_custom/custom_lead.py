@@ -1654,6 +1654,9 @@ def make_quotation_custom(source_name, target_doc=None):
 import frappe
 from frappe.utils import flt, getdate, get_last_day
 import datetime
+import frappe
+from frappe.utils import flt, getdate, get_last_day
+import datetime
 
 @frappe.whitelist()
 def get_target_vs_actual(from_date, to_date):
@@ -1664,46 +1667,60 @@ def get_target_vs_actual(from_date, to_date):
     # 1. Role-Based Filtering
     user_roles = frappe.get_roles(current_user)
     sp_filters = {"enabled": 1}
-    
     if "DAC CRM Head" not in user_roles and "Administrator" not in user_roles:
-        # Step A: Find Employee linked to this User
         employees = frappe.get_all("Employee", filters={"user_id": current_user}, fields=["name"])
         employee_names = [e.name for e in employees]
-        
         if not employee_names:
-            return [] # No employee linked to this user
-            
-        # Step B: Filter Sales Person linked to these Employees
+            return []
         sp_filters["employee"] = ["in", employee_names]
 
-    sales_persons = frappe.get_all("Sales Person", 
-                                   fields=["name", "sales_person_name"], 
-                                   filters=sp_filters)
-    
-    if not sales_persons:
-        return []
+    sales_persons = frappe.get_all("Sales Person", fields=["name", "sales_person_name"], filters=sp_filters)
+    if not sales_persons: return []
 
-    # 2. Calendar Year Start (Jan 1st)
-    year_start = datetime.date(from_date_obj.year, 1, 1)
     data = []
 
     for sp in sales_persons:
-        # --- A. PREVIOUS DEFICIT CALCULATION ---
+        # Step: Determine the Fiscal Year and its true Start Date
+        # We find the target detail that covers the current 'to_date'
+        sp_targets = frappe.db.get_all("Target Detail", 
+                                       filters={"parent": sp.name}, 
+                                       fields=["fiscal_year", "target_amount", "distribution_id"])
+        
+        # If no target, skip
+        if not sp_targets: continue
+
+        # Identify the relevant Fiscal Year for the selected period
+        active_fy = None
+        for t in sp_targets:
+            fy_doc = frappe.get_cached_doc("Fiscal Year", t.fiscal_year)
+            if getdate(fy_doc.year_start_date) <= to_date_obj and getdate(fy_doc.year_end_date) >= from_date_obj:
+                active_fy = fy_doc
+                break
+        
+        if not active_fy: continue
+        
+        # This is the dynamic start date (e.g., April 1st or July 1st)
+        fy_start_date = getdate(active_fy.year_start_date)
+
+        # --- A. PREVIOUS DEFICIT CALCULATION (From FY Start to Month-1) ---
         prev_deficit = 0.0
-        if from_date_obj > year_start:
+        if from_date_obj > fy_start_date:
             hist_end = from_date_obj - datetime.timedelta(days=1)
-            hist_months = get_months_in_range(year_start, hist_end)
+            hist_months = get_months_in_range(fy_start_date, hist_end)
             
             running_bal = 0.0
             for m_name in hist_months:
+                # Determine date for the specific month in the loop
                 m_idx = list(calendar_months().values()).index(m_name) + 1
-                m_start = datetime.date(from_date_obj.year, m_idx, 1)
+                # Check if month is in the next calendar year relative to FY start
+                m_year = fy_start_date.year if m_idx >= fy_start_date.month else fy_start_date.year + 1
                 
+                m_start = datetime.date(m_year, m_idx, 1)
                 m_t = get_specific_target(sp.name, [m_name], m_start, get_last_day(m_start))
                 m_a = get_specific_actual(sp.name, m_start, get_last_day(m_start))
                 
                 running_bal += (m_a - m_t)
-                if running_bal > 0: running_bal = 0.0 # Surplus doesn't carry
+                if running_bal > 0: running_bal = 0.0 # Rule: Surplus doesn't carry
             prev_deficit = running_bal
 
         # --- B. CURRENT MONTH DATA ---
@@ -1713,14 +1730,14 @@ def get_target_vs_actual(from_date, to_date):
         curr_variance = curr_actual - curr_target
         curr_ach = (curr_actual / curr_target * 100) if curr_target > 0 else 0.0
 
-        # --- C. OVERALL YTD DATA (Jan to Selected Month) ---
-        ytd_months_list = get_months_in_range(year_start, to_date_obj)
-        ytd_range_label = f"Jan to {ytd_months_list[-1][:3]}"
+        # --- C. OVERALL YTD DATA (FY START TO SELECTED MONTH) ---
+        ytd_months_list = get_months_in_range(fy_start_date, to_date_obj)
+        ytd_range_label = f"{fy_start_date.strftime('%b')} to {to_date_obj.strftime('%b')}"
         
-        ytd_target = get_specific_target(sp.name, ytd_months_list, year_start, to_date_obj)
+        ytd_target = get_specific_target(sp.name, ytd_months_list, fy_start_date, to_date_obj)
         overall_variance = prev_deficit + curr_variance
         
-        # Adjusted Achievement
+        # Overall Achievement: Actual / (Target + Needed to cover deficit)
         total_burden = curr_target + abs(prev_deficit)
         overall_ach = (curr_actual / total_burden * 100) if total_burden > 0 else 0.0
 
