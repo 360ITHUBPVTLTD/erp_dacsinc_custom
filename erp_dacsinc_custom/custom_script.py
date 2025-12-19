@@ -694,7 +694,7 @@ def get_item_stock_details_bulk(item_codes, sales_order_name):
             total_incoming_ewo_count += 1
 
         # =========================================================
-        # 7. RM PROCUREMENT (BOM ITEMS)
+        # 7. RM PROCUREMENT (BOM ITEMS) - UPDATED
         # =========================================================
         rm_procurement_status = {
             "rm_shortfall_exists": False, 
@@ -716,6 +716,7 @@ def get_item_stock_details_bulk(item_codes, sales_order_name):
                     
                     rm_map[rm_code] = {
                         "rm_code": rm_code,
+                        "rm_uom": bi.uom or bi.stock_uom, # FETCH UOM HERE
                         "rm_required_total": unfulfilled_fg * rm_qty_per_fg,
                         "rm_available_stock": 0,         
                         "rm_ordered_so_total": 0,       
@@ -731,9 +732,9 @@ def get_item_stock_details_bulk(item_codes, sales_order_name):
                     stock_data = frappe.db.sql("""
                         SELECT item_code, SUM(actual_qty) as qty
                         FROM `tabBin`
-                        WHERE item_code IN %s AND warehouse = %s
+                        WHERE item_code IN %s AND actual_qty > 0
                         GROUP BY item_code
-                    """, (tuple(rm_codes), warehouse), as_dict=1)
+                    """, (tuple(rm_codes),), as_dict=1) # Search globally or specify warehouse
                     
                     for s in stock_data:
                         if s.item_code in rm_map:
@@ -762,23 +763,28 @@ def get_item_stock_details_bulk(item_codes, sales_order_name):
                             rm["rm_ordered_so_total"] = flt(d.total_ordered)
                             rm["rm_received_so_total"] = flt(d.total_received)
                             rm["rm_pending_so_linked_total"] = max(0, flt(d.total_ordered) - flt(d.total_received))
-                            
                             if d.po_list:
                                 rm["po_documents"] = d.po_list.split(",")
 
-                # D. Final Logic
-                for idx, rm in enumerate(rm_map.values(), 1):
-                    rm["row_idx"] = idx 
-                    so_coverage_qty = rm["rm_ordered_so_total"]
-                    shortfall = rm["rm_required_total"] - so_coverage_qty
-                    rm["rm_shortfall_total"] = max(0, shortfall)
+                # D. Updated Shortfall Calculation Logic
+                for rm in rm_map.values():
+                    # Coverage includes physical stock + what's already on PO
+                    total_coverage = rm["rm_available_stock"] + rm["rm_pending_so_linked_total"]
+                    shortfall = max(0, rm["rm_required_total"] - total_coverage)
+                    
+                    rm["rm_shortfall_total"] = shortfall
+                    
+                    # Calculate Percentage
+                    if rm["rm_required_total"] > 0:
+                        # (Shortfall / Needed) * 100
+                        rm["shortfall_pct"] = (shortfall / rm["rm_required_total"]) * 100
+                    else:
+                        rm["shortfall_pct"] = 0
 
+                    # Status determination
                     if shortfall <= 0:
-                        if rm["rm_pending_so_linked_total"] > 0:
-                            rm["status"] = "On Order (Pending)"
-                        else:
-                            rm["status"] = "Fully Procured"
-                    elif so_coverage_qty > 0:
+                        rm["status"] = "Fully Covered"
+                    elif rm["rm_pending_so_linked_total"] > 0:
                         rm["status"] = "Partial Order"
                         rm_procurement_status["rm_shortfall_exists"] = True
                     else:
