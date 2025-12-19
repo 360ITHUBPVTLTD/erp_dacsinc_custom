@@ -1652,111 +1652,115 @@ def make_quotation_custom(source_name, target_doc=None):
 
     return doc
 import frappe
-from frappe.utils import flt, getdate
+from frappe.utils import flt, getdate, get_last_day
 import datetime
 
 @frappe.whitelist()
 def get_target_vs_actual(from_date, to_date):
-    """
-    Returns Sales Person wise Target vs Actuals.
-    Target: Based on Monthly Distribution 'percentage_allocation'.
-    Actual: Sum of 'allocated_amount' from Sales Team table in Sales Order.
-    """
-    from_date = getdate(from_date)
-    to_date = getdate(to_date)
+    from_date_obj = getdate(from_date)
+    to_date_obj = getdate(to_date)
+    current_user = frappe.session.user
     
-    # 1. Fetch All Enabled Sales Persons
-    sales_persons = frappe.get_all("Sales Person", 
-                                   fields=["name", "sales_person_name"], 
-                                   filters={"enabled": 1})
+    # Role-Based Filtering
+    user_roles = frappe.get_roles(current_user)
+    sp_filters = {"enabled": 1}
+    if "DAC CRM Head" not in user_roles and "Administrator" not in user_roles:
+        sp_filters["user_id"] = current_user
+
+    sales_persons = frappe.get_all("Sales Person", fields=["name", "sales_person_name"], filters=sp_filters)
+    if not sales_persons: return []
+
+    # Calendar Year Start (Jan 1st)
+    year_start = datetime.date(from_date_obj.year, 1, 1)
     
     data = []
 
-    # Get English month names for the selected range
-    months_in_range = get_months_in_range(from_date, to_date)
-    months_str = ", ".join(months_in_range)
-
     for sp in sales_persons:
-        target_amount = 0.0
-        
-        # --- A. Calculate Target ---
-        sp_targets = frappe.db.get_all("Target Detail", 
-                                       filters={"parent": sp.name}, 
-                                       fields=["fiscal_year", "target_amount", "distribution_id"])
-        
-        for t in sp_targets:
-            fy_doc = frappe.get_cached_doc("Fiscal Year", t.fiscal_year)
-            fy_start = getdate(fy_doc.year_start_date)
-            fy_end = getdate(fy_doc.year_end_date)
-
-            if fy_start <= to_date and fy_end >= from_date:
-                if t.distribution_id:
-                    distribution = frappe.get_cached_doc("Monthly Distribution", t.distribution_id)
-                    percentage_sum = 0.0
-                    
-                    for dist_row in distribution.percentages:
-                        if dist_row.month in months_in_range:
-                            p_val = getattr(dist_row, 'percentage_allocation', 0) or getattr(dist_row, 'percentage', 0)
-                            percentage_sum += flt(p_val)
-                    
-                    target_amount += (flt(t.target_amount) * percentage_sum) / 100.0
-                else:
-                    target_amount += flt(t.target_amount)
-
-        # --- B. Calculate Actuals (Submitted Sales Orders) ---
-        # UPDATED: Fetch 'allocated_amount' directly from 'tabSales Team'
-        actual_query = """
-            SELECT 
-                SUM(st.allocated_amount) as total
-            FROM 
-                `tabSales Order` so
-            INNER JOIN 
-                `tabSales Team` st ON st.parent = so.name
-            WHERE 
-                so.docstatus = 1 
-                AND st.sales_person = %s
-                AND so.transaction_date BETWEEN %s AND %s
-        """
-        actual_result = frappe.db.sql(actual_query, (sp.name, from_date, to_date))
-        actual_amount = flt(actual_result[0][0]) if actual_result else 0.0
-
-        # Only add to report if there is data
-        if target_amount > 0 or actual_amount > 0:
-            variance = actual_amount - target_amount
-            achievement = (actual_amount / target_amount * 100) if target_amount > 0 else 0.0
+        # --- A. PREVIOUS DEFICIT CALCULATION (Rule: Carry deficit, Reset surplus) ---
+        prev_deficit = 0.0
+        if from_date_obj > year_start:
+            hist_end = from_date_obj - datetime.timedelta(days=1)
+            hist_months = get_months_in_range(year_start, hist_end)
             
+            running_bal = 0.0
+            for m_name in hist_months:
+                m_idx = list(calendar_months().values()).index(m_name) + 1
+                m_start = datetime.date(from_date_obj.year, m_idx, 1)
+                m_t = get_specific_target(sp.name, [m_name], m_start, get_last_day(m_start))
+                m_a = get_specific_actual(sp.name, m_start, get_last_day(m_start))
+                
+                running_bal += (m_a - m_t)
+                if running_bal > 0: running_bal = 0.0 # Rule: Surplus doesn't carry
+            prev_deficit = running_bal
+
+        # --- B. CURRENT MONTH DATA ---
+        curr_months = get_months_in_range(from_date_obj, to_date_obj)
+        curr_target = get_specific_target(sp.name, curr_months, from_date_obj, to_date_obj)
+        curr_actual = get_specific_actual(sp.name, from_date_obj, to_date_obj)
+        curr_variance = curr_actual - curr_target
+        curr_ach = (curr_actual / curr_target * 100) if curr_target > 0 else 0.0
+
+        # --- C. OVERALL YTD DATA (JAN TO SELECTED MONTH) ---
+        ytd_months_list = get_months_in_range(year_start, to_date_obj)
+        ytd_range_label = f"Jan to {ytd_months_list[-1][:3]}" # e.g. "Jan to Dec"
+        
+        # Raw totals for display
+        ytd_target = get_specific_target(sp.name, ytd_months_list, year_start, to_date_obj)
+        ytd_actual = get_specific_actual(sp.name, year_start, to_date_obj)
+        
+        # Logic-based overall variance (Current Var + Previous Deficit)
+        overall_variance = prev_deficit + curr_variance
+        
+        # Adjusted Achievement (Actual vs (Target + Needed to cover deficit))
+        total_burden = curr_target + abs(prev_deficit)
+        overall_ach = (curr_actual / total_burden * 100) if total_burden > 0 else 0.0
+
+        if curr_target > 0 or curr_actual > 0 or prev_deficit < 0:
             data.append({
                 "sales_person": sp.sales_person_name,
-                "months": months_str,
-                "target": target_amount,
-                "actual": actual_amount,
-                "variance": variance,
-                "achievement": achievement
+                "target": curr_target,
+                "actual": curr_actual,
+                "curr_variance": curr_variance,
+                "curr_achievement": curr_ach,
+                # New Overall Details
+                "ytd_label": ytd_range_label,
+                "ytd_target": ytd_target,
+                "ytd_actual": ytd_actual,
+                "overall_variance": overall_variance,
+                "overall_achievement": overall_ach
             })
 
     return data
 
+# --- Keep Helper Functions (get_specific_target, get_specific_actual, etc.) from previous response ---
+def get_specific_target(sp_name, month_names, f_date, t_date):
+    target_val = 0.0
+    sp_targets = frappe.db.get_all("Target Detail", filters={"parent": sp_name}, fields=["fiscal_year", "target_amount", "distribution_id"])
+    for t in sp_targets:
+        fy = frappe.get_cached_doc("Fiscal Year", t.fiscal_year)
+        if getdate(fy.year_start_date) <= t_date and getdate(fy.year_end_date) >= f_date:
+            if t.distribution_id:
+                dist = frappe.get_cached_doc("Monthly Distribution", t.distribution_id)
+                pct_sum = sum([flt(getattr(d, 'percentage_allocation', 0) or getattr(d, 'percentage', 0)) for d in dist.percentages if d.month in month_names])
+                target_val += (flt(t.target_amount) * pct_sum) / 100.0
+            else:
+                target_val += (flt(t.target_amount) / 12.0) * len(month_names)
+    return target_val
+
+def get_specific_actual(sp_name, f_date, t_date):
+    res = frappe.db.sql("""SELECT SUM(st.allocated_amount) FROM `tabSales Order` so INNER JOIN `tabSales Team` st ON st.parent = so.name
+        WHERE so.docstatus = 1 AND st.sales_person = %s AND so.transaction_date BETWEEN %s AND %s""", (sp_name, f_date, t_date))
+    return flt(res[0][0]) if res else 0.0
+
+def calendar_months():
+    return {1: "January", 2: "February", 3: "March", 4: "April", 5: "May", 6: "June", 7: "July", 8: "August", 9: "September", 10: "October", 11: "November", 12: "December"}
+
 def get_months_in_range(start_date, end_date):
-    """Returns a list of English month names between two dates."""
-    month_map = {
-        1: "January", 2: "February", 3: "March", 4: "April",
-        5: "May", 6: "June", 7: "July", 8: "August",
-        9: "September", 10: "October", 11: "November", 12: "December"
-    }
-    
+    m_map = calendar_months()
     months = []
-    current = start_date
-    while current <= end_date:
-        m_name = month_map[current.month]
-        if m_name not in months:
-            months.append(m_name)
-        
-        # Logic to move to first day of next month
-        year = current.year + (current.month // 12)
-        month = (current.month % 12) + 1
-        try:
-            current = datetime.date(year, month, 1)
-        except ValueError:
-            current = datetime.date(year, month, 1)
-            
+    curr = start_date
+    while curr <= end_date:
+        if m_map[curr.month] not in months: months.append(m_map[curr.month])
+        if curr.month == 12: curr = datetime.date(curr.year + 1, 1, 1)
+        else: curr = datetime.date(curr.year, curr.month + 1, 1)
     return months
