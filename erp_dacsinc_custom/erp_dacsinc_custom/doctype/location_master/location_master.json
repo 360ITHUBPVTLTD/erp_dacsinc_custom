@@ -1,0 +1,49 @@
+{
+ "actions": [],
+ "allow_rename": 1,
+ "creation": "2025-12-22 11:48:48.890126",
+ "doctype": "DocType",
+ "engine": "InnoDB",
+ "field_order": [
+  "data_json",
+  "last_sync"
+ ],
+ "fields": [
+  {
+   "fieldname": "data_json",
+   "fieldtype": "Code",
+   "label": "Data Json"
+  },
+  {
+   "fieldname": "last_sync",
+   "fieldtype": "Datetime",
+   "label": "Last Sync"
+  }
+ ],
+ "grid_page_length": 50,
+ "index_web_pages_for_search": 1,
+ "issingle": 1,
+ "links": [],
+ "modified": "2025-12-22 11:50:51.757412",
+ "modified_by": "Administrator",
+ "module": "Erp Dacsinc Custom",
+ "name": "Location Master",
+ "owner": "Administrator",
+ "permissions": [
+  {
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "print": 1,
+   "read": 1,
+   "role": "System Manager",
+   "share": 1,
+   "write": 1
+  }
+ ],
+ "row_format": "Dynamic",
+ "rows_threshold_for_grid_search": 20,
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "states": []
+}

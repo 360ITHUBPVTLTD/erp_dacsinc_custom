@@ -2,81 +2,110 @@ import frappe
 from frappe.utils import flt
 
 def after_submit(doc, method):
-    """
-    Triggered when a BOM is submitted.
-    Creates a corresponding 'Subcontracting BOM' (non-submittable doctype),
-    bypassing its internal validation on creation to prevent errors.
-    """
-    try:
-        if frappe.db.exists("Subcontracting BOM", {"finished_good_bom": doc.name}):
-            return
-
-        service_item_uom = frappe.db.get_value("Item", "Order Charges", "stock_uom")
-        if not service_item_uom:
-            frappe.throw("Service Item 'Order Charges' not found or does not have a default Stock UOM.")
-
-        # Create a new 'Subcontracting BOM'
-        sc_bom = frappe.new_doc("Subcontracting BOM")
-        sc_bom.finished_good = doc.item
-        sc_bom.finished_good_uom = doc.uom
-        sc_bom.finished_good_qty = flt(doc.quantity)
-        sc_bom.finished_good_bom = doc.name # Link to the source BOM
-        sc_bom.conversion_factor = flt(doc.quantity)
-        sc_bom.service_item = doc.custom_service_item
-        sc_bom.service_item_qty = flt(doc.quantity)
-        sc_bom.service_item_uom = service_item_uom
-        sc_bom.is_active = doc.is_active
-
-        # Set a flag to bypass validations that might fail in this automated context
-        sc_bom.flags.ignore_validate = True
-        
-        # Insert the document as a Draft (since it's not submittable)
-        sc_bom.insert(ignore_permissions=True) 
-
-        frappe.msgprint(f"Subcontracting BOM <a href='/app/subcontracting-bom/{sc_bom.name}'>{sc_bom.name}</a> created.", title="Success", indicator="green")
-
-    except Exception as e:
-        frappe.log_error(message=frappe.get_traceback(), title="Subcontracting BOM Creation Failed")
-        frappe.msgprint(f"Error creating Subcontracting BOM: {e}", title="Error", indicator="red")
-
+    """Triggered on BOM submission."""
+    sync_subcontracting_bom(doc)
 
 def on_update_after_submit(doc, method):
-    """
-    Triggered when a submitted BOM is updated.
-    Updates the 'is_active' status of the linked Subcontracting BOM.
-    """
+    """Triggered when BOM is updated after submission (e.g., toggling Is Default)."""
+    sync_subcontracting_bom(doc)
+
+def sync_subcontracting_bom(doc):
     try:
+        # 1. Find the Subcontracting BOM linked to this specific BOM
         sc_bom_name = frappe.db.get_value("Subcontracting BOM", {"finished_good_bom": doc.name})
         
-        if sc_bom_name:
-            sc_bom = frappe.get_doc("Subcontracting BOM", sc_bom_name)
-            sc_bom.is_active = doc.is_active
-            sc_bom.service_item = doc.custom_service_item
-            sc_bom.service_item_qty = flt(doc.quantity)
-            sc_bom.finished_good_qty = flt(doc.quantity)
-            sc_bom.finished_good_uom = doc.uom
-            
-            sc_bom.save(ignore_permissions=True)
-            frappe.msgprint(f"Subcontracting BOM {sc_bom.name} status updated to {'Active' if doc.is_active else 'Inactive'}.", indicator="green")
+        # 2. If it does not exist, create it first
+        if not sc_bom_name:
+            sc_bom_name = create_subcontracting_bom(doc)
+            if not sc_bom_name:
+                return 
+
+        # 3. Logic: If this BOM is the Default (is_default=1), make SC BOM Active
+        if doc.is_default == 1:
+            # Deactivate ALL other SC BOMs for this Item to avoid "Already Active" validation error
+            frappe.db.sql("""
+                UPDATE `tabSubcontracting BOM` 
+                SET is_active = 0 
+                WHERE finished_good = %s AND name != %s
+            """, (doc.item, sc_bom_name))
+
+            # Update and Activate this specific SC BOM
+            frappe.db.set_value("Subcontracting BOM", sc_bom_name, {
+                "is_active": 1,
+                "service_item": doc.custom_service_item,  # Sync Service Item
+                "service_item_qty": flt(doc.quantity),
+                "finished_good_qty": flt(doc.quantity),
+                "finished_good_uom": doc.uom
+            })
+            frappe.msgprint(f"Subcontracting BOM {sc_bom_name} updated to <b>Active</b> and Service Item updated.", indicator="green")
+        
+        else:
+            # If this BOM is not default, set SC BOM to Inactive
+            # But still sync the service item in case it changed
+            frappe.db.set_value("Subcontracting BOM", sc_bom_name, {
+                "is_active": 0,
+                "service_item": doc.custom_service_item, # Sync Service Item even if inactive
+                "service_item_qty": flt(doc.quantity),
+                "finished_good_qty": flt(doc.quantity),
+                "finished_good_uom": doc.uom
+            })
 
     except Exception as e:
-        frappe.log_error(message=frappe.get_traceback(), title="Subcontracting BOM Update Failed")
+        frappe.log_error(message=frappe.get_traceback(), title="SC BOM Sync Error")
+        frappe.msgprint(f"Error Syncing Subcontracting BOM: {str(e)}")
 
+def create_subcontracting_bom(doc):
+    """Helper function to create a Subcontracting BOM record."""
+    try:
+        if not doc.custom_service_item:
+            frappe.msgprint("<b>Creation Skipped:</b> 'Custom Service Item' is empty.", indicator="orange")
+            return None
+
+        # Fetch Stock UOM for the service item
+        service_item_uom = frappe.db.get_value("Item", doc.custom_service_item, "stock_uom")
+        if not service_item_uom:
+            frappe.throw(f"Service Item {doc.custom_service_item} has no Stock UOM.")
+
+        sc_bom = frappe.new_doc("Subcontracting BOM")
+        sc_bom.finished_good = doc.item 
+        sc_bom.finished_good_bom = doc.name
+        sc_bom.finished_good_uom = doc.uom
+        sc_bom.finished_good_qty = flt(doc.quantity)
+        sc_bom.service_item = doc.custom_service_item # Mapping custom_service_item
+        sc_bom.service_item_qty = flt(doc.quantity)
+        sc_bom.service_item_uom = service_item_uom
+        
+        # Set initial active status based on if this BOM is default
+        sc_bom.is_active = 1 if doc.is_default else 0
+        
+        # Use flags to bypass the "Main BOM must be default" validation during creation
+        sc_bom.flags.ignore_validate = True
+        sc_bom.insert(ignore_permissions=True)
+        
+        frappe.msgprint(f"Subcontracting BOM {sc_bom.name} created.", indicator="green")
+        return sc_bom.name
+
+    except Exception as e:
+        frappe.log_error(message=frappe.get_traceback(), title="SC BOM Creation Error")
+        frappe.msgprint(f"Failed to create SC BOM: {str(e)}", indicator="red")
+        return None
 
 def on_cancel(doc, method):
     """
     Triggered when a BOM is cancelled.
-    Deactivates (sets is_active=0) the linked Subcontracting BOM.
+    Deletes the linked Subcontracting BOM.
     """
     try:
         sc_bom_name = frappe.db.get_value("Subcontracting BOM", {"finished_good_bom": doc.name})
         
         if sc_bom_name:
-            sc_bom = frappe.get_doc("Subcontracting BOM", sc_bom_name)
-            # Set to inactive since the non-submittable doctype cannot be "cancelled"
-            sc_bom.is_active = 0
-            sc_bom.save(ignore_permissions=True)
-            frappe.msgprint(f"Subcontracting BOM <a href='/app/subcontracting-bom/{sc_bom.name}'>{sc_bom.name}</a> has been deactivated.", title="Deactivated", indicator="orange")
+            # Delete the linked Subcontracting BOM
+            frappe.delete_doc("Subcontracting BOM", sc_bom_name, ignore_permissions=True)
+            frappe.msgprint(f"Subcontracting BOM {sc_bom_name} has been deleted.", indicator="red")
 
+    except frappe.LinkExistsError:
+        # Fallback: if it's already used in a Subcontracting Order, we can't delete it.
+        frappe.db.set_value("Subcontracting BOM", sc_bom_name, "is_active", 0)
+        frappe.msgprint(f"Subcontracting BOM {sc_bom_name} is linked to other transactions. It has been <b>Deactivated</b> instead of deleted.", indicator="orange")
     except Exception as e:
-        frappe.log_error(message=frappe.get_traceback(), title="Subcontracting BOM Deactivation Failed")
+        frappe.log_error(message=frappe.get_traceback(), title="Subcontracting BOM Deletion Failed")
