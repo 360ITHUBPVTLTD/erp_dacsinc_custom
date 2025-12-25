@@ -4374,3 +4374,63 @@ def biomentric_login(employee_code=None, employee_name=None, log_datetime=None,
             frappe.get_traceback()
         )
         return {"status": "error", "message": "Failed to create check-in"}
+
+
+
+
+import frappe
+from frappe.utils import add_days, flt, getdate
+
+def sales_order_before_insert(doc, method):
+    """
+    This runs BEFORE the ERPNext validation. 
+    It wipes the 'Quotation' dates and replaces them with 'Sales Order' dates.
+    """
+    if doc.payment_terms_template:
+        # 1. Fetch the template details manually
+        template_terms = frappe.get_all(
+            "Payment Terms Template Detail", 
+            filters={"parent": doc.payment_terms_template},
+            fields=["payment_term", "description", "invoice_portion", "credit_days", "discount_type", "discount"]
+        )
+
+        if not template_terms:
+            return
+
+        # 2. COMPLETELY CLEAR the table copied from the Quotation
+        doc.set("payment_schedule", [])
+
+        # 3. Re-calculate everything based on the Sales Order Date (doc.transaction_date)
+        total_amount = flt(doc.grand_total)
+        
+        for term in template_terms:
+            # Calculate new due date relative to the Sales Order
+            new_due_date = add_days(doc.transaction_date, term.credit_days)
+            
+            # Calculate payment amount for this row
+            amt = total_amount * (flt(term.invoice_portion) / 100.0)
+            
+            # Append the fresh row
+            doc.append("payment_schedule", {
+                "payment_term": term.payment_term,
+                "description": term.description,
+                "invoice_portion": term.invoice_portion,
+                "credit_days": term.credit_days,
+                "due_date": new_due_date,
+                "payment_amount": amt,
+                "base_payment_amount": amt * flt(doc.conversion_rate or 1),
+                "discount_type": term.discount_type,
+                "discount": term.discount
+            })
+
+        # 4. Rounding adjustment to make sure total matches exactly
+        fix_rounding(doc)
+
+def fix_rounding(doc):
+    if not doc.payment_schedule:
+        return
+    scheduled_total = sum(flt(d.payment_amount) for d in doc.payment_schedule)
+    diff = flt(doc.grand_total) - scheduled_total
+    if diff != 0:
+        doc.payment_schedule[-1].payment_amount += diff
+        doc.payment_schedule[-1].base_payment_amount = doc.payment_schedule[-1].payment_amount * flt(doc.conversion_rate or 1)
