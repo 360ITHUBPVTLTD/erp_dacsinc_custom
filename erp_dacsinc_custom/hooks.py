@@ -153,7 +153,8 @@ doc_events = {
     },
     "Lead": {
         "after_insert": "erp_dacsinc_custom.custom_lead.after_insert_lead",
-        "before_save": "erp_dacsinc_custom.custom_lead.before_save_lead"
+        "on_update": "erp_dacsinc_custom.custom_lead.on_update_lead",
+        "validate": "erp_dacsinc_custom.custom_lead.validate_lead"
     },
     "Quotation": {
         "before_insert": "erp_dacsinc_custom.custom_script.before_insert",
@@ -166,7 +167,6 @@ doc_events = {
         "after_insert": "erp_dacsinc_custom.notifications.notify_on_new_so",
         "on_update": "erp_dacsinc_custom.custom_script.sales_order_on_update",
         "on_trash": "erp_dacsinc_custom.custom_script.sales_order_on_trash"
-
     },
     "Delivery Note": {
         "on_submit": "erp_dacsinc_custom.custom_script.update_pick_lists_on_dn_submit"
@@ -180,7 +180,12 @@ doc_events = {
         "on_submit": "erp_dacsinc_custom.purchase_order.create_putaway_picklist",
         "on_cancel": "erp_dacsinc_custom.purchase_order.delete_putaway_picklist"
     },
+    # "Customer": {
+    #     "after_insert": "erp_dacsinc_custom.custom_customer.customer_after_insert",
+    #     "on_update": "erp_dacsinc_custom.custom_customer.update_customer_sharing"
+    # }
     "Customer": {
+        "before_insert": "erp_dacsinc_custom.custom_customer.customer_before_insert",
         "after_insert": "erp_dacsinc_custom.custom_customer.customer_after_insert",
         "on_update": "erp_dacsinc_custom.custom_customer.update_customer_sharing"
     }

@@ -2408,8 +2408,8 @@ import frappe
 
 def quotation_on_submit(doc, method):
     """When Quotation submitted → if linked Lead is 'Enquiry', change to 'Pipeline'."""
-    if doc.quotation_to == "Lead" and doc.party_name:
-        lead = frappe.get_doc("Lead", doc.party_name)
+    if doc.custom_lead_id:
+        lead = frappe.get_doc("Lead", doc.custom_lead_id)
         if lead.custom_lead_category == "Enquiry":
             lead.custom_lead_category = "Pipeline"
             lead.save(ignore_permissions=True)
@@ -2537,141 +2537,115 @@ def quotation_on_submit(doc, method):
 
 #         lead.save(ignore_permissions=True)
 
-
-
-
 import frappe
+from frappe.utils import flt
 from erpnext.selling.doctype.sales_order.sales_order import create_pick_list
 
 def get_lead_from_so_items(doc):
-    """Helper to extract Lead Name from Sales Order Items (via Quotation)"""
-    if doc.items and doc.items[0].prevdoc_docname:
-        quotation_name = doc.items[0].prevdoc_docname
-        quotation_to, party_name = frappe.db.get_value(
-            "Quotation", quotation_name, ["quotation_to", "party_name"]
-        ) or (None, None)
+    """
+    Finds the Lead ID by checking the custom_lead_id field in the 
+    Quotation linked to the Sales Order items.
+    """
+    if not doc.get("items"):
+        return None
 
-        if quotation_to == "Lead" and party_name:
-            return party_name
+    for item in doc.items:
+        prev_doc = item.get("prevdoc_docname")
+        if prev_doc:
+            # We fetch the custom_lead_id from the Quotation linked to this item
+            lead_id = frappe.db.get_value("Quotation", prev_doc, "custom_lead_id")
+            if lead_id:
+                return lead_id
     return None
 
-def update_lead_stats(doc, is_trash=False):
+def sync_lead_data(lead_name, exclude_so_name=None):
     """
-    Recalculate and update Lead status, PO Value, and Customer based on the latest valid Sales Order.
+    Synchronizes Lead data. 
+    PRIORITY: Latest Submitted Sales Order (docstatus 1) > Latest Draft (docstatus 0).
     """
-    lead_name = get_lead_from_so_items(doc)
-    
     if not lead_name:
         return
 
-    lead = frappe.get_doc("Lead", lead_name)
-
-    # 1. Sync Lead Owner to Sales Order (If in Draft/Update)
-    if not is_trash and hasattr(lead, "lead_owner") and doc.docstatus == 0:
-        if doc.custom_lead_owner != lead.lead_owner:
-            frappe.db.set_value("Sales Order", doc.name, "custom_lead_owner", lead.lead_owner)
-
-    # 2. Build Query to find the 'latest' relevant SO
-    conditions = "AND so.docstatus < 2"
+    # Prepare SQL filters and arguments
+    query_filters = "AND so.docstatus < 2"  # Exclude Cancelled
+    args = [lead_name]
     
-    if is_trash:
-        conditions += f" AND so.name != '{doc.name}'"
+    if exclude_so_name:
+        query_filters += " AND so.name != %s"
+        args.append(exclude_so_name)
 
+    # SQL logic: 
+    # 1. 'ORDER BY so.docstatus DESC' ensures Submitted (1) comes before Draft (0).
+    # 2. 'ORDER BY so.creation DESC' ensures the newest record within that status is picked.
     latest_so = frappe.db.sql(f"""
-        SELECT so.grand_total, so.name, so.customer
-        FROM `tabSales Order Item` soi
-        INNER JOIN `tabSales Order` so ON soi.parent = so.name
-        INNER JOIN `tabQuotation` q ON soi.prevdoc_docname = q.name
-        WHERE q.quotation_to = 'Lead'
-          AND q.party_name = %s
-          {conditions}
-        ORDER BY so.creation DESC
+        SELECT so.grand_total, so.customer, so.name, so.docstatus
+        FROM `tabSales Order` so
+        WHERE EXISTS (
+            SELECT 1 FROM `tabSales Order Item` soi
+            INNER JOIN `tabQuotation` q ON soi.prevdoc_docname = q.name
+            WHERE soi.parent = so.name AND q.custom_lead_id = %s
+        )
+        {query_filters}
+        ORDER BY so.docstatus DESC, so.creation DESC
         LIMIT 1
-    """, (lead_name,), as_dict=True)
+    """, tuple(args), as_dict=True)
 
-    # 3. Apply Updates to Lead
     if latest_so:
-        # Fetch the first row from the list
-        data = latest_so[0] 
-
-        # Update Value
-        lead.custom_po_value = data.grand_total
-        
-        # Update Customer (Fix applied here)
-        lead.custom_lead_customer = data.customer
-        
-        # Ensure status is 'Order'
-        if lead.custom_lead_category == "Pipeline":
-            lead.custom_lead_category = "Order"
+        data = latest_so[0]
+        # Valid SO exists: Update Lead
+        frappe.db.set_value("Lead", lead_name, {
+            "custom_po_value": flt(data.grand_total),
+            "custom_lead_category": "Order",
+            "custom_lead_type": "WON",
+            "custom_lead_customer": data.customer or ""
+        }, update_modified=True)
     else:
-        # No valid SOs found (everything deleted or cancelled)
-        lead.custom_po_value = 0
-        
-        # Clear the customer field since there are no active orders
-        # lead.custom_lead_customer = None 
-        
-        # Revert to Pipeline
-        if lead.custom_lead_category == "Order":
-            lead.custom_lead_category = "Pipeline"
-
-    lead.save(ignore_permissions=True)
+        # No valid Sales Orders remain: Revert Lead
+        frappe.db.set_value("Lead", lead_name, {
+            "custom_po_value": 0,
+            "custom_lead_category": "Pipeline",
+            "custom_lead_type": "WARM"
+        }, update_modified=True)
 
 # -------------------------------------------------------------------------
-# EVENT HOOKS
+# EVENT HOOKS (Sales Order)
 # -------------------------------------------------------------------------
 
 def sales_order_on_update(doc, method):
-    """
-    Triggered on: After Insert & Every Save (Draft).
-    Requirements: Update custom_po_value immediately when Draft is created or amount changes.
-    """
-    # Use generic function to update lead
-    update_lead_stats(doc, is_trash=False)
+    """Draft Save: Updates Lead with Draft total (unless a Submitted SO already exists)."""
+    lead_name = get_lead_from_so_items(doc)
+    if lead_name:
+        # Sync Lead Owner to Sales Order for Drafts
+        if doc.docstatus == 0:
+            lead_owner = frappe.db.get_value("Lead", lead_name, "lead_owner")
+            if lead_owner and doc.get("custom_lead_owner") != lead_owner:
+                frappe.db.set_value("Sales Order", doc.name, "custom_lead_owner", lead_owner)
+        
+        sync_lead_data(lead_name)
 
 def sales_order_on_submit(doc, method):
-    """
-    Triggered on: Submit.
-    Requirements: Finalize Lead update & Create Pick List.
-    """
-    # 1. Update Lead Values (Ensure final value is set)
-    update_lead_stats(doc, is_trash=False)
+    """Submit: Prioritizes this SO's total for the Lead PO Value."""
+    lead_name = get_lead_from_so_items(doc)
+    if lead_name:
+        sync_lead_data(lead_name)
 
-    # 2. Handle Pick List Creation
+    # Standard ERPNext logic: Create Pick List on Submit
     try:
         pick_list = create_pick_list(doc.name)
-
-        # Only proceed if the Pick List has actual line items (stock reserved)
         if pick_list.locations:
             pick_list.insert(ignore_permissions=True)
-            frappe.msgprint(f"Pick List <b>{pick_list.name}</b> created in Draft.", alert=True)
-        else:
-            frappe.msgprint("Stock allocation not possible. Pick List creation skipped.", indicator="orange", alert=True)
-
-    except Exception as e:
-        frappe.log_error(f"Error creating Pick List for SO {doc.name}: {str(e)}", "Pick List Error")
+    except Exception:
+        pass
 
 def sales_order_on_cancel(doc, method):
-    """
-    Triggered on: Cancel.
-    Requirements: Revert PO value to previous valid SO or 0.
-    """
-    # Docstatus is already 2 (Cancelled) in database when this runs effectively for calculation purposes
-    # Logic in update_lead_stats filters `docstatus < 2`, so this doc will naturally be excluded
-    update_lead_stats(doc, is_trash=False)
+    """Cancel: Automatically finds the next most recent Submitted/Draft SO."""
+    lead_name = get_lead_from_so_items(doc)
+    sync_lead_data(lead_name)
 
 def sales_order_on_trash(doc, method):
-    """
-    Triggered on: Delete.
-    Requirements: Remove this amount from Lead, revert to previous SO or 0.
-    """
-    # docstatus is still 0 (Draft) here, but we are deleting it.
-    # We pass is_trash=True to explicitly exclude this record from SQL query.
-    update_lead_stats(doc, is_trash=True)
-
-
-
-
-
+    """Delete: Manually excludes this doc to find the next valid record."""
+    lead_name = get_lead_from_so_items(doc)
+    sync_lead_data(lead_name, exclude_so_name=doc.name)
 
 
 
