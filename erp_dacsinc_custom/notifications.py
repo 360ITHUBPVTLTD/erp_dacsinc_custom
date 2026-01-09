@@ -137,19 +137,19 @@ def generate_daily_report(send_mail=0):
 
     # 2. Activity Data
     # Load (Record) Created Today
-    activity_created_today = frappe.db.count("Event", {"creation": ["between", [start_day, end_day]]})
+    activity_created_today = frappe.db.count("Event Activity", {"creation": ["between", [start_day, end_day]]})
     
     # Activity Completed Today (based on ends_on date)
-    completed_today = frappe.db.count("Event", {"ends_on": ["between", [start_day, end_day]]})
+    completed_today = frappe.db.count("Event Activity", {"ends_on": ["between", [start_day, end_day]]})
     
     # Overdue Active (Status Open/Active and Starts_on < Today)
-    overdue_active = frappe.db.count("Event", {
+    overdue_active = frappe.db.count("Event Activity", {
         "status": ["not in", ["Closed", "Completed", "Cancelled"]],
         "starts_on": ["<", start_day]
     })
 
     # Detailed Activity Log for the table (Created Today)
-    detailed_events = frappe.db.get_all("Event",
+    detailed_events = frappe.db.get_all("Event Activity",
         filters={"creation": ["between", [start_day, end_day]]},
         fields=["subject", "owner", "status", "starts_on", "ends_on"]
     )
