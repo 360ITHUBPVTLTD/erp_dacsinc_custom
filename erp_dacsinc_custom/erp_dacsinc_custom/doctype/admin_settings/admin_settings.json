@@ -5,11 +5,15 @@
  "doctype": "DocType",
  "engine": "InnoDB",
  "field_order": [
+  "sending_mails_for_sales_order_creation_section",
   "email_account",
   "send_email",
   "notify_creator",
   "column_break_vuzp",
-  "to_mail_ids"
+  "to_mail_ids",
+  "crm_daily_report_section",
+  "send_mail_for_daily",
+  "to_mail_id"
  ],
  "fields": [
   {
@@ -40,13 +44,35 @@
    "fieldname": "notify_creator",
    "fieldtype": "Check",
    "label": "Send Mail For Owner"
+  },
+  {
+   "fieldname": "sending_mails_for_sales_order_creation_section",
+   "fieldtype": "Section Break",
+   "label": "Sales Order Updates for CRM Team"
+  },
+  {
+   "fieldname": "crm_daily_report_section",
+   "fieldtype": "Section Break",
+   "label": "CRM Daily Report"
+  },
+  {
+   "default": "0",
+   "fieldname": "send_mail_for_daily",
+   "fieldtype": "Check",
+   "label": "Send mail for Daily"
+  },
+  {
+   "description": "CRM Daily Report ",
+   "fieldname": "to_mail_id",
+   "fieldtype": "Small Text",
+   "label": "To Mail ID"
   }
  ],
  "grid_page_length": 50,
  "index_web_pages_for_search": 1,
  "issingle": 1,
  "links": [],
- "modified": "2025-10-22 17:42:01.117025",
+ "modified": "2026-01-07 17:43:04.975120",
  "modified_by": "Administrator",
  "module": "Erp Dacsinc Custom",
  "name": "Admin Settings",

@@ -107,136 +107,140 @@ def get_html_email_template_for_owner(doc, creator_name):
 
 
 #####################  Lead daily report mail #########################################
-
-
 import frappe
 import json
 import urllib.parse
-from frappe.utils import today, format_datetime, get_url, format_date
-from frappe.utils.xlsxutils import make_xlsx
+from frappe.utils import today, format_datetime, get_url, format_date, get_datetime
 
 @frappe.whitelist()
 def generate_daily_report(send_mail=0):
     send_mail = bool(int(send_mail))
     settings = frappe.get_single("Admin Settings")
     
-    report_date_iso = today() # YYYY-MM-DD for filters
-    # Requested format: dd-mmm-yyyy (e.g. 09-Jan-2026)
+    report_date_iso = today()
     display_date = format_date(report_date_iso, "dd-MMM-yyyy")
     
-    start_time = f"{report_date_iso} 00:00:00"
-    end_time = f"{report_date_iso} 23:59:59"
+    start_day = f"{report_date_iso} 00:00:00"
+    end_day = f"{report_date_iso} 23:59:59"
     base_url = get_url()
 
-    # 1. Lead Data
+    # 1. Total Lead Created Today (by Lead Owner)
     leads_today = frappe.db.get_all("Lead", 
-        filters={"creation": ["between", [start_time, end_time]]},
-        fields=["name", "lead_name", "lead_owner", "status", "mobile_no", "email_id", "creation"]
+        filters={"creation": ["between", [start_day, end_day]]},
+        fields=["lead_owner", "name"]
     )
-    
+    total_lead_created_today = len(leads_today)
     lead_summary = {}
     for l in leads_today:
         owner = l.lead_owner or "Unassigned"
         lead_summary[owner] = lead_summary.get(owner, 0) + 1
 
-    # 2. Event Data
-    events_today = frappe.db.get_all("Event",
-        filters={"creation": ["between", [start_time, end_time]]},
-        fields=["subject", "owner", "status", "starts_on", "ends_on", "creation"]
+    # 2. Activity Data
+    # Load (Record) Created Today
+    activity_created_today = frappe.db.count("Event", {"creation": ["between", [start_day, end_day]]})
+    
+    # Activity Completed Today (based on ends_on date)
+    completed_today = frappe.db.count("Event", {"ends_on": ["between", [start_day, end_day]]})
+    
+    # Overdue Active (Status Open/Active and Starts_on < Today)
+    overdue_active = frappe.db.count("Event", {
+        "status": ["not in", ["Closed", "Completed", "Cancelled"]],
+        "starts_on": ["<", start_day]
+    })
+
+    # Detailed Activity Log for the table (Created Today)
+    detailed_events = frappe.db.get_all("Event",
+        filters={"creation": ["between", [start_day, end_day]]},
+        fields=["subject", "owner", "status", "starts_on", "ends_on"]
     )
 
-    # 3. Excel logic
-    attachments = []
-    if leads_today:
-        l_data = [["ID", "Lead Name", "Owner", "Status", "Mobile", "Email", "Creation"]]
-        for row in leads_today:
-            l_data.append([row.name, row.lead_name, row.lead_owner, row.status, row.mobile_no, row.email_id, row.creation])
-        attachments.append({"fname": f"Leads_{display_date}.xlsx", "fcontent": make_xlsx(l_data, "Leads").getvalue()})
-
-    if events_today:
-        e_data = [["Subject", "Assigned To", "Status", "Starts On (Due)", "Ends On (Completed)", "Created"]]
-        for row in events_today:
-            e_data.append([row.subject, row.owner, row.status, row.starts_on, row.ends_on, row.creation])
-        attachments.append({"fname": f"Events_{display_date}.xlsx", "fcontent": make_xlsx(e_data, "Events").getvalue()})
-
-    # 4. Links Generation
+    # 3. Dynamic Links for Buttons (Encoded)
     date_param = urllib.parse.quote(json.dumps([report_date_iso, report_date_iso]))
-    lead_link = f"{base_url}/app/query-report/Lead Report?custom_created_at_option=Custom&custom_created_at={date_param}"
-    event_link = f"{base_url}/app/query-report/Lead Report?inverse_report=1&custom_created_at_option=Custom&custom_created_at={date_param}"
+    lead_report_link = f"{base_url}/app/query-report/Lead Report?custom_created_at_option=Custom&custom_created_at={date_param}"
+    activity_report_link = f"{base_url}/app/query-report/Lead Report?inverse_report=1&custom_created_at_option=Custom&custom_created_at={date_param}"
 
-    html_content = get_html_template(display_date, lead_summary, events_today, lead_link, event_link)
+    html_content = get_modern_dashboard(
+        display_date, lead_summary, detailed_events, 
+        lead_report_link, activity_report_link,
+        total_lead_created_today, activity_created_today, completed_today, overdue_active
+    )
 
     if send_mail:
-        if not settings.send_mail_for_daily:
-            return {"status": "error", "message": "Email sending is disabled."}
-        recipients = [r.strip() for r in (settings.to_mail_id or "").split(",") if r.strip()]
-        if not recipients: return {"status": "error", "message": "No recipients found."}
-
+        if not settings.to_mail_id:
+            return {"status": "error", "message": "Recipients missing in Admin Settings."}
+        
+        recipients = [r.strip() for r in settings.to_mail_id.split(",") if r.strip()]
         frappe.sendmail(
             recipients=recipients,
-            subject=f"Daily Report: {display_date}",
+            subject=f"Management Daily Summary: {display_date}",
             content=html_content,
-            attachments=attachments,
             now=True
         )
-        return {"status": "success", "message": "Sent Successfully."}
+        return {"status": "success", "message": "Email sent to management."}
 
     return {"status": "success", "html": html_content}
 
-def get_html_template(date, lead_summary, events, lead_link, event_link):
-    summary_rows = ""
-    for owner, count in lead_summary.items():
-        summary_rows += f"<tr><td style='border:1px solid #ddd;padding:8px;'>{owner}</td><td style='border:1px solid #ddd;padding:8px;text-align:center;'><b>{count}</b></td></tr>"
+def get_modern_dashboard(date, lead_summary, events, lead_url, act_url, t_lead, a_create, a_comp, a_overdue):
+    # Overall metrics UI cards
+    metrics_html = f"""
+    <div style="display: grid; grid-template-columns: repeat(4, 1fr); gap: 15px; margin-bottom: 25px;">
+        <div style="background: #ffffff; padding: 15px; border: 1px solid #e0e0e0; border-radius: 8px; text-align: center;">
+            <div style="font-size: 11px; color: #777; text-transform: uppercase;">Total Leads Created Today</div>
+            <div style="font-size: 24px; font-weight: bold; color: #0047AB;">{t_lead}</div>
+        </div>
+        <div style="background: #ffffff; padding: 15px; border: 1px solid #e0e0e0; border-radius: 8px; text-align: center;">
+            <div style="font-size: 11px; color: #777; text-transform: uppercase;">Activity Created Today</div>
+            <div style="font-size: 24px; font-weight: bold; color: #15803d;">{a_create}</div>
+        </div>
+        <div style="background: #ffffff; padding: 15px; border: 1px solid #e0e0e0; border-radius: 8px; text-align: center;">
+            <div style="font-size: 11px; color: #777; text-transform: uppercase;">Completed Today</div>
+            <div style="font-size: 24px; font-weight: bold; color: #6366f1;">{a_comp}</div>
+        </div>
+        <div style="background: #ffffff; padding: 15px; border: 1px solid #e0e0e0; border-radius: 8px; text-align: center;">
+            <div style="font-size: 11px; color: #777; text-transform: uppercase;">Overdue Active</div>
+            <div style="font-size: 24px; font-weight: bold; color: #ef4444;">{a_overdue}</div>
+        </div>
+    </div>
+    """
 
-    event_rows = ""
-    for e in events:
-        event_rows += f"""
-            <tr>
-                <td style='border:1px solid #ddd;padding:8px;'>{e.subject}</td>
-                <td style='border:1px solid #ddd;padding:8px;'>{e.owner}</td>
-                <td style='border:1px solid #ddd;padding:8px;'>{e.status}</td>
-                <td style='border:1px solid #ddd;padding:8px;'>{format_datetime(e.starts_on)}</td>
-                <td style='border:1px solid #ddd;padding:8px;'>{format_datetime(e.ends_on) if e.ends_on else '-'}</td>
-            </tr>"""
+    # Table rows
+    lead_rows = "".join([f"<tr><td style='border:1px solid #ddd;padding:8px;'>{o}</td><td style='border:1px solid #ddd;padding:8px;text-align:center;'><b>{c}</b></td></tr>" for o, c in lead_summary.items()])
+    event_rows = "".join([f"<tr><td style='border:1px solid #ddd;padding:8px;'>{e.subject}</td><td style='border:1px solid #ddd;padding:8px;'>{e.owner}</td><td style='border:1px solid #ddd;padding:8px;'>{e.status}</td><td style='border:1px solid #ddd;padding:8px;'>{format_datetime(e.starts_on)}</td><td style='border:1px solid #ddd;padding:8px;'>{format_datetime(e.ends_on) if e.ends_on else '-'}</td></tr>" for e in events])
 
     return f"""
-    <div style="font-family: 'Segoe UI', Tahoma, sans-serif; padding: 10px; color: #444;">
-        <div style="background-color: #0047AB; color: white; padding: 20px; border-radius: 8px 8px 0 0;">
-            <h2 style="margin:0;">Daily Management Report</h2>
-            <p style="margin:5px 0 0 0; opacity:0.9;">Report Date: {date}</p>
-        </div>
-        
-        <div style="border: 1px solid #ddd; border-top: none; padding: 20px; background: #fff; border-radius: 0 0 8px 8px;">
+    <div style="background-color: #f3f4f6; padding: 25px; font-family: -apple-system, sans-serif;">
+        <div style="max-width: 900px; margin: auto; background: white; border-radius: 12px; box-shadow: 0 4px 6px -1px rgba(0,0,0,0.1); overflow: hidden;">
+            <div style="background: #0047AB; color: white; padding: 25px;">
+                <h1 style="margin: 0; font-size: 22px; color:white;">Executive Performance Dashboard</h1>
+                <p style="margin: 4px 0 0 0; opacity: 0.8; font-size: 13px;">Review Date: {date}</p>
+            </div>
             
-            <div style="margin-bottom: 25px;">
-                <h3 style="color: #0047AB; margin-top:0;">1. New Leads Summary</h3>
+            <div style="padding: 25px;">
+                {metrics_html}
+
+                <h3 style="color: #333; margin-top: 25px;">New Leads Created (Today)</h3>
                 <table style="width: 100%; border-collapse: collapse; margin-bottom: 15px;">
-                    <tr style="background: #f8f9fa;">
-                        <th style="border:1px solid #ddd;padding:10px;text-align:left;">Lead Owner</th>
-                        <th style="border:1px solid #ddd;padding:10px;width:120px;">Count</th>
-                    </tr>
-                    {summary_rows if summary_rows else "<tr><td colspan='2' style='padding:10px;text-align:center;'>No leads created today</td></tr>"}
+                    <tr style="background: #f9fafb;"><th style="border:1px solid #ddd;padding:10px;text-align:left;">Lead Owner</th><th style="border:1px solid #ddd;padding:10px;width:150px;">Created Today</th></tr>
+                    {lead_rows if lead_rows else "<tr><td colspan='2' style='padding:10px;text-align:center;'>No leads generated today.</td></tr>"}
                 </table>
-                <a href="{lead_link}" target="_blank" style="display:inline-block; padding: 10px 20px; background:#0047AB; color:#fff; text-decoration:none; border-radius:4px; font-weight:bold; font-size:13px;">View Detailed Lead Report</a>
-            </div>
+                <div style="text-align: right; margin-bottom: 30px;">
+                    <a href="{lead_url}" target="_blank" style="display:inline-block; background: #0047AB; color: white; padding: 8px 18px; text-decoration: none; border-radius: 6px; font-weight: bold; font-size: 13px;">View Full Lead Details →</a>
+                </div>
 
-            <div style="margin-bottom: 25px; border-top: 1px solid #eee; pt:20px;">
-                <h3 style="color: #0047AB; padding-top:15px;">2. Event Activity Log</h3>
-                <table style="width: 100%; border-collapse: collapse; font-size: 13px; margin-bottom: 15px;">
-                    <tr style="background: #f8f9fa;">
-                        <th style='border:1px solid #ddd;padding:8px;text-align:left;'>Subject</th>
-                        <th style='border:1px solid #ddd;padding:8px;text-align:left;'>Assigned To</th>
-                        <th style='border:1px solid #ddd;padding:8px;text-align:left;'>Status</th>
-                        <th style='border:1px solid #ddd;padding:8px;text-align:left;'>Starts On (Due)</th>
-                        <th style='border:1px solid #ddd;padding:8px;text-align:left;'>Ends On (Completed)</th>
+                <h3 style="color: #333;">Activity Log Details</h3>
+                <table style="width: 100%; border-collapse: collapse; margin-bottom: 15px; font-size: 13px;">
+                    <tr style="background: #f9fafb;">
+                        <th style="border:1px solid #ddd;padding:8px;">Subject</th><th style="border:1px solid #ddd;padding:8px;">Assigned To</th><th style="border:1px solid #ddd;padding:8px;">Status</th><th style="border:1px solid #ddd;padding:8px;">Starts On</th><th style="border:1px solid #ddd;padding:8px;">Ends On</th>
                     </tr>
-                    {event_rows if event_rows else "<tr><td colspan='5' style='padding:10px;text-align:center;'>No events recorded today</td></tr>"}
+                    {event_rows if event_rows else "<tr><td colspan='5' style='padding:20px;text-align:center;'>No events records for today.</td></tr>"}
                 </table>
-                <a href="{event_link}" target="_blank" style="display:inline-block; padding: 10px 20px; background:#0047AB; color:#fff; text-decoration:none; border-radius:4px; font-weight:bold; font-size:13px;">View Full Activity Report</a>
+                <div style="text-align: right;">
+                    <a href="{act_url}" target="_blank" style="display:inline-block; background: #0047AB; color: white; padding: 8px 18px; text-decoration: none; border-radius: 6px; font-weight: bold; font-size: 13px;">Full Activity Report →</a>
+                </div>
             </div>
-
-            <div style="background: #fdf6ec; border: 1px solid #faebcc; color: #8a6d3b; padding: 12px; border-radius: 4px; font-size: 12px;">
-                <b>System Note:</b> Comprehensive Excel data files for both Leads and Events have been attached to this email.
+            
+            <div style="padding: 20px; text-align: center; border-top: 1px solid #f0f0f0; color: #888; font-size: 11px;">
+                Automated System Message | Powered by ERP Intelligence
             </div>
         </div>
     </div>
