@@ -2099,61 +2099,107 @@ def create_embroidery_work_order(po_name, sco_name, items_to_send, notes="", sup
 
 
 
+# @frappe.whitelist()
+# def get_sco_status_for_po(purchase_order_name):
+#     """
+#     Checks status using 'panel_stage' field specifically.
+#     """
+#     # 1. Find SCO
+#     sco_list = frappe.get_all("Subcontracting Order", filters={"purchase_order": purchase_order_name, "docstatus": 1}, fields=["name"])
+#     if not sco_list:
+#         return {"sco_exists": False}
+
+#     sco_name = sco_list[0].name
+#     sco_doc = frappe.get_doc("Subcontracting Order", sco_name)
+
+#     # 2. Check Items Pending on SCO
+#     items_pending = False
+#     fg_received_total = 0
+#     for item in sco_doc.items:
+#         if item.received_qty < item.qty:
+#             items_pending = True
+#         fg_received_total += item.received_qty
+#     # print("items_pending", items_pending)
+#     # print("fg_received_total", fg_received_total)
+#     # 3. Check Embroidery Work Orders using 'panel_stage'
+#     # Fetching specifically the field 'panel_stage'
+#     panel_jobs = frappe.get_all("Embroidery Work Order", 
+#         filters={
+#             "purchase_order": purchase_order_name, 
+#             "work_type": "Panel Job Work",
+#             "docstatus": 1
+#         },
+#         fields=["name", "panel_stage"] 
+#     )
+
+#     is_panel_job_open = False
+#     has_closed_panel_job = False
+    
+#     # Exact text to match
+#     closed_status = "Returned to Jobber (Closed)"
+#     # Statuses that count as "Finished" (Job is not running)
+#     ignore_statuses = [closed_status]
+
+#     for job in panel_jobs:
+#         current_stage = (job.get("panel_stage") or "").strip()
+
+#         # Condition 1: Check if this specific job is the closed one
+#         if current_stage == closed_status:
+#             has_closed_panel_job = True
+
+#         # Condition 2: Check if this job is currently "Open" / Running
+#         # If it's NOT in our list of ignored/closed statuses, we assume it is open/running.
+#         if current_stage not in ignore_statuses:
+#             is_panel_job_open = True
+
+#     return {
+#         "sco_exists": True,
+#         "sco_name": sco_name,
+#         "items_pending": items_pending, 
+#         "is_panel_job_open": is_panel_job_open,
+#         "fg_received": fg_received_total > 0,
+#         "has_closed_panel_job": has_closed_panel_job
+#     }
+
+
 @frappe.whitelist()
 def get_sco_status_for_po(purchase_order_name):
-    """
-    Checks status using 'panel_stage' field specifically.
-    """
-    # 1. Find SCO
-    sco_list = frappe.get_all("Subcontracting Order", filters={"purchase_order": purchase_order_name, "docstatus": 1}, fields=["name"])
-    if not sco_list:
-        return {"sco_exists": False}
+    po_doc = frappe.get_doc("Purchase Order", purchase_order_name)
+    sco_name = frappe.db.get_value("Subcontracting Order", 
+        {"purchase_order": purchase_order_name, "docstatus": 1}, "name")
 
-    sco_name = sco_list[0].name
-    sco_doc = frappe.get_doc("Subcontracting Order", sco_name)
-
-    # 2. Check Items Pending on SCO
     items_pending = False
     fg_received_total = 0
-    for item in sco_doc.items:
-        if item.received_qty < item.qty:
-            items_pending = True
-        fg_received_total += item.received_qty
-    # print("items_pending", items_pending)
-    # print("fg_received_total", fg_received_total)
-    # 3. Check Embroidery Work Orders using 'panel_stage'
-    # Fetching specifically the field 'panel_stage'
+
+    if sco_name:
+        sco_doc = frappe.get_doc("Subcontracting Order", sco_name)
+        for item in sco_doc.items:
+            if flt(item.received_qty) < flt(item.qty): items_pending = True
+            fg_received_total += flt(item.received_qty)
+    else:
+        # For non-subcontracted orders (Direct)
+        for item in po_doc.items:
+            if flt(item.received_qty) < flt(item.qty): items_pending = True
+            fg_received_total += flt(item.received_qty)
+
+    # Embroidery Check
     panel_jobs = frappe.get_all("Embroidery Work Order", 
-        filters={
-            "purchase_order": purchase_order_name, 
-            "work_type": "Panel Job Work",
-            "docstatus": 1
-        },
+        filters={"purchase_order": purchase_order_name, "work_type": "Panel Job Work", "docstatus": 1},
         fields=["name", "panel_stage"] 
     )
 
     is_panel_job_open = False
     has_closed_panel_job = False
-    
-    # Exact text to match
-    closed_status = "Returned to Jobber (Closed)"
-    # Statuses that count as "Finished" (Job is not running)
-    ignore_statuses = [closed_status]
+    closed_text = "Returned to Jobber (Closed)"
 
     for job in panel_jobs:
-        current_stage = (job.get("panel_stage") or "").strip()
-
-        # Condition 1: Check if this specific job is the closed one
-        if current_stage == closed_status:
+        if job.panel_stage == closed_text:
             has_closed_panel_job = True
-
-        # Condition 2: Check if this job is currently "Open" / Running
-        # If it's NOT in our list of ignored/closed statuses, we assume it is open/running.
-        if current_stage not in ignore_statuses:
+        else:
             is_panel_job_open = True
 
     return {
-        "sco_exists": True,
+        "sco_exists": sco_name is not None,
         "sco_name": sco_name,
         "items_pending": items_pending, 
         "is_panel_job_open": is_panel_job_open,
@@ -2163,90 +2209,196 @@ def get_sco_status_for_po(purchase_order_name):
 
 
 
-
-# # --- MODIFY the existing get_linked_subcontracting_docs function ---
-# # Add the new "Embroidery Work Order" to the documents being fetched
 # @frappe.whitelist()
-# def get_linked_subcontracting_docs(purchase_order_name):
-#     # (previous code...)
-#     # Add a new key 'ewo' to fetch Embroidery Work Orders
-#     docs["ewo"] = frappe.get_all("Embroidery Work Order", 
-#         filters={"purchase_order": purchase_order_name, "docstatus": ["!=", 2]},
-#         fields=["name", "date", "status", "material_count_given"]
-#     )
-#     # (return docs...)
-@frappe.whitelist()
-def get_panel_work_summary(sco_name):
-    # 1. Fetch Aggregated Ordered Qty (Grouping by Item Code)
-    sql = """
-        SELECT 
-            item_code, 
-            MIN(item_name) as item_name, 
-            SUM(qty) as ordered_qty 
-        FROM `tabSubcontracting Order Item` 
-        WHERE parent = %s 
-        GROUP BY item_code
-    """
-    all_sco_items = frappe.db.sql(sql, (sco_name), as_dict=1)
+# def get_panel_work_summary(sco_name):
+#     # 1. Fetch Aggregated Ordered Qty (Grouping by Item Code)
+#     sql = """
+#         SELECT 
+#             item_code, 
+#             MIN(item_name) as item_name, 
+#             SUM(qty) as ordered_qty 
+#         FROM `tabSubcontracting Order Item` 
+#         WHERE parent = %s 
+#         GROUP BY item_code
+#     """
+#     all_sco_items = frappe.db.sql(sql, (sco_name), as_dict=1)
     
-    # 2. Fetch Work Orders
+#     # 2. Fetch Work Orders
+#     ewos = frappe.db.get_all("Embroidery Work Order", 
+#         filters={"subcontracting_order": sco_name, "docstatus": ["!=", 2]}, 
+#         fields=["name", "panel_stage", "date", "panel_jobber"],
+#         order_by="creation desc"
+#     )
+    
+#     # ... (Logic for separating active/closed remains the same)
+    
+#     active_ewo_names = []
+#     closed_ewos = []
+#     for e in ewos:
+#         if e.panel_stage == 'Returned to Jobber (Closed)':
+#             closed_ewos.append(e.name)
+#         else:
+#             active_ewo_names.append(e.name)
+
+#     # 3. Sum Quantities (Map Logic)
+#     proc_map = {} 
+#     qty_in_progress = {}
+#     qty_completed = {}
+
+#     if ewos:
+#         all_ewo_items = frappe.db.get_all("Embroidery Work Order Item", 
+#             filters={"parent": ["in", [x.name for x in ewos]]}, 
+#             fields=["parent", "item_code", "ordered_qty", "received_qty", "item_name"]
+#         )
+        
+#         for i in all_ewo_items:
+#             # Map for Active Table details
+#             if i.parent not in proc_map: proc_map[i.parent] = []
+#             proc_map[i.parent].append(i)
+
+#             # Sum for Summary Table
+#             if i.parent in closed_ewos:
+#                 qty_completed[i.item_code] = qty_completed.get(i.item_code, 0) + i.ordered_qty
+#             else:
+#                 qty_in_progress[i.item_code] = qty_in_progress.get(i.item_code, 0) + i.ordered_qty
+
+#     # 4. Final Processing
+#     processed_items = []
+#     for item in all_sco_items:
+#         comp = qty_completed.get(item.item_code, 0)
+#         prog = qty_in_progress.get(item.item_code, 0)
+        
+#         # Calculation for Total Collected so far (Active + Done)
+#         total_collected = comp + prog
+        
+#         # Only cap display for cleanliness; pending math allows new creation logic if needed
+#         item['completed_qty'] = comp
+#         item['progress_qty'] = prog
+#         item['collected_qty'] = total_collected 
+#         # Calculate real pending based on TOTAL order vs TOTAL collected
+#         item['pending_qty'] = max(0, item.ordered_qty - total_collected)
+        
+#         processed_items.append(item)
+
+#     # 5. Generate Active Process List Details (Unchanged logic)
+#     active_processes = []
+#     for p in ewos:
+#         if p.name in active_ewo_names: 
+#             p_items = proc_map.get(p.name, [])
+#             parts = []
+#             for pi in p_items:
+#                 sent = int(pi.ordered_qty)
+#                 rec = int(pi.received_qty or 0)
+                
+#                 # Visual Logic
+#                 status_color = "#e67e22" # Orange (Partial)
+#                 status_label = f"Pending Recv ({rec})"
+                
+#                 if rec >= sent: 
+#                     status_color = "#28a745" # Green
+#                     status_label = f"<b>✔ All Recv ({rec})</b>"
+#                 elif rec > 0:
+#                     status_label = f"<b>Partial ({rec}/{sent})</b>"
+#                 else:
+#                     status_color = "#e74c3c" # Red
+                
+#                 # Clean visual item
+#                 html = f"""<div style='border-left:3px solid {status_color}; padding-left:6px; margin-bottom:3px;'>
+#                     <div style='font-weight:600;font-size:11px;color:#333;'>{pi.item_name}</div>
+#                     <div style='font-size:10px;color:#666;'>Sent: {sent} | <span style='color:{status_color}'>{status_label}</span></div>
+#                 </div>"""
+#                 parts.append(html)
+            
+#             p['details_html'] = "".join(parts) if parts else "-"
+#             active_processes.append(p)
+
+#     return { "all_items": processed_items, "active_processes": active_processes }
+
+
+@frappe.whitelist()
+def get_panel_work_summary(po_name):
+    # 1. Determine Context (Check if an SCO exists for this PO)
+    sco_name = frappe.db.get_value("Subcontracting Order", 
+        {"purchase_order": po_name, "docstatus": 1}, "name")
+    
+    # 2. Fetch Base Items (Where process begins)
+    # If Subcontracting Order exists, we follow its Finished Goods.
+    # Otherwise, we follow the items on the Purchase Order itself.
+    if sco_name:
+        sql = """
+            SELECT 
+                item_code, 
+                MIN(item_name) as item_name, 
+                SUM(qty) as ordered_qty 
+            FROM `tabSubcontracting Order Item` 
+            WHERE parent = %s 
+            GROUP BY item_code
+        """
+        all_items = frappe.db.sql(sql, (sco_name), as_dict=1)
+    else:
+        sql = """
+            SELECT 
+                item_code, 
+                MIN(item_name) as item_name, 
+                SUM(qty) as ordered_qty 
+            FROM `tabPurchase Order Item` 
+            WHERE parent = %s 
+            GROUP BY item_code
+        """
+        all_items = frappe.db.sql(sql, (po_name), as_dict=1)
+
+    # 3. Fetch all Work Orders linked to this Purchase Order (Works for both)
     ewos = frappe.db.get_all("Embroidery Work Order", 
-        filters={"subcontracting_order": sco_name, "docstatus": ["!=", 2]}, 
+        filters={"purchase_order": po_name, "work_type": "Panel Job Work", "docstatus": ["!=", 2]}, 
         fields=["name", "panel_stage", "date", "panel_jobber"],
         order_by="creation desc"
     )
     
-    # ... (Logic for separating active/closed remains the same)
-    
     active_ewo_names = []
-    closed_ewos = []
+    closed_ewo_names = []
     for e in ewos:
         if e.panel_stage == 'Returned to Jobber (Closed)':
-            closed_ewos.append(e.name)
+            closed_ewo_names.append(e.name)
         else:
             active_ewo_names.append(e.name)
 
-    # 3. Sum Quantities (Map Logic)
+    # 4. Map Work Order progress to summary items
     proc_map = {} 
     qty_in_progress = {}
     qty_completed = {}
 
     if ewos:
+        # Get all child items for these Work Orders
         all_ewo_items = frappe.db.get_all("Embroidery Work Order Item", 
             filters={"parent": ["in", [x.name for x in ewos]]}, 
             fields=["parent", "item_code", "ordered_qty", "received_qty", "item_name"]
         )
         
         for i in all_ewo_items:
-            # Map for Active Table details
+            # Table visualization mapping
             if i.parent not in proc_map: proc_map[i.parent] = []
             proc_map[i.parent].append(i)
 
-            # Sum for Summary Table
-            if i.parent in closed_ewos:
+            # Calculation mapping
+            if i.parent in closed_ewo_names:
                 qty_completed[i.item_code] = qty_completed.get(i.item_code, 0) + i.ordered_qty
             else:
                 qty_in_progress[i.item_code] = qty_in_progress.get(i.item_code, 0) + i.ordered_qty
 
-    # 4. Final Processing
+    # 5. Build final "Incoming/Summary" table
     processed_items = []
-    for item in all_sco_items:
+    for item in all_items:
         comp = qty_completed.get(item.item_code, 0)
         prog = qty_in_progress.get(item.item_code, 0)
-        
-        # Calculation for Total Collected so far (Active + Done)
         total_collected = comp + prog
         
-        # Only cap display for cleanliness; pending math allows new creation logic if needed
         item['completed_qty'] = comp
         item['progress_qty'] = prog
         item['collected_qty'] = total_collected 
-        # Calculate real pending based on TOTAL order vs TOTAL collected
         item['pending_qty'] = max(0, item.ordered_qty - total_collected)
-        
         processed_items.append(item)
 
-    # 5. Generate Active Process List Details (Unchanged logic)
+    # 6. Build final "Active Process" details for HTML
     active_processes = []
     for p in ewos:
         if p.name in active_ewo_names: 
@@ -2256,29 +2408,23 @@ def get_panel_work_summary(sco_name):
                 sent = int(pi.ordered_qty)
                 rec = int(pi.received_qty or 0)
                 
-                # Visual Logic
-                status_color = "#e67e22" # Orange (Partial)
-                status_label = f"Pending Recv ({rec})"
+                status_color = "#e67e22" if rec < sent else "#28a745"
+                status_label = f"Partial ({rec}/{sent})" if 0 < rec < sent else (f"<b>✔ Recv ({rec})</b>" if rec >= sent else "Waiting")
                 
-                if rec >= sent: 
-                    status_color = "#28a745" # Green
-                    status_label = f"<b>✔ All Recv ({rec})</b>"
-                elif rec > 0:
-                    status_label = f"<b>Partial ({rec}/{sent})</b>"
-                else:
-                    status_color = "#e74c3c" # Red
-                
-                # Clean visual item
                 html = f"""<div style='border-left:3px solid {status_color}; padding-left:6px; margin-bottom:3px;'>
-                    <div style='font-weight:600;font-size:11px;color:#333;'>{pi.item_name}</div>
-                    <div style='font-size:10px;color:#666;'>Sent: {sent} | <span style='color:{status_color}'>{status_label}</span></div>
+                    <div style='font-weight:600;font-size:11px;'>{pi.item_name}</div>
+                    <div style='font-size:10px;color:#666;'>Qty: {sent} | <span style='color:{status_color}'>{status_label}</span></div>
                 </div>"""
                 parts.append(html)
             
             p['details_html'] = "".join(parts) if parts else "-"
             active_processes.append(p)
 
-    return { "all_items": processed_items, "active_processes": active_processes }
+    return { "all_items": processed_items, "active_processes": active_processes, "sco_name": sco_name }
+
+
+
+
 
 @frappe.whitelist()
 def create_embroidery_work_order(po_name, sco_name, items_to_send, notes="", supplier=None, panel_jobber=None, type="Normal Embroidery", stage="Pre-Receipt"):
@@ -2658,103 +2804,236 @@ def create_full_piece_receipt(ewo_name, items_data, notes=None):
 
 
 
+import json
+import frappe
+from frappe.utils import nowdate, flt
+
 @frappe.whitelist()
-def create_full_piece_send(sco_name, items_data, supplier):
-    """ STEP 1: CREATE DOC """
+def create_full_piece_send(items_data, supplier, sco_name=None, po_name=None):
+    """
+    Creates an Embroidery Work Order for the Full Piece stage.
+    Handles both Subcontracted (via sco_name) and Direct POs (via po_name).
+    """
     items = json.loads(items_data)
     
-    # Get SCO Link details
-    sco_val = frappe.db.get_value("Subcontracting Order", sco_name, ["purchase_order"], as_dict=True)
+    # 1. Resolve the target Purchase Order
+    # If po_name is passed directly from JS, use it. 
+    # Otherwise, try to find the linked PO from the SCO.
+    final_po_name = po_name
     
+    if not final_po_name and sco_name:
+        final_po_name = frappe.db.get_value("Subcontracting Order", sco_name, "purchase_order")
+        
+    if not final_po_name:
+        frappe.throw("Reference Purchase Order not found. Cannot link Job Work.")
+
+    # 2. Initialize the Embroidery Work Order
     ewo = frappe.new_doc("Embroidery Work Order")
-    ewo.subcontracting_order = sco_name
-    ewo.purchase_order = sco_val.purchase_order
+    ewo.subcontracting_order = sco_name # Will be None for Direct POs (OK)
+    ewo.purchase_order = final_po_name
     ewo.work_type = "Full Piece Job Work"
     ewo.full_piece_jobber = supplier
-    ewo.full_piece_stage = "Sent to Full Piece Jobber" # Start Stage
+    ewo.full_piece_stage = "Sent to Full Piece Jobber" 
     ewo.date = nowdate()
     
+    # 3. Add Line Items
     for i in items:
+        qty = flt(i.get('qty', 0))
         ewo.append("items", {
-            "item_code": i['item_code'],
-            "item_name": i['item_name'],
-            "ordered_qty": i['qty'],  # Qty Sending
-            "received_qty": 0,        # Qty Recvd Back (starts 0)
-            "pending_qty": i['qty']   # Balance
+            "item_code": i.get('item_code'),
+            "item_name": i.get('item_name'),
+            "ordered_qty": qty,     # Qty currently sending to assembly
+            "received_qty": 0,      # Qty received back (initially 0)
+            "pending_qty": qty      # Remaining balance
         })
     
+    # 4. Save and Submit
     ewo.save(ignore_permissions=True)
     ewo.submit()
+    
     return ewo.name
 
 
+# @frappe.whitelist()
+# def get_full_piece_dashboard_data(po_name):
+#     """
+#     Unified provider for Full Piece Dashboard. 
+#     Source: SCO (if subcontracted) OR PO (if direct).
+#     """
+#     # 1. Identify context (Does a Subcontracting Order exist?)
+#     sco_name = frappe.db.get_value("Subcontracting Order", 
+#         {"purchase_order": po_name, "docstatus": 1}, "name")
+    
+#     # 2. GET ALL EMBROIDERY WORK ORDERS (Both types)
+#     # Linked via purchase_order field to ensure we find everything for this specific PO
+#     ewos = frappe.get_all("Embroidery Work Order", 
+#         filters={"purchase_order": po_name, "docstatus": 1},
+#         fields=["name", "date", "full_piece_jobber", "full_piece_stage", "work_type", "panel_stage"],
+#         order_by="creation desc"
+#     )
+
+#     full_piece_processes = []
+#     qty_assigned_to_fp = {}      # Track items already sent for Full Piece
+#     qty_returned_from_panel = {} # Track items cleared from Panel work
+
+#     if ewos:
+#         # Optimized: Fetch all items for all EWOs in one query
+#         ewo_items = frappe.get_all("Embroidery Work Order Item", 
+#             filters={"parent": ["in", [e.name for e in ewos]]}, 
+#             fields=["parent", "item_code", "item_name", "ordered_qty", "received_qty"]
+#         )
+        
+#         # Build maps for calculation
+#         for i in ewo_items:
+#             parent_ewo = next((e for e in ewos if e.name == i.parent), None)
+#             if not parent_ewo: continue
+
+#             # Accumulate assigned qty for Full Piece phase
+#             if parent_ewo.work_type == 'Full Piece Job Work':
+#                 qty_assigned_to_fp[i.item_code] = qty_assigned_to_fp.get(i.item_code, 0) + i.ordered_qty
+            
+#             # Accumulate successful Panel returns (which makes them available for Full Piece)
+#             if parent_ewo.work_type == 'Panel Job Work' and parent_ewo.panel_stage == 'Returned to Jobber (Closed)':
+#                 qty_returned_from_panel[i.item_code] = qty_returned_from_panel.get(i.item_code, 0) + i.ordered_qty
+
+#         # Generate History List for Part 2 of the Dashboard
+#         for e in ewos:
+#             if e.work_type == 'Full Piece Job Work':
+#                 # Link line item HTML visualization
+#                 item_details = [i for i in ewo_items if i.parent == e.name]
+#                 html = "<div style='font-size:11px;'>"
+#                 for idtl in item_details:
+#                     bal = flt(idtl.ordered_qty) - flt(idtl.received_qty)
+#                     color = "#28a745" if bal <= 0 else "#e67e22"
+#                     status = "Finished" if bal <= 0 else f"Bal {int(bal)}"
+#                     html += f"<div><b>{idtl.item_name}</b>: {int(idtl.ordered_qty)} sent | <span style='color:{color};'>{status}</span></div>"
+#                 html += "</div>"
+#                 e["details_html"] = html
+#                 full_piece_processes.append(e)
+
+#     # 3. GET SOURCE ITEMS (Fallback: SCO -> PO)
+#     if sco_name:
+#         # Subcontracting Logic
+#         items_source = frappe.get_all("Subcontracting Order Item", 
+#             filters={"parent": sco_name}, 
+#             fields=["item_code", "item_name", "received_qty"])
+#     else:
+#         # Direct Purchase Order Logic
+#         items_source = frappe.get_all("Purchase Order Item", 
+#             filters={"parent": po_name}, 
+#             fields=["item_code", "item_name", "received_qty"])
+
+#     available_items = []
+#     for item in items_source:
+#         # Official Quantity Received at warehouse
+#         official_received = flt(item.received_qty)
+#         # Quantity physically cleared from Panel Work
+#         panel_cleared = flt(qty_returned_from_panel.get(item.item_code, 0))
+#         # Total already assigned to Full Piece jobbers
+#         already_sent_to_fp = flt(qty_assigned_to_fp.get(item.item_code, 0))
+        
+#         # Rule: Items are ready for Full Piece if they are either:
+#         # Officially Received OR Returned from Panels
+#         available_in_hand = max(official_received, panel_cleared)
+#         balance = available_in_hand - already_sent_to_fp
+        
+#         available_items.append({
+#             "item_code": item.item_code,
+#             "item_name": item.item_name,
+#             "stock_in_factory": int(available_in_hand), # Show what we can use
+#             "already_assigned": int(already_sent_to_fp),
+#             "balance_avail": int(balance) if balance > 0 else 0
+#         })
+
+#     return {
+#         "available_items": available_items,
+#         "active_processes": full_piece_processes,
+#         "sco_name": sco_name
+#     }
+
+
+
 
 
 @frappe.whitelist()
-def get_full_piece_dashboard_data(sco_name):
+def get_full_piece_dashboard_data(po_name):
     """
-    Data provider for the Full Piece Dashboard.
+    Data provider for Full Piece Dashboard. 
+    Allows direct POs to dispatch work based on 'Ordered Qty'.
     """
-    sco_doc = frappe.get_doc("Subcontracting Order", sco_name)
-    available_items = []
-
-    # 1. GET ALL JOBS (Both Active and Received)
-    # CHANGED: Removed the filter ["!=", "Received from Full Piece Jobber"]
-    # so we can show the history of what was received.
-    active_processes = frappe.get_all("Embroidery Work Order", 
-        filters={
-            "subcontracting_order": sco_name,
-            "work_type": "Full Piece Job Work",
-            "docstatus": 1
-        },
-        fields=["name", "date", "full_piece_jobber", "full_piece_stage"],
+    po_doc = frappe.get_doc("Purchase Order", po_name)
+    sco_name = frappe.db.get_value("Subcontracting Order", 
+        {"purchase_order": po_name, "docstatus": 1}, "name")
+    
+    # 1. GET ALL EMBROIDERY WORK ORDERS (Jobs)
+    ewos = frappe.get_all("Embroidery Work Order", 
+        filters={"purchase_order": po_name, "docstatus": 1},
+        fields=["name", "date", "full_piece_jobber", "full_piece_stage", "work_type", "panel_stage"],
         order_by="creation desc"
     )
 
-    # Enhance data with HTML details
-    for proc in active_processes:
-        items = frappe.get_all("Embroidery Work Order Item", filters={"parent": proc.name}, fields=["item_name", "ordered_qty", "received_qty"])
-        
-        list_html = "<ul style='margin:0; padding-left:15px; font-size:11px;'>"
-        for i in items:
-            pending = flt(i.ordered_qty) - flt(i.received_qty)
-            # Visual logic for items
-            status_color = "text-danger" if pending > 0 else "text-success"
-            status_text = f"Bal {int(pending)}" if pending > 0 else "Done"
-            
-            list_html += f"<li><b>{i.item_name}</b>: Sent {int(i.ordered_qty)} / <span class='{status_color}'>{status_text}</span></li>"
-        list_html += "</ul>"
-        
-        proc["details_html"] = list_html
+    full_piece_processes = []
+    qty_assigned_to_fp = {}      
+    qty_returned_from_panel = {} 
 
-    # 2. GET AVAILABLE STOCK TO SEND (Logic remains same)
-    for item in sco_doc.items:
-        total_recvd_via_sco = flt(item.received_qty)
-        in_process_qty = frappe.db.sql("""
-            SELECT SUM(c.ordered_qty) 
-            FROM `tabEmbroidery Work Order` p
-            JOIN `tabEmbroidery Work Order Item` c ON c.parent = p.name
-            WHERE p.subcontracting_order = %s 
-            AND p.work_type = 'Full Piece Job Work'
-            AND p.docstatus = 1
-            AND c.item_code = %s
-        """, (sco_name, item.item_code))[0][0] or 0
+    if ewos:
+        ewo_items = frappe.get_all("Embroidery Work Order Item", 
+            filters={"parent": ["in", [e.name for e in ewos]]}, 
+            fields=["parent", "item_code", "item_name", "ordered_qty", "received_qty"]
+        )
         
-        balance = total_recvd_via_sco - in_process_qty
+        for i in ewo_items:
+            parent_ewo = next((e for e in ewos if e.name == i.parent), None)
+            if not parent_ewo: continue
+
+            if parent_ewo.work_type == 'Full Piece Job Work':
+                qty_assigned_to_fp[i.item_code] = qty_assigned_to_fp.get(i.item_code, 0) + i.ordered_qty
+            
+            if parent_ewo.work_type == 'Panel Job Work' and parent_ewo.panel_stage == 'Returned to Jobber (Closed)':
+                qty_returned_from_panel[i.item_code] = qty_returned_from_panel.get(i.item_code, 0) + i.ordered_qty
+
+        for e in ewos:
+            if e.work_type == 'Full Piece Job Work':
+                items = [i for i in ewo_items if i.parent == e.name]
+                html = "<div style='font-size:11px;'>"
+                for itm in items:
+                    bal = flt(itm.ordered_qty) - flt(itm.received_qty)
+                    clr = "#28a745" if bal <= 0 else "#e67e22"
+                    html += f"<div><b>{itm.item_name}</b>: {int(itm.ordered_qty)} | <span style='color:{clr}; font-weight:700;'>{ 'Done' if bal <=0 else f'Bal {int(bal)}'}</span></div>"
+                html += "</div>"
+                e["details_html"] = html
+                full_piece_processes.append(e)
+
+    # 2. SOURCE ITEMS SELECTION
+    if sco_name:
+        items_source = frappe.get_all("Subcontracting Order Item", filters={"parent": sco_name}, fields=["item_code", "item_name", "received_qty", "qty"])
+    else:
+        items_source = frappe.get_all("Purchase Order Item", filters={"parent": po_name}, fields=["item_code", "item_name", "received_qty", "qty"])
+
+    available_items = []
+    for item in items_source:
+        already_sent_to_fp = flt(qty_assigned_to_fp.get(item.item_code, 0))
+        
+        # --- LOGIC CORE ---
+        if po_doc.is_subcontracted == 0:
+            # DIRECT PO: New work. Everything ordered is "available" for Jobber
+            total_basis = flt(item.qty)
+        else:
+            # SUBCONTRACTED PO: Factory work. Must wait for Official Receipt or Panel Return
+            total_basis = max(flt(item.received_qty), flt(qty_returned_from_panel.get(item.item_code, 0)))
+
+        balance = total_basis - already_sent_to_fp
         
         available_items.append({
             "item_code": item.item_code,
             "item_name": item.item_name,
-            "total_recvd_via_sco": total_recvd_via_sco,
-            "sent_to_fp_jobber": in_process_qty,
-            "balance_avail": balance if balance > 0 else 0
+            "stock_in_factory": int(total_basis), 
+            "already_assigned": int(already_sent_to_fp),
+            "balance_avail": int(balance) if balance > 0 else 0
         })
 
     return {
         "available_items": available_items,
-        "active_processes": active_processes
+        "active_processes": full_piece_processes,
+        "sco_name": sco_name
     }
-
-
-
-
