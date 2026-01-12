@@ -3690,7 +3690,7 @@ def _get_pick_list_reserved_qty(sales_order_name, item_code):
 
 
 
-
+from frappe.utils import nowdate
 
 @frappe.whitelist()
 # @frappe.db.transaction
@@ -3751,6 +3751,69 @@ def create_material_request_for_shortage(purchase_order_name):
         frappe.log_error(frappe.get_traceback(), "Material Request Creation Failed")
         frappe.throw(_("Failed to create Material Request: {0}").format(e))
 
+
+# --- NEW FUNCTION TO GET REQUIRED MATERIALS ---
+@frappe.whitelist()
+def get_required_raw_materials_for_po(purchase_order_name):
+    """
+    Aggregates all required raw materials for a subcontracting Purchase Order.
+    Fetches FG Items from PO, finds their default BOMs, and calculates total RM requirements.
+    """
+    po = frappe.get_doc("Purchase Order", purchase_order_name)
+    if not po.is_subcontracted:
+        frappe.throw(_("This action is only available for Subcontracting Purchase Orders."))
+
+    # Aggregate required FG quantities from the PO
+    fg_requirements = defaultdict(float)
+    for item in po.items:
+        if item.fg_item and item.fg_item_qty > 0:
+            fg_requirements[item.fg_item] += flt(item.fg_item_qty)
+    
+    if not fg_requirements:
+        return []
+
+    # Aggregate raw material requirements based on the BOM of each FG
+    rm_requirements = defaultdict(float)
+    for fg_item_code, total_fg_qty in fg_requirements.items():
+        # Get the default BOM for the finished good
+        default_bom = frappe.db.get_value("Item", fg_item_code, "default_bom")
+        if not default_bom:
+            frappe.throw(_("Please set a default BOM for Finished Good: {0}").format(fg_item_code))
+        
+        # Get BOM items (raw materials)
+        bom_items = frappe.get_all("BOM Item", filters={"parent": default_bom}, fields=["item_code", "qty"])
+        for bom_item in bom_items:
+            required_qty = flt(bom_item.qty) * flt(total_fg_qty)
+            rm_requirements[bom_item.item_code] += required_qty
+            
+    # Get stock levels for each required raw material
+    results = []
+    for rm_code, req_qty in rm_requirements.items():
+        item_details = frappe.db.get_value("Item", rm_code, ["item_name", "stock_uom"], as_dict=1)
+        
+        # Get available quantity from Bin
+        # Get available quantity from Bin
+        stock_data = frappe.db.sql("""
+            SELECT SUM(actual_qty), SUM(reserved_qty)
+            FROM `tabBin` WHERE item_code = %s
+        """, (rm_code), as_list=True)
+
+        actual_qty = flt(stock_data[0][0])
+        reserved_qty = flt(stock_data[0][1])
+
+        # Prevent negative available qty
+        available_qty = max(actual_qty - reserved_qty, 0)
+
+        # print(f"DEBUG: RM {rm_code} - Actual: {actual_qty}, Reserved: {reserved_qty}, Available: {available_qty}")
+        results.append({
+            "item_code": rm_code,
+            "item_name": item_details.item_name,
+            "uom": item_details.stock_uom,
+            "required_qty": req_qty,
+            "available_qty": actual_qty
+        })
+        
+    return sorted(results, key=lambda x: x['item_name'])
 
 
 @frappe.whitelist()

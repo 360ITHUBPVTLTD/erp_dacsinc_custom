@@ -110,137 +110,195 @@ def get_html_email_template_for_owner(doc, creator_name):
 import frappe
 import json
 import urllib.parse
-from frappe.utils import today, format_datetime, get_url, format_date, get_datetime
+from frappe.utils import today, format_datetime, get_url, format_date
 
 @frappe.whitelist()
 def generate_daily_report(send_mail=0):
     send_mail = bool(int(send_mail))
     settings = frappe.get_single("Admin Settings")
-    
-    report_date_iso = today()
-    display_date = format_date(report_date_iso, "dd-MMM-yyyy")
-    
-    start_day = f"{report_date_iso} 00:00:00"
-    end_day = f"{report_date_iso} 23:59:59"
     base_url = get_url()
+    
+    # Get Company Name for the Subject
+    company_name = frappe.defaults.get_global_default("common_company") or "Dac's Inc"
+    
+    report_date = today()
+    display_date = format_date(report_date, "dd-MMM-yyyy")
+    start_day = f"{report_date} 00:00:00"
+    end_day = f"{report_date} 23:59:59"
 
-    # 1. Total Lead Created Today (by Lead Owner)
+    # --- 1. DATA GATHERING (Total Records) ---
     leads_today = frappe.db.get_all("Lead", 
         filters={"creation": ["between", [start_day, end_day]]},
-        fields=["lead_owner", "name"]
+        fields=["lead_owner", "name", "first_name", "company_name"]
     )
-    total_lead_created_today = len(leads_today)
-    lead_summary = {}
+
+    # Activity Log Fetch (Including owner AND assigned_to)
+    activities_all = frappe.get_all("Event Activity",
+        or_filters=[
+            ["creation", "between", [start_day, end_day]],
+            ["ends_on", "between", [start_day, end_day]]
+        ],
+        fields=["name", "subject", "status", "starts_on", "category", "owner", "assigned_to", "creation", "notes"],
+        order_by="creation desc"
+    )
+
+    # --- 2. USER NAME MAPPING (Emails to Names) ---
+    involved_emails = set([l.lead_owner for l in leads_today if l.lead_owner] + 
+                          [a.owner for a in activities_all] + 
+                          [a.assigned_to for a in activities_all if a.assigned_to])
+    
+    name_map = {}
+    for email in involved_emails:
+        f_name = frappe.db.get_value("User", email, "full_name")
+        name_map[email] = f_name or email
+
+    # Lead summary using full names
+    lead_summary_manager = {}
     for l in leads_today:
-        owner = l.lead_owner or "Unassigned"
-        lead_summary[owner] = lead_summary.get(owner, 0) + 1
+        f_name = name_map.get(l.lead_owner, "Unassigned")
+        lead_summary_manager[f_name] = lead_summary_manager.get(f_name, 0) + 1
 
-    # 2. Activity Data
-    # Load (Record) Created Today
-    activity_created_today = frappe.db.count("Event Activity", {"creation": ["between", [start_day, end_day]]})
-    
-    # Activity Completed Today (based on ends_on date)
-    completed_today = frappe.db.count("Event Activity", {"ends_on": ["between", [start_day, end_day]]})
-    
-    # Overdue Active (Status Open/Active and Starts_on < Today)
-    overdue_active = frappe.db.count("Event Activity", {
-        "status": ["not in", ["Closed", "Completed", "Cancelled"]],
-        "starts_on": ["<", start_day]
-    })
+    # URLs for system redirection
+    date_p = urllib.parse.quote(json.dumps([report_date, report_date]))
+    lead_report_url = f"{base_url}/app/query-report/Lead Report?custom_created_at_option=Custom&custom_created_at={date_p}"
+    act_report_url = f"{base_url}/app/query-report/Lead Report?inverse_report=1&custom_created_at_option=Custom&custom_created_at={date_p}"
 
-    # Detailed Activity Log for the table (Created Today)
-    detailed_events = frappe.db.get_all("Event Activity",
-        filters={"creation": ["between", [start_day, end_day]]},
-        fields=["subject", "owner", "status", "starts_on", "ends_on"]
-    )
-
-    # 3. Dynamic Links for Buttons (Encoded)
-    date_param = urllib.parse.quote(json.dumps([report_date_iso, report_date_iso]))
-    lead_report_link = f"{base_url}/app/query-report/Lead Report?custom_created_at_option=Custom&custom_created_at={date_param}"
-    activity_report_link = f"{base_url}/app/query-report/Lead Report?inverse_report=1&custom_created_at_option=Custom&custom_created_at={date_param}"
-
-    html_content = get_modern_dashboard(
-        display_date, lead_summary, detailed_events, 
-        lead_report_link, activity_report_link,
-        total_lead_created_today, activity_created_today, completed_today, overdue_active
+    # Generate Manager View
+    mgmt_html = get_clean_template(
+        display_date, lead_summary_manager, activities_all, base_url, 
+        lead_report_url, act_report_url, len(leads_today), 
+        len([a for a in activities_all if str(a.creation) >= start_day]),
+        len([a for a in activities_all if a.status == "Completed"]), 
+        0, name_map, is_individual=False
     )
 
     if send_mail:
-        if not settings.to_mail_id:
-            return {"status": "error", "message": "Recipients missing in Admin Settings."}
-        
-        recipients = [r.strip() for r in settings.to_mail_id.split(",") if r.strip()]
-        frappe.sendmail(
-            recipients=recipients,
-            subject=f"Management Daily Summary: {display_date}",
-            content=html_content,
-            now=True
-        )
-        return {"status": "success", "message": "Email sent to management."}
+        # A. SEND TO MANAGEMENT
+        if settings.to_mail_id:
+            frappe.sendmail(
+                recipients=[r.strip() for r in settings.to_mail_id.split(",") if r.strip()],
+                subject=f"{company_name} | Daily Team Dashboard | {display_date}",
+                content=mgmt_html,
+                now=True
+            )
 
-    return {"status": "success", "html": html_content}
+        # B. SEND TO INDIVIDUAL USERS (BASED ON OWNER OR ASSIGNED TO)
+        for email in involved_emails:
+            if not email or "@" not in email: continue
+            
+            # Logic: Fetch work user is Lead Owner, Task Owner, OR Assigned User
+            p_leads = [l for l in leads_today if l.lead_owner == email]
+            p_acts = [a for a in activities_all if a.owner == email or a.assigned_to == email]
+            
+            p_full_name = name_map.get(email, email)
+            p_lead_count = len(p_leads)
+            p_cre_count = len([a for a in p_acts if str(a.creation) >= start_day])
+            p_don_count = len([a for a in p_acts if a.status == "Completed"])
+            
+            # Pre-filtered links for the specific user
+            u_lead_link = f"{lead_report_url}&lead_owner={email}"
+            u_act_link = f"{act_report_url}&owner={email}"
 
-def get_modern_dashboard(date, lead_summary, events, lead_url, act_url, t_lead, a_create, a_comp, a_overdue):
-    # Overall metrics UI cards
-    metrics_html = f"""
-    <div style="display: grid; grid-template-columns: repeat(4, 1fr); gap: 15px; margin-bottom: 25px;">
-        <div style="background: #ffffff; padding: 15px; border: 1px solid #e0e0e0; border-radius: 8px; text-align: center;">
-            <div style="font-size: 11px; color: #777; text-transform: uppercase;">Total Leads Created Today</div>
-            <div style="font-size: 24px; font-weight: bold; color: #0047AB;">{t_lead}</div>
-        </div>
-        <div style="background: #ffffff; padding: 15px; border: 1px solid #e0e0e0; border-radius: 8px; text-align: center;">
-            <div style="font-size: 11px; color: #777; text-transform: uppercase;">Activity Created Today</div>
-            <div style="font-size: 24px; font-weight: bold; color: #15803d;">{a_create}</div>
-        </div>
-        <div style="background: #ffffff; padding: 15px; border: 1px solid #e0e0e0; border-radius: 8px; text-align: center;">
-            <div style="font-size: 11px; color: #777; text-transform: uppercase;">Completed Today</div>
-            <div style="font-size: 24px; font-weight: bold; color: #6366f1;">{a_comp}</div>
-        </div>
-        <div style="background: #ffffff; padding: 15px; border: 1px solid #e0e0e0; border-radius: 8px; text-align: center;">
-            <div style="font-size: 11px; color: #777; text-transform: uppercase;">Overdue Active</div>
-            <div style="font-size: 24px; font-weight: bold; color: #ef4444;">{a_overdue}</div>
-        </div>
-    </div>
+            user_html = get_clean_template(
+                display_date, {p_full_name: p_lead_count}, p_acts, base_url, 
+                u_lead_link, u_act_link, p_lead_count, p_cre_count, p_don_count, 0, name_map, is_individual=True
+            )
+
+            frappe.sendmail(
+                recipients=[email],
+                subject=f"{company_name} - {p_full_name} - Daily Activity Log",
+                content=user_html,
+                now=True
+            )
+
+        return {"status": "success", "message": "Manager dashboard and user personal logs successfully delivered."}
+
+    return {"status": "success", "html": mgmt_html}
+
+def get_clean_template(date, l_summary, activities, base_url, l_url, a_url, nl, nc, ncom, novr, name_map, is_individual=False):
+    accent_blue = "#4361ee" 
+    title = "My Daily CRM Performance" if is_individual else "CRM Performance Overview"
+
+    summary_html = f"""
+    <table width="100%" cellpadding="0" cellspacing="0" style="margin-bottom: 25px; table-layout: fixed;">
+        <tr>
+            <td style="padding: 10px; width:33.3%;">
+                <div style="border: 1px solid #e9ecef; border-radius: 8px; padding: 15px; text-align: center; background: #fff;">
+                    <span style="color: #6c757d; font-size: 11px; text-transform: uppercase;">Leads Added</span><br>
+                    <span style="font-size: 22px; font-weight: bold; color: {accent_blue};">{nl}</span>
+                </div>
+            </td>
+            <td style="padding: 10px; width:33.3%;">
+                <div style="border: 1px solid #e9ecef; border-radius: 8px; padding: 15px; text-align: center; background: #fff;">
+                    <span style="color: #6c757d; font-size: 11px; text-transform: uppercase;">Tasks Created</span><br>
+                    <span style="font-size: 22px; font-weight: bold; color: #343a40;">{nc}</span>
+                </div>
+            </td>
+            <td style="padding: 10px; width:33.3%;">
+                <div style="border: 1px solid #e9ecef; border-radius: 8px; padding: 15px; text-align: center; background: #fff;">
+                    <span style="color: #198754; font-size: 11px; text-transform: uppercase;">Done Today</span><br>
+                    <span style="font-size: 22px; font-weight: bold; color: #198754;">{ncom}</span>
+                </div>
+            </td>
+        </tr>
+    </table>
     """
 
-    # Table rows
-    lead_rows = "".join([f"<tr><td style='border:1px solid #ddd;padding:8px;'>{o}</td><td style='border:1px solid #ddd;padding:8px;text-align:center;'><b>{c}</b></td></tr>" for o, c in lead_summary.items()])
-    event_rows = "".join([f"<tr><td style='border:1px solid #ddd;padding:8px;'>{e.subject}</td><td style='border:1px solid #ddd;padding:8px;'>{e.owner}</td><td style='border:1px solid #ddd;padding:8px;'>{e.status}</td><td style='border:1px solid #ddd;padding:8px;'>{format_datetime(e.starts_on)}</td><td style='border:1px solid #ddd;padding:8px;'>{format_datetime(e.ends_on) if e.ends_on else '-'}</td></tr>" for e in events])
+    l_rows = "".join([f'<tr><td style="padding: 12px; border-bottom: 1px solid #f1f3f5;">{name}</td><td style="padding: 12px; border-bottom: 1px solid #f1f3f5; text-align: right; color:#212529;"><b>{count} New</b></td></tr>' for name, count in l_summary.items()])
+
+    act_rows = ""
+    for a in activities:
+        st_color = "#198754" if a.status == "Completed" else "#343a40"
+        # Combine creator name and assigned user name for transparency
+        owner_name = name_map.get(a.owner, a.owner)
+        assigned_name = name_map.get(a.assigned_to, "No User") if a.assigned_to else owner_name
+        
+        act_rows += f"""
+            <tr style="font-size: 13px;">
+                <td style="padding: 12px; border-bottom: 1px solid #f1f3f5;"><a href="{base_url}/app/event-activity/{a.name}" style="color:{accent_blue}; text-decoration:none; font-weight:bold;">{a.subject}</a></td>
+                <td style="padding: 12px; border-bottom: 1px solid #f1f3f5; color:{st_color}; font-weight:bold;">{a.status}</td>
+                <td style="padding: 12px; border-bottom: 1px solid #f1f3f5; color:#6c757d;">{format_datetime(a.starts_on) if a.starts_on else "-"}</td>
+                <td style="padding: 12px; border-bottom: 1px solid #f1f3f5;">{a.category or '-'}</td>
+                <td style="padding: 12px; border-bottom: 1px solid #f1f3f5; color:#495057;">{assigned_name}</td>
+                <td style="padding: 12px; border-bottom: 1px solid #f1f3f5; font-size: 11px; color: #9da5af;">{format_date(a.creation)}</td>
+                <td style="padding: 12px; border-bottom: 1px solid #f1f3f5; font-size: 12px; font-style:italic; color:#adb5bd;">{a.note or "-"}</td>
+            </tr>
+        """
+
+    def btn(url, text):
+        return f"""<div style="text-align: right; margin-top: 15px; margin-bottom: 40px;"><a href="{url}" style="background-color: {accent_blue}; color: white; padding: 10px 18px; text-decoration: none; border-radius: 8px; font-size: 13px; font-weight: bold;">View Details Report &rarr;</a></div>"""
 
     return f"""
-    <div style="background-color: #f3f4f6; padding: 25px; font-family: -apple-system, sans-serif;">
-        <div style="max-width: 900px; margin: auto; background: white; border-radius: 12px; box-shadow: 0 4px 6px -1px rgba(0,0,0,0.1); overflow: hidden;">
-            <div style="background: #0047AB; color: white; padding: 25px;">
-                <h1 style="margin: 0; font-size: 22px; color:white;">Executive Performance Dashboard</h1>
-                <p style="margin: 4px 0 0 0; opacity: 0.8; font-size: 13px;">Review Date: {date}</p>
+    <div style="background-color: #f8fafc; padding: 25px; font-family: 'Inter', -apple-system, sans-serif;">
+        <div style="max-width: 950px; margin: auto; background: white; border-radius: 12px; border: 1px solid #e2e8f0; overflow: hidden; box-shadow: 0 4px 6px rgba(0,0,0,0.03);">
+            <div style="background: {accent_blue}; padding: 35px 30px; color: #fff;">
+                <h2 style="margin: 0; font-size: 24px; font-weight: 800;">{title}</h2>
+                <p style="margin: 5px 0 0; opacity: 0.9;">Progress Summary | <b>{date}</b></p>
             </div>
             
-            <div style="padding: 25px;">
-                {metrics_html}
+            <div style="padding: 30px;">
+                {summary_html}
 
-                <h3 style="color: #333; margin-top: 25px;">New Leads Created (Today)</h3>
-                <table style="width: 100%; border-collapse: collapse; margin-bottom: 15px;">
-                    <tr style="background: #f9fafb;"><th style="border:1px solid #ddd;padding:10px;text-align:left;">Lead Owner</th><th style="border:1px solid #ddd;padding:10px;width:150px;">Created Today</th></tr>
-                    {lead_rows if lead_rows else "<tr><td colspan='2' style='padding:10px;text-align:center;'>No leads generated today.</td></tr>"}
+                <h3 style="border-left: 5px solid {accent_blue}; padding-left: 12px; color: #212529; font-size: 18px; margin-bottom: 15px;">New Leads Created Today</h3>
+                <table width="100%" style="border-collapse: collapse;">
+                    {l_rows if l_rows else "<tr><td colspan='2' style='padding:20px; text-align:center; color:#94a3b8;'>No activity in leads recorded today.</td></tr>"}
                 </table>
-                <div style="text-align: right; margin-bottom: 30px;">
-                    <a href="{lead_url}" target="_blank" style="display:inline-block; background: #0047AB; color: white; padding: 8px 18px; text-decoration: none; border-radius: 6px; font-weight: bold; font-size: 13px;">View Full Lead Details →</a>
-                </div>
+                {btn(l_url, "Open Lead Registry")}
 
-                <h3 style="color: #333;">Activity Log Details</h3>
-                <table style="width: 100%; border-collapse: collapse; margin-bottom: 15px; font-size: 13px;">
-                    <tr style="background: #f9fafb;">
-                        <th style="border:1px solid #ddd;padding:8px;">Subject</th><th style="border:1px solid #ddd;padding:8px;">Assigned To</th><th style="border:1px solid #ddd;padding:8px;">Status</th><th style="border:1px solid #ddd;padding:8px;">Starts On</th><th style="border:1px solid #ddd;padding:8px;">Ends On</th>
-                    </tr>
-                    {event_rows if event_rows else "<tr><td colspan='5' style='padding:20px;text-align:center;'>No events records for today.</td></tr>"}
-                </table>
-                <div style="text-align: right;">
-                    <a href="{act_url}" target="_blank" style="display:inline-block; background: #0047AB; color: white; padding: 8px 18px; text-decoration: none; border-radius: 6px; font-weight: bold; font-size: 13px;">Full Activity Report →</a>
+                <h3 style="border-left: 5px solid #198754; padding-left: 12px; color: #212529; font-size: 18px; margin-top: 20px; margin-bottom: 15px;">Today's Activity Log</h3>
+                <div style="overflow-x: auto;">
+                    <table width="100%" style="border-collapse: collapse; min-width: 800px;">
+                        <thead style="background: #f8f9fa; border-bottom: 2px solid #dee2e6; font-size: 10px; text-transform: uppercase; color: #6c757d;">
+                            <tr><th style="padding:12px; text-align:left;">Topic</th><th style="padding:12px; text-align:left;">Status</th><th style="padding:12px; text-align:left;">Scheduled</th><th style="padding:12px; text-align:left;">Cat</th><th style="padding:12px; text-align:left;">Done By</th><th style="padding:12px; text-align:left;">Created</th><th style="padding:12px; text-align:left;">Note</th></tr>
+                        </thead>
+                        <tbody>{act_rows if act_rows else "<tr><td colspan='7' style='padding:30px; text-align:center; color:#94a3b8;'>No task updates recorded.</td></tr>"}</tbody>
+                    </table>
                 </div>
+                {btn(a_url, "Explore Full Work Dashboard")}
             </div>
             
-            <div style="padding: 20px; text-align: center; border-top: 1px solid #f0f0f0; color: #888; font-size: 11px;">
-                Automated System Message | Powered by ERP Intelligence
+            <div style="background: #f9f9f9; padding: 25px; text-align: center; color: #ced4da; font-size: 11px;">
+                Performance Intelligence System &bull; Private and Confidential Log
             </div>
         </div>
     </div>
