@@ -118,7 +118,7 @@ def execute_scheduled_reports():
     Called by Cron at 8:30 PM.
     """
     # 1. Update Overdue statuses so the reports show the latest numbers
-    update_overdue_activities_status()
+    # update_overdue_activities_status()
     
     # 2. Trigger the Mailing Logic (Dispatch Email to Team)
     generate_daily_report(send_mail=1)
