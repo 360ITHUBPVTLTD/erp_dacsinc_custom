@@ -204,11 +204,11 @@ doc_events = {
 # ---------------
 
 scheduler_events = {
-    # "cron": {
-    #     "30 20 * * *": [
-    #         "erp_dacsinc_custom.notifications.execute_scheduled_reports"
-    #     ]
-    # }
+    "cron": {
+        "30 20 * * *": [
+            "erp_dacsinc_custom.notifications.execute_scheduled_reports"
+        ]
+    }
 	# "all": [
 	# 	"erp_dacsinc_custom.tasks.all"
 	# ],

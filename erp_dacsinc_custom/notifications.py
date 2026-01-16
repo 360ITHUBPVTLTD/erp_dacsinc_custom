@@ -123,7 +123,10 @@ def execute_scheduled_reports():
     # 2. Trigger the Mailing Logic (Dispatch Email to Team)
     generate_daily_report(send_mail=1)
 
-
+import frappe
+import json
+import urllib.parse
+from frappe.utils import today, format_datetime, get_url, format_date, validate_email_address
 
 @frappe.whitelist()
 def generate_daily_report(send_mail=0):
@@ -131,21 +134,18 @@ def generate_daily_report(send_mail=0):
     settings = frappe.get_single("Admin Settings")
     base_url = get_url()
     
-    # Get Company Name for the Subject
     company_name = frappe.defaults.get_global_default("common_company") or "Dac's Inc"
-    
     report_date = today()
     display_date = format_date(report_date, "dd-MMM-yyyy")
     start_day = f"{report_date} 00:00:00"
     end_day = f"{report_date} 23:59:59"
 
-    # --- 1. DATA GATHERING (Total Records) ---
+    # --- 1. DATA GATHERING ---
     leads_today = frappe.db.get_all("Lead", 
         filters={"creation": ["between", [start_day, end_day]]},
         fields=["lead_owner", "name", "first_name", "company_name"]
     )
 
-    # Activity Log Fetch (Including owner AND assigned_to)
     activities_all = frappe.get_all("Event Activity",
         or_filters=[
             ["creation", "between", [start_day, end_day]],
@@ -155,28 +155,39 @@ def generate_daily_report(send_mail=0):
         order_by="creation desc"
     )
 
-    # --- 2. USER NAME MAPPING (Emails to Names) ---
-    involved_emails = set([l.lead_owner for l in leads_today if l.lead_owner] + 
+    # --- 2. FILTER USERS BY ROLE & VALID EMAIL ---
+    candidate_emails = set([l.lead_owner for l in leads_today if l.lead_owner] + 
                           [a.owner for a in activities_all] + 
                           [a.assigned_to for a in activities_all if a.assigned_to])
     
+    involved_emails = []
     name_map = {}
-    for email in involved_emails:
-        f_name = frappe.db.get_value("User", email, "full_name")
-        name_map[email] = f_name or email
 
-    # Lead summary using full names
+    for email in candidate_emails:
+        # Step A: Validate email format (Ignores mijanali@123@...)
+        if not email or not validate_email_address(email):
+            continue
+            
+        # Step B: Check for DAC CRM Role and fetch Name
+        user_info = frappe.db.get_value("User", email, ["full_name", "enabled"], as_dict=True)
+        if user_info and user_info.enabled:
+            user_roles = frappe.get_roles(email)
+            if "DAC CRM" in user_roles:
+                involved_emails.append(email)
+                name_map[email] = user_info.full_name or email
+
+    # Manager summary table data
     lead_summary_manager = {}
     for l in leads_today:
-        f_name = name_map.get(l.lead_owner, "Unassigned")
-        lead_summary_manager[f_name] = lead_summary_manager.get(f_name, 0) + 1
+        f_name = name_map.get(l.lead_owner)
+        if f_name: # Only show validated CRM users in summary
+            lead_summary_manager[f_name] = lead_summary_manager.get(f_name, 0) + 1
 
-    # URLs for system redirection
+    # System links
     date_p = urllib.parse.quote(json.dumps([report_date, report_date]))
     lead_report_url = f"{base_url}/app/query-report/Lead Report?custom_created_at_option=Custom&custom_created_at={date_p}"
     act_report_url = f"{base_url}/app/query-report/Lead Report?inverse_report=1&custom_created_at_option=Custom&custom_created_at={date_p}"
 
-    # Generate Manager View
     mgmt_html = get_clean_template(
         display_date, lead_summary_manager, activities_all, base_url, 
         lead_report_url, act_report_url, len(leads_today), 
@@ -188,45 +199,146 @@ def generate_daily_report(send_mail=0):
     if send_mail:
         # A. SEND TO MANAGEMENT
         if settings.to_mail_id:
-            frappe.sendmail(
-                recipients=[r.strip() for r in settings.to_mail_id.split(",") if r.strip()],
-                subject=f"{company_name} | Daily Team Dashboard | {display_date}",
-                content=mgmt_html,
-                now=True
-            )
+            valid_mgmt_emails = [r.strip() for r in settings.to_mail_id.split(",") if validate_email_address(r.strip())]
+            if valid_mgmt_emails:
+                frappe.sendmail(
+                    recipients=valid_mgmt_emails,
+                    subject=f"{company_name} | Daily Team Dashboard | {display_date}",
+                    content=mgmt_html,
+                    now=True
+                )
 
-        # B. SEND TO INDIVIDUAL USERS (BASED ON OWNER OR ASSIGNED TO)
+        # B. SEND TO INDIVIDUAL VALIDATED CRM USERS
         for email in involved_emails:
-            if not email or "@" not in email: continue
-            
-            # Logic: Fetch work user is Lead Owner, Task Owner, OR Assigned User
+            # Re-verify per user specific activity
             p_leads = [l for l in leads_today if l.lead_owner == email]
             p_acts = [a for a in activities_all if a.owner == email or a.assigned_to == email]
             
             p_full_name = name_map.get(email, email)
-            p_lead_count = len(p_leads)
-            p_cre_count = len([a for a in p_acts if str(a.creation) >= start_day])
-            p_don_count = len([a for a in p_acts if a.status == "Completed"])
             
-            # Pre-filtered links for the specific user
-            u_lead_link = f"{lead_report_url}&lead_owner={email}"
-            u_act_link = f"{act_report_url}&owner={email}"
-
             user_html = get_clean_template(
-                display_date, {p_full_name: p_lead_count}, p_acts, base_url, 
-                u_lead_link, u_act_link, p_lead_count, p_cre_count, p_don_count, 0, name_map, is_individual=True
+                display_date, {p_full_name: len(p_leads)}, p_acts, base_url, 
+                f"{lead_report_url}&lead_owner={email}", f"{act_report_url}&owner={email}", 
+                len(p_leads), len(p_acts), len([a for a in p_acts if a.status == "Completed"]), 0, name_map, is_individual=True
             )
 
-            frappe.sendmail(
-                recipients=[email],
-                subject=f"{company_name} - {p_full_name} - Daily Activity Log",
-                content=user_html,
-                now=True
-            )
+            try:
+                frappe.sendmail(
+                    recipients=[email],
+                    subject=f"{company_name} - {p_full_name} - Daily Performance Report",
+                    content=user_html,
+                    now=True
+                )
+            except Exception:
+                # Log the error but don't stop the whole report for one bad email
+                frappe.log_error(f"Failed to send CRM Daily report to {email}", "Daily Report Mailer")
 
-        return {"status": "success", "message": "Manager dashboard and user personal logs successfully delivered."}
+        return {"status": "success", "message": "Manager report and CRM User logs successfully delivered."}
 
     return {"status": "success", "html": mgmt_html}
+
+# @frappe.whitelist()
+# def generate_daily_report(send_mail=0):
+#     send_mail = bool(int(send_mail))
+#     settings = frappe.get_single("Admin Settings")
+#     base_url = get_url()
+    
+#     # Get Company Name for the Subject
+#     company_name = frappe.defaults.get_global_default("common_company") or "Dac's Inc"
+    
+#     report_date = today()
+#     display_date = format_date(report_date, "dd-MMM-yyyy")
+#     start_day = f"{report_date} 00:00:00"
+#     end_day = f"{report_date} 23:59:59"
+
+#     # --- 1. DATA GATHERING (Total Records) ---
+#     leads_today = frappe.db.get_all("Lead", 
+#         filters={"creation": ["between", [start_day, end_day]]},
+#         fields=["lead_owner", "name", "first_name", "company_name"]
+#     )
+
+#     # Activity Log Fetch (Including owner AND assigned_to)
+#     activities_all = frappe.get_all("Event Activity",
+#         or_filters=[
+#             ["creation", "between", [start_day, end_day]],
+#             ["ends_on", "between", [start_day, end_day]]
+#         ],
+#         fields=["name", "subject", "status", "starts_on", "category", "owner", "assigned_to", "creation", "notes"],
+#         order_by="creation desc"
+#     )
+
+#     # --- 2. USER NAME MAPPING (Emails to Names) ---
+#     involved_emails = set([l.lead_owner for l in leads_today if l.lead_owner] + 
+#                           [a.owner for a in activities_all] + 
+#                           [a.assigned_to for a in activities_all if a.assigned_to])
+    
+#     name_map = {}
+#     for email in involved_emails:
+#         f_name = frappe.db.get_value("User", email, "full_name")
+#         name_map[email] = f_name or email
+
+#     # Lead summary using full names
+#     lead_summary_manager = {}
+#     for l in leads_today:
+#         f_name = name_map.get(l.lead_owner, "Unassigned")
+#         lead_summary_manager[f_name] = lead_summary_manager.get(f_name, 0) + 1
+
+#     # URLs for system redirection
+#     date_p = urllib.parse.quote(json.dumps([report_date, report_date]))
+#     lead_report_url = f"{base_url}/app/query-report/Lead Report?custom_created_at_option=Custom&custom_created_at={date_p}"
+#     act_report_url = f"{base_url}/app/query-report/Lead Report?inverse_report=1&custom_created_at_option=Custom&custom_created_at={date_p}"
+
+#     # Generate Manager View
+#     mgmt_html = get_clean_template(
+#         display_date, lead_summary_manager, activities_all, base_url, 
+#         lead_report_url, act_report_url, len(leads_today), 
+#         len([a for a in activities_all if str(a.creation) >= start_day]),
+#         len([a for a in activities_all if a.status == "Completed"]), 
+#         0, name_map, is_individual=False
+#     )
+
+#     if send_mail:
+#         # A. SEND TO MANAGEMENT
+#         if settings.to_mail_id:
+#             frappe.sendmail(
+#                 recipients=[r.strip() for r in settings.to_mail_id.split(",") if r.strip()],
+#                 subject=f"{company_name} | Daily Team Dashboard | {display_date}",
+#                 content=mgmt_html,
+#                 now=True
+#             )
+
+#         # B. SEND TO INDIVIDUAL USERS (BASED ON OWNER OR ASSIGNED TO)
+#         for email in involved_emails:
+#             if not email or "@" not in email: continue
+            
+#             # Logic: Fetch work user is Lead Owner, Task Owner, OR Assigned User
+#             p_leads = [l for l in leads_today if l.lead_owner == email]
+#             p_acts = [a for a in activities_all if a.owner == email or a.assigned_to == email]
+            
+#             p_full_name = name_map.get(email, email)
+#             p_lead_count = len(p_leads)
+#             p_cre_count = len([a for a in p_acts if str(a.creation) >= start_day])
+#             p_don_count = len([a for a in p_acts if a.status == "Completed"])
+            
+#             # Pre-filtered links for the specific user
+#             u_lead_link = f"{lead_report_url}&lead_owner={email}"
+#             u_act_link = f"{act_report_url}&owner={email}"
+
+#             user_html = get_clean_template(
+#                 display_date, {p_full_name: p_lead_count}, p_acts, base_url, 
+#                 u_lead_link, u_act_link, p_lead_count, p_cre_count, p_don_count, 0, name_map, is_individual=True
+#             )
+
+#             frappe.sendmail(
+#                 recipients=[email],
+#                 subject=f"{company_name} - {p_full_name} - Daily Activity Log",
+#                 content=user_html,
+#                 now=True
+#             )
+
+#         return {"status": "success", "message": "Manager dashboard and user personal logs successfully delivered."}
+
+#     return {"status": "success", "html": mgmt_html}
 
 def get_clean_template(date, l_summary, activities, base_url, l_url, a_url, nl, nc, ncom, novr, name_map, is_individual=False):
     accent_blue = "#4361ee" 
