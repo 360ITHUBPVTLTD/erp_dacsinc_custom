@@ -203,23 +203,28 @@ doc_events = {
 # Scheduled Tasks
 # ---------------
 
-# scheduler_events = {
-# 	"all": [
-# 		"erp_dacsinc_custom.tasks.all"
-# 	],
-# 	"daily": [
-# 		"erp_dacsinc_custom.tasks.daily"
-# 	],
-# 	"hourly": [
-# 		"erp_dacsinc_custom.tasks.hourly"
-# 	],
-# 	"weekly": [
-# 		"erp_dacsinc_custom.tasks.weekly"
-# 	],
-# 	"monthly": [
-# 		"erp_dacsinc_custom.tasks.monthly"
-# 	],
-# }
+scheduler_events = {
+    "cron": {
+        "30 20 * * *": [
+            "erp_dacsinc_custom.notifications.execute_scheduled_reports"
+        ]
+    }
+	# "all": [
+	# 	"erp_dacsinc_custom.tasks.all"
+	# ],
+	# "daily": [
+	# 	"erp_dacsinc_custom.tasks.daily"
+	# ],
+	# "hourly": [
+	# 	"erp_dacsinc_custom.tasks.hourly"
+	# ],
+	# "weekly": [
+	# 	"erp_dacsinc_custom.tasks.weekly"
+	# ],
+	# "monthly": [
+	# 	"erp_dacsinc_custom.tasks.monthly"
+	# ],
+}
 
 # Testing
 # -------

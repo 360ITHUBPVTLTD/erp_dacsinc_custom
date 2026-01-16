@@ -113,6 +113,19 @@ import urllib.parse
 from frappe.utils import today, format_datetime, get_url, format_date
 
 @frappe.whitelist()
+def execute_scheduled_reports():
+    """
+    Called by Cron at 8:30 PM.
+    """
+    # 1. Update Overdue statuses so the reports show the latest numbers
+    update_overdue_activities_status()
+    
+    # 2. Trigger the Mailing Logic (Dispatch Email to Team)
+    generate_daily_report(send_mail=1)
+
+
+
+@frappe.whitelist()
 def generate_daily_report(send_mail=0):
     send_mail = bool(int(send_mail))
     settings = frappe.get_single("Admin Settings")
