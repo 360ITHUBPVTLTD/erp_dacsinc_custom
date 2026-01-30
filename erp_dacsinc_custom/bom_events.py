@@ -47,7 +47,8 @@ def sync_subcontracting_bom(doc):
                 "service_item": doc.custom_service_item, # Sync Service Item even if inactive
                 "service_item_qty": flt(doc.quantity),
                 "finished_good_qty": flt(doc.quantity),
-                "finished_good_uom": doc.uom
+                "finished_good_uom": doc.uom,
+                "conversion_factor":flt(doc.quantity)
             })
 
     except Exception as e:
@@ -74,6 +75,7 @@ def create_subcontracting_bom(doc):
         sc_bom.service_item = doc.custom_service_item # Mapping custom_service_item
         sc_bom.service_item_qty = flt(doc.quantity)
         sc_bom.service_item_uom = service_item_uom
+        sc_bom.conversion_factor = flt(doc.quantity)
         
         # Set initial active status based on if this BOM is default
         sc_bom.is_active = 1 if doc.is_default else 0
