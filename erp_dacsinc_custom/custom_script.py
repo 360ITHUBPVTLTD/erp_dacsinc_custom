@@ -35,7 +35,8 @@ def item_after_insert(doc, method):
     # if doc.custom_standard_buying_price:
     #     create_or_update_item_price(doc, "Buying", doc.custom_standard_buying_price)
 
-# def item_on_update(doc, method):
+def item_on_update(doc, method):
+    update_barcode_child(doc)
     # Check if the standard prices have been changed
     # doc_before_save = doc.get_doc_before_save()
     # if doc_before_save:
@@ -189,6 +190,7 @@ def update_barcode_child(doc):
                     break
             
             if not exists:
+                doc.set("barcodes", [])
                 doc.append("barcodes", {
                     "barcode": barcode_value,
                     "barcode_type": "CODE-39"
