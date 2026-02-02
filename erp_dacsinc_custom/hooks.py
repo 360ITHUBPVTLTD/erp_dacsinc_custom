@@ -162,13 +162,13 @@ doc_events = {
         # "on_cancel": "erp_dacsinc_custom.custom_script.quotation_on_cancel"
     },
     "Sales Order": {
-        "on_submit": "erp_dacsinc_custom.custom_script.sales_order_on_submit",
-        "on_cancel": "erp_dacsinc_custom.custom_script.sales_order_on_cancel",
-        "after_insert": "erp_dacsinc_custom.notifications.notify_on_new_so",
-        "on_update": "erp_dacsinc_custom.custom_script.sales_order_on_update",
-        "on_trash": "erp_dacsinc_custom.custom_script.sales_order_on_trash",
-         "before_insert": "erp_dacsinc_custom.custom_script.sales_order_before_insert",
-        "before_validate": "erp_dacsinc_custom.custom_script.sales_order_before_insert"
+        #"on_submit": "erp_dacsinc_custom.custom_script.sales_order_on_submit",
+        #"on_cancel": "erp_dacsinc_custom.custom_script.sales_order_on_cancel",
+       # "after_insert": "erp_dacsinc_custom.notifications.notify_on_new_so",
+       # "on_update": "erp_dacsinc_custom.custom_script.sales_order_on_update",
+        #"on_trash": "erp_dacsinc_custom.custom_script.sales_order_on_trash",
+        # "before_insert": "erp_dacsinc_custom.custom_script.sales_order_before_insert",
+       # "before_validate": "erp_dacsinc_custom.custom_script.sales_order_before_insert"
     },
     "Delivery Note": {
         "on_submit": "erp_dacsinc_custom.custom_script.update_pick_lists_on_dn_submit"
