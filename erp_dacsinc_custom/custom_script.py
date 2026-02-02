@@ -10,10 +10,24 @@ def copy_custom_fields(doc, method):
 
 
 
+# def item_after_insert(doc, method):
+#     doc.description = ''
+#     if doc.custom_tax_rate:
+#         update_tax_child(doc)
+
+
 def item_after_insert(doc, method):
-    doc.description = ''
-    if doc.custom_tax_rate:
-        update_tax_child(doc)
+    # 1. Reset description if needed
+    doc.description = doc.item_name # Recommended: setting it to something instead of empty
+    
+    # 2. Update Tax Child Table
+    update_tax_child(doc)
+    
+    # 3. Handle Barcode Child Table
+    update_barcode_child(doc)
+
+    # 4. Save the changes back to the database
+    doc.save(ignore_permissions=True)
 
     # Create Item Price on new item creation
     # if doc.custom_standard_selling_price:
@@ -87,35 +101,100 @@ def get_bom_data_for_item(item_code):
 
     return boms
 
+# def update_tax_child(doc):
+#     try:
+#         # Clear existing taxes
+#         doc.taxes = []
+
+#         # Fetch tax_rate
+#         tax_rate = doc.custom_tax_rate  # Assuming this stores your tax template
+
+#         if tax_rate and tax_rate != 'Non-GST - IND':
+#             # Add In-State entry
+#             doc.append('taxes', {
+#                 "tax_category": "In-State",
+#                 "item_tax_template": tax_rate
+#             })
+
+#             # Add Out-State entry
+#             doc.append('taxes', {
+#                 "tax_category": "Out-State",
+#                 "item_tax_template": tax_rate
+#             })
+
+#         # # Always add Non-GST entry
+#         # doc.append('taxes', {
+#         #     # "tax_category": "Non-GST",
+#         #     "item_tax_template": "Non-GST - IND"
+#         # })
+#         doc.save()
+#     except Exception as e:
+#         frappe.log_error(f"Error in updating taxes: {str(e)}")
+
+
 def update_tax_child(doc):
     try:
         # Clear existing taxes
         doc.taxes = []
 
-        # Fetch tax_rate
-        tax_rate = doc.custom_tax_rate  # Assuming this stores your tax template
+        tax_rate = doc.custom_tax_rate  # Primary GST template
+        alt_tax = doc.get("custom_alternative_gst_") # Slab GST template
+        alt_amount = flt(doc.get("custom_alternative_amount")) # Threshold Amount
 
-        if tax_rate and tax_rate != 'Non-GST - IND':
-            # Add In-State entry
-            doc.append('taxes', {
-                "tax_category": "In-State",
-                "item_tax_template": tax_rate
-            })
+        if tax_rate:
+            if alt_tax and alt_amount > 0:
+                # SLAB 1: For rates less than custom_alternative_amount
+                # We set maximum_net_rate to (threshold - 1)
+                for category in ["In-State", "Out-State"]:
+                    doc.append('taxes', {
+                        "tax_category": category,
+                        "item_tax_template": tax_rate,
+                        "maximum_net_rate": alt_amount - 1
+                    })
 
-            # Add Out-State entry
-            doc.append('taxes', {
-                "tax_category": "Out-State",
-                "item_tax_template": tax_rate
-            })
+                # SLAB 2: For rates greater than or equal to custom_alternative_amount
+                # We set minimum_net_rate to threshold and maximum to 99999
+                for category in ["In-State", "Out-State"]:
+                    doc.append('taxes', {
+                        "tax_category": category,
+                        "item_tax_template": alt_tax,
+                        "minimum_net_rate": alt_amount,
+                        "maximum_net_rate": 99999
+                    })
+            else:
+                # Fallback: Normal logic if alternative amount/gst is not provided
+                if tax_rate != 'Non-GST - IND':
+                    for category in ["In-State", "Out-State"]:
+                        doc.append('taxes', {
+                            "tax_category": category,
+                            "item_tax_template": tax_rate
+                        })
 
-        # # Always add Non-GST entry
-        # doc.append('taxes', {
-        #     # "tax_category": "Non-GST",
-        #     "item_tax_template": "Non-GST - IND"
-        # })
-        doc.save()
     except Exception as e:
-        frappe.log_error(f"Error in updating taxes: {str(e)}")
+        frappe.log_error(f"Error in updating taxes for {doc.name}: {str(e)}")
+
+
+def update_barcode_child(doc):
+    try:
+        # Assuming you have a custom field 'custom_barcode_input' to capture the value
+        # or checking if there's any value in 'barcode' field to append
+        barcode_value = doc.get("barcode") or doc.get("custom_barcode")
+        
+        if barcode_value:
+            # Check if this barcode already exists in the child table to avoid duplicates
+            exists = False
+            for b in doc.get("barcodes"):
+                if b.barcode == barcode_value:
+                    exists = True
+                    break
+            
+            if not exists:
+                doc.append("barcodes", {
+                    "barcode": barcode_value,
+                    "barcode_type": "CODE-39"
+                })
+    except Exception as e:
+        frappe.log_error(f"Error in updating barcodes for {doc.name}: {str(e)}")
 import frappe
 
 @frappe.whitelist()
