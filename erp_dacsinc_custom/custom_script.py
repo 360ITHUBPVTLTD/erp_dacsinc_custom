@@ -30,20 +30,20 @@ def item_after_insert(doc, method):
     doc.save(ignore_permissions=True)
 
     # Create Item Price on new item creation
-    # if doc.custom_standard_selling_price:
-    #     create_or_update_item_price(doc, "Selling", doc.custom_standard_selling_price)
-    # if doc.custom_standard_buying_price:
-    #     create_or_update_item_price(doc, "Buying", doc.custom_standard_buying_price)
+    if doc.custom_standard_selling_price:
+        create_or_update_item_price(doc, "Selling", doc.custom_standard_selling_price)
+    if doc.custom_standard_buying_price:
+        create_or_update_item_price(doc, "Buying", doc.custom_standard_buying_price)
 
 def item_on_update(doc, method):
     update_barcode_child(doc)
     # Check if the standard prices have been changed
-    # doc_before_save = doc.get_doc_before_save()
-    # if doc_before_save:
-    #     if doc.custom_standard_selling_price != doc_before_save.custom_standard_selling_price:
-    #         create_or_update_item_price(doc, "Selling", doc.custom_standard_selling_price)
-    #     if doc.custom_standard_buying_price != doc_before_save.custom_standard_buying_price:
-    #         create_or_update_item_price(doc, "Buying", doc.custom_standard_buying_price)
+    doc_before_save = doc.get_doc_before_save()
+    if doc_before_save:
+        if doc.custom_standard_selling_price != doc_before_save.custom_standard_selling_price:
+            create_or_update_item_price(doc, "Selling", doc.custom_standard_selling_price)
+        if doc.custom_standard_buying_price != doc_before_save.custom_standard_buying_price:
+            create_or_update_item_price(doc, "Buying", doc.custom_standard_buying_price)
 
 def create_or_update_item_price(doc, price_type, rate):
     price_list_name = f"Standard {price_type}"
@@ -779,32 +779,38 @@ def get_item_stock_details_bulk(item_codes, sales_order_name):
         # =========================================================
         rm_procurement_status = {
             "rm_shortfall_exists": False, 
-            "rm_items_status": []
+            "rm_items_status": [],
+            "fg_shortfall": 0
         }
 
-        if bom_no and required_qty > delivered_qty:
+        # CALCULATE FG SHORTFALL (Match the UI Logic: Required - Delivered - Available - Picked)
+        # In your example: (7 - 0) - 1 available = 6 units needing production/material
+        all_res = (picked_submitted_undelivered_qty + picked_draft_qty_so + picked_for_others_qty + draft_qty_for_others)
+        truly_available_fg = max(0, total_available_stock - all_res)
+        fg_remaining_to_plan = (required_qty - delivered_qty) - (picked_submitted_undelivered_qty + picked_draft_qty_so)
+        fg_shortfall = max(0, fg_remaining_to_plan - truly_available_fg)
+        
+        rm_procurement_status["fg_shortfall"] = fg_shortfall
+
+        # Only proceed if we have an actual FG shortfall needing raw materials
+        if bom_no and fg_shortfall > 0:
             try:
                 bom_doc = frappe.get_doc("BOM", bom_no)
-                unfulfilled_fg = required_qty - delivered_qty
                 rm_codes = [i.item_code for i in bom_doc.items]
                 rm_map = {}
                 
-                # A. Build Base RM Requirements
                 for bi in bom_doc.items:
                     rm_code = bi.item_code
-                    # Normalized qty needed per FG unit * unfulfilled amount
-                    rm_qty_per_fg = flt(bi.stock_qty) if bi.stock_qty else flt(bi.qty)
+                    qty_per_fg = flt(bi.stock_qty) if bi.stock_qty else flt(bi.qty)
                     
                     rm_map[rm_code] = {
                         "rm_code": rm_code,
-                        "rm_uom": bi.uom or bi.stock_uom, # FETCH UOM HERE
-                        "rm_required_total": unfulfilled_fg * rm_qty_per_fg,
+                        "rm_uom": bi.uom or bi.stock_uom,
+                        "rm_needed_for_shortfall": fg_shortfall * qty_per_fg,  # The 6 units x Qty
+                        "rm_required_total": (required_qty - delivered_qty) * qty_per_fg, # The total order qty x Qty
                         "rm_available_stock": 0,         
-                        "rm_ordered_so_total": 0,       
-                        "rm_received_so_total": 0,        
                         "rm_pending_so_linked_total": 0,
                         "rm_shortfall_total": 0,
-                        "status": "No PO Linked",
                         "po_documents": []
                     }
 
@@ -849,33 +855,21 @@ def get_item_stock_details_bulk(item_codes, sales_order_name):
 
                 # D. Updated Shortfall Calculation Logic
                 for rm in rm_map.values():
-                    # Coverage includes physical stock + what's already on PO
-                    total_coverage = rm["rm_available_stock"] + rm["rm_pending_so_linked_total"]
-                    shortfall = max(0, rm["rm_required_total"] - total_coverage)
-                    
+                    # Gap = Needed for production - (what we have + what's already on PO)
+                    coverage = rm["rm_available_stock"] + rm["rm_pending_so_linked_total"]
+                    shortfall = max(0, rm["rm_needed_for_shortfall"] - coverage)
                     rm["rm_shortfall_total"] = shortfall
                     
-                    # Calculate Percentage
-                    if rm["rm_required_total"] > 0:
-                        # (Shortfall / Needed) * 100
-                        rm["shortfall_pct"] = (shortfall / rm["rm_required_total"]) * 100
-                    else:
-                        rm["shortfall_pct"] = 0
-
-                    # Status determination
-                    if shortfall <= 0:
-                        rm["status"] = "Fully Covered"
-                    elif rm["rm_pending_so_linked_total"] > 0:
-                        rm["status"] = "Partial Order"
+                    if shortfall > 0:
                         rm_procurement_status["rm_shortfall_exists"] = True
+                        rm["status"] = "Shortage"
                     else:
-                        rm["status"] = "Not Ordered"
-                        rm_procurement_status["rm_shortfall_exists"] = True
+                        rm["status"] = "Covered"
 
                     rm_procurement_status["rm_items_status"].append(rm)
 
             except Exception as e:
-                frappe.log_error(f"RM Breakdown Logic Error {item_code}", str(e))
+                frappe.log_error(f"RM Error {item_code}", str(e))
         
         # =========================================================
         # 8. FINAL DATA PACKAGING
