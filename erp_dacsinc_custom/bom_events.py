@@ -3,11 +3,40 @@ from frappe.utils import flt
 
 def after_submit(doc, method):
     """Triggered on BOM submission."""
+    enforce_single_active_bom(doc)
     sync_subcontracting_bom(doc)
 
 def on_update_after_submit(doc, method):
     """Triggered when BOM is updated after submission (e.g., toggling Is Default)."""
+    enforce_single_active_bom(doc)
     sync_subcontracting_bom(doc)
+
+
+
+def enforce_single_active_bom(doc):
+    """
+    If this BOM is default, deactivate all other BOMs for the same item
+    """
+    if not doc.item or not doc.is_default:
+        return
+
+    # Deactivate other BOMs
+    frappe.db.sql("""
+        UPDATE `tabBOM`
+        SET is_active = 0,
+            is_default = 0
+        WHERE item = %s
+          AND name != %s
+          AND docstatus = 1
+    """, (doc.item, doc.name))
+
+    # Ensure current BOM is active
+    frappe.db.set_value("BOM", doc.name, {
+        "is_active": 1,
+        "is_default": 1
+    })
+
+
 
 def sync_subcontracting_bom(doc):
     try:
