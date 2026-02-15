@@ -17,58 +17,70 @@ def copy_custom_fields(doc, method):
 
 
 def item_after_insert(doc, method):
-    # 1. Reset description if needed
-    doc.description = doc.item_name # Recommended: setting it to something instead of empty
-    
-    # 2. Update Tax Child Table
+    # Set description safely
+    if not doc.description:
+        doc.db_set("description", doc.item_name)
+
+    # Update children
     update_tax_child(doc)
-    
-    # 3. Handle Barcode Child Table
     update_barcode_child(doc)
 
-    # 4. Save the changes back to the database
-    doc.save(ignore_permissions=True)
-
-    # Create Item Price on new item creation
-    if doc.custom_standard_selling_price:
+    # Create prices ONLY if valid
+    if doc.custom_standard_selling_price is not None:
         create_or_update_item_price(doc, "Selling", doc.custom_standard_selling_price)
-    if doc.custom_standard_buying_price:
+
+    if doc.custom_standard_buying_price is not None:
         create_or_update_item_price(doc, "Buying", doc.custom_standard_buying_price)
 
 def item_on_update(doc, method):
     update_barcode_child(doc)
-    # Check if the standard prices have been changed
-    doc_before_save = doc.get_doc_before_save()
-    if doc_before_save:
-        if doc.custom_standard_selling_price != doc_before_save.custom_standard_selling_price:
-            create_or_update_item_price(doc, "Selling", doc.custom_standard_selling_price)
-        if doc.custom_standard_buying_price != doc_before_save.custom_standard_buying_price:
-            create_or_update_item_price(doc, "Buying", doc.custom_standard_buying_price)
 
+    doc_before = doc.get_doc_before_save()
+    if not doc_before:
+        return
+
+    if doc.custom_standard_selling_price != doc_before.custom_standard_selling_price:
+        if doc.custom_standard_selling_price is not None:
+            create_or_update_item_price(
+                doc, "Selling", doc.custom_standard_selling_price
+            )
+
+    if doc.custom_standard_buying_price != doc_before.custom_standard_buying_price:
+        if doc.custom_standard_buying_price is not None:
+            create_or_update_item_price(
+                doc, "Buying", doc.custom_standard_buying_price
+            )
 def create_or_update_item_price(doc, price_type, rate):
+    if rate is None:
+        return
+
     price_list_name = f"Standard {price_type}"
 
-    # Check if an Item Price already exists for this item and price list
-    item_price = frappe.db.get_value("Item Price", {"item_code": doc.name, "price_list": price_list_name}, "name")
+    item_price = frappe.db.get_value(
+        "Item Price",
+        {"item_code": doc.name, "price_list": price_list_name},
+        "name"
+    )
 
     if item_price:
-        # If it exists, update it
-        ip = frappe.get_doc("Item Price", item_price)
-        ip.price_list_rate = rate
-        ip.save()
-        # frappe.msgprint(f"Item Price for {price_list_name} updated to {rate}")
+        frappe.db.set_value(
+            "Item Price",
+            item_price,
+            "price_list_rate",
+            rate
+        )
     else:
-        # If it doesn't exist, create a new one
         ip = frappe.new_doc("Item Price")
         ip.item_code = doc.name
         ip.price_list = price_list_name
         ip.price_list_rate = rate
-        ip.insert()
-        # frappe.msgprint(f"Item Price for {price_list_name} created with rate {rate}")
+        ip.insert(ignore_permissions=True)
 
 def item_before_save(doc, method):
     if doc.custom_tax_rate:
         update_tax_child(doc)
+
+
 
 
 
