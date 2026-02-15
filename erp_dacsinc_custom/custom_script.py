@@ -1941,7 +1941,6 @@ from frappe.utils import flt
 #     return results
 
 
-
 import json
 import frappe
 from frappe.utils import flt
@@ -2001,6 +2000,8 @@ def get_item_stock_details_bulk(item_bom_pairs, sales_order_name):
         total_available_stock = sum(flt(w.actual_qty) for w in warehouse_stock)
 
         # 4. Receipt History
+        # ------------- MODIFICATION STARTS HERE (Receipt History) ------------------
+        # Modified both parts of the UNION to fetch supplier_name instead of the ID.
         completed_receipt_docs = frappe.db.sql("""
             (SELECT
                 pr.name AS pr_name,
@@ -2010,8 +2011,11 @@ def get_item_stock_details_bulk(item_bom_pairs, sales_order_name):
                 pr.posting_date,
                 pri.received_qty,
                 pr.is_subcontracted,
-                -- For Purchase Receipts: Fetch supplier from linked Purchase Order
-                (SELECT po.supplier FROM `tabPurchase Order` po WHERE po.name = pri.purchase_order) AS supplier_name
+                -- Fetch supplier NAME from linked Purchase Order
+                (SELECT sup.supplier_name
+                 FROM `tabPurchase Order` po
+                 LEFT JOIN `tabSupplier` sup ON po.supplier = sup.name
+                 WHERE po.name = pri.purchase_order) AS supplier
             FROM `tabPurchase Receipt Item` pri
             JOIN `tabPurchase Receipt` pr ON pri.parent = pr.name
             WHERE pri.item_code = %(item)s
@@ -2019,7 +2023,7 @@ def get_item_stock_details_bulk(item_bom_pairs, sales_order_name):
               AND pr.docstatus = 1
               AND pr.is_subcontracted = 0)
 
-            UNION ALL -- Use UNION ALL instead of UNION to preserve all matching rows
+            UNION ALL
 
             (SELECT
                 '' AS pr_name,
@@ -2029,8 +2033,8 @@ def get_item_stock_details_bulk(item_bom_pairs, sales_order_name):
                 scr.posting_date,
                 scri.qty AS received_qty,
                 1 AS is_subcontracted,
-                -- For Subcontracting Receipts: Fetch supplier from the Subcontracting Receipt itself (which is the jobber)
-                scr.supplier AS supplier_name
+                -- Fetch supplier NAME from the Subcontracting Receipt
+                (SELECT sup.supplier_name FROM `tabSupplier` sup WHERE sup.name = scr.supplier) AS supplier
             FROM `tabSubcontracting Receipt Item` scri
             JOIN `tabSubcontracting Receipt` scr ON scri.parent = scr.name
             JOIN `tabPurchase Order Item` poi ON scri.purchase_order_item = poi.name
@@ -2040,6 +2044,8 @@ def get_item_stock_details_bulk(item_bom_pairs, sales_order_name):
 
             ORDER BY posting_date DESC
         """, {"so_name": sales_order_name, "item": item_code}, as_dict=1)
+        # ------------- MODIFICATION ENDS HERE (Receipt History) --------------------
+
         total_hist_recv = sum(flt(r.received_qty) for r in completed_receipt_docs)
         recv_for_so_qty = min(max(0, total_hist_recv - delivered_qty), total_available_stock)
         general_stock_qty = max(0, total_available_stock - recv_for_so_qty)
@@ -2087,23 +2093,32 @@ def get_item_stock_details_bulk(item_bom_pairs, sales_order_name):
         draft_qty_for_others = sum(flt(r.qty) for r in conflict_details if r.docstatus == 0)
 
         # 7. Incoming Pipeline (Current SO POs/EWOs)
+        # ------------- MODIFICATION STARTS HERE (Current SO POs) ------------------
         po_data = frappe.db.sql("""
-            SELECT po.name, po.supplier, po.is_subcontracted, MAX(poi.warehouse) AS warehouse,
+            SELECT
+                po.name, po.supplier, sup.supplier_name, po.is_subcontracted,
+                MAX(poi.warehouse) AS warehouse,
                 SUM(CASE WHEN po.is_subcontracted = 1 THEN (poi.fg_item_qty - poi.received_qty) ELSE (poi.qty - poi.received_qty) END) AS pending_qty
-            FROM `tabPurchase Order Item` poi JOIN `tabPurchase Order` po ON poi.parent = po.name
+            FROM `tabPurchase Order Item` poi
+            JOIN `tabPurchase Order` po ON poi.parent = po.name
+            LEFT JOIN `tabSupplier` sup ON po.supplier = sup.name
             WHERE poi.sales_order = %(so)s AND po.docstatus = 1 
             AND ((po.is_subcontracted=0 AND poi.item_code=%(item)s) OR (po.is_subcontracted=1 AND poi.fg_item=%(item)s))
-            GROUP BY po.name, po.supplier, po.is_subcontracted HAVING pending_qty > 0
+            GROUP BY po.name, po.supplier, sup.supplier_name, po.is_subcontracted
+            HAVING pending_qty > 0
         """, {"so": sales_order_name, "item": item_code}, as_dict=1)
 
         for row in po_data:
             qty = flt(row.pending_qty)
-            incoming_stock.append({"doc_type": "Purchase Order", "name": row.name, "info": row.supplier, "pending_qty": qty, "warehouse": row.warehouse, "is_ewo": 0, "is_subcontracted": row.is_subcontracted})
+            info_text = row.supplier_name or row.supplier # Use name, fallback to ID
+            incoming_stock.append({
+                "doc_type": "Purchase Order", "name": row.name, "info": info_text, "pending_qty": qty, 
+                "warehouse": row.warehouse, "is_ewo": 0, "is_subcontracted": row.is_subcontracted
+            })
             total_incoming_qty += qty
             total_incoming_po_count += 1
-        
-        # ------------- MODIFICATION STARTS HERE ------------------
-        # Modified the query to JOIN with tabSupplier to fetch the supplier_name for the jobber
+        # ------------- MODIFICATION ENDS HERE (Current SO POs) ------------------
+
         ewo_data = frappe.db.sql("""
              SELECT
                 parent.name, parent.date, parent.purchase_order, parent.work_type,
@@ -2130,82 +2145,55 @@ def get_item_stock_details_bulk(item_bom_pairs, sales_order_name):
         for row in ewo_data:
             qty = flt(row.pending_qty) or max(0, flt(row.ordered_qty) - flt(row.received_qty))
             if qty <= 0: continue
-
             jobber_id = row.full_piece_jobber if row.work_type == "Full Piece Job Work" else row.panel_jobber
-            jobber_name = row.jobber_name  # Fetched directly from the SQL query
-            
-            # Use the fetched name, fallback to the ID if the name is missing
-            info_text = jobber_name if jobber_name else (jobber_id or "Job Work")
-            
+            info_text = row.jobber_name if row.jobber_name else (jobber_id or "Job Work")
             stage = row.full_piece_stage if row.work_type == "Full Piece Job Work" else row.panel_stage
-            
             incoming_stock.append({
-                "doc_type": "Embroidery Work Order",
-                "name": row.name,
-                "date": row.date,
-                "work_type": row.work_type,
-                "info": info_text,
-                "jobber_id": jobber_id, # Keep the original ID as well
-                "stage": stage,
-                "po_ref": row.purchase_order,
-                "pending_qty": qty,
-                "is_ewo": 1
+                "doc_type": "Embroidery Work Order", "name": row.name, "date": row.date,
+                "work_type": row.work_type, "info": info_text, "jobber_id": jobber_id, "stage": stage, 
+                "po_ref": row.purchase_order, "pending_qty": qty, "is_ewo": 1
             })
             total_incoming_qty += qty
             unique_ewos.add(row.name)
         total_incoming_ewo_count = len(unique_ewos)
-        # ------------- MODIFICATION ENDS HERE --------------------
 
         # 8. Incoming Pipeline (Other SO POs)
+        # ------------- MODIFICATION STARTS HERE (Other SO POs) ------------------
         other_po_data = frappe.db.sql("""
             SELECT 
-                po.name, 
-                po.supplier, 
-                poi.sales_order, 
+                po.name, po.supplier, sup.supplier_name, poi.sales_order, 
                 SUM(poi.qty - poi.received_qty) AS pending_qty
             FROM `tabPurchase Order Item` poi 
             JOIN `tabPurchase Order` po ON poi.parent = po.name
+            LEFT JOIN `tabSupplier` sup ON po.supplier = sup.name
             WHERE 
-                poi.item_code = %(item)s 
-                AND po.docstatus = 1 
-                -- CRITICAL FIX: Ensure strictly NOT this Sales Order
+                poi.item_code = %(item)s AND po.docstatus = 1 
                 AND (poi.sales_order != %(so)s OR poi.sales_order IS NULL OR poi.sales_order = '')
                 AND (poi.qty - poi.received_qty) > 0 
-            GROUP BY po.name, po.supplier, poi.sales_order
+            GROUP BY po.name, po.supplier, sup.supplier_name, poi.sales_order
         """, {"so": sales_order_name, "item": item_code}, as_dict=1)
 
         for row in other_po_data:
             qty = flt(row.pending_qty)
             total_other_po_qty += qty
+            info_text = row.supplier_name or row.supplier # Use name, fallback to ID
             other_po_list.append({
-                "name": row.name, 
-                "info": row.supplier, 
-                "sales_order": row.sales_order or "General Stock", 
+                "name": row.name, "info": info_text, "sales_order": row.sales_order or "General Stock", 
                 "pending_qty": qty
             })
         total_other_po_count = len(other_po_data)
+        # ------------- MODIFICATION ENDS HERE (Other SO POs) ------------------
 
         # 9. Shortfall & RM Logic
-        # truly_available is what is physically there MINUS what others have already claimed
         truly_available_fg = max(0, total_available_stock - picked_for_others_qty - draft_qty_for_others)
-        # Shortfall for RM = (Requirement) - (Delivered) - (Physical Stock available to us)
         pending_fg_for_so = max(0, required_qty - delivered_qty)
-
-        # `fg_shortfall` is the quantity we must produce after consuming all available stock.
         fg_shortfall = max(0, pending_fg_for_so - truly_available_fg)
         
         rm_procurement_status = {
-            "rm_shortfall_exists": False,
-            "rm_items_status": [],
-            "fg_shortfall": fg_shortfall
+            "rm_shortfall_exists": False, "rm_items_status": [], "fg_shortfall": fg_shortfall
         }
 
         if bom_no:
-            rm_procurement_status = {
-                "rm_shortfall_exists": False,
-                "rm_items_status": [],
-                "fg_shortfall": fg_shortfall
-            }
             try:
                 bom_doc = frappe.get_doc("BOM", bom_no)
                 rm_codes = [i.item_code for i in bom_doc.items]
@@ -2214,13 +2202,10 @@ def get_item_stock_details_bulk(item_bom_pairs, sales_order_name):
                     rm_code = bi.item_code
                     qty_per_fg = flt(bi.stock_qty) if bi.stock_qty else flt(bi.qty)
                     rm_map[rm_code] = {
-                        "rm_code": rm_code,
-                        "rm_uom": bi.uom or bi.stock_uom,
-                        "rm_needed_for_shortfall": fg_shortfall * qty_per_fg, # Will be 0 if no shortfall
-                        "rm_required_total": required_qty * qty_per_fg, # For full SO qty
-                        "rm_available_stock": 0,
-                        "rm_pending_so_linked_total": 0,
-                        "rm_shortfall_total": 0,
+                        "rm_code": rm_code, "rm_uom": bi.uom or bi.stock_uom,
+                        "rm_needed_for_shortfall": fg_shortfall * qty_per_fg,
+                        "rm_required_total": required_qty * qty_per_fg, "rm_available_stock": 0,
+                        "rm_pending_so_linked_total": 0, "rm_shortfall_total": 0,
                         "po_documents": []
                     }
                 
@@ -2256,7 +2241,7 @@ def get_item_stock_details_bulk(item_bom_pairs, sales_order_name):
             "item_code": item_code, "required_qty": required_qty, "delivered_qty": delivered_qty,
             "total_available_stock": total_available_stock, "received_for_so_qty": recv_for_so_qty, "general_stock_qty": general_stock_qty,
             "warehouse_stock": warehouse_stock, "completed_receipt_docs": completed_receipt_docs,
-            "picked_for_this_so_details": current_picks, # RETURN ONLY MATCHING PICKS
+            "picked_for_this_so_details": current_picks,
             "picked_draft_qty_so": picked_draft_qty_so, 
             "picked_submitted_qty_so_actual": picked_sub_qty_so_actual, 
             "picked_submitted_undelivered_qty": picked_sub_undelivered,
