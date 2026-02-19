@@ -2230,67 +2230,138 @@ from erpnext.controllers.subcontracting_controller import make_rm_stock_entry
 #         "ste_name": ste_doc.name
 #     }
 
+# @frappe.whitelist()
+# def create_subcontracting_docs(purchase_order_name, updated_materials_for_supply=None):
+#     """
+#     Creates a Subcontracting Order and its corresponding Material Transfer.
+#     Uses 'qty_to_supply' from `updated_materials_for_supply` for the Stock Entry.
+#     """
+#     po = frappe.get_doc("Purchase Order", purchase_order_name)
+#     subcontractor_warehouse = "Jobers Warehouse - IND" # Ensure this warehouse exists
+
+#     if not frappe.db.exists("Warehouse", subcontractor_warehouse):
+#         frappe.throw(_("Warehouse '{0}' not found. Please create it first.").format(subcontractor_warehouse))
+
+#     # --- Create the Subcontracting Order ---
+#     sco = make_subcontracting_order(purchase_order_name)
+#     sco.supplier = po.supplier
+#     target_warehouse = "VV Puram - IND" # The warehouse from which materials are transferred
+#     sco.set_warehouse = target_warehouse # This sets the default for the SCO items
+#     for item in sco.items:
+#         item.warehouse = target_warehouse # Ensure each item also has the source warehouse
+#     sco.insert(ignore_permissions=True)
+#     sco.submit()
+#     po.add_comment("Comment", _("Created Subcontracting Order: {0}").format(sco.name))
+
+#     # --- Create the Material Transfer Stock Entry ---
+#     ste_doclist = make_rm_stock_entry(subcontract_order=sco.name, order_doctype=sco.doctype)
+#     ste_doc = frappe.get_doc(ste_doclist)
+
+#     # --- NEW: LOGIC TO UPDATE QUANTITIES BASED ON 'qty_to_supply' ---
+#     if updated_materials_for_supply:
+#         supply_quantities = {
+#             item['item_code']: flt(item['qty_to_supply']) for item in json.loads(updated_materials_for_supply)
+#         }
+        
+#         # Adjust quantities in the stock entry items
+#         for item in ste_doc.items:
+#             if item.item_code in supply_quantities:
+#                 item.qty = supply_quantities[item.item_code]
+#                 item.t_warehouse = subcontractor_warehouse # Transfer to subcontractor's warehouse
+#             else:
+#                 # If an item is somehow not in the updated_materials_for_supply, 
+#                 # you might want to remove it or set its qty to 0
+#                 item.qty = 0 
+#                 item.t_warehouse = subcontractor_warehouse # Still transfer to subcontractor
+#     else:
+#         # If no updated_materials_for_supply, default all to 0 or original SCO quantities
+#         # Depending on desired default behavior. For this, we'll set to 0.
+#         for item in ste_doc.items:
+#             item.qty = 0
+#             item.t_warehouse = subcontractor_warehouse
+
+#     # Filter out items with 0 quantity if desired
+#     ste_doc.items = [item for item in ste_doc.items if item.qty > 0]
+    
+#     # If no items are to be transferred, prevent submission of an empty Stock Entry
+#     if not ste_doc.items:
+#         frappe.throw(_("No raw materials selected for transfer. Stock Entry cannot be created."))
+
+#     # Save and submit the now-corrected Stock Entry
+#     ste_doc.insert(ignore_permissions=True)
+#     ste_doc.submit()
+#     po.add_comment("Comment", _("Created Material Transfer: {0}").format(ste_doc.name))
+    
+#     return {
+#         "sco_name": sco.name,
+#         "ste_name": ste_doc.name
+#     }
+
+
+
+
 @frappe.whitelist()
 def create_subcontracting_docs(purchase_order_name, updated_materials_for_supply=None):
-    """
-    Creates a Subcontracting Order and its corresponding Material Transfer.
-    Uses 'qty_to_supply' from `updated_materials_for_supply` for the Stock Entry.
-    """
     po = frappe.get_doc("Purchase Order", purchase_order_name)
-    subcontractor_warehouse = "Jobers Warehouse - IND" # Ensure this warehouse exists
+    subcontractor_warehouse = "Jobers Warehouse - IND"
+    target_warehouse = "VV Puram - IND"
 
     if not frappe.db.exists("Warehouse", subcontractor_warehouse):
-        frappe.throw(_("Warehouse '{0}' not found. Please create it first.").format(subcontractor_warehouse))
+        frappe.throw(_("Warehouse '{0}' not found.").format(subcontractor_warehouse))
 
-    # --- Create the Subcontracting Order ---
+    # 1. Create Subcontracting Order
     sco = make_subcontracting_order(purchase_order_name)
     sco.supplier = po.supplier
-    target_warehouse = "VV Puram - IND" # The warehouse from which materials are transferred
-    sco.set_warehouse = target_warehouse # This sets the default for the SCO items
+    sco.set_warehouse = target_warehouse 
     for item in sco.items:
-        item.warehouse = target_warehouse # Ensure each item also has the source warehouse
+        item.warehouse = target_warehouse
     sco.insert(ignore_permissions=True)
     sco.submit()
-    po.add_comment("Comment", _("Created Subcontracting Order: {0}").format(sco.name))
 
-    # --- Create the Material Transfer Stock Entry ---
+    # 2. Create Stock Entry (Material Transfer)
     ste_doclist = make_rm_stock_entry(subcontract_order=sco.name, order_doctype=sco.doctype)
     ste_doc = frappe.get_doc(ste_doclist)
 
-    # --- NEW: LOGIC TO UPDATE QUANTITIES BASED ON 'qty_to_supply' ---
     if updated_materials_for_supply:
         supply_quantities = {
-            item['item_code']: flt(item['qty_to_supply']) for item in json.loads(updated_materials_for_supply)
+            item['item_code']: flt(item['qty_to_supply']) 
+            for item in json.loads(updated_materials_for_supply)
         }
         
-        # Adjust quantities in the stock entry items
+        # --- FIX: Consolidate duplicate items and update quantities ---
+        new_items = []
+        seen_items = set()
+
         for item in ste_doc.items:
+            # If we've already added this item code to our new list, skip the duplicate
+            if item.item_code in seen_items:
+                continue
+            
             if item.item_code in supply_quantities:
-                item.qty = supply_quantities[item.item_code]
-                item.t_warehouse = subcontractor_warehouse # Transfer to subcontractor's warehouse
-            else:
-                # If an item is somehow not in the updated_materials_for_supply, 
-                # you might want to remove it or set its qty to 0
-                item.qty = 0 
-                item.t_warehouse = subcontractor_warehouse # Still transfer to subcontractor
+                qty = supply_quantities[item.item_code]
+                if qty > 0:
+                    item.qty = qty
+                    item.t_warehouse = subcontractor_warehouse
+                    item.s_warehouse = target_warehouse # Source warehouse
+                    new_items.append(item)
+                    seen_items.add(item.item_code)
+            
+        ste_doc.items = new_items
     else:
-        # If no updated_materials_for_supply, default all to 0 or original SCO quantities
-        # Depending on desired default behavior. For this, we'll set to 0.
-        for item in ste_doc.items:
-            item.qty = 0
-            item.t_warehouse = subcontractor_warehouse
+        frappe.throw(_("No supply materials provided."))
 
-    # Filter out items with 0 quantity if desired
-    ste_doc.items = [item for item in ste_doc.items if item.qty > 0]
-    
-    # If no items are to be transferred, prevent submission of an empty Stock Entry
     if not ste_doc.items:
-        frappe.throw(_("No raw materials selected for transfer. Stock Entry cannot be created."))
+        frappe.throw(_("No raw materials selected for transfer."))
 
-    # Save and submit the now-corrected Stock Entry
+    # 3. Save and Submit
     ste_doc.insert(ignore_permissions=True)
-    ste_doc.submit()
-    po.add_comment("Comment", _("Created Material Transfer: {0}").format(ste_doc.name))
+    # The submission might still fail if actual warehouse stock is lower than 'qty_to_supply'
+    try:
+        ste_doc.submit()
+    except frappe.exceptions.ValidationError:
+        frappe.throw(_("Insufficient stock in {0} to complete the transfer.").format(target_warehouse))
+        
+    po.add_comment("Comment", _("Created SCO: {0} and STE: {1}").format(sco.name, ste_doc.name))
     
     return {
         "sco_name": sco.name,
@@ -4519,3 +4590,25 @@ def get_detailed_pending_pos(supplier):
             AND (poi.qty - poi.received_qty) > 0
         ORDER BY po.transaction_date DESC, po.name DESC
     """, (supplier), as_dict=1)
+
+
+
+
+import frappe
+from erpnext.stock.doctype.purchase_receipt.purchase_receipt import make_purchase_invoice
+
+@frappe.whitelist()
+def make_purchase_invoice_custom(source_name, target_doc=None):
+    # 1. Generate the Purchase Invoice using the standard ERPNext logic
+    doc = make_purchase_invoice(source_name, target_doc)
+    
+    # 2. Fetch the source Purchase Receipt data
+    source_pr = frappe.get_doc("Purchase Receipt", source_name)
+    
+    # 3. Map your custom fields to the standard PI fields
+    # Make sure these fieldnames match your system exactly
+    doc.bill_no = source_pr.custom_supplier_invoice_no
+    doc.bill_date = source_pr.custom_supplier_invoice_date
+    
+    # 4. Return the modified document object to the frontend
+    return doc
