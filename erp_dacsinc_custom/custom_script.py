@@ -2576,12 +2576,217 @@ def get_item_stock_details_bulk(item_bom_pairs, sales_order_name):
             "incoming_stock": incoming_stock, "total_incoming_qty": total_incoming_qty, "total_incoming_po_count": total_incoming_po_count, "total_incoming_ewo_count": total_incoming_ewo_count,
             "total_other_po_qty": total_other_po_qty, "total_other_po_count": total_other_po_count, "other_po_list": other_po_list,
             "is_bom_item": bool(bom_no), "rm_procurement_status": rm_procurement_status, 
-            "customer": so_doc.customer if so_doc else None, "warehouse": warehouse, "stock_uom": stock_uom
+            "customer": so_doc.customer if so_doc else None, "warehouse": warehouse, "stock_uom": stock_uom, "fg_shortfall_for_ewO": fg_shortfall 
+
         }
 
     return results
 
+import frappe
+from frappe.utils import flt
 
+@frappe.whitelist()
+def get_full_piece_dashboard_data(po_name=None, doc_name=None):
+    """
+    Data provider for Full Piece Dashboard. 
+    """
+    target_id = doc_name or po_name
+    
+    if not target_id:
+        frappe.throw("Document ID is required")
+
+    doctype = "Purchase Order"
+    
+    if target_id.startswith("SAL-ORD") or frappe.db.exists("Sales Order", target_id):
+        doctype = "Sales Order"
+    elif not frappe.db.exists("Purchase Order", target_id):
+         frappe.throw(f"Document {target_id} not found.")
+
+    parent_doc = frappe.get_doc(doctype, target_id)
+    sco_name = None
+    
+    # 3. CONFIGURE FILTERS
+    ewo_filters = {"docstatus": 1}
+    
+    if doctype == "Purchase Order":
+        sco_name = frappe.db.get_value("Subcontracting Order", {"purchase_order": target_id, "docstatus": 1}, "name")
+        ewo_filters["purchase_order"] = target_id
+    else:
+        # Verify link field exists, else fallback logic might be needed
+        if frappe.get_meta("Embroidery Work Order").has_field("sales_order_ref"):
+            ewo_filters["sales_order_ref"] = target_id
+
+    # 4. GET LINKED WORK ORDERS (Jobs)
+    ewos = frappe.get_all("Embroidery Work Order", 
+        filters=ewo_filters,
+        fields=["name", "date", "full_piece_jobber", "full_piece_stage", "work_type", "panel_stage"],
+        order_by="creation desc"
+    )
+
+    full_piece_processes = []
+    qty_assigned_to_fp = {}      
+
+    if ewos:
+        ewo_names = [e.name for e in ewos]
+        ewo_items = frappe.get_all("Embroidery Work Order Item", 
+            filters={"parent": ["in", ewo_names]}, 
+            fields=["parent", "item_code", "item_name", "ordered_qty", "received_qty"]
+        )
+        
+        for i in ewo_items:
+            parent_ewo = next((e for e in ewos if e.name == i.parent), None)
+            if not parent_ewo: continue
+
+            if parent_ewo.work_type == 'Full Piece Job Work':
+                qty_assigned_to_fp[i.item_code] = qty_assigned_to_fp.get(i.item_code, 0) + i.ordered_qty
+
+        for e in ewos:
+            if e.work_type == 'Full Piece Job Work':
+                items = [i for i in ewo_items if i.parent == e.name]
+                html = "<div style='font-size:11px;'>"
+                for itm in items:
+                    bal = flt(itm.ordered_qty) - flt(itm.received_qty)
+                    clr = "#28a745" if bal <= 0 else "#e67e22"
+                    html += f"<div><b>{itm.item_name}</b>: {int(itm.ordered_qty)} | <span style='color:{clr}; font-weight:700;'>{ 'Done' if bal <=0 else f'Bal {int(bal)}'}</span></div>"
+                html += "</div>"
+                e["details_html"] = html
+                full_piece_processes.append(e)
+
+    # 5. SOURCE ITEMS & AVAILABILITY
+    available_items = []
+    
+    for item in parent_doc.items:
+        # Total Amount currently sitting in Job Cards/Work Orders
+        already_sent = flt(qty_assigned_to_fp.get(item.item_code, 0))
+        
+        stock_qty = 0      # Physical Stock
+        balance_avail = 0  # Physical Stock
+        required_qty = 0   # How much the dashboard suggests sending
+        
+        if doctype == "Purchase Order":
+            # [LEGACY PO LOGIC]
+            total_basis = flt(item.qty) if parent_doc.is_subcontracted == 0 else flt(item.received_qty) 
+            stock_qty = total_basis
+            balance_avail = total_basis - already_sent # For PO, stock implies "Recvd vs Sent"
+            required_qty = balance_avail
+        else:
+            # [SALES ORDER LOGIC - CORRECTION]
+            
+            # A. Get Physical Stock from Warehouse (The 'Green' Badge)
+            bin_qty = frappe.db.get_value("Bin", 
+                {"item_code": item.item_code, "warehouse": item.warehouse}, 
+                "actual_qty"
+            ) or 0
+            
+            stock_qty = flt(bin_qty)
+            balance_avail = stock_qty
+            
+            # B. Calculate "Required" (The 'Yellow' Badge)
+            # Sales Order Qty - Already Delivered - Already Sent to Jobber (Work in Progress)
+            total_needed = flt(item.qty) - flt(item.delivered_qty)
+            net_needed = max(0, total_needed - already_sent)
+            
+            required_qty = net_needed
+
+        available_items.append({
+            "item_code": item.item_code,
+            "item_name": item.item_name,
+            "warehouse": item.warehouse,  # Must return warehouse for frontend to read
+            "stock_in_factory": flt(stock_qty), 
+            "already_assigned": flt(already_sent),
+            "balance_avail": flt(balance_avail) if balance_avail > 0 else 0, # Physical Unpicked Stock
+            "required_qty": flt(required_qty) if required_qty > 0 else 0     # Needed Logic
+        })
+
+    return {
+        "available_items": available_items,
+        "active_processes": full_piece_processes,
+        "sco_name": sco_name
+    }
+import frappe
+import json
+from frappe.utils import flt
+from collections import defaultdict # Added for get_item_stock_details_bulk
+
+@frappe.whitelist()
+def create_full_piece_receipt(ewo_name, items_data):
+    """
+    Updates the Embroidery Work Order with received quantities and creates
+    a Stock Entry linked to the original Sales Order.
+    """
+    if isinstance(items_data, str):
+        items_data = json.loads(items_data)
+
+    if not items_data:
+        frappe.throw("No item data received")
+
+    # 1. Get the Work Order Document and the linked Sales Order
+    doc = frappe.get_doc("Embroidery Work Order", ewo_name)
+    sales_order_ref = doc.sales_order_ref  # Get the Sales Order ID from the EWO
+
+    if not sales_order_ref:
+        # We can still receive stock but it won't be linked. Let's inform the user.
+        frappe.msgprint(f"Warning: Sales Order reference not found on {ewo_name}. Stock Entry will be created without a Sales Order link.")
+
+    received_items = []
+    # 2. Iterate through incoming data and update EWO rows
+    for entry in items_data:
+        row_name = entry.get("name") # Child Table Row ID
+        qty_received_now = flt(entry.get("qty"))
+
+        for item in doc.items:
+            if item.name == row_name:
+                current_bal = flt(item.ordered_qty) - flt(item.received_qty)
+                if qty_received_now > current_bal:
+                    frappe.throw(f"Cannot receive {qty_received_now} for {item.item_code}. Max allowed is {current_bal}.")
+                
+                item.received_qty = flt(item.received_qty) + qty_received_now
+                item.pending_qty = flt(item.ordered_qty) - item.received_qty
+                
+                if qty_received_now > 0:
+                    received_items.append({
+                        'item_code': item.item_code,
+                        'qty': qty_received_now,
+                        'warehouse': item.warehouse
+                    })
+                break
+
+    doc.save()
+
+    # 3. Create a Stock Entry linked to the Sales Order if items were received
+    if received_items:
+        se = frappe.new_doc("Stock Entry")
+        se.stock_entry_type = "Material Receipt"
+        se.posting_date = frappe.utils.nowdate()
+        
+        # You can add a link to the EWO itself if you have a custom field on Stock Entry
+        # e.g., se.custom_ewo_reference = doc.name
+        
+        for ri in received_items:
+            item_row = {
+                'item_code': ri['item_code'],
+                't_warehouse': ri['warehouse'],
+                'qty': ri['qty'],
+                'from_bom': 1  # Standard practice for receiving finished goods
+            }
+            # THIS IS THE KEY CHANGE: Add the sales order link to each item
+            if sales_order_ref:
+                item_row['sales_order'] = sales_order_ref
+            
+            se.append("items", item_row)
+        
+        se.insert()
+        se.submit()
+
+    # 4. Check for Global Completion of the EWO
+    all_complete = all(flt(item.received_qty) >= flt(item.ordered_qty) for item in doc.items)
+    
+    if all_complete:
+        doc.full_piece_stage = "Received from Full Piece Jobber"
+        doc.save()
+    
+    frappe.msgprint(f"Stock received successfully against {doc.name}")
+    return "Success"
 
 @frappe.whitelist()
 def get_linked_delivery_notes(sales_order_name):
@@ -5290,3 +5495,190 @@ def fix_rounding(doc):
     if diff != 0:
         doc.payment_schedule[-1].payment_amount += diff
         doc.payment_schedule[-1].base_payment_amount = doc.payment_schedule[-1].payment_amount * flt(doc.conversion_rate or 1)
+
+import frappe
+from frappe import _
+import json
+from frappe.utils import flt
+
+@frappe.whitelist()
+def get_job_work_dashboard_data(sales_order_name, supplier=None):
+    sales_order = frappe.get_doc("Sales Order", sales_order_name)
+    warehouse = sales_order.set_warehouse or "Finished Goods - D" 
+    
+    # 1. CONSOLIDATE SO ITEMS (Group by Item Code)
+    # This prevents the same item from appearing twice if it was added in two SO rows
+    so_items_consolidated = {}
+    for item in sales_order.items:
+        ic = item.item_code
+        if ic not in so_items_consolidated:
+            so_items_consolidated[ic] = {
+                "item_code": ic,
+                "item_name": item.item_name,
+                "ordered_qty": 0.0
+            }
+        so_items_consolidated[ic]["ordered_qty"] += flt(item.qty)
+
+    item_codes = list(so_items_consolidated.keys())
+    
+    # 2. Get Live Stock (Bin)
+    stock_dict = {}
+    if item_codes:
+        stock_map = frappe.get_all("Bin", 
+            filters={"item_code": ["in", item_codes], "warehouse": warehouse}, 
+            fields=["item_code", "actual_qty"])
+        stock_dict = {d.item_code: flt(d.actual_qty) for d in stock_map}
+
+    # 3. Get History from EWOs
+    sql_history = """
+        SELECT child.item_code, child.pending_qty, child.received_qty, parent.full_piece_jobber
+        FROM `tabEmbroidery Work Order Item` child
+        INNER JOIN `tabEmbroidery Work Order` parent ON parent.name = child.parent
+        WHERE parent.saels_order_id = %s
+            AND parent.work_type = 'Full Piece Job Work'
+            AND parent.docstatus = 1
+    """
+    history_logs = frappe.db.sql(sql_history, (sales_order_name), as_dict=True)
+
+    history_tracking = {}
+    for log in history_logs:
+        ic = log.item_code
+        if ic not in history_tracking:
+            history_tracking[ic] = {"total_sent": 0.0, "total_received": 0.0, "total_pending": 0.0, "locations": []}
+        
+        # Historical metrics
+        history_tracking[ic]["total_sent"] += (flt(log.pending_qty) + flt(log.received_qty))
+        history_tracking[ic]["total_received"] += flt(log.received_qty)
+        
+        qty_pending = flt(log.pending_qty)
+        if qty_pending > 0:
+            history_tracking[ic]["total_pending"] += qty_pending
+            j_name = frappe.db.get_value("Supplier", log.full_piece_jobber, "supplier_name") or log.full_piece_jobber
+            
+            existing_loc = next((l for l in history_tracking[ic]["locations"] if l['id'] == log.full_piece_jobber), None)
+            if existing_loc:
+                existing_loc['qty'] += qty_pending
+            else:
+                history_tracking[ic]["locations"].append({"id": log.full_piece_jobber, "name": j_name, "qty": qty_pending})
+
+    # 4. Final Data Assembly (Unique Rows)
+    result_data = []
+    for ic, row in so_items_consolidated.items():
+        hist = history_tracking.get(ic, {"total_sent": 0.0, "total_received": 0.0, "total_pending": 0.0, "locations": []})
+        ordered_qty = row["ordered_qty"]
+        stock_avail = stock_dict.get(ic, 0.0)
+        
+        # Status Logic
+        can_still_send = max(0, ordered_qty - hist["total_sent"])
+        
+        status = "Available"
+        if hist["total_received"] >= ordered_qty:
+            status = "Completed"
+        elif can_still_send <= 0 and hist["total_pending"] > 0:
+            status = "Process Active"
+        elif stock_avail <= 0 and can_still_send > 0:
+            status = "Out of Stock"
+
+        result_data.append({
+            "item_code": ic,
+            "item_name": row["item_name"],
+            "ordered_qty": ordered_qty,
+            "stock_avail": stock_avail,
+            "locations_display": "<br>".join([f"{l['name']} ({int(l['qty'])})" for l in hist["locations"]]), 
+            "jobbers_search_text": ", ".join([l['name'] for l in hist["locations"]]),
+            "max_sendable": min(can_still_send, stock_avail),
+            "max_receivable": hist["total_pending"],
+            "status": status
+        })
+        
+    return result_data
+import frappe
+from frappe import _
+import json
+from frappe.utils import flt, now_datetime, format_datetime
+
+@frappe.whitelist()
+def process_job_work_action(sales_order_name, items_json, supplier=None, notes=None, attachment=None):
+    items = json.loads(items_json)
+    timestamp = format_datetime(now_datetime(), "dd-MM-yyyy HH:mm")
+    formatted_new_note = f"[{timestamp}] {notes}" if notes else ""
+    
+    touched_work_orders = []
+
+    # 1. SEND ACTION (Create NEW EWO)
+    send_rows = [r for r in items if flt(r.get('send_qty')) > 0]
+    if send_rows:
+        if not supplier:
+            frappe.throw(_("Destination Jobber is required when Sending stock."))
+            
+        doc = frappe.new_doc("Embroidery Work Order")
+        doc.update({
+            "saels_order_id": sales_order_name,
+            "full_piece_jobber": supplier, 
+            "work_type": "Full Piece Job Work",
+            "full_piece_stage": "Sent to Full Piece Jobber",
+            "notes": formatted_new_note,
+            "items": []
+        })
+
+        for r in send_rows:
+            # FIX: We use 'send_qty' for EVERYTHING in this row
+            # so the EWO strictly reflects the amount you just entered
+            qty_to_send = flt(r['send_qty'])
+            doc.append("items", {
+                "item_code": r['item_code'],
+                "ordered_qty": qty_to_send, # Quantity entered in box
+                "pending_qty": qty_to_send, # Same amount
+                "received_qty": 0
+            })
+
+        doc.insert().submit()
+        touched_work_orders.append(doc.name)
+
+    # 2. RECEIVE ACTION (FIFO FIFO)
+    recv_rows = [r for r in items if flt(r.get('receive_qty')) > 0]
+    for r in recv_rows:
+        qty_rem = flt(r.get('receive_qty'))
+        p_data = frappe.db.sql("""
+            SELECT child.name, child.parent, child.pending_qty FROM `tabEmbroidery Work Order Item` child
+            INNER JOIN `tabEmbroidery Work Order` parent ON child.parent = parent.name
+            WHERE parent.saels_order_id = %s AND child.item_code = %s AND child.pending_qty > 0 AND parent.docstatus = 1
+            ORDER BY parent.creation ASC""", (sales_order_name, r['item_code']), as_dict=True)
+
+        for p in p_data:
+            if qty_rem <= 0: break
+            take = min(qty_rem, flt(p.pending_qty))
+            
+            # Using db_set logic to avoid loading complex docs unnecessarily
+            new_recv = flt(frappe.db.get_value("Embroidery Work Order Item", p.name, "received_qty")) + take
+            new_pend = flt(p.pending_qty) - take
+            
+            frappe.db.set_value("Embroidery Work Order Item", p.name, {
+                "received_qty": new_recv,
+                "pending_qty": new_pend
+            }, update_modified=False)
+
+            # Update EWO Parent State
+            if new_pend == 0:
+                frappe.db.set_value("Embroidery Work Order", p.parent, "full_piece_stage", "Received")
+            
+            if p.parent not in touched_work_orders:
+                touched_work_orders.append(p.parent)
+                if notes:
+                    orig = frappe.db.get_value("Embroidery Work Order", p.parent, "notes") or ""
+                    new_n = (orig + "\n" + formatted_new_note) if orig else formatted_new_note
+                    frappe.db.set_value("Embroidery Work Order", p.parent, "notes", new_n)
+            
+            qty_rem -= take
+
+    # 3. ATTACHMENT
+    if attachment and touched_work_orders:
+        for ewo in touched_work_orders:
+            if not frappe.db.exists("File", {"file_url": attachment, "attached_to_name": ewo}):
+                frappe.get_doc({
+                    "doctype": "File", "file_url": attachment, 
+                    "attached_to_doctype": "Embroidery Work Order",
+                    "attached_to_name": ewo, "is_private": 1
+                }).insert(ignore_permissions=True)
+
+    return True
