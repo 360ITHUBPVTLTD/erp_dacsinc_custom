@@ -159,7 +159,11 @@ doc_events = {
     "Quotation": {
         "before_insert": "erp_dacsinc_custom.custom_script.before_insert",
         "on_submit": "erp_dacsinc_custom.custom_script.quotation_on_submit",
+        "validate": "erp_dacsinc_custom.custom_script.validate_non_zero_rate"
         # "on_cancel": "erp_dacsinc_custom.custom_script.quotation_on_cancel"
+    },
+    "Sales Invoice": {
+        "validate": "erp_dacsinc_custom.custom_script.validate_non_zero_rate"
     },
     "Sales Order": {
         "on_submit": "erp_dacsinc_custom.custom_script.sales_order_on_submit",
@@ -168,7 +172,8 @@ doc_events = {
        "on_update": "erp_dacsinc_custom.custom_script.sales_order_on_update",
         "on_trash": "erp_dacsinc_custom.custom_script.sales_order_on_trash",
         "before_insert": "erp_dacsinc_custom.custom_script.sales_order_before_insert",
-       "before_validate": "erp_dacsinc_custom.custom_script.sales_order_before_insert"
+       "before_validate": "erp_dacsinc_custom.custom_script.sales_order_before_insert",
+       "validate": "erp_dacsinc_custom.custom_script.validate_non_zero_rate"
     },
     "Delivery Note": {
         "on_submit": "erp_dacsinc_custom.custom_script.update_pick_lists_on_dn_submit"
@@ -190,7 +195,13 @@ doc_events = {
         "before_insert": "erp_dacsinc_custom.custom_customer.customer_before_insert",
         "after_insert": "erp_dacsinc_custom.custom_customer.customer_after_insert",
         "on_update": "erp_dacsinc_custom.custom_customer.update_customer_sharing"
-    }
+    },
+    "Purchase Order": {
+        "validate": "erp_dacsinc_custom.custom_script.validate_non_zero_rate"
+    },
+    "Purchase Invoice": {
+        "validate": "erp_dacsinc_custom.custom_script.validate_non_zero_rate"
+    },
 }
 
 
@@ -237,6 +248,13 @@ scheduler_events = {
 # override_whitelisted_methods = {
 # 	"frappe.desk.doctype.event.event.get_events": "erp_dacsinc_custom.event.get_events"
 # }
+
+# Map Purchase Receipt to Purchase Invoice
+override_whitelisted_methods = {
+    "erpnext.stock.doctype.purchase_receipt.purchase_receipt.make_purchase_invoice": "erp_dacsinc_custom.purchase_order.make_purchase_invoice_custom"
+}
+
+
 #
 # each overriding function accepts a `data` argument;
 # generated from the base implementation of the doctype dashboard,

@@ -22,6 +22,7 @@
   "completed_on",
   "per_received",
   "stage",
+  "saels_order_id",
   "section_break_jpwf",
   "items",
   "section_break_fiha",
@@ -150,13 +151,20 @@
    "fieldtype": "Link",
    "label": "Full Piece Jobber",
    "options": "Supplier"
+  },
+  {
+   "fieldname": "saels_order_id",
+   "fieldtype": "Link",
+   "label": "Saels Order ID",
+   "options": "Sales Order",
+   "read_only": 1
   }
  ],
  "grid_page_length": 50,
  "index_web_pages_for_search": 1,
  "is_submittable": 1,
  "links": [],
- "modified": "2025-12-05 18:51:34.309470",
+ "modified": "2026-02-17 19:12:30.617375",
  "modified_by": "Administrator",
  "module": "Erp Dacsinc Custom",
  "name": "Embroidery Work Order",

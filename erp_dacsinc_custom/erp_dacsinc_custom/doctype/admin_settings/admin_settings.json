@@ -13,7 +13,9 @@
   "to_mail_ids",
   "crm_daily_report_section",
   "send_mail_for_daily",
-  "to_mail_id"
+  "to_mail_id",
+  "buying_settings_section",
+  "allow_over_collecting_of_fg"
  ],
  "fields": [
   {
@@ -66,13 +68,23 @@
    "fieldname": "to_mail_id",
    "fieldtype": "Small Text",
    "label": "To Mail ID"
+  },
+  {
+   "fieldname": "buying_settings_section",
+   "fieldtype": "Section Break",
+   "label": "Buying Settings"
+  },
+  {
+   "fieldname": "allow_over_collecting_of_fg",
+   "fieldtype": "Percent",
+   "label": "Allow Over Collecting of FG "
   }
  ],
  "grid_page_length": 50,
  "index_web_pages_for_search": 1,
  "issingle": 1,
  "links": [],
- "modified": "2026-01-07 17:43:04.975120",
+ "modified": "2026-02-14 16:36:19.571814",
  "modified_by": "Administrator",
  "module": "Erp Dacsinc Custom",
  "name": "Admin Settings",
