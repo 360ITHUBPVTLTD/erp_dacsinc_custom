@@ -5682,3 +5682,28 @@ def process_job_work_action(sales_order_name, items_json, supplier=None, notes=N
                 }).insert(ignore_permissions=True)
 
     return True
+
+
+
+
+def validate_non_zero_rate(doc, method):
+    """
+    Central validation hook to prevent 0 rate items.
+    Attached to: Sales Order, Sales Invoice, Purchase Order, Purchase Invoice, etc.
+    """
+    # 1. Check if the document has an 'items' table
+    if not hasattr(doc, "items"):
+        return
+ 
+    # 2. Iterate through the items
+    for row in doc.items:
+        # We check strictly if rate is 0 or negative. 
+        # We use (row.rate or 0.0) to handle cases where rate might be None
+        if (row.rate or 0.0) <= 0.0:
+
+ 
+            # 3. Throw the blocker
+            frappe.throw(
+                msg=_(f"Row #{row.idx}: Rate cannot be zero for Item <b>{row.item_code}</b>."),
+                title=_("Validation Error")
+            )
