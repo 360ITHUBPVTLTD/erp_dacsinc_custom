@@ -5707,3 +5707,336 @@ def validate_non_zero_rate(doc, method):
                 msg=_(f"Row #{row.idx}: Rate cannot be zero for Item <b>{row.item_code}</b>."),
                 title=_("Validation Error")
             )
+import frappe
+
+@frappe.whitelist()
+def get_order_stock_analysis(sales_order_name):
+    so = frappe.get_doc('Sales Order', sales_order_name)
+    
+    # ---------------------------------------------
+    # 1. FETCH MR DATA
+    # ---------------------------------------------
+    mr_dict = {}
+    mri_db_links = frappe.db.sql("""
+        SELECT 
+            child.parent as name, child.item_code, child.warehouse,
+            child.qty, child.ordered_qty, parent.docstatus, parent.status
+        FROM `tabMaterial Request Item` child
+        INNER JOIN `tabMaterial Request` parent ON child.parent = parent.name
+        WHERE child.sales_order = %s AND parent.docstatus < 2
+    """, (so.name,), as_dict=True)
+    
+    for mr in mri_db_links:
+        mr_key = (mr.item_code, mr.warehouse)
+        if mr_key not in mr_dict:
+            mr_dict[mr_key] = {'qty_pending_math': 0.0, 'docs': {}}
+        pending_val = max(float(mr.qty) - float(mr.ordered_qty), 0)
+        mr_dict[mr_key]['qty_pending_math'] += pending_val
+        mr_dict[mr_key]['docs'][mr.name] = {'docstatus': mr.docstatus, 'status': mr.status}
+
+    # ---------------------------------------------
+    # 2. FINISHED GOODS AGGREGATION (Grouping by BOM)
+    # ---------------------------------------------
+    aggregated_finished = {}
+
+    for item in so.items:
+        # We group by Item, Warehouse, AND the specific BOM selected in the SO row
+        key = (item.item_code, item.warehouse, item.bom_no or "")
+        
+        if key not in aggregated_finished:
+            # Check Pick Lists
+            picks = frappe.db.sql("""
+                SELECT pl.docstatus, SUM(pli.qty) as qty
+                FROM `tabPick List Item` pli
+                INNER JOIN `tabPick List` pl ON pli.parent = pl.name
+                WHERE pli.sales_order = %s AND pli.item_code = %s 
+                  AND pli.warehouse = %s AND pl.docstatus < 2
+                GROUP BY pl.docstatus
+            """, (so.name, item.item_code, item.warehouse), as_dict=True)
+
+            p_draft = sum(float(p.qty) for p in picks if p.docstatus == 0)
+            p_sub = sum(float(p.qty) for p in picks if p.docstatus == 1)
+            actual_qty = frappe.db.get_value('Bin', {'item_code': item.item_code, 'warehouse': item.warehouse}, 'actual_qty') or 0.0
+            
+            aggregated_finished[key] = {
+                'item_code': item.item_code,
+                'warehouse': item.warehouse,
+                'bom_no': item.bom_no, # Taken directly from SO line
+                'has_bom': True if item.bom_no else False, # Logical check based on SO line
+                'qty_order': 0.0,
+                'picked_draft': p_draft,
+                'picked_submitted': p_sub,
+                'available': actual_qty,
+                'uom': item.uom,
+                'row_count': 0 
+            }
+        
+        aggregated_finished[key]['qty_order'] += item.qty
+        aggregated_finished[key]['row_count'] += 1
+
+    finished_items_list = []
+    total_raw_demand = {}
+
+    for key, val in aggregated_finished.items():
+        mr_lookup_key = (val['item_code'], val['warehouse'])
+        mr_metadata = mr_dict.get(mr_lookup_key, {'qty_pending_math': 0.0, 'docs': {}})
+        
+        bom_base_demand = max(val['qty_order'] - val['picked_draft'] - val['picked_submitted'], 0)
+        fg_display_shortage = max(bom_base_demand - mr_metadata['qty_pending_math'], 0)
+        mr_link_data = [{'name': n, 'docstatus': i['docstatus'], 'status': i['status']} for n, i in mr_metadata['docs'].items()]
+
+        val.update({
+            'mr_qty_display': mr_metadata['qty_pending_math'],
+            'mr_links': mr_link_data,
+            'shortage': fg_display_shortage,
+            'is_combined': val['row_count'] > 1
+        })
+        finished_items_list.append(val)
+
+        # EXPLOSION ONLY IF item.bom_no WAS IN SALES ORDER
+        if bom_base_demand > 0 and val['bom_no']:
+            bom_doc = frappe.get_doc('BOM', val['bom_no'])
+            factor = float(bom_base_demand) / float(bom_doc.quantity)
+            exploded = frappe.get_all('BOM Explosion Item', 
+                filters={'parent': val['bom_no']}, 
+                fields=['item_code', 'stock_qty', 'stock_uom', 'source_warehouse'])
+
+            for exp in exploded:
+                rm_wh = exp.source_warehouse or val['warehouse']
+                rm_key = f"{exp.item_code}%%{rm_wh}"
+                if rm_key not in total_raw_demand:
+                    total_raw_demand[rm_key] = {'item_code': exp.item_code, 'qty_needed': 0, 'warehouse': rm_wh, 'uom': exp.stock_uom}
+                total_raw_demand[rm_key]['qty_needed'] += (exp.stock_qty * factor)
+
+    # 3. Final Raw Materials Compilation
+    final_raw_materials = []
+    for rm_key_str, data in total_raw_demand.items():
+        rm_actual = frappe.db.get_value('Bin', {'item_code': data['item_code'], 'warehouse': data['warehouse']}, 'actual_qty') or 0.0
+        mr_lookup_key = (data['item_code'], data['warehouse'])
+        rm_mr_tracking = mr_dict.get(mr_lookup_key, {'qty_pending_math': 0.0, 'docs': {}})
+        
+        final_raw_materials.append({
+            'item_code': data['item_code'], 'warehouse': data['warehouse'], 'uom': data['uom'],
+            'available': rm_actual, 'mr_qty_display': rm_mr_tracking['qty_pending_math'],
+            'mr_links': [{'name': n, 'docstatus': i['docstatus'], 'status': i['status']} for n, i in rm_mr_tracking['docs'].items()],
+            'qty_needed': data['qty_needed'],
+            'shortage': max(data['qty_needed'] - rm_actual - rm_mr_tracking['qty_pending_math'], 0)
+        })
+
+    return {'finished': finished_items_list, 'raw': final_raw_materials}
+import frappe
+from frappe.utils import flt
+
+# @frappe.whitelist()
+# def fetch_multi_order_requirements():
+#     # 1. Fetch pending Sales Order items
+#     so_items_raw = frappe.db.sql("""
+#         SELECT 
+#             so.name as so_id, so.customer, so.customer_name, 
+#             so_item.item_code, so_item.warehouse, so_item.qty, 
+#             so_item.bom_no, so_item.uom, so.delivery_date
+#         FROM `tabSales Order` so
+#         INNER JOIN `tabSales Order Item` so_item ON so_item.parent = so.name
+#         WHERE so.docstatus = 1 
+#           AND so.status NOT IN ('Completed', 'Closed', 'Cancelled')
+#           AND so_item.qty > so_item.delivered_qty
+#     """, as_dict=True)
+
+#     # 2. Pre-fetch Open MR Supply (Any unfulfilled Material Request items in the system)
+#     # This covers both Purchase and Manufacture MRs that haven't turned into POs or Work Orders yet
+#     mr_supply_query = frappe.db.sql("""
+#         SELECT child.item_code, child.warehouse, SUM(child.qty - child.ordered_qty) as open_qty
+#         FROM `tabMaterial Request Item` child
+#         INNER JOIN `tabMaterial Request` parent ON child.parent = parent.name
+#         WHERE parent.docstatus < 2
+#         GROUP BY child.item_code, child.warehouse
+#     """, as_dict=True)
+    
+#     mr_supply_map = {(d.item_code, d.warehouse): flt(d.open_qty) for d in mr_supply_query}
+
+#     aggregated_so_data = {}
+#     rm_aggregation = {}
+
+#     for row in so_items_raw:
+#         key = (row.so_id, row.item_code, row.warehouse, row.bom_no or "")
+
+#         if key not in aggregated_so_data:
+#             actual_stock = frappe.db.get_value("Bin", {"item_code": row.item_code, "warehouse": row.warehouse}, "actual_qty") or 0.0
+            
+#             picked_qty = flt(frappe.db.sql("""
+#                 SELECT SUM(pli.qty) FROM `tabPick List Item` pli
+#                 INNER JOIN `tabPick List` pl ON pli.parent = pl.name
+#                 WHERE pli.sales_order = %s AND pli.item_code = %s AND pli.warehouse = %s AND pl.docstatus < 2
+#             """, (row.so_id, row.item_code, row.warehouse))[0][0])
+
+#             # Individual SO level MR links
+#             mr_rows = frappe.db.sql("""
+#                 SELECT child.parent as name, parent.status, parent.docstatus, child.qty, child.ordered_qty
+#                 FROM `tabMaterial Request Item` child
+#                 INNER JOIN `tabMaterial Request` parent ON child.parent = parent.name
+#                 WHERE child.sales_order = %s AND child.item_code = %s AND parent.docstatus < 2
+#             """, (row.so_id, row.item_code), as_dict=True)
+
+#             pending_on_mr = sum(max(flt(m.qty) - flt(m.ordered_qty), 0) for m in mr_rows)
+
+#             aggregated_so_data[key] = {
+#                 "so_id": row.so_id, "customer": row.customer, "customer_name": row.customer_name,
+#                 "item_code": row.item_code, "warehouse": row.warehouse, "uom": row.uom,
+#                 "order_qty": 0.0, "picked": picked_qty, "on_request_pending": pending_on_mr,
+#                 "mr_links": [{"name": m.name, "status": m.status, "docstatus": m.docstatus} for m in mr_rows],
+#                 "available": actual_stock, "line_count": 0, "bom_no": row.bom_no
+#             }
+        
+#         aggregated_so_data[key]["order_qty"] += flt(row.qty)
+#         aggregated_so_data[key]["line_count"] += 1
+
+#     standard_results = []
+#     for k, val in aggregated_so_data.items():
+#         val["shortage"] = max(flt(val["order_qty"]) - flt(val["picked"]) - flt(val["on_request_pending"]), 0)
+
+#         if not val["bom_no"]:
+#             standard_results.append(val)
+#         else:
+#             if val["shortage"] > 0:
+#                 bom_doc = frappe.get_doc("BOM", val["bom_no"])
+#                 factor = val["shortage"] / flt(bom_doc.quantity)
+#                 exploded = frappe.get_all("BOM Explosion Item", filters={"parent": val["bom_no"]}, fields=["item_code", "stock_qty", "stock_uom", "source_warehouse"])
+#                 for exp in exploded:
+#                     rm_wh = exp.source_warehouse or val['warehouse']
+#                     rm_key = (exp.item_code, rm_wh)
+#                     if rm_key not in rm_aggregation:
+#                         rm_agg_stock = frappe.db.get_value("Bin", {"item_code": exp.item_code, "warehouse": rm_wh}, "actual_qty") or 0.0
+#                         rm_aggregation[rm_key] = {
+#                             "item_code": exp.item_code, "warehouse": rm_wh, "uom": exp.stock_uom, 
+#                             "available": rm_agg_stock, "qty_needed": 0.0, "linked_orders": [],
+#                             "open_supply": mr_supply_map.get(rm_key, 0.0) # OPEN MR QUANTITIES ALREADY RAISED
+#                         }
+                    
+#                     rm_aggregation[rm_key]["qty_needed"] += (flt(exp.stock_qty) * factor)
+#                     if val["so_id"] not in [o['name'] for o in rm_aggregation[rm_key]["linked_orders"]]:
+#                         rm_aggregation[rm_key]["linked_orders"].append({"name": val['so_id'], "customer_name": val['customer_name']})
+
+#     # Final Filter for RMs: Subtract Open MRs
+#     final_raw_list = []
+#     for rm in rm_aggregation.values():
+#         # LOGIC: (Need - Existing Supply)
+#         rm["final_shortage"] = max(rm["qty_needed"] - rm["open_supply"], 0)
+#         # If the final shortage is 0 or less (supply covers need), we still show it so user can see it's fulfilled by an MR
+#         final_raw_list.append(rm)
+
+#     return {"standard": standard_results, "raw": final_raw_list}
+
+
+
+
+import frappe
+from frappe.utils import flt
+
+@frappe.whitelist()
+def fetch_multi_order_requirements():
+    # 1. Fetch pending Sales Order items
+    so_items_raw = frappe.db.sql("""
+        SELECT 
+            so.name as so_id, so.customer, so.customer_name, 
+            so_item.item_code, so_item.warehouse, so_item.qty, 
+            so_item.bom_no, so_item.uom, so.delivery_date
+        FROM `tabSales Order` so
+        INNER JOIN `tabSales Order Item` so_item ON so_item.parent = so.name
+        WHERE so.docstatus = 1 
+          AND so.status NOT IN ('Completed', 'Closed', 'Cancelled')
+          AND so_item.qty > so_item.delivered_qty
+    """, as_dict=True)
+
+    # 2. FETCH OPEN MR SUPPLY (with Links)
+    # We find all MRs that aren't fully ordered yet for EVERY component in the system
+    mr_supply_data = frappe.db.sql("""
+        SELECT 
+            child.item_code, child.warehouse, child.parent as mr_id, 
+            parent.status, parent.docstatus, (child.qty - child.ordered_qty) as open_qty
+        FROM `tabMaterial Request Item` child
+        INNER JOIN `tabMaterial Request` parent ON child.parent = parent.name
+        WHERE parent.docstatus < 2 AND (child.qty - child.ordered_qty) > 0
+    """, as_dict=True)
+
+    # Group MR supply by Item and Warehouse
+    mr_supply_map = {}
+    for d in mr_supply_data:
+        key = (d.item_code, d.warehouse)
+        if key not in mr_supply_map:
+            mr_supply_map[key] = {"total_qty": 0.0, "links": []}
+        
+        mr_supply_map[key]["total_qty"] += flt(d.open_qty)
+        mr_supply_map[key]["links"].append({
+            "name": d.mr_id,
+            "status": d.status,
+            "docstatus": d.docstatus
+        })
+
+    aggregated_so_data = {}
+    rm_aggregation = {}
+
+    for row in so_items_raw:
+        key = (row.so_id, row.item_code, row.warehouse, row.bom_no or "")
+
+        if key not in aggregated_so_data:
+            picked_qty = flt(frappe.db.sql("""
+                SELECT SUM(pli.qty) FROM `tabPick List Item` pli
+                INNER JOIN `tabPick List` pl ON pli.parent = pl.name
+                WHERE pli.sales_order = %s AND pli.item_code = %s AND pli.warehouse = %s AND pl.docstatus < 2
+            """, (row.so_id, row.item_code, row.warehouse))[0][0])
+
+            # Order-specific MR links for Standard Table
+            mr_rows = frappe.db.sql("""
+                SELECT child.parent as name, parent.status, parent.docstatus, child.qty, child.ordered_qty
+                FROM `tabMaterial Request Item` child
+                INNER JOIN `tabMaterial Request` parent ON child.parent = parent.name
+                WHERE child.sales_order = %s AND child.item_code = %s AND parent.docstatus < 2
+            """, (row.so_id, row.item_code), as_dict=True)
+
+            pending_on_mr = sum(max(flt(m.qty) - flt(m.ordered_qty), 0) for m in mr_rows)
+
+            aggregated_so_data[key] = {
+                "so_id": row.so_id, "customer": row.customer, "customer_name": row.customer_name,
+                "item_code": row.item_code, "warehouse": row.warehouse, "uom": row.uom,
+                "order_qty": 0.0, "picked": picked_qty, "on_request_pending": pending_on_mr,
+                "mr_links": [{"name": m.name, "status": m.status, "docstatus": m.docstatus} for m in mr_rows],
+                "available": frappe.db.get_value("Bin", {"item_code": row.item_code, "warehouse": row.warehouse}, "actual_qty") or 0.0,
+                "line_count": 0, "bom_no": row.bom_no
+            }
+        
+        aggregated_so_data[key]["order_qty"] += flt(row.qty)
+        aggregated_so_data[key]["line_count"] += 1
+
+    standard_results = []
+    for val in aggregated_so_data.values():
+        val["shortage"] = max(flt(val["order_qty"]) - flt(val["picked"]) - flt(val["on_request_pending"]), 0)
+
+        if not val["bom_no"]:
+            standard_results.append(val)
+        else:
+            if val["shortage"] > 0:
+                bom_doc = frappe.get_doc("BOM", val["bom_no"])
+                factor = val["shortage"] / flt(bom_doc.quantity)
+                exploded = frappe.get_all("BOM Explosion Item", filters={"parent": val["bom_no"]}, fields=["item_code", "stock_qty", "stock_uom", "source_warehouse"])
+                for exp in exploded:
+                    rm_wh = exp.source_warehouse or val['warehouse']
+                    rm_key = (exp.item_code, rm_wh)
+                    if rm_key not in rm_aggregation:
+                        # Fetch consolidated supply from our map
+                        supply_info = mr_supply_map.get(rm_key, {"total_qty": 0.0, "links": []})
+                        
+                        rm_aggregation[rm_key] = {
+                            "item_code": exp.item_code, "warehouse": rm_wh, "uom": exp.stock_uom, 
+                            "available": (frappe.db.get_value("Bin", {"item_code": exp.item_code, "warehouse": rm_wh}, "actual_qty") or 0.0), 
+                            "qty_needed": 0.0, "linked_orders": [], 
+                            "open_supply_qty": supply_info["total_qty"],
+                            "mr_links": supply_info["links"] # THE REQUESTED FIELD
+                        }
+                    rm_aggregation[rm_key]["qty_needed"] += (flt(exp.stock_qty) * factor)
+                    if val["so_id"] not in [o['name'] for o in rm_aggregation[rm_key]["linked_orders"]]:
+                        rm_aggregation[rm_key]["linked_orders"].append({"name": val['so_id'], "customer_name": val['customer_name']})
+
+    for rm in rm_aggregation.values():
+        rm["final_shortage"] = max(rm["qty_needed"] - rm["open_supply_qty"], 0)
+
+    return {"standard": standard_results, "raw": list(rm_aggregation.values())}
