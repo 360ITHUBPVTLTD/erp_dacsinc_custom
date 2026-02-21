@@ -6066,3 +6066,46 @@ def get_so_mr_summary(sales_order):
     """, (sales_order), as_dict=True)
 
     return mrs
+
+
+
+import frappe
+from frappe.utils import getdate, nowdate
+import json
+
+@frappe.whitelist()
+def create_material_request_custom(items, company, sales_order_name, is_subcontracted=0):
+    # If items come as a string from JS, parse them
+    if isinstance(items, str):
+        items = json.loads(items)
+        
+    today = nowdate()
+    
+    mr = frappe.new_doc("Material Request")
+    mr.material_request_type = "Purchase"
+    mr.transaction_date = today
+    mr.company = company
+    mr.custom_is_subcontracted = is_subcontracted # Matching your custom logic
+    
+    for it in items:
+        # THE DATE FIX: 
+        # Reqd by Date (schedule_date) cannot be before Transaction Date (today)
+        target_date = it.get('schedule_date')
+        if not target_date or getdate(target_date) < getdate(today):
+            target_date = today
+
+        mr.append("items", {
+            "item_code": it.get('item_code'),
+            "qty": it.get('qty'),
+            "warehouse": it.get('warehouse'),
+            "schedule_date": target_date, # Validated Date
+            "uom": it.get('uom'),
+            "bom_no": it.get('bom_no'),
+            "sales_order": sales_order_name,
+            "description": it.get('description', f"Requirement for {sales_order_name}")
+        })
+    
+    mr.insert()
+    # mr.submit() # Uncomment this if you want it automatically submitted
+    
+    return mr.name
