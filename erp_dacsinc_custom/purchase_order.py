@@ -4893,3 +4893,120 @@ def make_purchase_invoice_custom(source_name, target_doc=None):
     
     # 4. Return the modified document object to the frontend
     return doc
+
+
+
+
+
+# import frappe
+# from frappe.utils import flt
+
+# @frappe.whitelist()
+# def get_mr_suggestions_for_po():
+#     """
+#     Fetches grouped needs from open Material Requests that are of type 'Purchase' 
+#     AND have already been SUBMITTED (docstatus=1).
+#     """
+    
+#     # Filter by parent.docstatus = 1 (Submitted) to meet the requirement
+#     data = frappe.db.sql("""
+#         SELECT
+#             child.item_code,
+#             child.warehouse,
+#             child.uom,
+#             child.parent AS mr_id,
+#             parent.docstatus,
+#             parent.status,
+#             COALESCE(child.qty, 0.0) AS mr_qty,
+#             COALESCE(child.ordered_qty, 0.0) AS ordered_qty,
+#             parent.creation
+#         FROM `tabMaterial Request Item` child
+#         INNER JOIN `tabMaterial Request` parent ON child.parent = parent.name
+#         WHERE parent.docstatus = 1  -- <-- STRICTLY ENFORCING SUBMITTED STATUS
+#           AND parent.material_request_type = 'Purchase'
+#           AND (child.qty - child.ordered_qty) > 0
+#     """, as_dict=True)
+
+#     aggregated_needs = {}
+    
+#     for row in data:
+#         key = (row.item_code, row.warehouse)
+        
+#         if key not in aggregated_needs:
+#             item_name = frappe.db.get_value("Item", row.item_code, "item_name")
+#             available_stock = flt(frappe.db.get_value("Bin", 
+#                 {"item_code": row.item_code, "warehouse": row.warehouse}, "actual_qty")) or 0.0
+                
+#             aggregated_needs[key] = {
+#                 'item_code': row.item_code,
+#                 'item_name': item_name,
+#                 'warehouse': row.warehouse,
+#                 'uom': row.uom,
+#                 'available': available_stock,
+#                 'total_required_qty': 0.0,
+#                 'mr_links': {},
+#             }
+        
+#         pending_on_mr_line = flt(row.mr_qty - row.ordered_qty)
+        
+#         aggregated_needs[key]['total_required_qty'] = flt(aggregated_needs[key]['total_required_qty'] + pending_on_mr_line)
+        
+#         # Track unique MRs and their balances
+#         if row.mr_id not in aggregated_needs[key]['mr_links']:
+#              aggregated_needs[key]['mr_links'][row.mr_id] = {
+#                  'status': row.status, 
+#                  'qty': 0.0,
+#                  'creation': row.creation
+#              }
+#         aggregated_needs[key]['mr_links'][row.mr_id]['qty'] += pending_on_mr_line
+
+#     # Format output
+#     final_list = []
+#     for key, item in aggregated_needs.items():
+        
+#         formatted_links = []
+#         for mr_id, details in item['mr_links'].items():
+#              formatted_links.append({
+#                 'name': mr_id,
+#                 'status': details['status'], 
+#                 'qty_balance': details['qty'] 
+#              })
+             
+#         final_list.append({
+#             'item_code': item['item_code'],
+#             'item_name': item['item_name'],
+#             'warehouse': item['warehouse'],
+#             'uom': item['uom'],
+#             'available': item['available'],
+#             'total_needed': item['total_required_qty'],
+#             'suggested_qty': item['total_required_qty'], 
+#             'mr_links': formatted_links
+#         })
+        
+#     return final_list
+
+
+import frappe
+from frappe.utils import flt
+
+@frappe.whitelist()
+def get_mr_suggestions_for_po():
+    """ Fetches pending Material Request items for procurement planning """
+    return frappe.db.sql("""
+        SELECT
+            child.name AS mr_item_id,
+            child.item_code,
+            child.item_name,
+            child.warehouse,
+            child.uom,
+            child.parent AS mr_id,
+            child.sales_order,
+            (child.qty - child.ordered_qty) AS pending_qty,
+            (SELECT actual_qty FROM `tabBin` WHERE item_code = child.item_code AND warehouse = child.warehouse) as available_qty
+        FROM `tabMaterial Request Item` child
+        INNER JOIN `tabMaterial Request` parent ON child.parent = parent.name
+        WHERE parent.docstatus = 1 
+          AND parent.material_request_type = 'Purchase'
+          AND (child.qty - child.ordered_qty) > 0
+        ORDER BY child.item_code ASC
+    """, as_dict=True)

@@ -6040,3 +6040,27 @@ def fetch_multi_order_requirements():
         rm["final_shortage"] = max(rm["qty_needed"] - rm["open_supply_qty"], 0)
 
     return {"standard": standard_results, "raw": list(rm_aggregation.values())}
+
+
+
+import frappe
+
+@frappe.whitelist()
+def get_so_mr_summary(sales_order):
+    # Fetch all Material Requests linked to this SO through their items
+    # We group by name to avoid duplicates if multiple items are in one MR
+    mrs = frappe.db.sql("""
+        SELECT 
+            parent.name, 
+            parent.transaction_date, 
+            parent.material_request_type, 
+            parent.status, 
+            parent.docstatus
+        FROM `tabMaterial Request` parent
+        JOIN `tabMaterial Request Item` child ON child.parent = parent.name
+        WHERE child.sales_order = %s AND parent.docstatus < 2
+        GROUP BY parent.name
+        ORDER BY parent.creation DESC
+    """, (sales_order), as_dict=True)
+
+    return mrs
