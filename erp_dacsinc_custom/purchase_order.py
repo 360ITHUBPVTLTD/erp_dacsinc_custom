@@ -1210,7 +1210,7 @@ def get_pending_so_with_material_stock(is_subcontracted=False):
     # --- 1. Fetch Sales Order Lines ---
     pending_orders = frappe.db.sql(f"""
         SELECT
-            soi.name as so_row_name, soi.parent AS sales_order, so.customer, 
+            soi.name as so_row_name, soi.parent AS sales_order, so.customer, so.customer_name,
             so.sales_partner AS jobber_name, soi.item_code, soi.item_name, 
             soi.qty, soi.delivered_qty, soi.bom_no AS bom
         FROM `tabSales Order Item` soi 
@@ -1572,7 +1572,7 @@ def get_pending_so_with_raw_materials_summary():
             si.parent as sales_order, si.item_code, si.item_name, si.qty,
             COALESCE(si.delivered_qty, 0) as delivered_qty,
             (si.qty - COALESCE(si.delivered_qty, 0)) as pending_qty,
-            so.customer, si.bom_no as bom, si.uom
+            so.customer,so.customer_name, si.bom_no as bom, si.uom
         FROM `tabSales Order Item` si 
         JOIN `tabSales Order` so ON si.parent = so.name
         WHERE so.docstatus = 1 AND so.status NOT IN ('Closed', 'Cancelled', 'On Hold')
@@ -3423,76 +3423,129 @@ def delete_putaway_picklist(doc, method=None):
 
 
 
+# import frappe
+# from frappe.utils import cint
+
+# @frappe.whitelist()
+# def get_pending_pr_items(supplier, is_subcontracted=0):
+#     if not supplier:
+#         return []
+
+#     is_subcontracted_val = cint(is_subcontracted)
+    
+#     sql_query = """
+#         SELECT 
+#             pr.name as pr_name, 
+#             pr.posting_date,
+#             pr.is_subcontracted,
+#             pri.name as pr_detail, 
+#             pri.item_code, 
+#             pri.item_name, 
+#             pri.uom,
+#             pri.rate, 
+#             pri.received_qty, 
+            
+#             -- Calculate Total Billed Qty (using subquery for accuracy)
+#             IFNULL((
+#                 SELECT SUM(pii.qty) 
+#                 FROM `tabPurchase Invoice Item` pii 
+#                 WHERE pii.pr_detail = pri.name 
+#                 AND pii.docstatus = 1
+#             ), 0) as billed_qty,
+            
+#             -- Calculate Pending
+#             (pri.received_qty - IFNULL((
+#                 SELECT SUM(pii.qty) 
+#                 FROM `tabPurchase Invoice Item` pii 
+#                 WHERE pii.pr_detail = pri.name 
+#                 AND pii.docstatus = 1
+#             ), 0)) as pending_qty,
+            
+#             pri.cost_center,
+#             pri.expense_account,
+#             pr.supplier_warehouse, # Make sure this is still here
+#             po_item.fg_item as finished_good_item_code, # Make sure this is still here
+#             po_item.qty as po_item_qty, 
+#             po_item.item_code as po_item_code 
+#         FROM 
+#             `tabPurchase Receipt` pr
+#         JOIN 
+#             `tabPurchase Receipt Item` pri ON pri.parent = pr.name
+#         LEFT JOIN 
+#             `tabPurchase Order Item` po_item ON po_item.name = pri.purchase_order_item
+#         WHERE 
+#             pr.supplier = %(supplier)s 
+#             AND pr.docstatus = 1 
+#             AND IFNULL(pr.is_subcontracted, 0) = %(is_subcontracted)s
+#             AND pr.status NOT IN ('Closed', 'Completed')
+#         HAVING 
+#             pending_qty > 0.0001
+#         ORDER BY 
+#             pr.posting_date DESC
+#     """
+    
+#     return frappe.db.sql(sql_query, {
+#         "supplier": supplier,
+#         "is_subcontracted": is_subcontracted_val
+#     }, as_dict=True)
+
+
+
+
 import frappe
-from frappe.utils import cint
+from frappe.utils import flt, cint
 
 @frappe.whitelist()
 def get_pending_pr_items(supplier, is_subcontracted=0):
     if not supplier:
         return []
 
-    is_subcontracted_val = cint(is_subcontracted)
-    
-    sql_query = """
+    # 1. Fetch pending PR Items with Finished Good info from PO
+    data = frappe.db.sql("""
         SELECT 
             pr.name as pr_name, 
             pr.posting_date,
-            pr.is_subcontracted,
             pri.name as pr_detail, 
             pri.item_code, 
             pri.item_name, 
             pri.uom,
             pri.rate, 
-            pri.received_qty, 
-            
-            -- Calculate Total Billed Qty (using subquery for accuracy)
-            IFNULL((
-                SELECT SUM(pii.qty) 
-                FROM `tabPurchase Invoice Item` pii 
-                WHERE pii.pr_detail = pri.name 
-                AND pii.docstatus = 1
-            ), 0) as billed_qty,
-            
-            -- Calculate Pending
-            (pri.received_qty - IFNULL((
-                SELECT SUM(pii.qty) 
-                FROM `tabPurchase Invoice Item` pii 
-                WHERE pii.pr_detail = pri.name 
-                AND pii.docstatus = 1
-            ), 0)) as pending_qty,
-            
+            pri.received_qty as total_pr_qty, 
             pri.cost_center,
             pri.expense_account,
-            pr.supplier_warehouse, # Make sure this is still here
-            po_item.fg_item as finished_good_item_code, # Make sure this is still here
-            po_item.qty as po_item_qty, 
-            po_item.item_code as po_item_code 
-        FROM 
-            `tabPurchase Receipt` pr
-        JOIN 
-            `tabPurchase Receipt Item` pri ON pri.parent = pr.name
-        LEFT JOIN 
-            `tabPurchase Order Item` po_item ON po_item.name = pri.purchase_order_item
-        WHERE 
-            pr.supplier = %(supplier)s 
+            po_item.fg_item as finished_good_item_code 
+        FROM `tabPurchase Receipt` pr
+        JOIN `tabPurchase Receipt Item` pri ON pri.parent = pr.name
+        LEFT JOIN `tabPurchase Order Item` po_item ON po_item.name = pri.purchase_order_item
+        WHERE pr.supplier = %(supplier)s 
             AND pr.docstatus = 1 
             AND IFNULL(pr.is_subcontracted, 0) = %(is_subcontracted)s
             AND pr.status NOT IN ('Closed', 'Completed')
-        HAVING 
-            pending_qty > 0.0001
-        ORDER BY 
-            pr.posting_date DESC
-    """
-    
-    return frappe.db.sql(sql_query, {
-        "supplier": supplier,
-        "is_subcontracted": is_subcontracted_val
-    }, as_dict=True)
+        ORDER BY pr.posting_date DESC
+    """, {"supplier": supplier, "is_subcontracted": cint(is_subcontracted)}, as_dict=1)
 
+    final_data = []
+    for d in data:
+        # 2. Trace Billing History per PR Item row
+        history = frappe.db.sql("""
+            SELECT pii.parent as inv_id, SUM(pii.qty) as billed_amt
+            FROM `tabPurchase Invoice Item` pii
+            JOIN `tabPurchase Invoice` pi ON pii.parent = pi.name
+            WHERE pii.pr_detail = %s AND pi.docstatus = 1
+            GROUP BY pii.parent
+        """, (d.pr_detail), as_dict=1)
 
+        total_billed = sum(flt(h.billed_amt) for h in history)
+        pending = flt(d.total_pr_qty) - total_billed
 
+        # 3. Only include if there is something left to bill
+        if pending > 0.001:
+            d['billed_qty'] = total_billed
+            d['pending_qty'] = pending
+            d['history_links'] = history # Array of {inv_id: '...', billed_amt: 0}
+            final_data.append(d)
 
-
+    return final_data
 
 
 
@@ -4838,28 +4891,65 @@ def get_full_piece_dashboard_data(po_name):
     }
 
 
+# import frappe
+# from frappe.utils import flt
+# @frappe.whitelist()
+# def get_detailed_pending_pos(supplier):
+#     if not supplier:
+#         return []
+
+#     return frappe.db.sql("""
+#         SELECT 
+#             po.name as purchase_order,
+#             po.transaction_date as po_date,
+#             poi.name as po_item_id,
+#             poi.item_code,
+            
+#             poi.item_name,
+#             poi.uom,
+#             (poi.qty - poi.received_qty) as pending_qty,
+#             poi.rate,
+#             poi.warehouse,
+#             poi.schedule_date,
+#             poi.sales_order,
+#             so.customer as customer,  -- Changed alias from customer_id to customer
+#             so.customer_name as customer_name
+#         FROM `tabPurchase Order Item` poi
+#         JOIN `tabPurchase Order` po ON poi.parent = po.name
+#         LEFT JOIN `tabSales Order` so ON poi.sales_order = so.name
+#         WHERE po.supplier = %s 
+#             AND po.docstatus = 1 
+#             AND po.is_subcontracted = 0
+#             AND po.status NOT IN ('Closed', 'Cancelled')
+#             AND (poi.qty - poi.received_qty) > 0
+#         ORDER BY po.transaction_date DESC, po.name DESC
+#     """, (supplier), as_dict=1)
+
+
 import frappe
 from frappe.utils import flt
+
 @frappe.whitelist()
 def get_detailed_pending_pos(supplier):
     if not supplier:
         return []
 
-    return frappe.db.sql("""
+    # 1. Fetch pending PO Items
+    data = frappe.db.sql("""
         SELECT 
             po.name as purchase_order,
             po.transaction_date as po_date,
             poi.name as po_item_id,
             poi.item_code,
-            
             poi.item_name,
             poi.uom,
+            poi.qty as total_qty,           -- The original PO Quantity
+            poi.received_qty,               -- What has been received so far
             (poi.qty - poi.received_qty) as pending_qty,
             poi.rate,
             poi.warehouse,
-            poi.schedule_date,
             poi.sales_order,
-            so.customer as customer,  -- Changed alias from customer_id to customer
+            so.customer as customer,
             so.customer_name as customer_name
         FROM `tabPurchase Order Item` poi
         JOIN `tabPurchase Order` po ON poi.parent = po.name
@@ -4867,13 +4957,25 @@ def get_detailed_pending_pos(supplier):
         WHERE po.supplier = %s 
             AND po.docstatus = 1 
             AND po.is_subcontracted = 0
-            AND po.status NOT IN ('Closed', 'Cancelled')
+            AND po.status NOT IN ('Closed', 'Cancelled', 'Completed')
             AND (poi.qty - poi.received_qty) > 0
         ORDER BY po.transaction_date DESC, po.name DESC
     """, (supplier), as_dict=1)
 
+    for row in data:
+        # 2. Audit Trail: Find specific Purchase Receipts that linked to this PO Item
+        if flt(row.received_qty) > 0:
+            history = frappe.db.sql("""
+                SELECT DISTINCT parent as pr_id
+                FROM `tabPurchase Receipt Item`
+                WHERE purchase_order_item = %s 
+                  AND docstatus = 1
+            """, (row.po_item_id), as_dict=1)
+            row['history_links'] = [h.pr_id for h in history]
+        else:
+            row['history_links'] = []
 
-
+    return data
 
 import frappe
 from erpnext.stock.doctype.purchase_receipt.purchase_receipt import make_purchase_invoice
@@ -4893,3 +4995,138 @@ def make_purchase_invoice_custom(source_name, target_doc=None):
     
     # 4. Return the modified document object to the frontend
     return doc
+
+
+
+
+
+# import frappe
+# from frappe.utils import flt
+
+# @frappe.whitelist()
+# def get_mr_suggestions_for_po():
+#     """
+#     Fetches grouped needs from open Material Requests that are of type 'Purchase' 
+#     AND have already been SUBMITTED (docstatus=1).
+#     """
+    
+#     # Filter by parent.docstatus = 1 (Submitted) to meet the requirement
+#     data = frappe.db.sql("""
+#         SELECT
+#             child.item_code,
+#             child.warehouse,
+#             child.uom,
+#             child.parent AS mr_id,
+#             parent.docstatus,
+#             parent.status,
+#             COALESCE(child.qty, 0.0) AS mr_qty,
+#             COALESCE(child.ordered_qty, 0.0) AS ordered_qty,
+#             parent.creation
+#         FROM `tabMaterial Request Item` child
+#         INNER JOIN `tabMaterial Request` parent ON child.parent = parent.name
+#         WHERE parent.docstatus = 1  -- <-- STRICTLY ENFORCING SUBMITTED STATUS
+#           AND parent.material_request_type = 'Purchase'
+#           AND (child.qty - child.ordered_qty) > 0
+#     """, as_dict=True)
+
+#     aggregated_needs = {}
+    
+#     for row in data:
+#         key = (row.item_code, row.warehouse)
+        
+#         if key not in aggregated_needs:
+#             item_name = frappe.db.get_value("Item", row.item_code, "item_name")
+#             available_stock = flt(frappe.db.get_value("Bin", 
+#                 {"item_code": row.item_code, "warehouse": row.warehouse}, "actual_qty")) or 0.0
+                
+#             aggregated_needs[key] = {
+#                 'item_code': row.item_code,
+#                 'item_name': item_name,
+#                 'warehouse': row.warehouse,
+#                 'uom': row.uom,
+#                 'available': available_stock,
+#                 'total_required_qty': 0.0,
+#                 'mr_links': {},
+#             }
+        
+#         pending_on_mr_line = flt(row.mr_qty - row.ordered_qty)
+        
+#         aggregated_needs[key]['total_required_qty'] = flt(aggregated_needs[key]['total_required_qty'] + pending_on_mr_line)
+        
+#         # Track unique MRs and their balances
+#         if row.mr_id not in aggregated_needs[key]['mr_links']:
+#              aggregated_needs[key]['mr_links'][row.mr_id] = {
+#                  'status': row.status, 
+#                  'qty': 0.0,
+#                  'creation': row.creation
+#              }
+#         aggregated_needs[key]['mr_links'][row.mr_id]['qty'] += pending_on_mr_line
+
+#     # Format output
+#     final_list = []
+#     for key, item in aggregated_needs.items():
+        
+#         formatted_links = []
+#         for mr_id, details in item['mr_links'].items():
+#              formatted_links.append({
+#                 'name': mr_id,
+#                 'status': details['status'], 
+#                 'qty_balance': details['qty'] 
+#              })
+             
+#         final_list.append({
+#             'item_code': item['item_code'],
+#             'item_name': item['item_name'],
+#             'warehouse': item['warehouse'],
+#             'uom': item['uom'],
+#             'available': item['available'],
+#             'total_needed': item['total_required_qty'],
+#             'suggested_qty': item['total_required_qty'], 
+#             'mr_links': formatted_links
+#         })
+        
+#     return final_list
+import frappe
+from frappe.utils import flt
+
+@frappe.whitelist()
+def get_mr_suggestions_for_po():
+    """ 
+    Traces unfulfilled Material Requests, their origin Sales Orders (and Customers), 
+    and previously created Purchase Orders (and Suppliers).
+    """
+    # Fetch unfulfilled Purchase Material Request items linked to Sales Orders
+    data = frappe.db.sql("""
+        SELECT
+            child.name AS mr_item_id,
+            child.item_code,
+            child.item_name,
+            child.warehouse,
+            child.uom,
+            child.qty AS mr_total_qty,       -- Original MR Quantity
+            child.ordered_qty,               -- Sum of previously ordered quantity
+            child.parent AS mr_id,
+            child.sales_order,
+            so.customer_name AS customer_name,
+            (child.qty - child.ordered_qty) AS pending_qty,
+            (SELECT actual_qty FROM `tabBin` WHERE item_code = child.item_code AND warehouse = child.warehouse) as available_qty
+        FROM `tabMaterial Request Item` child
+        INNER JOIN `tabMaterial Request` parent ON child.parent = parent.name
+        LEFT JOIN `tabSales Order` so ON child.sales_order = so.name
+        WHERE parent.docstatus = 1 
+          AND parent.material_request_type = 'Purchase'
+          AND (child.qty - child.ordered_qty) > 0
+        ORDER BY child.item_code ASC
+    """, as_dict=True)
+
+    for row in data:
+        # TRACING: Find existing POs and their Suppliers already created from this specific line
+        row['previous_po_history'] = frappe.db.sql("""
+            SELECT po.name as po_id, po.supplier_name 
+            FROM `tabPurchase Order Item` poi
+            JOIN `tabPurchase Order` po ON poi.parent = po.name
+            WHERE poi.material_request_item = %s 
+              AND po.docstatus < 2
+        """, (row.mr_item_id), as_dict=True)
+
+    return data
