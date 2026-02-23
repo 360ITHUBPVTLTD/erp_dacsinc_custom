@@ -1210,7 +1210,7 @@ def get_pending_so_with_material_stock(is_subcontracted=False):
     # --- 1. Fetch Sales Order Lines ---
     pending_orders = frappe.db.sql(f"""
         SELECT
-            soi.name as so_row_name, soi.parent AS sales_order, so.customer, 
+            soi.name as so_row_name, soi.parent AS sales_order, so.customer, so.customer_name,
             so.sales_partner AS jobber_name, soi.item_code, soi.item_name, 
             soi.qty, soi.delivered_qty, soi.bom_no AS bom
         FROM `tabSales Order Item` soi 
@@ -1572,7 +1572,7 @@ def get_pending_so_with_raw_materials_summary():
             si.parent as sales_order, si.item_code, si.item_name, si.qty,
             COALESCE(si.delivered_qty, 0) as delivered_qty,
             (si.qty - COALESCE(si.delivered_qty, 0)) as pending_qty,
-            so.customer, si.bom_no as bom, si.uom
+            so.customer,so.customer_name, si.bom_no as bom, si.uom
         FROM `tabSales Order Item` si 
         JOIN `tabSales Order` so ON si.parent = so.name
         WHERE so.docstatus = 1 AND so.status NOT IN ('Closed', 'Cancelled', 'On Hold')

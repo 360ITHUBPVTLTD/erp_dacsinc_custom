@@ -6109,3 +6109,60 @@ def create_material_request_custom(items, company, sales_order_name, is_subcontr
     # mr.submit() # Uncomment this if you want it automatically submitted
     
     return mr.name
+
+
+
+import frappe
+from frappe.utils import flt
+
+@frappe.whitelist()
+def get_subcontract_data(item_code):
+    # 1. Get the Default Active BOM for the Finished Good
+    bom_name = frappe.db.get_value("BOM", 
+        {"item": item_code, "is_default": 1, "is_active": 1, "docstatus": 1}, 
+        "name"
+    )
+    
+    if not bom_name:
+        frappe.throw(f"Please set a Default Active BOM for Item {item_code}")
+
+    # 2. Get the Subcontracting BOM linked via 'finished_good_bom' field
+    sub_bom = frappe.db.get_value("Subcontracting BOM", 
+        {"finished_good_bom": bom_name, "is_active": 1, "docstatus": 1}, 
+        ["name", "service_item"], as_dict=True
+    )
+
+    if not sub_bom:
+         frappe.throw(f"No active 'Subcontracting BOM' found linked to BOM: {bom_name}")
+
+    service_item = sub_bom.get('service_item')
+    if not service_item:
+        frappe.throw(f"Service Item is empty in Subcontracting BOM {sub_bom.name}")
+
+    # 3. Get raw materials from the Main BOM for the calculation preview
+    bom = frappe.get_doc("BOM", bom_name)
+    components = []
+    for d in bom.items:
+        components.append({
+            "item_code": d.item_code,
+            "item_name": d.item_name,
+            "qty": flt(d.qty) / flt(bom.quantity), # Qty required for 1 unit of FG
+            "uom": d.stock_uom
+        })
+
+    return {
+        "bom_name": bom_name,
+        "service_item": service_item,
+        "components": components
+    }
+
+@frappe.whitelist()
+@frappe.validate_and_sanitize_search_inputs
+def get_items_with_bom(doctype, txt, searchfield, start, page_len, filters):
+    # This filters the Select FG Link to show only Items that have an active BOM
+    return frappe.db.sql("""
+        SELECT item, item_name FROM `tabBOM`
+        WHERE docstatus = 1 AND is_active = 1
+        AND (item LIKE %(txt)s OR item_name LIKE %(txt)s)
+        GROUP BY item ORDER BY item ASC LIMIT %(start)s, %(page_len)s
+    """, {'txt': f'%{txt}%', 'start': start, 'page_len': page_len})
