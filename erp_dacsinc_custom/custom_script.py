@@ -2713,25 +2713,98 @@ def get_item_stock_details_bulk(item_bom_pairs, sales_order_name):
                         "po_documents": []
                     }
                 
+                # if rm_codes:
+                #     stock_data = frappe.db.sql("""SELECT item_code, SUM(actual_qty) as qty FROM `tabBin` WHERE item_code IN %s AND actual_qty > 0 GROUP BY item_code""", (tuple(rm_codes),), as_dict=1)
+                #     for s in stock_data:
+                #         if s.item_code in rm_map: rm_map[s.item_code]["rm_available_stock"] = flt(s.qty)
+                    
+                #     so_procurement_data = frappe.db.sql("""
+                #         SELECT source.raw_material_item, SUM(poi.qty - poi.received_qty) as pending_ordered, GROUP_CONCAT(DISTINCT source.parent) as po_list
+                #         FROM `tabPurchase Order Raw Material Source` source JOIN `tabPurchase Order Item` poi ON poi.parent = source.parent AND poi.item_code = source.raw_material_item
+                #         WHERE source.source_sales_order = %s AND source.raw_material_item IN %s AND poi.docstatus = 1 GROUP BY source.raw_material_item
+                #     """, (sales_order_name, tuple(rm_codes)), as_dict=1)
+                    
+                #     for d in so_procurement_data:
+                #         rm = rm_map.get(d.raw_material_item)
+                #         if rm:
+                #             rm["rm_pending_so_linked_total"] = max(0, flt(d.pending_ordered))
+                #             if d.po_list: rm["po_documents"] = d.po_list.split(",")
+
+                # for rm in rm_map.values():
+                #     coverage = rm["rm_available_stock"] + rm["rm_pending_so_linked_total"]
+                #     shortfall = max(0, rm["rm_needed_for_shortfall"] - coverage)
+                #     rm["rm_shortfall_total"] = shortfall
+                #     rm["status"] = "Shortage" if shortfall > 0 else "Covered"
+                #     if shortfall > 0: rm_procurement_status["rm_shortfall_exists"] = True
+                #     rm_procurement_status["rm_items_status"].append(rm)
+                # ... (previous code in the bom_no block)
                 if rm_codes:
+                    # 1. Physical Stock (Bin)
                     stock_data = frappe.db.sql("""SELECT item_code, SUM(actual_qty) as qty FROM `tabBin` WHERE item_code IN %s AND actual_qty > 0 GROUP BY item_code""", (tuple(rm_codes),), as_dict=1)
                     for s in stock_data:
                         if s.item_code in rm_map: rm_map[s.item_code]["rm_available_stock"] = flt(s.qty)
                     
+                    # 2. Material Requests (MR) linked to this SO
+                    mr_data = frappe.db.sql("""
+                        SELECT 
+                            mri.item_code, 
+                            SUM(mri.qty - mri.ordered_qty) as pending_mr, 
+                            GROUP_CONCAT(DISTINCT mri.parent) as mr_list
+                        FROM `tabMaterial Request Item` mri
+                        JOIN `tabMaterial Request` mr ON mri.parent = mr.name
+                        WHERE mri.sales_order = %(so)s 
+                          AND mri.item_code IN %(items)s 
+                          AND mr.docstatus = 1 
+                          AND mr.status != 'Stopped'
+                        GROUP BY mri.item_code
+                    """, {"so": sales_order_name, "items": tuple(rm_codes)}, as_dict=1)
+
+                    for d in mr_data:
+                        if d.item_code in rm_map:
+                            rm_map[d.item_code]["rm_pending_mr_total"] = max(0, flt(d.pending_mr))
+                            rm_map[d.item_code]["mr_documents"] = d.mr_list.split(",") if d.mr_list else []
+
+                    # 3. Purchase Orders (PO) linked to this SO (Subcontracting + Direct)
+                    # We also fetch the Material Request reference from the PO Item
                     so_procurement_data = frappe.db.sql("""
-                        SELECT source.raw_material_item, SUM(poi.qty - poi.received_qty) as pending_ordered, GROUP_CONCAT(DISTINCT source.parent) as po_list
-                        FROM `tabPurchase Order Raw Material Source` source JOIN `tabPurchase Order Item` poi ON poi.parent = source.parent AND poi.item_code = source.raw_material_item
-                        WHERE source.source_sales_order = %s AND source.raw_material_item IN %s AND poi.docstatus = 1 GROUP BY source.raw_material_item
-                    """, (sales_order_name, tuple(rm_codes)), as_dict=1)
+                        SELECT 
+                            poi.item_code, 
+                            SUM(poi.qty - poi.received_qty) as pending_ordered, 
+                            GROUP_CONCAT(DISTINCT poi.parent) as po_list,
+                            GROUP_CONCAT(DISTINCT poi.material_request) as linked_mrs
+                        FROM `tabPurchase Order Item` poi 
+                        JOIN `tabPurchase Order` po ON poi.parent = po.name
+                        WHERE poi.sales_order = %(so)s 
+                          AND poi.item_code IN %(items)s 
+                          AND po.docstatus = 1
+                        GROUP BY poi.item_code
+                        
+                        UNION
+                        
+                        SELECT 
+                            source.raw_material_item as item_code, 
+                            SUM(poi.qty - poi.received_qty) as pending_ordered, 
+                            GROUP_CONCAT(DISTINCT source.parent) as po_list,
+                            GROUP_CONCAT(DISTINCT poi.material_request) as linked_mrs
+                        FROM `tabPurchase Order Raw Material Source` source 
+                        JOIN `tabPurchase Order Item` poi ON poi.parent = source.parent 
+                        WHERE source.source_sales_order = %(so)s 
+                          AND source.raw_material_item IN %(items)s 
+                          AND poi.docstatus = 1 
+                        GROUP BY source.raw_material_item
+                    """, {"so": sales_order_name, "items": tuple(rm_codes)}, as_dict=1)
                     
                     for d in so_procurement_data:
-                        rm = rm_map.get(d.raw_material_item)
+                        rm = rm_map.get(d.item_code)
                         if rm:
                             rm["rm_pending_so_linked_total"] = max(0, flt(d.pending_ordered))
-                            if d.po_list: rm["po_documents"] = d.po_list.split(",")
+                            rm["po_documents"] = list(set(rm.get("po_documents", []) + (d.po_list.split(",") if d.po_list else [])))
+                            # Store which MRs are now covered by POs
+                            rm["mrs_in_pos"] = d.linked_mrs.split(",") if d.linked_mrs else []
 
                 for rm in rm_map.values():
-                    coverage = rm["rm_available_stock"] + rm["rm_pending_so_linked_total"]
+                    # Coverage = Physical + PO + MR (MR is usually what's left to order)
+                    coverage = rm["rm_available_stock"] + rm["rm_pending_so_linked_total"] + rm.get("rm_pending_mr_total", 0)
                     shortfall = max(0, rm["rm_needed_for_shortfall"] - coverage)
                     rm["rm_shortfall_total"] = shortfall
                     rm["status"] = "Shortage" if shortfall > 0 else "Covered"
