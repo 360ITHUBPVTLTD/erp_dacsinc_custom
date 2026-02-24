@@ -15,70 +15,201 @@ def copy_custom_fields(doc, method):
 #     if doc.custom_tax_rate:
 #         update_tax_child(doc)
 
-def item_after_insert(doc, method):
-    # Set description safely
-    if not doc.description:
-        doc.db_set("description", doc.item_name)
+# def item_after_insert(doc, method):
+#     # Set description safely
+#     if not doc.description:
+#         doc.db_set("description", doc.item_name)
 
-    # Update children
-    update_tax_child(doc)
-    update_barcode_child(doc)
+#     # Update children
+#     update_tax_child(doc)
+#     update_barcode_child(doc)
 
-    # Create prices ONLY if valid
-    if doc.custom_standard_selling_price is not None:
-        create_or_update_item_price(doc, "Selling", doc.custom_standard_selling_price)
+#     # Create prices ONLY if valid
+#     if doc.custom_standard_selling_price is not None:
+#         create_or_update_item_price(doc, "Selling", doc.custom_standard_selling_price)
 
-    if doc.custom_standard_buying_price is not None:
-        create_or_update_item_price(doc, "Buying", doc.custom_standard_buying_price)
+#     if doc.custom_standard_buying_price is not None:
+#         create_or_update_item_price(doc, "Buying", doc.custom_standard_buying_price)
 
-def item_on_update(doc, method):
-    update_barcode_child(doc)
+# def item_on_update(doc, method):
+#     update_barcode_child(doc)
 
-    doc_before = doc.get_doc_before_save()
-    if not doc_before:
-        return
+#     doc_before = doc.get_doc_before_save()
+#     if not doc_before:
+#         return
 
-    if doc.custom_standard_selling_price != doc_before.custom_standard_selling_price:
-        if doc.custom_standard_selling_price is not None:
-            create_or_update_item_price(
-                doc, "Selling", doc.custom_standard_selling_price
-            )
+#     if doc.custom_standard_selling_price != doc_before.custom_standard_selling_price:
+#         if doc.custom_standard_selling_price is not None:
+#             create_or_update_item_price(
+#                 doc, "Selling", doc.custom_standard_selling_price
+#             )
 
-    if doc.custom_standard_buying_price != doc_before.custom_standard_buying_price:
-        if doc.custom_standard_buying_price is not None:
-            create_or_update_item_price(
-                doc, "Buying", doc.custom_standard_buying_price
-            )
-def create_or_update_item_price(doc, price_type, rate):
-    if rate is None:
-        return
+#     if doc.custom_standard_buying_price != doc_before.custom_standard_buying_price:
+#         if doc.custom_standard_buying_price is not None:
+#             create_or_update_item_price(
+#                 doc, "Buying", doc.custom_standard_buying_price
+#             )
+# def create_or_update_item_price(doc, price_type, rate):
+#     if rate is None:
+#         return
 
-    price_list_name = f"Standard {price_type}"
+#     price_list_name = f"Standard {price_type}"
 
-    item_price = frappe.db.get_value(
-        "Item Price",
-        {"item_code": doc.name, "price_list": price_list_name},
-        "name"
-    )
+#     item_price = frappe.db.get_value(
+#         "Item Price",
+#         {"item_code": doc.name, "price_list": price_list_name},
+#         "name"
+#     )
 
-    if item_price:
-        frappe.db.set_value(
-            "Item Price",
-            item_price,
-            "price_list_rate",
-            rate
-        )
-    else:
-        ip = frappe.new_doc("Item Price")
-        ip.item_code = doc.name
-        ip.price_list = price_list_name
-        ip.price_list_rate = rate
-        ip.insert(ignore_permissions=True)
+#     if item_price:
+#         frappe.db.set_value(
+#             "Item Price",
+#             item_price,
+#             "price_list_rate",
+#             rate
+#         )
+#     else:
+#         ip = frappe.new_doc("Item Price")
+#         ip.item_code = doc.name
+#         ip.price_list = price_list_name
+#         ip.price_list_rate = rate
+#         ip.insert(ignore_permissions=True)
 
+# def item_before_save(doc, method):
+#     if doc.custom_tax_rate:
+#         update_tax_child(doc)
+
+
+import frappe
+import re
+from frappe.utils import flt
 def item_before_save(doc, method):
-    if doc.custom_tax_rate:
+    doc_before = doc.get_doc_before_save()
+    
+    # 1. Check if any tax-related field has changed
+    tax_fields = ["custom_tax_rate", "custom_alternative_gst_", "custom_alternative_amount"]
+    tax_changed = False
+    
+    if not doc_before:
+        tax_changed = True # New record
+    else:
+        for field in tax_fields:
+            if doc.get(field) != doc_before.get(field):
+                tax_changed = True
+                break
+
+    # 2. Update Tax Table ONLY if fields changed
+    if tax_changed:
         update_tax_child(doc)
 
+    # 3. Calculate POS Price (based on the applicable slab rate)
+    if tax_changed or (doc_before and flt(doc.custom_standard_selling_price) != flt(doc_before.custom_standard_selling_price)):
+        calculate_and_set_pos_price(doc)
+
+# def item_after_insert(doc, method):
+#     # Set description if empty
+#     if not doc.description:
+#         doc.db_set("description", doc.item_name)
+    
+    # Sync prices to Item Price List records after creation
+#     sync_all_item_prices(doc)
+
+# def item_on_update(doc, method):
+#     # Sync prices on every update/save
+#     sync_all_item_prices(doc)
+
+# --- Internal Logic ---
+
+def extract_rate_from_string(tax_string):
+    if not tax_string: return 0.0
+    match = re.search(r"(\d+\.?\d*)", str(tax_string))
+    return flt(match.group(1)) if match else 0.0
+def calculate_and_set_pos_price(doc):
+    """Calculates POS price based on applicable tax slab"""
+    selling_price = flt(doc.custom_standard_selling_price)
+    threshold = flt(doc.get("custom_alternative_amount"))
+    
+    # Determine which tax template applies to the current selling price
+    applicable_template = doc.custom_tax_rate
+    if threshold > 0 and selling_price >= threshold:
+        applicable_template = doc.get("custom_alternative_gst_") or doc.custom_tax_rate
+
+    # Extract numeric rate (e.g., 5 from 'GST 5%')
+    tax_percent = extract_rate_from_string(applicable_template)
+    
+    if selling_price > 0:
+        doc.custom_pos_price = flt(selling_price / (1 + (tax_percent / 100)), 2)
+    else:
+        doc.custom_pos_price = 0
+
+# def update_tax_child(doc):
+#     """Updates the Item Tax child table (field name 'taxes')"""
+#     # Clear existing rows to prevent duplicates on every save
+#     doc.set("taxes", [])
+    
+#     # Add the template selected in the custom_tax_rate field
+#     doc.append("taxes", {
+#         "item_tax_template": doc.custom_tax_rate
+#     })
+
+def sync_all_item_prices(doc):
+    """Syncs the prices to Item Price list"""
+    prices = [
+        ("Standard Selling", doc.custom_standard_selling_price),
+        ("Standard Buying", doc.custom_standard_buying_price),
+        ("POS Price", doc.custom_pos_price)
+    ]
+    for price_list, rate in prices:
+        if rate is not None:
+            sync_price_record(doc.name, price_list, rate)
+
+def sync_price_record(item_code, price_list, rate):
+    name = frappe.db.get_value("Item Price", {"item_code": item_code, "price_list": price_list})
+    if name:
+        frappe.db.set_value("Item Price", name, "price_list_rate", flt(rate), update_modified=True)
+    else:
+        ip = frappe.new_doc("Item Price")
+        ip.item_code = item_code
+        ip.price_list = price_list
+        ip.price_list_rate = flt(rate)
+        ip.insert(ignore_permissions=True)
+
+# --- Standard Hooks ---
+
+def item_after_insert(doc, method):
+    if not doc.description: doc.db_set("description", doc.item_name)
+    sync_all_item_prices(doc)
+    update_barcode_child(doc)
+def item_on_update(doc, method):
+    sync_all_item_prices(doc)
+    update_barcode_child(doc)
+# --- Reverse Sync (Price List -> Item Master) ---
+
+def item_price_on_update(doc, method):
+    """If a user manually changes an Item Price record, update the Item Master field"""
+    field_map = {
+        "Standard Selling": "custom_standard_selling_price",
+        "Standard Buying": "custom_standard_buying_price",
+        "POS Price": "custom_pos_price"
+    }
+
+    if doc.price_list in field_map:
+        target_field = field_map[doc.price_list]
+        current_val = frappe.db.get_value("Item", doc.item_code, target_field)
+
+        # Update Item field if different
+        if flt(current_val) != flt(doc.price_list_rate):
+            frappe.db.set_value("Item", doc.item_code, target_field, flt(doc.price_list_rate))
+
+            # Trigger POS Price recalculation if Standard Selling was the one changed
+            if doc.price_list == "Standard Selling":
+                tax_rate_str = frappe.db.get_value("Item", doc.item_code, "custom_tax_rate")
+                tax_percent = extract_rate_from_string(tax_rate_str)
+                new_pos = flt(flt(doc.price_list_rate) / (1 + (tax_percent / 100)), 2)
+                
+                # Update both the Item Field and the POS Price list record
+                frappe.db.set_value("Item", doc.item_code, "custom_pos_price", new_pos)
+                sync_price_record(doc.item_code, "POS Price", new_pos)
 
 
 
@@ -144,10 +275,54 @@ def get_bom_data_for_item(item_code):
 #         frappe.log_error(f"Error in updating taxes: {str(e)}")
 
 
+# def update_tax_child(doc):
+#     try:
+#         # Clear existing taxes
+#         doc.taxes = []
+
+#         tax_rate = doc.custom_tax_rate  # Primary GST template
+#         alt_tax = doc.get("custom_alternative_gst_") # Slab GST template
+#         alt_amount = flt(doc.get("custom_alternative_amount")) # Threshold Amount
+
+#         if tax_rate:
+#             if alt_tax and alt_amount > 0:
+#                 # SLAB 1: For rates less than custom_alternative_amount
+#                 # We set maximum_net_rate to (threshold - 1)
+#                 for category in ["In-State", "Out-State"]:
+#                     doc.append('taxes', {
+#                         "tax_category": category,
+#                         "item_tax_template": tax_rate,
+#                         "maximum_net_rate": alt_amount - 1
+#                     })
+
+#                 # SLAB 2: For rates greater than or equal to custom_alternative_amount
+#                 # We set minimum_net_rate to threshold and maximum to 99999
+#                 for category in ["In-State", "Out-State"]:
+#                     doc.append('taxes', {
+#                         "tax_category": category,
+#                         "item_tax_template": alt_tax,
+#                         "minimum_net_rate": alt_amount,
+#                         "maximum_net_rate": 99999
+#                     })
+#             else:
+#                 # Fallback: Normal logic if alternative amount/gst is not provided
+#                 if tax_rate != 'Non-GST - IND':
+#                     for category in ["In-State", "Out-State"]:
+#                         doc.append('taxes', {
+#                             "tax_category": category,
+#                             "item_tax_template": tax_rate
+#                         })
+
+#     except Exception as e:
+#         frappe.log_error(f"Error in updating taxes for {doc.name}: {str(e)}")
+
+
+
 def update_tax_child(doc):
+    """Your provided logic with protection"""
     try:
         # Clear existing taxes
-        doc.taxes = []
+        doc.set("taxes", [])
 
         tax_rate = doc.custom_tax_rate  # Primary GST template
         alt_tax = doc.get("custom_alternative_gst_") # Slab GST template
@@ -155,26 +330,24 @@ def update_tax_child(doc):
 
         if tax_rate:
             if alt_tax and alt_amount > 0:
-                # SLAB 1: For rates less than custom_alternative_amount
-                # We set maximum_net_rate to (threshold - 1)
+                # SLAB 1: Below threshold
                 for category in ["In-State", "Out-State"]:
                     doc.append('taxes', {
                         "tax_category": category,
                         "item_tax_template": tax_rate,
-                        "maximum_net_rate": alt_amount - 1
+                        "maximum_net_rate": alt_amount - 0.01
                     })
 
-                # SLAB 2: For rates greater than or equal to custom_alternative_amount
-                # We set minimum_net_rate to threshold and maximum to 99999
+                # SLAB 2: Above or equal to threshold
                 for category in ["In-State", "Out-State"]:
                     doc.append('taxes', {
                         "tax_category": category,
                         "item_tax_template": alt_tax,
                         "minimum_net_rate": alt_amount,
-                        "maximum_net_rate": 99999
+                        "maximum_net_rate": 0 # 0 usually means no limit in ERPNext
                     })
             else:
-                # Fallback: Normal logic if alternative amount/gst is not provided
+                # Fallback: Normal logic
                 if tax_rate != 'Non-GST - IND':
                     for category in ["In-State", "Out-State"]:
                         doc.append('taxes', {
@@ -183,7 +356,9 @@ def update_tax_child(doc):
                         })
 
     except Exception as e:
-        frappe.log_error(f"Error in updating taxes for {doc.name}: {str(e)}")
+        frappe.log_error(title="Error in update_tax_child", message=frappe.get_traceback())
+
+
 
 
 def update_barcode_child(doc):
@@ -6115,54 +6290,88 @@ def create_material_request_custom(items, company, sales_order_name, is_subcontr
 import frappe
 from frappe.utils import flt
 
+# 1. Custom Link Field Dropdown Query
 @frappe.whitelist()
-def get_subcontract_data(item_code):
-    # 1. Get the Default Active BOM for the Finished Good
-    bom_name = frappe.db.get_value("BOM", 
-        {"item": item_code, "is_default": 1, "is_active": 1, "docstatus": 1}, 
-        "name"
-    )
-    
-    if not bom_name:
-        frappe.throw(f"Please set a Default Active BOM for Item {item_code}")
+@frappe.validate_and_sanitize_search_inputs
+def item_with_active_bom_query(doctype, txt, searchfield, start, page_len, filters):
+    # This SQL strictly returns items that have a Default, Active, and Submitted BOM
+    search_condition = ""
+    if txt:
+        search_condition = "AND (item.name LIKE %(txt)s OR item.item_name LIKE %(txt)s)"
 
-    # 2. Get the Subcontracting BOM linked via 'finished_good_bom' field
-    sub_bom = frappe.db.get_value("Subcontracting BOM", 
-        {"finished_good_bom": bom_name, "is_active": 1, "docstatus": 1}, 
-        ["name", "service_item"], as_dict=True
-    )
+    query = f"""
+        SELECT item.name, item.item_name, item.description
+        FROM `tabItem` item
+        WHERE item.disabled = 0
+          AND item.is_stock_item = 1
+          AND EXISTS (
+              SELECT 1 FROM `tabBOM` bom 
+              WHERE bom.item = item.name 
+                AND bom.is_active = 1 
+                AND bom.is_default = 1
+                AND bom.docstatus = 1
+          )
+          {search_condition}
+        ORDER BY item.name ASC
+        LIMIT %(start)s, %(page_len)s
+    """
+    
+    return frappe.db.sql(query, {
+        'txt': '%' + txt + '%',
+        'start': start,
+        'page_len': page_len
+    })
+
+import frappe
+from frappe.utils import flt, cint
+
+@frappe.whitelist()
+def get_custom_bom_data(item_code, qty):
+    if not item_code:
+        return {"status": "error", "message": "No item code selected."}
+
+    # strictly an integer, minimum 1
+    target_qty = cint(qty) if qty else 1 
+
+    # 1. Get Default & Active BOM specifically mapped to this item
+    bom_name = frappe.db.get_value("BOM", {
+        "item": item_code,
+        "is_active": 1,
+        "docstatus": 1
+    }, "name", order_by="is_default desc")
+
+    if not bom_name:
+        return {"status": "error", "message": "No active and default BOM found."}
+
+    # 2. IMPORTANT: Lookup the linked "Subcontracting BOM" to get service conversions
+    sub_bom = frappe.db.get_value("Subcontracting BOM", {
+        "finished_good": item_code,
+        "finished_good_bom": bom_name,
+        "is_active": 1,
+    }, ["name", "service_item", "finished_good_qty", "service_item_qty"], as_dict=True)
 
     if not sub_bom:
-         frappe.throw(f"No active 'Subcontracting BOM' found linked to BOM: {bom_name}")
+        return {"status": "error", "message": "No Active Subcontracting BOM found mapping this FG."}
 
-    service_item = sub_bom.get('service_item')
-    if not service_item:
-        frappe.throw(f"Service Item is empty in Subcontracting BOM {sub_bom.name}")
+    bom_doc = frappe.get_doc("BOM", bom_name)
+    base_qty = flt(bom_doc.quantity) or 1.0
 
-    # 3. Get raw materials from the Main BOM for the calculation preview
-    bom = frappe.get_doc("BOM", bom_name)
-    components = []
-    for d in bom.items:
-        components.append({
-            "item_code": d.item_code,
-            "item_name": d.item_name,
-            "qty": flt(d.qty) / flt(bom.quantity), # Qty required for 1 unit of FG
-            "uom": d.stock_uom
+    items = []
+    for rm in bom_doc.items:
+        # Strict logic per unit
+        req_per_unit = flt(rm.stock_qty) / base_qty
+        
+        items.append({
+            "item_code": rm.item_code,
+            "item_name": rm.item_name,
+            "uom": rm.stock_uom,
+            "req_per_unit": req_per_unit
+            # Note: total_req will be calculated dynamically on Frontend instantly!
         })
 
     return {
+        "status": "success",
         "bom_name": bom_name,
-        "service_item": service_item,
-        "components": components
+        "subcontracting_bom": sub_bom,  # Sending to JS
+        "items": items
     }
-
-@frappe.whitelist()
-@frappe.validate_and_sanitize_search_inputs
-def get_items_with_bom(doctype, txt, searchfield, start, page_len, filters):
-    # This filters the Select FG Link to show only Items that have an active BOM
-    return frappe.db.sql("""
-        SELECT item, item_name FROM `tabBOM`
-        WHERE docstatus = 1 AND is_active = 1
-        AND (item LIKE %(txt)s OR item_name LIKE %(txt)s)
-        GROUP BY item ORDER BY item ASC LIMIT %(start)s, %(page_len)s
-    """, {'txt': f'%{txt}%', 'start': start, 'page_len': page_len})
