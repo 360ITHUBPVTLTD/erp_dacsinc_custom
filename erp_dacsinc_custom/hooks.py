@@ -207,6 +207,9 @@ doc_events = {
     "Purchase Invoice": {
         "validate": "erp_dacsinc_custom.custom_script.validate_non_zero_rate"
     },
+    "Material Request": {
+        "validate": "erp_dacsinc_custom.custom_script.validate_non_zero_rate",
+    }
 }
 
 
