@@ -6562,6 +6562,7 @@ def start_item_price_sync():
 # -----------------------------------------
 # Background Worker Function
 # -----------------------------------------
+@frappe.whitelist()
 def sync_standard_and_pos_prices():
     standard_price_list = "Standard Selling"
     pos_price_list = "POS Price"
