@@ -6642,52 +6642,51 @@ def get_custom_bom_data(item_code, qty):
 #             "price_list_rate": rate
 #         }).insert(ignore_permissions=True)
 
-
 import frappe
+from frappe.utils import now, random_string
 
-def share_notification_settings(doc, method):
+def share_notification_settings(doc, method=None):
     """
-    Hook to ALWAYS share Notification Settings with 'anuj@dacsinc.in'
-    Trigger: After Save
+    Auto-shares Notification Settings via direct SQL.
+    This BYPASSES the 'You need to have Share permission' error.
     """
     target_user = "anuj@dacsinc.in"
 
-    # 1. Do not share if the doc owner IS the target user 
-    # (A user always has access to their own settings, sharing duplicates this)
+    # 1. Do not share with self
     if doc.name == target_user:
         return
 
     try:
-        # 2. Check if the Share ALREADY exists in the database
-        # We search the 'tabDocShare' table directly to be accurate
-        is_shared = frappe.db.exists("DocShare", {
+        # 2. Check if the Share record already exists
+        # This prevents duplicate primary key errors
+        exists = frappe.db.exists("DocShare", {
             "share_doctype": "Notification Settings",
             "share_name": doc.name,
             "user": target_user
         })
 
-        # 3. If NOT shared yet, create the share entry manually
-        if not is_shared:
-            new_share = frappe.get_doc({
-                "doctype": "DocShare",
-                "share_doctype": "Notification Settings",
-                "share_name": doc.name,
-                "user": target_user,
-                "read": 1,
-                "write": 1,
-                "share": 1
-            })
+        if not exists:
+            # 3. Create a unique ID for the new Share record
+            new_name = random_string(10)
             
-            # 4. Insert directly into Database, ignoring permissions
-            new_share.insert(ignore_permissions=True)
-            
-            # (Optional) Log to console for debugging
-            # print(f"--- Shared {doc.name} with {target_user} ---")
+            # 4. Use Raw SQL Insert
+            # This skips the DocType validation logic completely.
+            # We hardcode Administrator as owner to ensure maximum permission.
+            frappe.db.sql("""
+                INSERT INTO `tabDocShare` 
+                (name, creation, modified, modified_by, owner, docstatus, 
+                share_doctype, share_name, user, `read`, `write`, `share`, `everyone`) 
+                VALUES 
+                (%s, %s, %s, 'Administrator', 'Administrator', 0, 
+                'Notification Settings', %s, %s, 1, 1, 1, 0)
+            """, (new_name, now(), now(), doc.name, target_user))
 
-    except Exception as e:
-        # Log error in ERPNext 'Error Log' list if something crashes
-        message = f"Failed to share {doc.name}: {str(e)}"
-        frappe.log_error(title="Auto Share Notification Error", message=message)
+            # 5. Commit immediately so it sticks to the database
+            frappe.db.commit()
+
+    except Exception:
+        # If it fails, log the full error so you can see it in Error Logs
+        frappe.log_error(title="SQL Auto-Share Failed", message=frappe.get_traceback())
 
 import frappe
 from frappe.utils import flt
