@@ -6643,34 +6643,31 @@ def get_custom_bom_data(item_code, qty):
 #         }).insert(ignore_permissions=True)
 
 
-
 import frappe
 
 def share_notification_settings(doc, method):
+    """
+    Hook to ALWAYS share Notification Settings with 'anuj@dacsinc.in'
+    Trigger: After Save
+    """
     target_user = "anuj@dacsinc.in"
 
-    # 1. Do not share with self
+    # 1. Do not share if the doc owner IS the target user 
+    # (A user always has access to their own settings, sharing duplicates this)
     if doc.name == target_user:
         return
 
-    # 2. Logic Check (Check roles or any other field logic)
-    # Using getattr for safety in hooks
-    if not getattr(doc, "roles", None): 
-        # Note: if "roles" is not mandatory, remove this block
-        pass 
-
     try:
-        # 3. Check if Share Exists (prevents duplicates)
-        # We assume Administrator context to ensure we can 'see' all shares
-        exists = frappe.db.count("DocShare", {
+        # 2. Check if the Share ALREADY exists in the database
+        # We search the 'tabDocShare' table directly to be accurate
+        is_shared = frappe.db.exists("DocShare", {
             "share_doctype": "Notification Settings",
             "share_name": doc.name,
             "user": target_user
         })
 
-        if not exists:
-            # 4. MANUALLY Create the Share Entry
-            # This is more robust than frappe.share.add for hooks
+        # 3. If NOT shared yet, create the share entry manually
+        if not is_shared:
             new_share = frappe.get_doc({
                 "doctype": "DocShare",
                 "share_doctype": "Notification Settings",
@@ -6681,16 +6678,16 @@ def share_notification_settings(doc, method):
                 "share": 1
             })
             
-            # 5. Insert with System Administrator privileges
-            # ignore_permissions=True forces the DB write
+            # 4. Insert directly into Database, ignoring permissions
             new_share.insert(ignore_permissions=True)
             
-            # Debugging: Run 'bench console' to see this print if it works
-            print(f"--- SUCCESS: Shared {doc.name} with {target_user} ---")
+            # (Optional) Log to console for debugging
+            # print(f"--- Shared {doc.name} with {target_user} ---")
 
     except Exception as e:
-        frappe.log_error(title="Auto Share Failed", message=str(e))
-
+        # Log error in ERPNext 'Error Log' list if something crashes
+        message = f"Failed to share {doc.name}: {str(e)}"
+        frappe.log_error(title="Auto Share Notification Error", message=message)
 
 import frappe
 from frappe.utils import flt
