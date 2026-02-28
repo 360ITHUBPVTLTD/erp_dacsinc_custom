@@ -6543,12 +6543,113 @@ def get_custom_bom_data(item_code, qty):
 
 
 
+# import frappe
+# from frappe.utils import flt
+
+# # -----------------------------------------
+# # Button Trigger Method
+# # -----------------------------------------
+# @frappe.whitelist()
+# def start_item_price_sync():
+#     frappe.enqueue(
+#         "erp_dacsinc_custom.custom_script.sync_standard_and_pos_prices",
+#         queue="long",
+#         timeout=6000
+#     )
+#     return "Price sync started in background. You can continue working."
+
+
+# # -----------------------------------------
+# # Background Worker Function
+# # -----------------------------------------
+# @frappe.whitelist()
+# def sync_standard_and_pos_prices():
+#     standard_price_list = "Standard Selling"
+#     pos_price_list = "POS Price"
+
+#     batch_size = 500
+#     start = 0
+#     total_processed = 0
+
+#     while True:
+#         items = frappe.get_all(
+#             "Item",
+#             fields=["name", "custom_standard_selling_price", "custom_tax_rate"],
+#             limit_start=start,
+#             limit_page_length=batch_size
+#         )
+
+#         if not items:
+#             break
+
+#         for item in items:
+#             item_code = item.name
+#             base_price = flt(item.custom_standard_selling_price)
+
+#             # If 0 → set 10
+#             if base_price == 0:
+#                 base_price = 10
+#                 frappe.db.set_value(
+#                     "Item",
+#                     item_code,
+#                     "custom_standard_selling_price",
+#                     10
+#                 )
+
+#             # Tax extraction
+#             tax_rate = 0
+#             tax_rate_str = item.custom_tax_rate or ""
+
+#             if "%" in tax_rate_str:
+#                 try:
+#                     tax_rate = flt(tax_rate_str.split("%")[0].split()[-1])
+#                 except:
+#                     tax_rate = 0
+
+#             tax_amount = base_price * tax_rate / 100
+#             final_pos_rate = base_price - tax_amount  # your logic
+
+#             # STANDARD SELLING
+#             upsert_price(item_code, standard_price_list, base_price)
+
+#             # POS PRICE
+#             upsert_price(item_code, pos_price_list, final_pos_rate)
+
+#             total_processed += 1
+
+#         frappe.db.commit()
+#         start += batch_size
+
+#     frappe.logger().info(f"Item Price Sync Completed. Total: {total_processed}")
+
+
+# # -----------------------------------------
+# # Helper Function (Cleaner Code)
+# # -----------------------------------------
+# def upsert_price(item_code, price_list, rate):
+#     ip = frappe.db.get_value(
+#         "Item Price",
+#         {"item_code": item_code, "price_list": price_list}
+#     )
+
+#     if ip:
+#         frappe.db.set_value("Item Price", ip, "price_list_rate", rate)
+#     else:
+#         frappe.get_doc({
+#             "doctype": "Item Price",
+#             "item_code": item_code,
+#             "price_list": price_list,
+#             "price_list_rate": rate
+#         }).insert(ignore_permissions=True)
+
+
 import frappe
 from frappe.utils import flt
 
-# -----------------------------------------
-# Button Trigger Method
-# -----------------------------------------
+
+# =====================================================
+# BUTTON TRIGGER METHOD (Starts Background Job)
+# =====================================================
 @frappe.whitelist()
 def start_item_price_sync():
     frappe.enqueue(
@@ -6556,14 +6657,14 @@ def start_item_price_sync():
         queue="long",
         timeout=6000
     )
-    return "Price sync started in background. You can continue working."
+    return "Item Price Sync started in background."
 
 
-# -----------------------------------------
-# Background Worker Function
-# -----------------------------------------
-@frappe.whitelist()
+# =====================================================
+# MAIN BACKGROUND FUNCTION
+# =====================================================
 def sync_standard_and_pos_prices():
+
     standard_price_list = "Standard Selling"
     pos_price_list = "POS Price"
 
@@ -6574,7 +6675,15 @@ def sync_standard_and_pos_prices():
     while True:
         items = frappe.get_all(
             "Item",
-            fields=["name", "custom_standard_selling_price", "custom_tax_rate"],
+            filters={
+                "has_variants": 0,  # Ignore template items
+                "custom_standard_selling_price": ["in", [0, 10]]
+            },
+            fields=[
+                "name",
+                "custom_standard_selling_price",
+                "custom_tax_rate"
+            ],
             limit_start=start,
             limit_page_length=batch_size
         )
@@ -6586,7 +6695,9 @@ def sync_standard_and_pos_prices():
             item_code = item.name
             base_price = flt(item.custom_standard_selling_price)
 
-            # If 0 → set 10
+            # -----------------------------------------
+            # If price is 0 → set to 10
+            # -----------------------------------------
             if base_price == 0:
                 base_price = 10
                 frappe.db.set_value(
@@ -6596,23 +6707,31 @@ def sync_standard_and_pos_prices():
                     10
                 )
 
-            # Tax extraction
+            # -----------------------------------------
+            # Extract tax %
+            # -----------------------------------------
             tax_rate = 0
             tax_rate_str = item.custom_tax_rate or ""
 
             if "%" in tax_rate_str:
                 try:
-                    tax_rate = flt(tax_rate_str.split("%")[0].split()[-1])
+                    tax_rate = flt(
+                        tax_rate_str.split("%")[0].split()[-1]
+                    )
                 except:
                     tax_rate = 0
 
             tax_amount = base_price * tax_rate / 100
-            final_pos_rate = base_price - tax_amount  # your logic
+            final_pos_rate = base_price - tax_amount   # your logic
 
-            # STANDARD SELLING
+            # -----------------------------------------
+            # Update Standard Selling Price
+            # -----------------------------------------
             upsert_price(item_code, standard_price_list, base_price)
 
-            # POS PRICE
+            # -----------------------------------------
+            # Update POS Price
+            # -----------------------------------------
             upsert_price(item_code, pos_price_list, final_pos_rate)
 
             total_processed += 1
@@ -6620,20 +6739,31 @@ def sync_standard_and_pos_prices():
         frappe.db.commit()
         start += batch_size
 
-    frappe.logger().info(f"Item Price Sync Completed. Total: {total_processed}")
-
-
-# -----------------------------------------
-# Helper Function (Cleaner Code)
-# -----------------------------------------
-def upsert_price(item_code, price_list, rate):
-    ip = frappe.db.get_value(
-        "Item Price",
-        {"item_code": item_code, "price_list": price_list}
+    frappe.logger().info(
+        f"Item Price Sync Completed. Total Processed: {total_processed}"
     )
 
-    if ip:
-        frappe.db.set_value("Item Price", ip, "price_list_rate", rate)
+
+# =====================================================
+# HELPER FUNCTION (Create or Update Item Price)
+# =====================================================
+def upsert_price(item_code, price_list, rate):
+
+    ip_name = frappe.db.get_value(
+        "Item Price",
+        {
+            "item_code": item_code,
+            "price_list": price_list
+        }
+    )
+
+    if ip_name:
+        frappe.db.set_value(
+            "Item Price",
+            ip_name,
+            "price_list_rate",
+            rate
+        )
     else:
         frappe.get_doc({
             "doctype": "Item Price",
