@@ -1,0 +1,49 @@
+{
+ "add_total_row": 0,
+ "add_translate_data": 0,
+ "columns": [],
+ "creation": "2026-03-02 12:26:39.726966",
+ "disabled": 0,
+ "docstatus": 0,
+ "doctype": "Report",
+ "filters": [],
+ "idx": 0,
+ "is_standard": "Yes",
+ "letter_head": null,
+ "modified": "2026-03-02 16:44:02.110875",
+ "modified_by": "Administrator",
+ "module": "Erp Dacsinc Custom",
+ "name": "Stock Balance Summary",
+ "owner": "Administrator",
+ "prepared_report": 0,
+ "ref_doctype": "Warehouse",
+ "report_name": "Stock Balance Summary",
+ "report_type": "Script Report",
+ "roles": [
+  {
+   "role": "Accounts User"
+  },
+  {
+   "role": "Purchase User"
+  },
+  {
+   "role": "Stock User"
+  },
+  {
+   "role": "Item Manager"
+  },
+  {
+   "role": "Manufacturing User"
+  },
+  {
+   "role": "Sales User"
+  },
+  {
+   "role": "Employee Self Service"
+  },
+  {
+   "role": "POS User"
+  }
+ ],
+ "timeout": 0
+}
