@@ -4,13 +4,13 @@ from frappe import _
 def execute(filters=None):
     if not filters: filters = frappe._dict({})
 
-    # 1. Lock down warehouse for POS users automatically
+    # 1. Security Logic
     filters = restrict_to_pos_user_warehouse(filters)
 
-    # 2. Get dynamic column list (Links are included here)
+    # 2. Get Dynamic Columns
     columns = get_columns(filters)
 
-    # 3. Fetch processed stock data
+    # 3. Get Report Data
     data = get_data(filters)
 
     return columns, data
@@ -18,86 +18,75 @@ def execute(filters=None):
 def restrict_to_pos_user_warehouse(filters):
     user = frappe.session.user
     roles = frappe.get_roles(user)
-    
-    # Even if they hack the UI, Python checks the database role
     if "POS User" in roles and "System Manager" not in roles:
-        # Link current user to their allowed POS Warehouse
         pos_profile = frappe.db.get_value("POS Profile User", {"user": user}, "parent")
         if pos_profile:
             wh = frappe.db.get_value("POS Profile", pos_profile, "warehouse")
-            filters["warehouse"] = wh
-            filters["report_mode"] = "Retail (POS) View"
+            if wh:
+                filters["warehouse"] = wh
+                filters["report_mode"] = "Retail (POS) View"
     return filters
 
 def get_columns(filters):
-    # 1. Base Master Data Columns (Always Shown)
     columns = [
-        {"label": _("Item Code"), "fieldname": "item_code", "fieldtype": "Link", "options": "Item", "width": 250},
+        {"label": _("Item Code"), "fieldname": "item_code", "fieldtype": "Link", "options": "Item", "width": 200},
         {"label": _("Item Group"), "fieldname": "item_group", "fieldtype": "Link", "options": "Item Group", "width": 120},
         {"label": _("Brand"), "fieldname": "brand", "fieldtype": "Link", "options": "Brand", "width": 100},
-        {"label": _("Category"), "fieldname": "custom_product_category", "fieldtype": "Data", "width": 100},
-        {"label": _("Standard Price"), "fieldname": "custom_standard_selling_price", "fieldtype": "Currency", "width": 110},
-        {"label": _("Warehouse Name"), "fieldname": "warehouse_name", "fieldtype": "Data", "width": 120},
+        {"label": _("Warehouse"), "fieldname": "warehouse_name", "fieldtype": "Data", "width": 140},
     ]
 
-    # 2. Logic for Retail Mode
+    # Formulas are now visible to the user
     if filters.get("report_mode") == "Retail (POS) View":
         columns += [
-            {"label": _("System Balance"), "fieldname": "system_qty", "fieldtype": "Float", "width": 90},
-            {"label": _("Counter Sales"), "fieldname": "unclosed_pos_qty", "fieldtype": "Float", "width": 90},
-            {"label": _("Actual Qty"), "fieldname": "actual_qty", "fieldtype": "Float", "width": 90},
-            # {"label": _("Coming (PO)"), "fieldname": "ordered_qty", "fieldtype": "Float", "width": 90},
-            # reserved_qty is EXCLUDED here
-            {"label": _("Projected Balance"), "fieldname": "final_projected", "fieldtype": "Float", "width": 120},
+            {"label": _("System Bal"), "fieldname": "system_qty", "fieldtype": "Float", "width": 90},
+            {"label": _("Counter Sales"), "fieldname": "unclosed_pos_qty", "fieldtype": "Float", "width": 100},
+            {"label": _("Actual Stock"), "fieldname": "actual_qty", "fieldtype": "Float", "width": 100},
         ]
-    # 3. Logic for All other Views (General / Back Office)
     else:
         columns += [
-            {"label": _("Actual Qty"), "fieldname": "actual_qty", "fieldtype": "Float", "width": 90},
-            {"label": _("Coming (PO)"), "fieldname": "ordered_qty", "fieldtype": "Float", "width": 90},
-            {"label": _("Reserved (SO)"), "fieldname": "reserved_qty", "fieldtype": "Float", "width": 90},
-            {"label": _("Projected Balance"), "fieldname": "final_projected", "fieldtype": "Float", "width": 120},
+            {"label": _("Actual Stock"), "fieldname": "actual_qty", "fieldtype": "Float", "width": 100},
         ]
-        
+
+    # THESE COLUMNS EXPLAIN THE PROJECTED BALANCE
+    columns += [
+        {"label": _("Coming (PO)"), "fieldname": "ordered_qty", "fieldtype": "Float", "width": 90},
+        {"label": _("Reserved (SO)"), "fieldname": "reserved_qty", "fieldtype": "Float", "width": 90},
+        {"label": _("Projected Bal"), "fieldname": "final_projected", "fieldtype": "Float", "width": 110},
+    ]
     return columns
 
 def get_data(filters):
     params = {}
-    conditions = ["item.disabled = 0"] # Only active items
+    conditions = ["item.disabled = 0"]
 
     mapping = {
         "item_code": "bin.item_code",
         "warehouse": "bin.warehouse",
         "item_group": "item.item_group",
         "brand": "item.brand",
-        "custom_product_category": "item.custom_product_category",
-        "custom_item_type": "item.custom_item_type"
+        "custom_product_category": "item.custom_product_category"
     }
 
-    for key, sql_path in mapping.items():
+    for key, path in mapping.items():
         if filters.get(key):
-            conditions.append(f"{sql_path} = %({key})s")
+            conditions.append(f"{path} = %({key})s")
             params[key] = filters.get(key)
 
-    # Calculate POS warehouses for the Inverse mode
-    pos_warehouses = frappe.get_all("POS Profile", pluck="warehouse")
-    pos_warehouses = [w for w in pos_warehouses if w]
+    retail_ws = frappe.get_all("POS Profile", pluck="warehouse")
+    retail_ws = [w for w in retail_ws if w]
 
-    if filters.get("report_mode") == "Retail (POS) View" and pos_warehouses:
+    if filters.get("report_mode") == "Retail (POS) View" and retail_ws:
         conditions.append("bin.warehouse IN %(retail_ws)s")
-        params["retail_ws"] = pos_warehouses
-    elif filters.get("report_mode") == "Back-Office Only" and pos_warehouses:
+        params["retail_ws"] = retail_ws
+    elif filters.get("report_mode") == "Back-Office Only" and retail_ws:
         conditions.append("bin.warehouse NOT IN %(retail_ws)s")
-        params["retail_ws"] = pos_warehouses
+        params["retail_ws"] = retail_ws
 
     where_clause = " AND ".join(conditions)
 
-    # Core data fetching
-    raw_data = frappe.db.sql(f"""
+    bin_data = frappe.db.sql(f"""
         SELECT 
             bin.item_code, item.item_name, item.item_group, item.brand,
-            item.custom_product_category, item.custom_item_type,
-            item.custom_standard_selling_price,
             wh.warehouse_name, bin.warehouse,
             bin.actual_qty as system_qty, bin.reserved_qty, bin.ordered_qty
         FROM `tabBin` bin
@@ -108,37 +97,30 @@ def get_data(filters):
         ORDER BY bin.warehouse, bin.item_code
     """, params, as_dict=1)
 
-    # POS Pending Sales Logic
-    unclosed_sales_map = get_unclosed_pos_qty()
+    unclosed_sales = get_unclosed_pos_qty()
 
-    # Strings to clean if None
-    cleanup_fields = ["item_group", "brand", "custom_product_category", "custom_item_type", "warehouse_name"]
-
-    for d in raw_data:
-        # DATA CLEANUP (None to "")
-        for field in cleanup_fields:
+    for d in bin_data:
+        # 1. Clean NULLS
+        for field in ["item_group", "brand", "warehouse_name"]:
             if d.get(field) is None: d[field] = ""
-        if d.get("custom_standard_selling_price") is None: d["custom_standard_selling_price"] = 0
-
-        # Math Logic
-        unclosed = unclosed_sales_map.get((d.item_code, d.warehouse), 0)
+        
+        # 2. Logic: Real Actual vs System Actual
+        unclosed = unclosed_sales.get((d.item_code, d.warehouse), 0)
         d.unclosed_pos_qty = unclosed
-        
-        # Real stock is system stock MINUS items physically sold at the counter today
         d.actual_qty = d.system_qty - unclosed
-        
-        # Calculation for planning
+
+        # 3. Final Projected Calculation (THE FORMULA)
+        # We add what's on its way and subtract what's already promised in SO
         d.final_projected = (d.actual_qty + d.ordered_qty) - d.reserved_qty
 
-    return raw_data
+    return bin_data
 
 def get_unclosed_pos_qty():
-    # Only pick invoices where closing entry consolidation hasn't happened
-    data = frappe.db.sql("""
+    res = frappe.db.sql("""
         SELECT item.item_code, item.warehouse, SUM(item.qty) as qty
         FROM `tabPOS Invoice Item` item
         INNER JOIN `tabPOS Invoice` p ON item.parent = p.name
         WHERE p.docstatus = 1 AND (p.consolidated_invoice IS NULL OR p.consolidated_invoice = '')
         GROUP BY item.item_code, item.warehouse
     """, as_dict=1)
-    return {(r.item_code, r.warehouse): r.qty for r in data}
+    return {(r.item_code, r.warehouse): r.qty for r in res}
