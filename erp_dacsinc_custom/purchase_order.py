@@ -3957,7 +3957,14 @@ def get_panel_work_summary(po_name):
         fields=["name", "panel_stage", "date", "panel_jobber"],
         order_by="creation desc"
     )
-
+    jobber_ids = list(set([e.panel_jobber for e in ewos if e.panel_jobber]))
+    supplier_map = {}
+    if jobber_ids:
+        suppliers = frappe.get_all("Supplier", 
+            filters={"name": ["in", jobber_ids]}, 
+            fields=["name", "supplier_name"]
+        )
+        supplier_map = {s.name: s.supplier_name for s in suppliers}
     # --- ADDED: Fetch files/images associated with these EWOs ---
     ewo_names = [e.name for e in ewos]
     images_dict = {}
@@ -3978,6 +3985,7 @@ def get_panel_work_summary(po_name):
     active_ewo_names = []
     closed_ewo_names = []
     for e in ewos:
+        e['panel_jobber_name'] = supplier_map.get(e.panel_jobber, e.panel_jobber)
         if e.panel_stage == 'Returned to Jobber (Closed)':
             closed_ewo_names.append(e.name)
         else:
@@ -4799,6 +4807,18 @@ def get_full_piece_dashboard_data(po_name):
     qty_returned_from_panel = {} 
 
     if ewos:
+        jobber_ids = list(set(
+            [e.full_piece_jobber for e in ewos if e.full_piece_jobber] + 
+            [e.panel_jobber for e in ewos if e.panel_jobber]
+        ))
+        
+        supplier_map = {}
+        if jobber_ids:
+            suppliers = frappe.get_all("Supplier", 
+                filters={"name": ["in", jobber_ids]}, 
+                fields=["name", "supplier_name"]
+            )
+            supplier_map = {s.name: s.supplier_name for s in suppliers}
         # --- NEW: Bulk Fetch File Attachments for these EWOs ---
         ewo_names = [e.name for e in ewos]
         attachments = frappe.get_all("File", 
@@ -4842,6 +4862,8 @@ def get_full_piece_dashboard_data(po_name):
 
         # Process each EWO for the dashboard view
         for e in ewos:
+            e["full_piece_jobber_name"] = supplier_map.get(e.full_piece_jobber, e.full_piece_jobber)
+            e["panel_jobber_name"] = supplier_map.get(e.panel_jobber, e.panel_jobber)
             if e.work_type == 'Full Piece Job Work':
                 p_items = items_by_parent.get(e.name, [])
                 parts = []
