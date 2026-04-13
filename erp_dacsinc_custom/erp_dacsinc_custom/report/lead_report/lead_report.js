@@ -101,93 +101,187 @@ frappe.query_reports["Lead Report"] = {
 		},
 	],
 
-	onload: function (report) {
-	// Lead Owner Filter
-	let lead_owner_filter = report.get_filter("lead_owner");
-	let assigned_to_filter = report.get_filter("assigned_to");
+// 	onload: function (report) {
+// 	// Lead Owner Filter
+// 	let lead_owner_filter = report.get_filter("lead_owner");
+// 	let assigned_to_filter = report.get_filter("assigned_to");
 
-	// Check if user is DAC CRM Head
-	let is_crm_head = frappe.user.has_role("DAC CRM Head");
+// 	// Check if user is DAC CRM Head
+// 	let is_crm_head = frappe.user.has_role("DAC CRM");
 
-	if (!is_crm_head) {
-		// For non-CRM Head users → set session user as default and lock
-		lead_owner_filter.set_value(frappe.session.user);
-		$(lead_owner_filter.$input).attr("disabled", true);
+// 	if (!is_crm_head) {
+// 		// For non-CRM Head users → set session user as default and lock
+// 		lead_owner_filter.set_value(frappe.session.user);
+// 		$(lead_owner_filter.$input).attr("disabled", true);
 
-		assigned_to_filter.set_value(frappe.session.user);
-		$(assigned_to_filter.$input).attr("disabled", true);
-	} else {
-		// For CRM Head → keep empty and editable
-		$(lead_owner_filter.$input).attr("disabled", false);
-		$(assigned_to_filter.$input).attr("disabled", false);
-	}
+// 		assigned_to_filter.set_value(frappe.session.user);
+// 		$(assigned_to_filter.$input).attr("disabled", true);
+// 	} else {
+// 		// For CRM Head → keep empty and editable
+// 		$(lead_owner_filter.$input).attr("disabled", false);
+// 		$(assigned_to_filter.$input).attr("disabled", false);
+// 	}
 
-	function toggle_filters_visibility() {
-		const inverse = report.get_filter_value("inverse_report");
+// 	function toggle_filters_visibility() {
+// 		const inverse = report.get_filter_value("inverse_report");
 
-		const lead_filters = [
-			"custom_lead_category",
-			"lead_owner",
-			"mobile_no",
-			"source",
-			"lead_activity_status",
-			"lead_type",
-			"direction_type",
-			"industry",
-		];
+// 		const lead_filters = [
+// 			"custom_lead_category",
+// 			"lead_owner",
+// 			"mobile_no",
+// 			"source",
+// 			"lead_activity_status",
+// 			"lead_type",
+// 			"direction_type",
+// 			"industry",
+// 		];
 
-		const inverse_filters = ["category", "status"];
-		const assigned_to = report.get_filter("assigned_to");
+// 		const inverse_filters = ["category", "status"];
+// 		const assigned_to = report.get_filter("assigned_to");
 
-		if (inverse) {
-			lead_filters.forEach(f => {
-				const df = report.get_filter(f);
-				if (df) $(df.wrapper).hide();
-			});
+// 		if (inverse) {
+// 			lead_filters.forEach(f => {
+// 				const df = report.get_filter(f);
+// 				if (df) $(df.wrapper).hide();
+// 			});
 
-			inverse_filters.forEach(f => {
-				const df = report.get_filter(f);
-				if (df) $(df.wrapper).show();
-			});
+// 			inverse_filters.forEach(f => {
+// 				const df = report.get_filter(f);
+// 				if (df) $(df.wrapper).show();
+// 			});
 
-			if (assigned_to) $(assigned_to.wrapper).show();
+// 			if (assigned_to) $(assigned_to.wrapper).show();
 
-			const custom_option = report.get_filter("custom_created_at_option");
-			if (custom_option) $(custom_option.wrapper).show();
+// 			const custom_option = report.get_filter("custom_created_at_option");
+// 			if (custom_option) $(custom_option.wrapper).show();
 
-			const custom_range = report.get_filter("custom_created_at");
-			if (custom_range) $(custom_range.wrapper).show();
+// 			const custom_range = report.get_filter("custom_created_at");
+// 			if (custom_range) $(custom_range.wrapper).show();
+// 		} else {
+// 			lead_filters.forEach(f => {
+// 				const df = report.get_filter(f);
+// 				if (df) $(df.wrapper).show();
+// 			});
+
+// 			inverse_filters.forEach(f => {
+// 				const df = report.get_filter(f);
+// 				if (df) $(df.wrapper).hide();
+// 			});
+
+// 			if (assigned_to) $(assigned_to.wrapper).hide();
+
+// 			const custom_option = report.get_filter("custom_created_at_option");
+// 			if (custom_option) {
+// 				$(custom_option.wrapper).hide();
+// 				custom_option.set_value("Custom");
+// 			}
+
+// 			const custom_range = report.get_filter("custom_created_at");
+// 			if (custom_range) $(custom_range.wrapper).show();
+// 		}
+// 	}
+
+// 	toggle_filters_visibility();
+
+// 	const inverse_filter = report.get_filter("inverse_report");
+// 	if (inverse_filter) {
+// 		$(inverse_filter.input).on("change", toggle_filters_visibility);
+// 	}
+// },
+
+
+onload: function (report) {
+		// Lead Owner Filter
+		let lead_owner_filter = report.get_filter("lead_owner");
+		let assigned_to_filter = report.get_filter("assigned_to");
+
+		// Check if user is DAC CRM Head OR Administrator
+		let is_privileged_user = 
+			frappe.user.has_role("DAC CRM") || 
+			frappe.user.has_role("Administrator") || 
+			frappe.session.user === "Administrator";
+
+		if (!is_privileged_user) {
+			// For regular users → set session user as default and lock
+			lead_owner_filter.set_value(frappe.session.user);
+			$(lead_owner_filter.$input).attr("disabled", true);
+
+			assigned_to_filter.set_value(frappe.session.user);
+			$(assigned_to_filter.$input).attr("disabled", true);
 		} else {
-			lead_filters.forEach(f => {
-				const df = report.get_filter(f);
-				if (df) $(df.wrapper).show();
-			});
-
-			inverse_filters.forEach(f => {
-				const df = report.get_filter(f);
-				if (df) $(df.wrapper).hide();
-			});
-
-			if (assigned_to) $(assigned_to.wrapper).hide();
-
-			const custom_option = report.get_filter("custom_created_at_option");
-			if (custom_option) {
-				$(custom_option.wrapper).hide();
-				custom_option.set_value("Custom");
-			}
-
-			const custom_range = report.get_filter("custom_created_at");
-			if (custom_range) $(custom_range.wrapper).show();
+			// For CRM Head or Admin → keep editable
+			// We clear the value if you want them to see everything by default, 
+			// or keep it if they just need the ability to change it.
+			$(lead_owner_filter.$input).attr("disabled", false);
+			$(assigned_to_filter.$input).attr("disabled", false);
 		}
-	}
 
-	toggle_filters_visibility();
+		function toggle_filters_visibility() {
+			const inverse = report.get_filter_value("inverse_report");
 
-	const inverse_filter = report.get_filter("inverse_report");
-	if (inverse_filter) {
-		$(inverse_filter.input).on("change", toggle_filters_visibility);
-	}
-},
+			const lead_filters = [
+				"custom_lead_category",
+				"lead_owner",
+				"mobile_no",
+				"source",
+				"lead_activity_status",
+				"lead_type",
+				"direction_type",
+				"industry",
+			];
+
+			const inverse_filters = ["category", "status"];
+			const assigned_to = report.get_filter("assigned_to");
+
+			if (inverse) {
+				lead_filters.forEach(f => {
+					const df = report.get_filter(f);
+					if (df) $(df.wrapper).hide();
+				});
+
+				inverse_filters.forEach(f => {
+					const df = report.get_filter(f);
+					if (df) $(df.wrapper).show();
+				});
+
+				if (assigned_to) $(assigned_to.wrapper).show();
+
+				const custom_option = report.get_filter("custom_created_at_option");
+				if (custom_option) $(custom_option.wrapper).show();
+
+				const custom_range = report.get_filter("custom_created_at");
+				if (custom_range) $(custom_range.wrapper).show();
+			} else {
+				lead_filters.forEach(f => {
+					const df = report.get_filter(f);
+					if (df) $(df.wrapper).show();
+				});
+
+				inverse_filters.forEach(f => {
+					const df = report.get_filter(f);
+					if (df) $(df.wrapper).hide();
+				});
+
+				if (assigned_to) $(assigned_to.wrapper).hide();
+
+				const custom_option = report.get_filter("custom_created_at_option");
+				if (custom_option) {
+					$(custom_option.wrapper).hide();
+					custom_option.set_value("Custom");
+				}
+
+				const custom_range = report.get_filter("custom_created_at");
+				if (custom_range) $(custom_range.wrapper).show();
+			}
+		}
+
+		toggle_filters_visibility();
+
+		const inverse_filter = report.get_filter("inverse_report");
+		if (inverse_filter) {
+			$(inverse_filter.input).on("change", toggle_filters_visibility);
+		}
+	},
 
 };
 
