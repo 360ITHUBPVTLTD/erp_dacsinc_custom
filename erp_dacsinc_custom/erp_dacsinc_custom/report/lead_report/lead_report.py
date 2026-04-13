@@ -121,8 +121,8 @@ def get_leads(filters=None):
         conditions.append("l.lead_owner = %(lead_owner)s")
         values["lead_owner"] = filters.get("lead_owner")
     else:
-        # Restrict only if user has DAC CRM but NOT DAC CRM Head
-        if "DAC CRM" in session_roles and "DAC CRM Head" not in session_roles:
+        # Restrict only if user has DAC CRM but NOT CRM Head
+        if "DAC CRM" in session_roles and "CRM Head" not in session_roles:
             conditions.append("l.lead_owner = %(session_user)s")
             values["session_user"] = frappe.session.user
 
@@ -223,8 +223,8 @@ def get_event_activity_with_reference(filters=None):
             conditions.append("ea.assigned_to = %(assigned_to)s")
             values["assigned_to"] = filters.get("assigned_to")
         else:
-            # Restrict only if user has DAC CRM but NOT DAC CRM Head
-            if "DAC CRM" in session_roles and "DAC CRM Head" not in session_roles:
+            # Restrict only if user has DAC CRM but NOT CRM Head
+            if "DAC CRM" in session_roles and "CRM Head" not in session_roles:
                 conditions.append("ea.assigned_to = %(session_user)s")
                 values["session_user"] = frappe.session.user
 
@@ -470,8 +470,8 @@ def get_custom_custom_status_counts(filters=None):
             conditions.append("lead_owner = %(lead_owner)s")
             values["lead_owner"] = filters["lead_owner"]
         else:
-            # Restrict only if user has DAC CRM but NOT DAC CRM Head
-            if "DAC CRM" in session_roles and "DAC CRM Head" not in session_roles:
+            # Restrict only if user has DAC CRM but NOT CRM Head
+            if "DAC CRM" in session_roles and "CRM Head" not in session_roles:
                 conditions.append("lead_owner = %(session_user)s")
                 values["session_user"] = frappe.session.user
 
