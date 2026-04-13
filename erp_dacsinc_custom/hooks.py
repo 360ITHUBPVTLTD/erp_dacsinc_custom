@@ -79,6 +79,7 @@ app_include_css = "/assets/erp_dacsinc_custom/style.css?v=1.0.3"
 # ----------
 
 # add methods and filters to jinja environment
+
 # jinja = {
 # 	"methods": "erp_dacsinc_custom.utils.jinja_methods",
 # 	"filters": "erp_dacsinc_custom.utils.jinja_filters"
