@@ -106,18 +106,18 @@
 // 	let lead_owner_filter = report.get_filter("lead_owner");
 // 	let assigned_to_filter = report.get_filter("assigned_to");
 
-// 	// Check if user is CRM Head Head
-// 	let is_crm_head = frappe.user.has_role("CRM Head Head");
+// 	// Check if user is DAC CRM Head Head
+// 	let is_crm_head = frappe.user.has_role("DAC CRM Head Head");
 
 // 	if (!is_crm_head) {
-// 		// For non-CRM Head users → set session user as default and lock
+// 		// For non-DAC CRM Head users → set session user as default and lock
 // 		lead_owner_filter.set_value(frappe.session.user);
 // 		$(lead_owner_filter.$input).attr("disabled", true);
 
 // 		assigned_to_filter.set_value(frappe.session.user);
 // 		$(assigned_to_filter.$input).attr("disabled", true);
 // 	} else {
-// 		// For CRM Head → keep empty and editable
+// 		// For DAC CRM Head → keep empty and editable
 // 		$(lead_owner_filter.$input).attr("disabled", false);
 // 		$(assigned_to_filter.$input).attr("disabled", false);
 // 	}
@@ -355,8 +355,8 @@ frappe.query_reports["Lead Report"] = {
 		let lead_owner_filter = report.get_filter("lead_owner");
 		let assigned_to_filter = report.get_filter("assigned_to");
 
-		// Check if user is Administrator or has CRM Head role
-		let is_privileged_user = frappe.user.has_role("CRM Head") || frappe.user.has_role("Administrator");
+		// Check if user is Administrator or has DAC CRM Head role
+		let is_privileged_user = frappe.user.has_role("DAC CRM Head") || frappe.user.has_role("Administrator");
 
 		if (!is_privileged_user) {
 			// For regular users: Set session user and Lock fields
@@ -371,7 +371,7 @@ frappe.query_reports["Lead Report"] = {
 			lead_owner_filter.df.read_only = 1;
 			assigned_to_filter.df.read_only = 1;
 		} else {
-			// For CRM Head / Admin: Ensure fields are editable and can be empty
+			// For DAC CRM Head / Admin: Ensure fields are editable and can be empty
 			$(lead_owner_filter.$input).attr("disabled", false);
 			$(assigned_to_filter.$input).attr("disabled", false);
 			
