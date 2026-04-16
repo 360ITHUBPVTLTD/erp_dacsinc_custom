@@ -446,9 +446,19 @@ def get_supplier_details(id):
         "link": f"/app/supplier/{supplier.name}"
     }
 
+@frappe.whitelist()
+def get_business_contacts_details(id):
+    business_contacts = frappe.get_doc("Business Contacts", id)
+    return {
+        "name": business_contacts.contact_name,
+        # "email_id": business_contacts.email_id,
+        "contact_type": business_contacts.contact_type,
+        "mobile_no": business_contacts.mobile_number,
+        "company_name": business_contacts.organization_name,  # or company_name if you have it
+        "link": f"/app/business-contacts/{business_contacts.name}"
+    }
 
-
-############### lead Dashboard ###############################
+############################################ lead Dashboard ###########################################################################
 
 
 # import frappe

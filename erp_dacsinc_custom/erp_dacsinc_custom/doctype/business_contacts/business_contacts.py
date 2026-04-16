@@ -1,7 +1,7 @@
 # Copyright (c) 2026, Pankaj and contributors
 # For license information, please see license.txt
 
-# import frappe
+import frappe
 from frappe.model.document import Document
 
 
@@ -25,15 +25,55 @@ class BusinessContacts(Document):
 					frappe.db.set_value("DocShare", s.name, "write", 0)
 
 
-import frappe
-from frappe import _
+# import frappe
+# from frappe import _
+
+# @frappe.whitelist()
+# def make_lead_from_contact(source_name):
+#     # Fetch the Business Contact document
+#     doc = frappe.get_doc("Business Contacts", source_name)
+
+#     if doc.status == "Converted":
+#         frappe.throw(_("This Business Contact is already converted to Lead {0}").format(doc.lead_id))
+
+#     # 1. Create the Lead Document
+#     lead = frappe.get_doc({
+#         "doctype": "Lead",
+#         "first_name": doc.contact_name,
+#         "mobile_no": doc.mobile_number,
+#         "source": doc.source,
+#         "custom_lead_description": doc.details,
+#         "industry": doc.industry,
+#         "job_title": doc.job_title,
+#         "custom_address": doc.address,
+#         "country": doc.country,
+#         "custom_custom_state": doc.state,
+#         "custom_custom_city": doc.city,
+#         "custom_business_contacts": doc.name  # Link back to BC
+#     })
+    
+#     # Optional: Inherit company if needed
+#     # if doc.company:
+#     #     lead.company = doc.company
+        
+#     lead.insert(ignore_permissions=True)
+
+#     # 2. Update Business Contact status and Lead ID
+#     doc.status = "Converted to Lead"
+#     doc.lead_id = lead.name
+#     doc.save(ignore_permissions=True)
+
+#     return lead.name
+
+
+
 
 @frappe.whitelist()
-def make_lead_from_contact(source_name, lead_source):
+def make_lead_from_contact(source_name):
     # Fetch the Business Contact document
     doc = frappe.get_doc("Business Contacts", source_name)
 
-    if doc.status == "Converted":
+    if doc.status == "Converted to Lead":
         frappe.throw(_("This Business Contact is already converted to Lead {0}").format(doc.lead_id))
 
     # 1. Create the Lead Document
@@ -41,19 +81,23 @@ def make_lead_from_contact(source_name, lead_source):
         "doctype": "Lead",
         "first_name": doc.contact_name,
         "mobile_no": doc.mobile_number,
-        "source": lead_source,           # From the prompt
+        "source": doc.source,
         "custom_lead_description": doc.details,
-        "custom_business_contacts": doc.name  # Link back to BC
+        "industry": doc.industry,
+        "job_title": doc.job_title,
+        "custom_address": doc.address,
+        "country": doc.country,
+        # IMPORTANT: Ensure these attribute names match your Business Contacts field names exactly
+        "custom_custom_state": doc.state, 
+        "custom_custom_city": doc.city,
+        "custom_business_contacts": doc.name,
+        "company_name" : doc.organization_name
     })
     
-    # Optional: Inherit company if needed
-    # if doc.company:
-    #     lead.company = doc.company
-        
     lead.insert(ignore_permissions=True)
 
-    # 2. Update Business Contact status and Lead ID
-    doc.status = "Converted"
+    # 2. Update Business Contact status
+    doc.status = "Converted to Lead"
     doc.lead_id = lead.name
     doc.save(ignore_permissions=True)
 

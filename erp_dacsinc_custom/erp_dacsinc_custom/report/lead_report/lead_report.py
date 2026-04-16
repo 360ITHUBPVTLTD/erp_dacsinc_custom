@@ -20,6 +20,7 @@ def get_columns(filters=None):
             {"label": "Subject", "fieldname": "subject", "fieldtype": "Data", "width": 150},
             {"label": "Status", "fieldname": "status", "fieldtype": "Data", "width": 100},
             {"label": "Category", "fieldname": "category", "fieldtype": "Data", "width": 120},
+            {"label": "View Location", "fieldname": "location_map", "fieldtype": "Data", "width": 100},
             {"label": "Reference Type", "fieldname": "reference_type", "fieldtype": "Data", "width": 120},
             {"label": "Reference Name", "fieldname": "reference_name", "fieldtype": "Dynamic Link", "options": "reference_type", "width": 150},
             {"label": "Lead Name", "fieldname": "lead_name", "fieldtype": "Data", "width": 150},
@@ -272,7 +273,8 @@ def get_event_activity_with_reference(filters=None):
             ea.actual_checked_out_at,
             ea.notes,
             ea.reference_type,
-            ea.reference_name
+            ea.reference_name,
+            ea.location
         FROM `tabEvent Activity` ea
         WHERE {where_clause}
         ORDER BY ea.starts_on DESC
@@ -280,6 +282,33 @@ def get_event_activity_with_reference(filters=None):
     # print("ddddddddddddddddddddddddddd",activities)
     # Add reference info dynamically
     for row in activities:
+        coords = row.get("location")
+        # Better Styled Map Button
+        coords = row.get("location") # Ensure this is your actual field name
+        if coords and "," in coords:
+            map_url = f"https://www.google.com/maps?q={coords.strip()}"
+            
+            row["location_map"] = f"""
+                <a href="{map_url}" target="_blank" 
+                   style="
+                        display: inline-block;
+                        padding: 2px 10px;
+                        background-color: #3498DB;
+                        color: white;
+                        text-align: center;
+                        font-size: 10px;
+                        font-weight: 500;
+                        border-radius: 20px;
+                        text-decoration: none;
+                        border: 1px solid #3498DB;
+                        white-space: nowrap;
+                        line-height: 1.5;
+                   ">
+                   📍 View Map
+                </a>
+            """
+        else:
+            row["location_map"] = "<span style='color: #ccc;'>--</span>"
         reference_type = row.get("reference_type")
         reference_name = row.get("reference_name")
         if reference_type and reference_name:
@@ -578,7 +607,7 @@ def get_custom_custom_status_cards_html(status_counts):
                 fieldname: "reference_type",
                 label: "Reference Type",
                 fieldtype: "Select",
-                options: ["Lead", "Customer", "Supplier"].join("\\n"),
+                options: ["Lead", "Customer", "Supplier", "Business Contacts"].join("\\n"),
                 default: "Lead",
                 reqd: 1
             },
@@ -606,7 +635,8 @@ def get_custom_custom_status_cards_html(status_counts):
                     "Follow up meetings",
                     "Meeting (Sample)",
                     "Proposal/Quotation",
-                    "Order Closure"
+                    "Order Closure",
+                    Mail
                 ].join("\\n"),
                 default: "Initial Call",
                 reqd: 1

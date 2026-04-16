@@ -1,54 +1,115 @@
 frappe.ui.form.on("Business Contacts", {
     refresh(frm) {
+
+        if (!frm.location_data) {
+            frappe.db.get_single_value('Location Master', 'data_json').then(val => {
+                if (val) {
+                    frm.location_data = JSON.parse(val);
+                    // Update options for existing records
+                    if (frm.doc.country) {
+                        set_state_options(frm);
+                        if (frm.doc.state) {
+                            set_city_options(frm);
+                        }
+                    }
+                }
+            });
+        }
         render_lead_activities(frm);
 
-        if (frm.doc.status === "New" && !frm.doc.__islocal) {
+        if (frm.doc.status === "Open" && !frm.doc.__islocal) {
+    
+    // Check 1: Is the current user assigned to this record?
+    let is_assigned_user = (frm.doc.assigned_to === frappe.session.user);
+    
+    // Check 2: Is the user a "DAC CRM Head"?
+    let is_crm_head = frappe.user_roles.includes("DAC CRM Head");
+
+    if (is_assigned_user || is_crm_head) {
+        frm.add_custom_button(__('Convert to Lead'), function() {
             
-            // Check 1: Is the current user assigned to this record?
-            let is_assigned_user = (frm.doc.assigned_to === frappe.session.user);
-            
-            // Check 2: Is the user a "DAC CRM Head"?
-            let is_crm_head = frappe.user_roles.includes("DAC CRM Head");
-
-            // Check 3: Is the current user the record creator (Owner)?
-            // (Your request implies ONLY the assigned user and Head should see it)
-
-            if (is_assigned_user || is_crm_head) {
-                frm.add_custom_button(__('Convert to Lead'), function() {
-                    
-                    // Validation for Mobile Number
-                    if (!frm.doc.mobile_number) {
-                        frappe.msgprint(__('Please enter a Mobile Number first.'));
-                        return;
-                    }
-
-                    frappe.prompt([{
-                        fieldname: 'lead_source',
-                        label: __('Lead Source'),
-                        fieldtype: 'Link',
-                        options: 'Lead Source',
-                        reqd: 1
-                    }], function(values) {
-                        frappe.call({
-                            method: "erp_dacsinc_custom.erp_dacsinc_custom.doctype.business_contacts.business_contacts.make_lead_from_contact",
-                            args: {
-                                source_name: frm.doc.name,
-                                lead_source: values.lead_source
-                            },
-                            callback: function(r) {
-                                if (r.message) {
-                                    frappe.show_alert({message: __('Lead Created'), indicator: 'green'});
-                                    frm.reload_doc();
-                                }
-                            }
-                        });
-                    }, __('Convert Contact to Lead'), __('Convert'));
-
-                }).addClass("btn-primary");
+            // 1. Validation for Mobile Number
+            if (!frm.doc.mobile_number) {
+                frappe.msgprint(__('Please enter a Mobile Number first.'));
+                return;
             }
-        }
+
+            // 2. Validation for Source (based on your snippet using frm.doc.source)
+            if (!frm.doc.source) {
+                frappe.msgprint(__('Please set the <b>Source</b> field before converting.'));
+                return;
+            }
+
+            // 3. Confirmation Dialog
+            frappe.confirm(
+                __('Are you sure you want to convert this Business Contact into a Lead?'),
+                function() {
+                    // This code runs if the user clicks "Yes"
+                    frappe.call({
+                        method: "erp_dacsinc_custom.erp_dacsinc_custom.doctype.business_contacts.business_contacts.make_lead_from_contact",
+                        args: {
+                            source_name: frm.doc.name
+                        },
+                        freeze: true,
+                        freeze_message: __("Converting to Lead..."),
+                        callback: function(r) {
+                            if (r.message) {
+                                frappe.show_alert({
+                                    message: __('Lead Created Successfully'), 
+                                    indicator: 'green'
+                                });
+                                frm.reload_doc();
+                            }
+                        }
+                    });
+                }
+                // Optional: you can add a callback for "No" here
+            );
+
+        }).addClass("btn-primary");
+    }
+}
     },
+    country: function(frm) {
+        frm.set_value('state', '');
+        frm.set_value('city', '');
+        set_state_options(frm);
+    },
+
+    state: function(frm) {
+        frm.set_value('city', '');
+        set_city_options(frm);
+    }
 });
+
+
+
+
+function set_state_options(frm) {
+    if (frm.location_data && frm.doc.country) {
+        let country_data = frm.location_data[frm.doc.country];
+        if (country_data) {
+            let states = Object.keys(country_data).sort();
+            frm.set_df_property('state', 'options', states);
+        } else {
+            frm.set_df_property('state', 'options', []);
+        }
+    }
+    frm.refresh_field('state');
+}
+
+function set_city_options(frm) {
+    if (frm.location_data && frm.doc.country && frm.doc.state) {
+        let country_data = frm.location_data[frm.doc.country];
+        if (country_data && country_data[frm.doc.state]) {
+            let cities = country_data[frm.doc.state].sort();
+            frm.set_df_property('city', 'options', cities);
+        } else {
+            frm.set_df_property('city', 'options', []);
+        }
+    }
+    frm.refresh_field('city');
+}
 
 function render_lead_activities(frm) {
     frappe.call({
@@ -205,7 +266,7 @@ function handle_update_activity(activity_id, status, frm, create_new) {
 function open_lead_activity_prompt(frm) {
     frappe.prompt([
         { fieldname: "mark_completed", label: "Mark as Completed", fieldtype: "Check", default: 0 },
-        { fieldname: "category", label: "Category", fieldtype: "Select", reqd: 1, options: ["Initial Call","Follow Up Call","Offline Initial Meeting","Offline Follow up Meeting","Offline Sample Meeting","Online Meeting","Proposal/Quotation","Order Closure"].join("\n"), default: "Initial Call" },
+        { fieldname: "category", label: "Category", fieldtype: "Select", reqd: 1, options: ["Initial Call","Follow Up Call","Mail"].join("\n"), default: "Initial Call" },
         { fieldname: "subject", label: "Subject", fieldtype: "Data", reqd: 1 },
         { fieldname: "starts_on", label: "Starts On", fieldtype: "Datetime", default: frappe.datetime.now_datetime(), reqd: 1 },
         { fieldname: "assigned_to", label: "Assigned To", fieldtype: "Link", options: "User", default: frappe.session.user, reqd: 1 },

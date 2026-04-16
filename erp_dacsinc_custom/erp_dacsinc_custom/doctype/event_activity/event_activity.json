@@ -24,6 +24,7 @@
   "section_break_wgnf",
   "column_break_rrca",
   "notes",
+  "location_html",
   "column_break_bkty",
   "reference_type",
   "reference_name",
@@ -60,7 +61,7 @@
    "in_list_view": 1,
    "in_standard_filter": 1,
    "label": "Category",
-   "options": "Initial Call\nCold Calling\nFollow Up Call\nOffline Initial Meeting\nOffline Follow up Meeting\nOffline Sample Meeting\nOnline Meeting\nProposal/Quotation\nOrder Closure\nField Visit"
+   "options": "Initial Call\nCold Calling\nFollow Up Call\nOffline Initial Meeting\nOffline Follow up Meeting\nOffline Sample Meeting\nOnline Meeting\nProposal/Quotation\nOrder Closure\nField Visit\nMail"
   },
   {
    "fieldname": "column_break_4",
@@ -217,16 +218,21 @@
    "fieldtype": "Data",
    "label": "Reference Doc Mobile No",
    "read_only": 1
+  },
+  {
+   "fieldname": "location_html",
+   "fieldtype": "HTML",
+   "label": "Location HTML"
   }
  ],
  "grid_page_length": 50,
  "icon": "fa fa-calendar",
  "links": [],
- "modified": "2025-12-29 15:19:39.106996",
+ "modified": "2026-04-15 16:42:07.800042",
  "modified_by": "Administrator",
  "module": "Erp Dacsinc Custom",
  "name": "Event Activity",
- "naming_rule": "Expression (old style)",
+ "naming_rule": "Expression",
  "owner": "Administrator",
  "permissions": [
   {
@@ -245,6 +251,7 @@
   }
  ],
  "row_format": "Dynamic",
+ "rows_threshold_for_grid_search": 20,
  "sender_field": "sender",
  "sort_field": "modified",
  "sort_order": "DESC",
