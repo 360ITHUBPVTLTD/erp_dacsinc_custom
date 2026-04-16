@@ -2,7 +2,7 @@
 // 	filters: [
 // 		{
 // 			fieldname: "inverse_report",
-// 			label: "Inverse Activity Report",
+// 			label: "Activity Report",
 // 			fieldtype: "Check",
 // 			default: 0,
 // 			reqd: 0,
@@ -251,7 +251,7 @@ frappe.query_reports["Lead Report"] = {
 	filters: [
 		{
 			fieldname: "inverse_report",
-			label: "Inverse Activity Report",
+			label: "Activity Report",
 			fieldtype: "Check",
 			default: 0,
 			reqd: 0,

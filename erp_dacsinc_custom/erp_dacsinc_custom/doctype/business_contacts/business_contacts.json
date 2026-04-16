@@ -7,13 +7,23 @@
  "engine": "InnoDB",
  "field_order": [
   "contact_name",
+  "organization_name",
   "mobile_number",
   "assign_to",
+  "source",
+  "industry",
   "column_break_txnv",
   "alternative_mobile_number",
   "contact_type",
+  "job_title",
   "status",
   "lead_id",
+  "section_break_ybfx",
+  "address",
+  "column_break_zlmw",
+  "country",
+  "state",
+  "city",
   "description_section",
   "details",
   "activity_tab",
@@ -73,13 +83,13 @@
    "label": "Activity HTML"
   },
   {
-   "default": "New",
+   "default": "Open",
    "fieldname": "status",
    "fieldtype": "Select",
    "in_list_view": 1,
    "in_standard_filter": 1,
    "label": "Status",
-   "options": "New\nConverted",
+   "options": "Open\nConverted to Lead",
    "read_only": 1
   },
   {
@@ -95,12 +105,64 @@
    "fieldtype": "Link",
    "label": "Assign to",
    "options": "User"
+  },
+  {
+   "fieldname": "source",
+   "fieldtype": "Link",
+   "label": "Source",
+   "options": "Lead Source"
+  },
+  {
+   "fieldname": "industry",
+   "fieldtype": "Link",
+   "label": "Industry",
+   "options": "Industry Type"
+  },
+  {
+   "fieldname": "job_title",
+   "fieldtype": "Data",
+   "label": "Job Title"
+  },
+  {
+   "fieldname": "section_break_ybfx",
+   "fieldtype": "Section Break"
+  },
+  {
+   "fieldname": "address",
+   "fieldtype": "Small Text",
+   "label": "Address"
+  },
+  {
+   "fieldname": "column_break_zlmw",
+   "fieldtype": "Column Break"
+  },
+  {
+   "default": "India",
+   "fieldname": "country",
+   "fieldtype": "Link",
+   "label": "Country",
+   "options": "Country"
+  },
+  {
+   "fieldname": "state",
+   "fieldtype": "Select",
+   "label": "State"
+  },
+  {
+   "fieldname": "city",
+   "fieldtype": "Select",
+   "label": "City"
+  },
+  {
+   "fieldname": "organization_name",
+   "fieldtype": "Data",
+   "label": "Organization Name "
   }
  ],
  "grid_page_length": 50,
  "index_web_pages_for_search": 1,
  "links": [],
- "modified": "2026-04-07 17:16:29.708589",
+ "modified": "2026-04-15 16:09:58.966335",
  "modified_by": "Administrator",
  "module": "Erp Dacsinc Custom",
  "name": "Business Contacts",
