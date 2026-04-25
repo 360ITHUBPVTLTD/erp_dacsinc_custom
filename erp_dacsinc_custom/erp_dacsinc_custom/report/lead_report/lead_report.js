@@ -251,10 +251,29 @@ frappe.query_reports["Lead Report"] = {
 	filters: [
 		{
 			fieldname: "inverse_report",
-			label: "Activity Report",
+			label: __("Activity Report"),
 			fieldtype: "Check",
-			default: 0,
-			reqd: 0,
+			on_change: function() {
+				// 1. Force Mutually Exclusive (Uncheck Business Contact if this is checked)
+				if (frappe.query_report.get_filter_value("inverse_report")) {
+					frappe.query_report.set_filter_value("show_business_contacts", 0);
+				}
+				// 2. Trigger UI Refresh to update Columns
+				frappe.query_report.refresh();
+			}
+		},
+		{
+			fieldname: "show_business_contacts",
+			label: __("Show Business Contacts"),
+			fieldtype: "Check",
+			on_change: function() {
+				// 1. Force Mutually Exclusive (Uncheck Activity Report if this is checked)
+				if (frappe.query_report.get_filter_value("show_business_contacts")) {
+					frappe.query_report.set_filter_value("inverse_report", 0);
+				}
+				// 2. Trigger UI Refresh to update Columns
+				frappe.query_report.refresh();
+			}
 		},
 		{
 			fieldname: "custom_lead_category",
@@ -350,111 +369,153 @@ frappe.query_reports["Lead Report"] = {
 		},
 	],
 
-	onload: function (report) {
-		// 1. Handle Permissions for Lead Owner and Assigned To
+// 	onload: function (report) {
+// 		// 1. Handle Permissions for Lead Owner and Assigned To
+// 		let lead_owner_filter = report.get_filter("lead_owner");
+// 		let assigned_to_filter = report.get_filter("assigned_to");
+
+// 		// Check if user is Administrator or has DAC CRM Head role
+// 		let is_privileged_user = frappe.user.has_role("DAC CRM Head") || frappe.user.has_role("Administrator");
+
+// 		if (!is_privileged_user) {
+// 			// For regular users: Set session user and Lock fields
+// 			lead_owner_filter.set_value(frappe.session.user);
+// 			assigned_to_filter.set_value(frappe.session.user);
+
+// 			// Disable inputs
+// 			$(lead_owner_filter.$input).attr("disabled", true);
+// 			$(assigned_to_filter.$input).attr("disabled", true);
+			
+// 			// Set internal metadata to read_only to prevent clearing
+// 			lead_owner_filter.df.read_only = 1;
+// 			assigned_to_filter.df.read_only = 1;
+// 		} else {
+// 			// For DAC CRM Head / Admin: Ensure fields are editable and can be empty
+// 			$(lead_owner_filter.$input).attr("disabled", false);
+// 			$(assigned_to_filter.$input).attr("disabled", false);
+			
+// 			lead_owner_filter.df.read_only = 0;
+// 			assigned_to_filter.df.read_only = 0;
+// 		}
+
+// 		// 2. Define visibility toggling logic
+// 		function toggle_filters_visibility() {
+// 			const inverse = report.get_filter_value("inverse_report");
+
+// 			const lead_filters = [
+// 				"custom_lead_category",
+// 				"lead_owner",
+// 				"mobile_no",
+// 				"source",
+// 				"lead_activity_status",
+// 				"lead_type",
+// 				"direction_type",
+// 				"industry",
+// 			];
+
+// 			const inverse_filters = ["category", "status"];
+// 			const assigned_to = report.get_filter("assigned_to");
+
+// 			if (inverse) {
+// 				// Show Activity specific filters
+// 				lead_filters.forEach(f => {
+// 					const df = report.get_filter(f);
+// 					if (df) $(df.wrapper).hide();
+// 				});
+
+// 				inverse_filters.forEach(f => {
+// 					const df = report.get_filter(f);
+// 					if (df) $(df.wrapper).show();
+// 				});
+
+// 				if (assigned_to) $(assigned_to.wrapper).show();
+
+// 				const custom_option = report.get_filter("custom_created_at_option");
+// 				if (custom_option) $(custom_option.wrapper).show();
+
+// 				const custom_range = report.get_filter("custom_created_at");
+// 				if (custom_range) $(custom_range.wrapper).show();
+// 			} else {
+// 				// Show Standard Lead filters
+// 				lead_filters.forEach(f => {
+// 					const df = report.get_filter(f);
+// 					if (df) $(df.wrapper).show();
+// 				});
+
+// 				inverse_filters.forEach(f => {
+// 					const df = report.get_filter(f);
+// 					if (df) $(df.wrapper).hide();
+// 				});
+
+// 				// Hide assigned_to in standard view per original logic
+// 				if (assigned_to) $(assigned_to.wrapper).hide();
+
+// 				const custom_option = report.get_filter("custom_created_at_option");
+// 				if (custom_option) {
+// 					$(custom_option.wrapper).hide();
+// 					custom_option.set_value("Custom");
+// 				}
+
+// 				const custom_range = report.get_filter("custom_created_at");
+// 				if (custom_range) $(custom_range.wrapper).show();
+// 			}
+// 		}
+
+// 		// Initial toggle on load
+// 		toggle_filters_visibility();
+
+// 		// Bind change event to inverse_report checkbox
+// 		const inverse_filter = report.get_filter("inverse_report");
+// 		if (inverse_filter) {
+// 			$(inverse_filter.input).on("change", function() {
+// 				toggle_filters_visibility();
+// 			});
+// 		}
+// 	},
+// };
+onload: function (report) {
+		// Permissions check
 		let lead_owner_filter = report.get_filter("lead_owner");
-		let assigned_to_filter = report.get_filter("assigned_to");
+		let is_crm_head = frappe.user.has_role("DAC CRM Head") || frappe.user.has_role("Administrator");
 
-		// Check if user is Administrator or has DAC CRM Head role
-		let is_privileged_user = frappe.user.has_role("DAC CRM Head") || frappe.user.has_role("Administrator");
-
-		if (!is_privileged_user) {
-			// For regular users: Set session user and Lock fields
+		if (!is_crm_head) {
 			lead_owner_filter.set_value(frappe.session.user);
-			assigned_to_filter.set_value(frappe.session.user);
-
-			// Disable inputs
 			$(lead_owner_filter.$input).attr("disabled", true);
-			$(assigned_to_filter.$input).attr("disabled", true);
-			
-			// Set internal metadata to read_only to prevent clearing
-			lead_owner_filter.df.read_only = 1;
-			assigned_to_filter.df.read_only = 1;
-		} else {
-			// For DAC CRM Head / Admin: Ensure fields are editable and can be empty
-			$(lead_owner_filter.$input).attr("disabled", false);
-			$(assigned_to_filter.$input).attr("disabled", false);
-			
-			lead_owner_filter.df.read_only = 0;
-			assigned_to_filter.df.read_only = 0;
 		}
 
-		// 2. Define visibility toggling logic
-		function toggle_filters_visibility() {
-			const inverse = report.get_filter_value("inverse_report");
+		// VISIBILITY LOGIC
+		const toggle_logic = function() {
+			const is_act = report.get_filter_value("inverse_report");
+			const is_bc = report.get_filter_value("show_business_contacts");
 
-			const lead_filters = [
-				"custom_lead_category",
-				"lead_owner",
-				"mobile_no",
-				"source",
-				"lead_activity_status",
-				"lead_type",
-				"direction_type",
-				"industry",
-			];
-
-			const inverse_filters = ["category", "status"];
-			const assigned_to = report.get_filter("assigned_to");
-
-			if (inverse) {
-				// Show Activity specific filters
-				lead_filters.forEach(f => {
-					const df = report.get_filter(f);
-					if (df) $(df.wrapper).hide();
-				});
-
-				inverse_filters.forEach(f => {
-					const df = report.get_filter(f);
-					if (df) $(df.wrapper).show();
-				});
-
-				if (assigned_to) $(assigned_to.wrapper).show();
-
-				const custom_option = report.get_filter("custom_created_at_option");
-				if (custom_option) $(custom_option.wrapper).show();
-
-				const custom_range = report.get_filter("custom_created_at");
-				if (custom_range) $(custom_range.wrapper).show();
-			} else {
-				// Show Standard Lead filters
-				lead_filters.forEach(f => {
-					const df = report.get_filter(f);
-					if (df) $(df.wrapper).show();
-				});
-
-				inverse_filters.forEach(f => {
-					const df = report.get_filter(f);
-					if (df) $(df.wrapper).hide();
-				});
-
-				// Hide assigned_to in standard view per original logic
-				if (assigned_to) $(assigned_to.wrapper).hide();
-
-				const custom_option = report.get_filter("custom_created_at_option");
-				if (custom_option) {
-					$(custom_option.wrapper).hide();
-					custom_option.set_value("Custom");
-				}
-
-				const custom_range = report.get_filter("custom_created_at");
-				if (custom_range) $(custom_range.wrapper).show();
+			const lead_fields = ["custom_lead_category", "mobile_no","lead_type","lead_owner", "lead_activity_status", "direction_type"];
+			const act_fields = ["category", "status", "assigned_to", "custom_created_at_option"];
+			
+			// Show / Hide Logic
+			if (is_bc) {
+				// Show common, Hide lead and activity specifics
+				lead_fields.concat(act_fields).forEach(f => report.get_filter(f) && $(report.get_filter(f).wrapper).hide());
+				$(report.get_filter("lead_owner").wrapper).show();
+			} 
+			else if (is_act) {
+				// Show Activity details and specific Activity filters
+				lead_fields.forEach(f => report.get_filter(f) && $(report.get_filter(f).wrapper).hide());
+				act_fields.forEach(f => report.get_filter(f) && $(report.get_filter(f).wrapper).show());
+			} 
+			else {
+				// Default Lead Report view
+				act_fields.forEach(f => report.get_filter(f) && $(report.get_filter(f).wrapper).hide());
+				lead_fields.forEach(f => report.get_filter(f) && $(report.get_filter(f).wrapper).show());
 			}
-		}
+		};
 
-		// Initial toggle on load
-		toggle_filters_visibility();
-
-		// Bind change event to inverse_report checkbox
-		const inverse_filter = report.get_filter("inverse_report");
-		if (inverse_filter) {
-			$(inverse_filter.input).on("change", function() {
-				toggle_filters_visibility();
-			});
-		}
-	},
+		// Run visibility toggle on checkbox change
+		report.get_filter("inverse_report").$input.on("change", toggle_logic);
+		report.get_filter("show_business_contacts").$input.on("change", toggle_logic);
+		
+		toggle_logic(); // Initial run
+	}
 };
-
 // --- Global Window Functions ---
 
 // Lead Activity Dialog

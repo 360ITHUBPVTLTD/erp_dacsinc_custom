@@ -13,23 +13,20 @@ def execute(filters=None):
 # Columns
 # -------------------------
 def get_columns(filters=None):
-    if filters and filters.get("inverse_report"):
+    if filters.get("inverse_report"):
         # Columns for Inverse Report (Activities)
         return [
-            {"label": "Activity ID", "fieldname": "activity_id", "fieldtype": "Link", "options": "Event Activity", "width": 120},
-            {"label": "Subject", "fieldname": "subject", "fieldtype": "Data", "width": 150},
+            {"label": "Lead Name", "fieldname": "lead_name", "fieldtype": "Data", "width": 150},
+            {"label": "Lead Organization Name", "fieldname": "company_name", "fieldtype": "Data", "width": 150},
             {"label": "Status", "fieldname": "status", "fieldtype": "Data", "width": 100},
             {"label": "Category", "fieldname": "category", "fieldtype": "Data", "width": 120},
+            {"label": "Subject", "fieldname": "subject", "fieldtype": "Data", "width": 150},
             {"label": "View Location", "fieldname": "location_map", "fieldtype": "Data", "width": 100},
             {"label": "Reference Type", "fieldname": "reference_type", "fieldtype": "Data", "width": 120},
             {"label": "Reference Name", "fieldname": "reference_name", "fieldtype": "Dynamic Link", "options": "reference_type", "width": 150},
-            {"label": "Lead Name", "fieldname": "lead_name", "fieldtype": "Data", "width": 150},
-            {"label": "Lead Organization Name", "fieldname": "company_name", "fieldtype": "Data", "width": 150},
             {"label": "Lead Mobile", "fieldname": "mobile_no", "fieldtype": "Data", "width": 150},
 
-            {"label": "Lead Email", "fieldname": "email_id", "fieldtype": "Data", "width": 150},
             # {"label": "Lead ID", "fieldname": "lead_id", "fieldtype": "Link", "options": "Lead", "width": 100},
-            {"label": "Lead Owner", "fieldname": "lead_owner", "fieldtype": "Link", "options": "User", "width": 120},
             {"label": "Lead Category", "fieldname": "custom_lead_category", "fieldtype": "Data", "width": 120},
             {"label": "Lead Type", "fieldname": "custom_lead_type", "fieldtype": "Data", "width": 100},
             {"label": "Starts On", "fieldname": "starts_on", "fieldtype": "Datetime", "width": 150},
@@ -40,18 +37,44 @@ def get_columns(filters=None):
             {"label": "Actual Checked Out At", "fieldname": "actual_checked_out_at", "fieldtype": "Datetime", "width": 150},
 
             # {"label": "Lead Name", "fieldname": "lead_name", "fieldtype": "Data", "width": 150},
+            {"label": "Lead Owner", "fieldname": "lead_owner", "fieldtype": "Link", "options": "User", "width": 120},
+            {"label": "Lead Email", "fieldname": "email_id", "fieldtype": "Data", "width": 150},
             {"label": "Created At", "fieldname": "custom_created_at", "fieldtype": "Datetime", "width": 150},
+            {"label": "Activity ID", "fieldname": "activity_id", "fieldtype": "Link", "options": "Event Activity", "width": 120},
+        ]
+
+
+    elif filters.get("show_business_contacts"):
+        # Business Contacts View (NEW)
+        return [
+            {"label": "Contact Name", "fieldname": "contact_name", "fieldtype": "Data", "width": 150},
+            {"label": "Organization", "fieldname": "organization_name", "fieldtype": "Data", "width": 150},
+            {"label": "Status", "fieldname": "status", "fieldtype": "Data", "width": 120},
+            {"label": "Contact Type", "fieldname": "contact_type", "fieldtype": "Data", "width": 100},
+            {"label": "Mobile No", "fieldname": "mobile_number", "fieldtype": "Data", "width": 120},
+            {"label": "Assign To", "fieldname": "assign_to", "fieldtype": "Link", "options": "User", "width": 120},
+            {"label": "Source", "fieldname": "source", "fieldtype": "Data", "width": 120},
+            {"label": "Industry", "fieldname": "industry", "fieldtype": "Data", "width": 120},
+            {"label": "Last Completed Type", "fieldname": "last_completed_activity_type", "fieldtype": "Data", "width": 150},
+            {"label": "Last Notes", "fieldname": "last_completion_notes", "fieldtype": "Data", "width": 180},
+            {"label": "Last Completed Date", "fieldname": "last_completed_date", "fieldtype": "Date", "width": 120},
+            {"label": "Next Follow-up", "fieldname": "next_follow_up_date", "fieldtype": "Date", "width": 120},
+            {"label": "City", "fieldname": "city", "fieldtype": "Data", "width": 100},
+            {"label": "ID", "fieldname": "name", "fieldtype": "Link", "options": "Business Contacts", "width": 100},
         ]
     else:
         # Columns for Normal Lead Report
         return [
-            {"label": "Lead ID", "fieldname": "lead_id", "fieldtype": "Link", "options": "Lead", "width": 100},
             {"label": "Lead Name", "fieldname": "lead_name", "fieldtype": "Data", "width": 150},
             {"label": "Organization", "fieldname": "company_name", "fieldtype": "Data", "width": 150},
             {"label": "Email", "fieldname": "email_id", "fieldtype": "Data", "width": 120},
             {"label": "Mobile No", "fieldname": "mobile_no", "fieldtype": "Data", "width": 120},
             {"label": "Status", "fieldname": "custom_lead_category", "fieldtype": "Data", "width": 120},
-            {"label": "Lead Owner", "fieldname": "lead_owner", "fieldtype": "Link", "options": "User", "width": 150},
+            
+            {"label": "Last Completed Category", "fieldname": "last_completed_category", "fieldtype": "Data", "width": 150},
+            {"label": "Last Completed Notes", "fieldname": "last_completed_notes", "fieldtype": "Small Text", "width": 200},
+            {"label": "Last Completed Date", "fieldname": "last_completed_date", "fieldtype": "Datetime", "width": 150},
+            
             {"label": "Revenue", "fieldname": "custom_expected_revenue", "fieldtype": "Currency", "width": 150},
             {"label": "PO Value", "fieldname": "custom_po_value", "fieldtype": "Currency", "width": 150},
             {"label": "Product Category", "fieldname": "custom_product_multi_category", "fieldtype": "Small Text", "width": 100},
@@ -66,6 +89,8 @@ def get_columns(filters=None):
             {"label": "Lead Type", "fieldname": "custom_lead_type", "fieldtype": "Data", "width": 100},
             {"label": "Direction Type", "fieldname": "custom_direction_type", "fieldtype": "Data", "width": 100},
             {"label": "Created At", "fieldname": "custom_created_at", "fieldtype": "Datetime", "width": 150},
+            {"label": "Lead Owner", "fieldname": "lead_owner", "fieldtype": "Link", "options": "User", "width": 150},
+            {"label": "Lead ID", "fieldname": "lead_id", "fieldtype": "Link", "options": "Lead", "width": 100},
         ]
 
 
@@ -73,9 +98,67 @@ def get_columns(filters=None):
 # Fetch Data
 # -------------------------
 def get_data(filters):
-    if filters and filters.get("inverse_report"):
+    if filters.get("inverse_report"):
         return get_event_activity_with_reference(filters)
+    if filters.get("show_business_contacts"):
+        return get_business_contacts(filters)
     return get_leads(filters)
+
+
+
+def get_business_contacts(filters=None):
+    conditions = []
+    values = {}
+
+    # Basic Date Filter (Based on creation date for BC)
+    if filters.get("custom_created_at"):
+        start_date, end_date = filters.get("custom_created_at")
+        conditions.append("DATE(creation) BETWEEN %(start_date)s AND %(end_date)s")
+        values["start_date"] = start_date
+        values["end_date"] = end_date
+
+    # Assigned To / User restrictions (Mirroring Lead Logic)
+    session_roles = frappe.get_roles(frappe.session.user)
+    if filters.get("lead_owner"): # Assuming you reuse the owner filter for assigned_to
+        conditions.append("assign_to = %(assign_to)s")
+        values["assign_to"] = filters.get("lead_owner")
+    else:
+        if "DAC CRM" in session_roles and "DAC CRM Head" not in session_roles:
+            conditions.append("assign_to = %(session_user)s")
+            values["session_user"] = frappe.session.user
+
+    if filters.get("industry"):
+        conditions.append("industry = %(industry)s")
+        values["industry"] = filters["industry"]
+
+    if filters.get("source"):
+        conditions.append("source = %(source)s")
+        values["source"] = filters["source"]
+
+    where_clause = " AND ".join(conditions) if conditions else "1=1"
+
+    data = frappe.db.sql(f"""
+        SELECT 
+            name, 
+            contact_name, 
+            organization_name, 
+            status, 
+            contact_type, 
+            mobile_number, 
+            assign_to, 
+            source, 
+            industry, 
+            last_completed_activity_type, 
+            last_completion_notes, 
+            last_completed_date, 
+            next_follow_up_date, 
+            city
+        FROM `tabBusiness Contacts`
+        WHERE {where_clause}
+        ORDER BY creation DESC
+    """, values, as_dict=True)
+
+    return data
 
 import frappe
 from datetime import datetime, timedelta
@@ -148,6 +231,53 @@ def get_leads(filters=None):
 
     where_clause = " AND ".join(conditions) if conditions else "1=1"
 
+    # leads = frappe.db.sql(f"""
+    #     SELECT 
+    #         GROUP_CONCAT(msi.product_category SEPARATOR ', ') AS custom_product_multi_category,
+    #         l.name AS lead_id,
+    #         l.lead_name,
+    #         l.company_name,
+    #         l.email_id,
+    #         l.mobile_no,
+    #         l.custom_lead_type,
+    #         l.custom_direction_type,
+    #         l.industry,
+    #         l.custom_next_followup_date,
+    #         l.custom_expected_revenue,
+    #         l.source,
+    #         l.custom_po_value,
+    #         l.custom_lead_description,
+    #         l.custom_lead_category,
+    #         DATEDIFF(CURDATE(), DATE(l.creation)) AS lead_age,
+    #         l.custom_created_at,
+    #         l.lead_owner,
+    #         (SELECT COUNT(*) 
+    #         FROM `tabEvent Activity` la 
+    #         WHERE la.reference_name = l.name) AS followup_count,
+    #         (SELECT CONCAT(la.subject, ' | ', la.category) 
+    #         FROM `tabEvent Activity` la 
+    #         WHERE la.reference_name = l.name AND la.status='Open' 
+    #         ORDER BY la.creation DESC LIMIT 1) AS latest_open_description,
+    #         (SELECT COUNT(*) 
+    #         FROM `tabQuotation` q 
+    #         WHERE q.quotation_to = 'Lead' 
+    #         AND q.party_name = l.name 
+    #         AND q.docstatus = 1) AS quotation_count
+    #     FROM `tabLead` l
+    #     LEFT JOIN `tabProduct Category Multiselect` msi 
+    #         ON msi.parent = l.name AND msi.parentfield = 'custom_product_multi_category'
+    #     WHERE {where_clause}
+    #     GROUP BY l.name
+    # """, values, as_dict=True)
+
+
+
+    # # Wrap followup count as link
+    # for lead in leads:
+    #     lead["followup_count"] = f"<a href='#' onclick='showFollowupDetails(\"{lead['lead_id']}\")'>{lead['followup_count']}</a>"
+
+    # return leads
+
     leads = frappe.db.sql(f"""
         SELECT 
             GROUP_CONCAT(msi.product_category SEPARATOR ', ') AS custom_product_multi_category,
@@ -168,18 +298,34 @@ def get_leads(filters=None):
             DATEDIFF(CURDATE(), DATE(l.creation)) AS lead_age,
             l.custom_created_at,
             l.lead_owner,
-            (SELECT COUNT(*) 
-            FROM `tabEvent Activity` la 
-            WHERE la.reference_name = l.name) AS followup_count,
+
+            # Subquery for Count
+            (SELECT COUNT(*) FROM `tabEvent Activity` la WHERE la.reference_name = l.name) AS followup_count,
+
+            # Subquery for Latest Open Description
             (SELECT CONCAT(la.subject, ' | ', la.category) 
-            FROM `tabEvent Activity` la 
-            WHERE la.reference_name = l.name AND la.status='Open' 
-            ORDER BY la.creation DESC LIMIT 1) AS latest_open_description,
+             FROM `tabEvent Activity` la 
+             WHERE la.reference_name = l.name AND la.status='Open' 
+             ORDER BY la.creation DESC LIMIT 1) AS latest_open_description,
+
+            # --- NEW SUBQUERIES FOR LAST COMPLETED ACTIVITY ---
+            (SELECT category FROM `tabEvent Activity` 
+             WHERE reference_name = l.name AND status = 'Completed' 
+             ORDER BY ends_on DESC LIMIT 1) AS last_completed_category,
+
+            (SELECT notes FROM `tabEvent Activity` 
+             WHERE reference_name = l.name AND status = 'Completed' 
+             ORDER BY ends_on DESC LIMIT 1) AS last_completed_notes,
+
+            (SELECT ends_on FROM `tabEvent Activity` 
+             WHERE reference_name = l.name AND status = 'Completed' 
+             ORDER BY ends_on DESC LIMIT 1) AS last_completed_date,
+            # --------------------------------------------------
+
             (SELECT COUNT(*) 
-            FROM `tabQuotation` q 
-            WHERE q.quotation_to = 'Lead' 
-            AND q.party_name = l.name 
-            AND q.docstatus = 1) AS quotation_count
+             FROM `tabQuotation` q 
+             WHERE q.quotation_to = 'Lead' AND q.party_name = l.name AND q.docstatus = 1) AS quotation_count
+
         FROM `tabLead` l
         LEFT JOIN `tabProduct Category Multiselect` msi 
             ON msi.parent = l.name AND msi.parentfield = 'custom_product_multi_category'
@@ -187,12 +333,13 @@ def get_leads(filters=None):
         GROUP BY l.name
     """, values, as_dict=True)
 
-
-
-    # Wrap followup count as link
+    # Logic to wrap followup count and potentially format dates if needed
     for lead in leads:
         lead["followup_count"] = f"<a href='#' onclick='showFollowupDetails(\"{lead['lead_id']}\")'>{lead['followup_count']}</a>"
 
+        # Alternative safety fix if raw objects still fail:
+        if lead.get("last_completed_date"):
+            lead["last_completed_date"] = lead["last_completed_date"].strftime("%Y-%m-%d %H:%M:%S")
     return leads
 
 import frappe

@@ -188,23 +188,56 @@ def customer_before_insert(doc, method=None):
                 "allocated_percentage": allocation
             })
 
+# def customer_after_insert(doc, method=None):
+#     """
+#     Logic for external updates and sharing AFTER the document is created.
+#     """
+#     if doc.lead_name:
+#         # 1. Update the Lead document with this Customer's ID
+#         frappe.db.set_value("Lead", doc.lead_name, "custom_lead_customer", doc.name, update_modified=False)
+
+#         # 2. Initial Sharing with Lead Owner
+#         lead_owner = frappe.db.get_value("Lead", doc.lead_name, "lead_owner")
+#         if lead_owner:
+#             frappe.share.add(
+#                 doctype="Customer",
+#                 name=doc.name,
+#                 user=lead_owner,
+#                 read=1, write=1, share=1, notify=1
+#             )
+
+
+
 def customer_after_insert(doc, method=None):
     """
     Logic for external updates and sharing AFTER the document is created.
     """
     if doc.lead_name:
-        # 1. Update the Lead document with this Customer's ID
+        # 1. Fetch values from the Lead (Customer Link + Business Contact Link + Owner)
+        lead_data = frappe.db.get_value("Lead", doc.lead_name, 
+            ["lead_owner", "custom_business_contacts"], as_dict=True)
+
+        # 2. Update the Lead document with this Customer's ID
         frappe.db.set_value("Lead", doc.lead_name, "custom_lead_customer", doc.name, update_modified=False)
 
-        # 2. Initial Sharing with Lead Owner
-        lead_owner = frappe.db.get_value("Lead", doc.lead_name, "lead_owner")
-        if lead_owner:
+        # 3. Handle Business Contact Status Update
+        if lead_data and lead_data.custom_business_contacts:
+            # Update the status of the linked Business Contact
+            frappe.db.set_value("Business Contacts", lead_data.custom_business_contacts, {
+                "status": "Existing Customer"
+            })
+            # Optional: Add a message for visibility
+            # frappe.msgprint(f"Business Contact {lead_data.custom_business_contacts} updated to 'Existing Customer'")
+
+        # 4. Initial Sharing with Lead Owner
+        if lead_data and lead_data.lead_owner:
             frappe.share.add(
                 doctype="Customer",
                 name=doc.name,
-                user=lead_owner,
+                user=lead_data.lead_owner,
                 read=1, write=1, share=1, notify=1
             )
+
 
 def update_customer_sharing(doc, method=None):
     """

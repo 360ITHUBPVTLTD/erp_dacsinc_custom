@@ -91,7 +91,9 @@ def make_lead_from_contact(source_name):
         "custom_custom_state": doc.state, 
         "custom_custom_city": doc.city,
         "custom_business_contacts": doc.name,
-        "company_name" : doc.organization_name
+        "custom_sub_source": doc.sub_source,
+        "company_name" : doc.organization_name,
+        "custom_number_of_employee": doc.number_of_employee
     })
     
     lead.insert(ignore_permissions=True)

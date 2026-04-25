@@ -15,7 +15,11 @@
   "send_mail_for_daily",
   "to_mail_id",
   "buying_settings_section",
-  "allow_over_collecting_of_fg"
+  "allow_over_collecting_of_fg",
+  "fcm_notification_section",
+  "leave_creation",
+  "column_break_zhtq",
+  "expense_creation"
  ],
  "fields": [
   {
@@ -78,13 +82,35 @@
    "fieldname": "allow_over_collecting_of_fg",
    "fieldtype": "Percent",
    "label": "Allow Over Collecting of FG "
+  },
+  {
+   "fieldname": "fcm_notification_section",
+   "fieldtype": "Section Break",
+   "label": "FCM Notification"
+  },
+  {
+   "description": "While creation the Leave notification need to send ti this users",
+   "fieldname": "leave_creation",
+   "fieldtype": "Table MultiSelect",
+   "label": "Leave Creation",
+   "options": "Multiselect User"
+  },
+  {
+   "fieldname": "column_break_zhtq",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "expense_creation",
+   "fieldtype": "Table MultiSelect",
+   "label": "Expense Creation",
+   "options": "Multiselect User"
   }
  ],
  "grid_page_length": 50,
  "index_web_pages_for_search": 1,
  "issingle": 1,
  "links": [],
- "modified": "2026-02-14 16:36:19.571814",
+ "modified": "2026-04-16 17:41:02.516654",
  "modified_by": "Administrator",
  "module": "Erp Dacsinc Custom",
  "name": "Admin Settings",
