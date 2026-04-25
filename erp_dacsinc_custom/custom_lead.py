@@ -573,7 +573,7 @@ def get_lead_dashboard_data():
     data.total_follow_ups_today_upcoming = get_today_upcoming_follow_ups_count()
     data.total_overdue_activities = get_overdue_activities_count()
     data.total_open_activities = get_open_activities_count()
-
+    data.bc_without_activity = get_bc_without_activity_count()
     # Lead counts by category
     data.lead_counts = get_lead_category_counts()
 
@@ -595,6 +595,35 @@ def get_filters_for(doctype):
 
     return {}
 
+
+def get_bc_without_activity_count():
+    """Returns count of Open Business Contacts with no linked Event Activity."""
+    is_crm_head = "DAC CRM Head" in frappe.get_roles()
+    user = frappe.session.user
+
+    # Logic: Status is 'Open' and Name does NOT exist in Event Activity's reference_name
+    query = """
+        SELECT count(name) 
+        FROM `tabBusiness Contacts` bc
+        WHERE bc.status = 'Open'
+    """
+    
+    # Filter by owner if not CRM Head
+    if not is_crm_head:
+        # Assuming Business Contact has an 'owner' or 'lead_owner' field. 
+        # Using 'owner' (the creator) as standard. Change to specific field if different.
+        query += f" AND bc.assign_to = '{user}'"
+
+    query += """
+        AND bc.name NOT IN (
+            SELECT DISTINCT reference_name 
+            FROM `tabEvent Activity` 
+            WHERE reference_type = 'Business Contact'
+        )
+    """
+
+    count = frappe.db.sql(query)[0][0]
+    return count
 
 
 # -----------------------
