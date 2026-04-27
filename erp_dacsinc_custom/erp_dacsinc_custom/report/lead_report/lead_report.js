@@ -254,11 +254,11 @@ frappe.query_reports["Lead Report"] = {
 			label: __("Activity Report"),
 			fieldtype: "Check",
 			on_change: function() {
-				// 1. Force Mutually Exclusive (Uncheck Business Contact if this is checked)
+				// 1. Force mutual exclusivity
 				if (frappe.query_report.get_filter_value("inverse_report")) {
 					frappe.query_report.set_filter_value("show_business_contacts", 0);
 				}
-				// 2. Trigger UI Refresh to update Columns
+				// 2. Trigger Full Report Refresh (Forces Python get_columns to run)
 				frappe.query_report.refresh();
 			}
 		},
@@ -267,11 +267,11 @@ frappe.query_reports["Lead Report"] = {
 			label: __("Show Business Contacts"),
 			fieldtype: "Check",
 			on_change: function() {
-				// 1. Force Mutually Exclusive (Uncheck Activity Report if this is checked)
+				// 1. Force mutual exclusivity
 				if (frappe.query_report.get_filter_value("show_business_contacts")) {
 					frappe.query_report.set_filter_value("inverse_report", 0);
 				}
-				// 2. Trigger UI Refresh to update Columns
+				// 2. Trigger Full Report Refresh (Forces Python get_columns to run)
 				frappe.query_report.refresh();
 			}
 		},
@@ -474,46 +474,54 @@ frappe.query_reports["Lead Report"] = {
 // 	},
 // };
 onload: function (report) {
-		// Permissions check
-		let lead_owner_filter = report.get_filter("lead_owner");
-		let is_crm_head = frappe.user.has_role("DAC CRM Head") || frappe.user.has_role("Administrator");
-
-		if (!is_crm_head) {
-			lead_owner_filter.set_value(frappe.session.user);
-			$(lead_owner_filter.$input).attr("disabled", true);
+		// Permissions for lockdown
+		let is_privileged = frappe.user.has_role("DAC CRM Head") || frappe.user.has_role("Administrator");
+		if (!is_privileged) {
+			report.get_filter("lead_owner").set_value(frappe.session.user);
+			$(report.get_filter("lead_owner").$input).attr("disabled", true);
 		}
 
-		// VISIBILITY LOGIC
-		const toggle_logic = function() {
+		// CENTRALIZED LOGIC FUNCTION
+		function update_view_ui() {
 			const is_act = report.get_filter_value("inverse_report");
 			const is_bc = report.get_filter_value("show_business_contacts");
 
-			const lead_fields = ["custom_lead_category", "mobile_no","lead_type","lead_owner", "lead_activity_status", "direction_type"];
+			const lead_fields = ["custom_lead_category", "mobile_no", "lead_activity_status", "direction_type"];
 			const act_fields = ["category", "status", "assigned_to", "custom_created_at_option"];
-			
-			// Show / Hide Logic
-			if (is_bc) {
-				// Show common, Hide lead and activity specifics
-				lead_fields.concat(act_fields).forEach(f => report.get_filter(f) && $(report.get_filter(f).wrapper).hide());
-				$(report.get_filter("lead_owner").wrapper).show();
-			} 
-			else if (is_act) {
-				// Show Activity details and specific Activity filters
-				lead_fields.forEach(f => report.get_filter(f) && $(report.get_filter(f).wrapper).hide());
-				act_fields.forEach(f => report.get_filter(f) && $(report.get_filter(f).wrapper).show());
-			} 
-			else {
-				// Default Lead Report view
-				act_fields.forEach(f => report.get_filter(f) && $(report.get_filter(f).wrapper).hide());
-				lead_fields.forEach(f => report.get_filter(f) && $(report.get_filter(f).wrapper).show());
-			}
-		};
+			const common_fields = ["source", "industry", "lead_owner", "custom_created_at", "lead_type"];
 
-		// Run visibility toggle on checkbox change
-		report.get_filter("inverse_report").$input.on("change", toggle_logic);
-		report.get_filter("show_business_contacts").$input.on("change", toggle_logic);
-		
-		toggle_logic(); // Initial run
+			if (is_bc) {
+				// --- View 1: Business Contacts ---
+				lead_fields.concat(act_fields).forEach(f => report.get_filter(f) && $(report.get_filter(f).wrapper).hide());
+				common_fields.forEach(f => report.get_filter(f) && $(report.get_filter(f).wrapper).show());
+				
+				report.get_filter("lead_owner").$wrapper.find('label').text(__("Assign To"));
+				report.get_filter("lead_type").$wrapper.find('label').text(__("Contact Type"));
+
+			} else if (is_act) {
+				// --- View 2: Activity Report ---
+				lead_fields.forEach(f => report.get_filter(f) && $(report.get_filter(f).wrapper).hide());
+				act_fields.concat(common_fields).forEach(f => report.get_filter(f) && $(report.get_filter(f).wrapper).show());
+				
+				report.get_filter("lead_owner").$wrapper.find('label').text(__("Lead Owner"));
+				report.get_filter("lead_type").$wrapper.find('label').text(__("Lead Type"));
+
+			} else {
+				// --- View 3: Normal Lead Report (Default) ---
+				act_fields.forEach(f => report.get_filter(f) && $(report.get_filter(f).wrapper).hide());
+				lead_fields.concat(common_fields).forEach(f => report.get_filter(f) && $(report.get_filter(f).wrapper).show());
+				
+				report.get_filter("lead_owner").$wrapper.find('label').text(__("Lead Owner"));
+				report.get_filter("lead_type").$wrapper.find('label').text(__("Lead Type"));
+			}
+		}
+
+		// Initial setup
+		update_view_ui();
+
+		// Update on checkbox clicks
+		report.get_filter("inverse_report").$input.on("change", update_view_ui);
+		report.get_filter("show_business_contacts").$input.on("change", update_view_ui);
 	}
 };
 // --- Global Window Functions ---
