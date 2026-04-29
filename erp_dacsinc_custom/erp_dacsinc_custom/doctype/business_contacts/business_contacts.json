@@ -10,6 +10,8 @@
   "organization_name",
   "number_of_employee",
   "mobile_number",
+  "email_id",
+  "column_break_hhgn",
   "assign_to",
   "source",
   "sub_source",
@@ -19,11 +21,6 @@
   "contact_type",
   "job_title",
   "status",
-  "lead_id",
-  "last_completed_activity_type",
-  "last_completion_notes",
-  "last_completed_date",
-  "next_follow_up_date",
   "section_break_ybfx",
   "address",
   "column_break_zlmw",
@@ -32,6 +29,13 @@
   "city",
   "description_section",
   "details",
+  "section_break_ffzd",
+  "lead_id",
+  "last_completed_activity_type",
+  "column_break_aebu",
+  "last_completed_date",
+  "last_completion_notes",
+  "next_follow_up_date",
   "activity_tab",
   "activity_html"
  ],
@@ -203,12 +207,29 @@
    "fieldtype": "Date",
    "label": "Next Follow Up Date",
    "read_only": 1
+  },
+  {
+   "fieldname": "column_break_hhgn",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "section_break_ffzd",
+   "fieldtype": "Section Break"
+  },
+  {
+   "fieldname": "column_break_aebu",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "email_id",
+   "fieldtype": "Data",
+   "label": "Email ID"
   }
  ],
  "grid_page_length": 50,
  "index_web_pages_for_search": 1,
  "links": [],
- "modified": "2026-04-24 12:38:59.576115",
+ "modified": "2026-04-29 11:20:16.867432",
  "modified_by": "Administrator",
  "module": "Erp Dacsinc Custom",
  "name": "Business Contacts",
@@ -230,7 +251,9 @@
  ],
  "row_format": "Dynamic",
  "rows_threshold_for_grid_search": 20,
+ "show_title_field_in_link": 1,
  "sort_field": "modified",
  "sort_order": "DESC",
- "states": []
+ "states": [],
+ "title_field": "organization_name"
 }
