@@ -87,6 +87,7 @@ def make_lead_from_contact(source_name):
         "job_title": doc.job_title,
         "custom_address": doc.address,
         "country": doc.country,
+        "email_id": doc.email_id,
         # IMPORTANT: Ensure these attribute names match your Business Contacts field names exactly
         "custom_custom_state": doc.state, 
         "custom_custom_city": doc.city,

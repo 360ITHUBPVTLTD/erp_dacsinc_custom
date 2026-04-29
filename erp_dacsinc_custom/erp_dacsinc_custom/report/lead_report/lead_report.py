@@ -783,7 +783,8 @@ def get_custom_custom_status_cards_html(status_counts):
                     "Meeting (Sample)",
                     "Proposal/Quotation",
                     "Order Closure",
-                    Mail
+                    "Mail",
+                    "Visit"
                 ].join("\\n"),
                 default: "Initial Call",
                 reqd: 1
