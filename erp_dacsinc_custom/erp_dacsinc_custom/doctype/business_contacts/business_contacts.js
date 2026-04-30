@@ -20,12 +20,12 @@ frappe.ui.form.on("Business Contacts", {
         if (frm.doc.status === "Open" && !frm.doc.__islocal) {
     
     // Check 1: Is the current user assigned to this record?
-    let is_assigned_user = (frm.doc.assigned_to === frappe.session.user);
+    let is_assigned_user = (frm.doc.assign_to === frappe.session.user);
     
     // Check 2: Is the user a "DAC CRM Head"?
     let is_crm_head = frappe.user_roles.includes("DAC CRM Head");
 
-    if (is_assigned_user ) {
+    if (is_assigned_user || is_crm_head) {
         frm.add_custom_button(__('Convert to Lead'), function() {
             
             // 1. Validation for Mobile Number
