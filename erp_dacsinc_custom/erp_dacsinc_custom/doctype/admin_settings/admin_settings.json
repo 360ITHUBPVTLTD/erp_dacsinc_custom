@@ -16,10 +16,8 @@
   "to_mail_id",
   "buying_settings_section",
   "allow_over_collecting_of_fg",
-  "fcm_notification_section",
-  "leave_creation",
-  "column_break_zhtq",
-  "expense_creation"
+  "section_break_hbuh",
+  "mobile_app_crm_card"
  ],
  "fields": [
   {
@@ -84,33 +82,21 @@
    "label": "Allow Over Collecting of FG "
   },
   {
-   "fieldname": "fcm_notification_section",
-   "fieldtype": "Section Break",
-   "label": "FCM Notification"
+   "fieldname": "section_break_hbuh",
+   "fieldtype": "Section Break"
   },
   {
-   "description": "While creation the Leave notification need to send ti this users",
-   "fieldname": "leave_creation",
-   "fieldtype": "Table MultiSelect",
-   "label": "Leave Creation",
-   "options": "Multiselect User"
-  },
-  {
-   "fieldname": "column_break_zhtq",
-   "fieldtype": "Column Break"
-  },
-  {
-   "fieldname": "expense_creation",
-   "fieldtype": "Table MultiSelect",
-   "label": "Expense Creation",
-   "options": "Multiselect User"
+   "fieldname": "mobile_app_crm_card",
+   "fieldtype": "Link",
+   "label": "Mobile App CRM Card",
+   "options": "Department"
   }
  ],
  "grid_page_length": 50,
  "index_web_pages_for_search": 1,
  "issingle": 1,
  "links": [],
- "modified": "2026-04-16 17:41:02.516654",
+ "modified": "2026-05-05 10:43:09.057318",
  "modified_by": "Administrator",
  "module": "Erp Dacsinc Custom",
  "name": "Admin Settings",
