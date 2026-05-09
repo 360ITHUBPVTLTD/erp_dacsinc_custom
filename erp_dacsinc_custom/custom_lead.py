@@ -564,21 +564,105 @@ def get_business_contacts_details(id):
 import frappe
 from frappe.utils import getdate, nowdate, add_days
 
+# @frappe.whitelist()
+# def get_lead_dashboard_data():
+#     data = frappe._dict()
+
+#     # Top summary cards
+#     data.leads_without_activity = get_leads_without_activity_count()
+#     data.total_follow_ups_today_upcoming = get_today_upcoming_follow_ups_count()
+#     data.total_overdue_activities = get_overdue_activities_count()
+#     data.total_open_activities = get_open_activities_count()
+#     data.bc_without_activity = get_bc_without_activity_data()
+#     # Lead counts by category
+#     data.lead_counts = get_lead_category_counts()
+
+#     return data
+
+
+import frappe
+from frappe.utils import getdate, nowdate, add_days, flt
+
 @frappe.whitelist()
-def get_lead_dashboard_data():
+def get_lead_dashboard_data(from_date=None, to_date=None, selected_user=None):
+    # Determine Role & User
+    user_roles = frappe.get_roles(frappe.session.user)
+    is_crm_head = "DAC CRM Head" in user_roles
+    
+    target_user = None
+    if is_crm_head:
+        target_user = selected_user if selected_user else None 
+    else:
+        target_user = frappe.session.user
+
+    filters = frappe._dict({"from_date": from_date, "to_date": to_date, "user": target_user})
     data = frappe._dict()
 
-    # Top summary cards
-    data.leads_without_activity = get_leads_without_activity_count()
-    data.total_follow_ups_today_upcoming = get_today_upcoming_follow_ups_count()
-    data.total_overdue_activities = get_overdue_activities_count()
-    data.total_open_activities = get_open_activities_count()
-    data.bc_without_activity = get_bc_without_activity_data()
-    # Lead counts by category
-    data.lead_counts = get_lead_category_counts()
+    # Metrics
+    data.leads_without_activity = get_filtered_leads_without_activity(filters)
+    data.total_follow_ups_today_upcoming = get_filtered_activities(filters, timeframe="upcoming")
+    data.total_overdue_activities = get_filtered_activities(filters, timeframe="overdue")
+    data.total_open_activities = get_filtered_activities(filters)
+    data.bc_status_counts = get_bc_status_counts(filters)
+    data.bc_without_activity = get_bc_without_activity_data(filters)
+    data.lead_counts = get_filtered_lead_category_counts(filters)
 
     return data
 
+def get_filtered_leads_without_activity(filters):
+    db_f = {"custom_is_activity_created": 0, "custom_lead_category": ["in", ["Enquiry", "Pipeline"]]}
+    if filters.user: db_f["lead_owner"] = filters.user
+    if filters.from_date: db_f["creation"] = ["between", [filters.from_date, filters.to_date]]
+    return frappe.db.count("Lead", db_f)
+
+def get_filtered_activities(filters, timeframe=None):
+    db_f = {"status": "Open"}
+    if filters.user: db_f["assigned_to"] = filters.user
+    today = nowdate()
+    if timeframe == "upcoming":
+        db_f["starts_on"] = ["between", [f"{today} 00:00:00", f"{add_days(today, 3)} 23:59:59"]]
+    elif timeframe == "overdue":
+        db_f["starts_on"] = ["<", today]
+    return frappe.db.count("Event Activity", db_f)
+
+def get_bc_status_counts(filters):
+    counts = {}
+    for s in ["Open", "Converted to Lead", "Existing Customer"]:
+        db_f = {"status": s}
+        if filters.user: db_f["assign_to"] = filters.user
+        if filters.from_date: db_f["creation"] = ["between", [filters.from_date, filters.to_date]]
+        counts[s] = frappe.db.count("Business Contacts", db_f)
+    return counts
+
+def get_filtered_lead_category_counts(filters):
+    res = {}
+    for cat in ['Enquiry', 'Pipeline', 'Order', 'Lost Enquiry', 'Lost Pipeline']:
+        db_f = {"custom_lead_category": cat}
+        if filters.user: db_f["lead_owner"] = filters.user
+        if filters.from_date: db_f["creation"] = ["between", [filters.from_date, filters.to_date]]
+        
+        recs = frappe.db.get_all("Lead", filters=db_f, fields=["custom_expected_revenue", "custom_po_value"])
+        rev_sum = sum([flt(r.custom_po_value if cat == "Order" else r.custom_expected_revenue) for r in recs])
+        res[cat] = {"count": len(recs), "revenue": rev_sum}
+    return res
+
+@frappe.whitelist()
+def get_crm_users():
+    """Returns users having 'DAC CRM' or 'DAC CRM Head' roles with their Full Names."""
+    return frappe.db.sql("""
+        SELECT DISTINCT
+            u.name as user,
+            u.full_name as user_name
+        FROM
+            `tabUser` u
+        INNER JOIN
+            `tabHas Role` hr ON u.name = hr.parent
+        WHERE
+            hr.role IN ('DAC CRM', 'DAC CRM Head')
+            AND u.enabled = 1
+            AND u.name NOT IN ('Administrator', 'Guest')
+        ORDER BY u.full_name ASC
+    """, as_dict=True)
 # -----------------------
 # Utility: role-based filters
 # -----------------------
@@ -624,42 +708,67 @@ def get_filters_for(doctype):
 
 #     count = frappe.db.sql(query)[0][0]
 #     return count
-
+import frappe
+import json
 
 @frappe.whitelist()
-def get_bc_without_activity_data():
-    """Returns count and names for BCs with no OPEN activities."""
-    is_crm_head = "DAC CRM Head" in frappe.get_roles()
-    user = frappe.session.user
+def get_bc_without_activity_data(filters=None):
+    """
+    Returns Business Contacts with status 'Open' that have 
+    ZERO entries in the Event Activity table (neglected contacts).
+    """
+    # 1. Parse Filters
+    if isinstance(filters, str):
+        filters = frappe._dict(json.loads(filters))
+    elif not filters:
+        filters = frappe._dict()
 
-    # Base Query: Business Contact must be Open
-    conditions = ["bc.status = 'Open'"]
+    # 2. Determine User Scope
+    user_roles = frappe.get_roles(frappe.session.user)
+    is_crm_head = "DAC CRM Head" in user_roles
     
-    # Filter by assignment if not CRM Head
-    if not is_crm_head:
-        conditions.append(f"bc.assign_to = '{user}'")
+    target_user = filters.get("user")
+    if not target_user and not is_crm_head:
+        target_user = frappe.session.user
 
-    # The Logic: Exclude BCs that HAVE an activity with status 'Open'
-    # This leaves BCs that either have NO activities or ONLY 'Closed/Cancelled' activities
-    conditions.append("""
-        bc.name NOT IN (
-            SELECT DISTINCT reference_name 
-            FROM `tabEvent Activity` 
-            WHERE reference_type = 'Business Contacts' 
-            AND status = 'Open'
-        )
-    """)
+    # 3. Build Query Conditions
+    # We only look for Business Contacts currently in 'Open' status
+    conditions = ["bc.status = 'Open'"]
+    query_params = []
+
+    # Filter by Assignment
+    if target_user:
+        conditions.append("bc.assign_to = %s")
+        query_params.append(target_user)
+
+    # Dashboard Date Filtering (usually based on when the BC was created)
+    if filters.get("from_date") and filters.get("to_date"):
+        conditions.append("bc.creation BETWEEN %s AND %s")
+        query_params.extend([filters.from_date, filters.to_date])
 
     where_clause = " AND ".join(conditions)
+
+    # 4. The Logic: NOT EXISTS
+    # This finds BCs where there is NO record in tabEvent Activity 
+    # regardless of that activity's status.
+    sql_query = f"""
+        SELECT bc.name 
+        FROM `tabBusiness Contacts` bc 
+        WHERE {where_clause}
+        AND NOT EXISTS (
+            SELECT 1 
+            FROM `tabEvent Activity` ea 
+            WHERE ea.reference_type = 'Business Contacts' 
+            AND ea.reference_name = bc.name
+        )
+    """
     
-    # Fetch names to use for filtering in the UI
-    names = frappe.db.sql(f"SELECT name FROM `tabBusiness Contacts` bc WHERE {where_clause}", pluck=True)
+    names = frappe.db.sql(sql_query, tuple(query_params), pluck=True)
     
     return {
-        "count": len(names),
-        "names": names
+        "count": len(names) or 0,
+        "names": list(names) if names else []
     }
-
 # -----------------------
 # Counts
 # -----------------------
@@ -1807,3 +1916,269 @@ def validate_lead(doc, method=None):
                 'changed_by': frappe.session.user,
                 'change_on': now_datetime(),
             })
+
+
+
+
+
+
+
+
+# import frappe
+# from frappe.utils import flt
+
+# @frappe.whitelist()
+# def get_tabular_dashboard_data(from_date=None, to_date=None, user=None, industry=None):
+#     lead_rows = []
+    
+#     # 1. Base Query Params
+#     params = {}
+#     filter_clause = " WHERE docstatus < 2 "
+    
+#     if user:
+#         filter_clause += " AND lead_owner = %(user)s "
+#         params["user"] = user
+#     if industry:
+#         # User defined label Industry Type, usually matches field name custom_industry_type
+#         # Verify fieldname in Lead doctype. Replace 'custom_industry_type' if needed.
+#         filter_clause += " AND industry = %(industry)s "
+#         params["industry"] = industry
+#     if from_date and to_date:
+#         filter_clause += " AND creation BETWEEN %(sd)s AND %(ed)s "
+#         params["sd"] = from_date
+#         params["ed"] = to_date
+
+#     # --- Lead Data Extraction ---
+#     # Using specific Logic: Order -> PO Value | All others -> Expected Revenue
+#     leads_sql = frappe.db.sql(f"""
+#         SELECT 
+#             MONTHNAME(creation) as m_name, YEAR(creation) as m_year, MONTH(creation) as m_num,
+#             custom_lead_category as category,
+#             COUNT(name) as count,
+#             SUM(CASE 
+#                 WHEN custom_lead_category = 'Order' THEN IFNULL(custom_po_value, 0) 
+#                 ELSE IFNULL(custom_expected_revenue, 0) 
+#             END) as value
+#         FROM `tabLead` 
+#         {filter_clause}
+#         GROUP BY m_year, m_num, category
+#         ORDER BY m_year ASC, m_num ASC
+#     """, params, as_dict=1)
+
+#     lead_map = {}
+#     # Grand Totals accumulator
+#     lt = {"enq_c":0,"enq_v":0,"pipe_c":0,"pipe_v":0,"ord_c":0,"ord_v":0,"lenq_c":0,"lenq_v":0,"lpipe_c":0,"lpipe_v":0}
+
+#     for l in leads_sql:
+#         m_key = f"{l.m_name} {l.m_year}"
+#         if m_key not in lead_map:
+#             lead_map[m_key] = {"month_label": m_key, "sort": f"{l.m_year}-{l.m_num:02}", "enq_cnt":0, "enq_val":0, "pipe_cnt":0, "pipe_val":0, "ord_cnt":0, "ord_val":0, "lenq_cnt":0, "lenq_val":0, "lpipe_cnt":0, "lpipe_val":0}
+        
+#         row = lead_map[m_key]
+#         c, v = int(l.count), flt(l.value)
+        
+#         if l.category == 'Enquiry': row['enq_cnt'], row['enq_val'] = c, v; lt["enq_c"] += c; lt["enq_v"] += v
+#         elif l.category == 'Pipeline': row['pipe_cnt'], row['pipe_val'] = c, v; lt["pipe_c"] += c; lt["pipe_v"] += v
+#         elif l.category == 'Order': row['ord_cnt'], row['ord_val'] = c, v; lt["ord_c"] += c; lt["ord_v"] += v
+#         elif l.category == 'Lost Enquiry': row['lenq_cnt'], row['lenq_val'] = c, v; lt["lenq_c"] += c; lt["lenq_v"] += v
+#         elif l.category == 'Lost Pipeline': row['lpipe_cnt'], row['lpipe_val'] = c, v; lt["lpipe_c"] += c; lt["lpipe_v"] += v
+
+#     lead_rows = sorted(lead_map.values(), key=lambda x: x['sort'])
+
+#     # --- Contact Management Logic ---
+#     bc_filters = " WHERE docstatus < 2 "
+#     bc_params = {}
+#     if user: bc_filters += " AND assign_to = %(u)s "; bc_params["u"] = user
+#     if from_date and to_date: bc_filters += " AND creation BETWEEN %(s)s AND %(e)s "; bc_params["s"] = from_date; bc_params["e"] = to_date
+
+#     contacts = frappe.db.sql(f"""
+#         SELECT MONTHNAME(creation) as m_name, YEAR(creation) as m_year, status, count(name) as count
+#         FROM `tabBusiness Contacts` {bc_filters}
+#         GROUP BY m_year, m_name, status
+#     """, bc_params, as_dict=1)
+
+#     bc_map = {}
+#     ct = {"o": 0, "c": 0, "e": 0} # Totals: Open, Converted, Existing
+    
+#     for c in contacts:
+#         label = f"{c.m_name} {c.m_year}"
+#         if label not in bc_map: bc_map[label] = {"label": label, "open": 0, "conv": 0, "existing": 0}
+        
+#         count = int(c.count)
+#         if c.status == "Open": bc_map[label]["open"] = count; ct["o"] += count
+#         elif c.status == "Converted to Lead": bc_map[label]["conv"] = count; ct["c"] += count
+#         elif c.status == "Existing Customer": bc_map[label]["existing"] = count; ct["e"] += count
+
+#     return {
+#         "lead_data": lead_rows,
+#         "lead_totals": lt,
+#         "contact_data": list(bc_map.values()),
+#         "contact_totals": ct
+#     }
+
+# import frappe
+# from frappe.utils import flt, format_date
+
+# @frappe.whitelist()
+# def get_tabular_dashboard_data(from_date=None, to_date=None, user=None, industry=None):
+#     # Parameters initialization
+#     params = {"sd": from_date, "ed": to_date, "usr": user, "ind": industry}
+    
+#     # 1. Base Filter String logic
+#     filters = " WHERE docstatus < 2 "
+#     bc_filters = " WHERE docstatus < 2 "
+    
+#     if user:
+#         filters += " AND lead_owner = %(usr)s "
+#         bc_filters += " AND assign_to = %(usr)s "
+#     if industry:
+#         # Assuming field name is industry in both doctypes. Change if different.
+#         filters += " AND industry = %(ind)s "
+#         bc_filters += " AND industry = %(ind)s "
+#     if from_date and to_date:
+#         filters += " AND creation BETWEEN %(sd)s AND %(ed)s "
+#         bc_filters += " AND creation BETWEEN %(sd)s AND %(ed)s "
+
+#     # --- LEAD LOGIC ---
+#     leads = frappe.db.sql(f"""
+#         SELECT 
+#             MONTHNAME(creation) as m_name, YEAR(creation) as m_year, MONTH(creation) as m_num,
+#             custom_lead_category as cat, COUNT(name) as count,
+#             SUM(CASE WHEN custom_lead_category = 'Order' THEN IFNULL(custom_po_value, 0) ELSE IFNULL(custom_expected_revenue, 0) END) as val
+#         FROM `tabLead` {filters}
+#         GROUP BY m_year, m_num, m_name, cat ORDER BY m_year ASC, m_num ASC
+#     """, params, as_dict=1)
+
+#     lead_map = {}
+#     lt = {"enq_c":0,"enq_v":0,"pipe_c":0,"pipe_v":0,"ord_c":0,"ord_v":0,"lenq_c":0,"lenq_v":0,"lpipe_c":0,"lpipe_v":0}
+
+#     for l in leads:
+#         key = f"{l.m_name} {l.m_year}"
+#         if key not in lead_map:
+#             lead_map[key] = {"label": key, "sort": f"{l.m_year}-{l.m_num:02}", "enq_c":0,"enq_v":0,"pipe_c":0,"pipe_v":0,"ord_c":0,"ord_v":0,"lenq_c":0,"lenq_v":0,"lpipe_c":0,"lpipe_v":0}
+        
+#         row, c, v = lead_map[key], int(l.count), flt(l.val)
+#         if l.cat == 'Enquiry': row['enq_c'], row['enq_v'] = c, v; lt['enq_c']+=c; lt['enq_v']+=v
+#         elif l.cat == 'Pipeline': row['pipe_c'], row['pipe_v'] = c, v; lt['pipe_c']+=c; lt['pipe_v']+=v
+#         elif l.cat == 'Order': row['ord_c'], row['ord_v'] = c, v; lt['ord_c']+=c; lt['ord_v']+=v
+#         elif l.cat == 'Lost Enquiry': row['lenq_c'], row['lenq_v'] = c, v; lt['lenq_c']+=c; lt['lenq_v']+=v
+#         elif l.cat == 'Lost Pipeline': row['lpipe_c'], row['lpipe_v'] = c, v; lt['lpipe_c']+=c; lt['lpipe_v']+=v
+
+#     # --- CONTACT LOGIC ---
+#     contacts = frappe.db.sql(f"""
+#         SELECT MONTHNAME(creation) as m_name, YEAR(creation) as m_year, MONTH(creation) as m_num, status, COUNT(name) as count
+#         FROM `tabBusiness Contacts` {bc_filters}
+#         GROUP BY m_year, m_num, m_name, status ORDER BY m_year ASC, m_num ASC
+#     """, params, as_dict=1)
+
+#     bc_map = {}
+#     ct = {"o": 0, "c": 0, "e": 0}
+#     for b in contacts:
+#         key = f"{b.m_name} {b.m_year}"
+#         if key not in bc_map:
+#             bc_map[key] = {"label": key, "o": 0, "c": 0, "e": 0, "sort": f"{b.m_year}-{b.m_num:02}"}
+        
+#         cnt = int(b.count)
+#         if b.status == "Open": bc_map[key]["o"] = cnt; ct["o"] += cnt
+#         elif b.status == "Converted to Lead": bc_map[key]["c"] = cnt; ct["c"] += cnt
+#         elif b.status == "Existing Customer": bc_map[key]["e"] = cnt; ct["e"] += cnt
+
+#     return {
+#         "leads": sorted(lead_map.values(), key=lambda x: x['sort']),
+#         "lead_totals": lt,
+#         "contacts": sorted(bc_map.values(), key=lambda x: x['sort']),
+#         "contact_totals": ct
+#     }
+
+
+import frappe
+from frappe.utils import flt
+
+@frappe.whitelist()
+def get_tabular_dashboard_data(from_date=None, to_date=None, user=None, industry=None):
+    # Determine the User Filter based on permissions
+    is_head = "DAC CRM Head" in frappe.get_roles()
+    effective_user = user if (is_head and user) else (None if (is_head and not user) else frappe.session.user)
+
+    params = {"sd": from_date, "ed": to_date, "usr": effective_user, "ind": industry}
+    
+    # Filter String building
+    l_filters = " WHERE docstatus < 2 "
+    c_filters = " WHERE docstatus < 2 "
+    
+    if effective_user:
+        l_filters += " AND lead_owner = %(usr)s "
+        c_filters += " AND assign_to = %(usr)s "
+    if industry:
+        l_filters += " AND industry = %(ind)s "
+        c_filters += " AND industry = %(ind)s "
+
+    # UPDATED DATE FILTER LOGIC: Using DATE(creation) to include the entire end day
+    if from_date and to_date:
+        l_filters += " AND DATE(creation) BETWEEN %(sd)s AND %(ed)s "
+        c_filters += " AND DATE(creation) BETWEEN %(sd)s AND %(ed)s "
+
+    # FISCAL YEAR SORT LOGIC
+    fiscal_logic = """
+        CASE WHEN MONTH(creation) >= 4 
+             THEN YEAR(creation) ELSE YEAR(creation) - 1 END as f_year,
+        CASE WHEN MONTH(creation) >= 4 
+             THEN MONTH(creation) - 3 ELSE MONTH(creation) + 9 END as f_sort
+    """
+
+    # --- LEAD LOGIC ---
+    leads = frappe.db.sql(f"""
+        SELECT 
+            MONTHNAME(creation) as m_name, YEAR(creation) as m_year,
+            {fiscal_logic},
+            custom_lead_category as cat, COUNT(name) as count,
+            SUM(CASE WHEN custom_lead_category = 'Order' THEN IFNULL(custom_po_value, 0) ELSE IFNULL(custom_expected_revenue, 0) END) as val
+        FROM `tabLead` {l_filters}
+        GROUP BY f_year, f_sort, m_name, cat 
+        ORDER BY f_year ASC, f_sort ASC
+    """, params, as_dict=1)
+
+    lead_map = {}
+    lt = {"enq_c":0,"enq_v":0,"pipe_c":0,"pipe_v":0,"ord_c":0,"ord_v":0,"lenq_c":0,"lenq_v":0,"lpipe_c":0,"lpipe_v":0}
+
+    for l in leads:
+        key = f"{l.m_name} {l.m_year}"
+        if key not in lead_map:
+            lead_map[key] = {"label": key, "f_sort": f"{l.f_year}-{l.f_sort:02}", "enq_c":0,"enq_v":0,"pipe_c":0,"pipe_v":0,"ord_c":0,"ord_v":0,"lenq_c":0,"lenq_v":0,"lpipe_c":0,"lpipe_v":0}
+        
+        row, c, v = lead_map[key], int(l.count), flt(l.val)
+        if l.cat == 'Enquiry': row['enq_c'], row['enq_v'] = c, v; lt['enq_c']+=c; lt['enq_v']+=v
+        elif l.cat == 'Pipeline': row['pipe_c'], row['pipe_v'] = c, v; lt['pipe_c']+=c; lt['pipe_v']+=v
+        elif l.cat == 'Order': row['ord_c'], row['ord_v'] = c, v; lt['ord_c']+=c; lt['ord_v']+=v
+        elif l.cat == 'Lost Enquiry': row['lenq_c'], row['lenq_v'] = c, v; lt['lenq_c']+=c; lt['lenq_v']+=v
+        elif l.cat == 'Lost Pipeline': row['lpipe_c'], row['lpipe_v'] = c, v; lt['lpipe_c']+=c; lt['lpipe_v']+=v
+
+    # --- CONTACT LOGIC ---
+    contacts = frappe.db.sql(f"""
+        SELECT 
+            MONTHNAME(creation) as m_name, YEAR(creation) as m_year, 
+            {fiscal_logic},
+            status, COUNT(name) as count
+        FROM `tabBusiness Contacts` {c_filters}
+        GROUP BY f_year, f_sort, m_name, status 
+        ORDER BY f_year ASC, f_sort ASC
+    """, params, as_dict=1)
+
+    bc_map = {}
+    ct = {"o": 0, "c": 0, "e": 0}
+    for b in contacts:
+        key = f"{b.m_name} {b.m_year}"
+        if key not in bc_map:
+            bc_map[key] = {"label": key, "o": 0, "c": 0, "e": 0, "f_sort": f"{b.f_year}-{b.f_sort:02}"}
+        
+        cnt = int(b.count)
+        if b.status == "Open": bc_map[key]["o"] = cnt; ct["o"] += cnt
+        elif b.status == "Converted to Lead": bc_map[key]["c"] = cnt; ct["c"] += cnt
+        elif b.status == "Existing Customer": bc_map[key]["e"] = cnt; ct["e"] += cnt
+
+    return {
+        "leads": sorted(lead_map.values(), key=lambda x: x['f_sort']),
+        "lead_totals": lt,
+        "contacts": sorted(bc_map.values(), key=lambda x: x['f_sort']),
+        "contact_totals": ct
+    }

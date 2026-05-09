@@ -266,7 +266,7 @@ function handle_update_activity(activity_id, status, frm, create_new) {
 function open_lead_activity_prompt(frm) {
     frappe.prompt([
         { fieldname: "mark_completed", label: "Mark as Completed", fieldtype: "Check", default: 0 },
-        { fieldname: "category", label: "Category", fieldtype: "Select", reqd: 1, options: ["Initial Call","Visit","Follow Up Call","Mail"].join("\n"), default: "Initial Call" },
+        { fieldname: "category", label: "Category", fieldtype: "Select", reqd: 1, options: ["Initial Call","Visit","Follow Up Call","Mail/WA"].join("\n"), default: "Initial Call" },
         { fieldname: "subject", label: "Subject", fieldtype: "Data", reqd: 1 },
         { fieldname: "starts_on", label: "Starts On", fieldtype: "Datetime", default: frappe.datetime.now_datetime(), reqd: 1 },
         { fieldname: "assigned_to", label: "Assigned To", fieldtype: "Link", options: "User", default: frappe.session.user, reqd: 1 },
