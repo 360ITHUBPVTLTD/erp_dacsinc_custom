@@ -59,7 +59,7 @@
    "in_list_view": 1,
    "in_standard_filter": 1,
    "label": "Category",
-   "options": "Initial Call\nFollow Up Call\nMail\nVisit\nField Visit\nOffline Initial Meeting\nOffline Follow up Meeting\nOffline Follow Up Meeting\nOffline Sample Meeting\nInitial Meeting\nFollow up meetings\nMeeting (Sample)\nOnline Meeting\nProposal/Quotation\nOrder Closure"
+   "options": "Initial Call\nFollow Up Call\nMail/WA\nVisit\nField Visit\nOffline Initial Meeting\nOffline Follow up Meeting\nOffline Follow Up Meeting\nOffline Sample Meeting\nInitial Meeting\nFollow up meetings\nMeeting (Sample)\nOnline Meeting\nProposal/Quotation\nOrder Closure"
   },
   {
    "fieldname": "column_break_4",
@@ -221,7 +221,7 @@
  "grid_page_length": 50,
  "icon": "fa fa-calendar",
  "links": [],
- "modified": "2026-05-05 12:37:06.448606",
+ "modified": "2026-05-07 11:41:37.543233",
  "modified_by": "Administrator",
  "module": "Erp Dacsinc Custom",
  "name": "Event Activity",
