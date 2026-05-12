@@ -29,6 +29,8 @@
   "country",
   "state",
   "city",
+  "section_break_iwpi",
+  "lead_and_customer_html",
   "description_section",
   "details",
   "section_break_ffzd",
@@ -226,12 +228,21 @@
    "fieldname": "email_id",
    "fieldtype": "Data",
    "label": "Email ID"
+  },
+  {
+   "fieldname": "section_break_iwpi",
+   "fieldtype": "Section Break"
+  },
+  {
+   "fieldname": "lead_and_customer_html",
+   "fieldtype": "HTML",
+   "label": "Lead and Customer HTML"
   }
  ],
  "grid_page_length": 50,
  "index_web_pages_for_search": 1,
  "links": [],
- "modified": "2026-05-09 18:13:59.118429",
+ "modified": "2026-05-11 14:59:50.439240",
  "modified_by": "Administrator",
  "module": "Erp Dacsinc Custom",
  "name": "Business Contacts",

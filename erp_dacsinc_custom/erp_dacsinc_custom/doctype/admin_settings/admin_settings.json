@@ -17,7 +17,15 @@
   "buying_settings_section",
   "allow_over_collecting_of_fg",
   "section_break_hbuh",
-  "mobile_app_crm_card"
+  "mobile_app_crm_card",
+  "what_apps_tab",
+  "enable_whatsapp",
+  "section_break_yrwa",
+  "send_on_task_creation",
+  "column_break_yysf",
+  "send_on_task_completion",
+  "column_break_cpco",
+  "send_daily_summary_wa"
  ],
  "fields": [
   {
@@ -90,13 +98,58 @@
    "fieldtype": "Link",
    "label": "Mobile App CRM Card",
    "options": "Department"
+  },
+  {
+   "fieldname": "what_apps_tab",
+   "fieldtype": "Tab Break",
+   "label": "What apps"
+  },
+  {
+   "default": "0",
+   "fieldname": "enable_whatsapp",
+   "fieldtype": "Check",
+   "label": "Enable Whatsapp"
+  },
+  {
+   "fieldname": "section_break_yrwa",
+   "fieldtype": "Section Break",
+   "label": "Task"
+  },
+  {
+   "default": "0",
+   "depends_on": "enable_whatsapp",
+   "fieldname": "send_on_task_creation",
+   "fieldtype": "Check",
+   "label": "Send On Task Creation"
+  },
+  {
+   "fieldname": "column_break_yysf",
+   "fieldtype": "Column Break"
+  },
+  {
+   "default": "0",
+   "depends_on": "enable_whatsapp",
+   "fieldname": "send_on_task_completion",
+   "fieldtype": "Check",
+   "label": "Send On Task Completion"
+  },
+  {
+   "fieldname": "column_break_cpco",
+   "fieldtype": "Column Break"
+  },
+  {
+   "default": "0",
+   "depends_on": "enable_whatsapp",
+   "fieldname": "send_daily_summary_wa",
+   "fieldtype": "Check",
+   "label": "Send Activity Reminders"
   }
  ],
  "grid_page_length": 50,
  "index_web_pages_for_search": 1,
  "issingle": 1,
  "links": [],
- "modified": "2026-05-05 10:43:09.057318",
+ "modified": "2026-05-12 11:37:40.606613",
  "modified_by": "Administrator",
  "module": "Erp Dacsinc Custom",
  "name": "Admin Settings",
