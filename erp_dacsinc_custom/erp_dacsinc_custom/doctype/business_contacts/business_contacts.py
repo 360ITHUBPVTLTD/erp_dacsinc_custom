@@ -69,7 +69,7 @@ class BusinessContacts(Document):
 
 
 @frappe.whitelist()
-def make_lead_from_contact(source_name):
+def make_lead_from_contact(source_name, expected_revenue, expected_closure_date):
     # Fetch the Business Contact document
     doc = frappe.get_doc("Business Contacts", source_name)
 
@@ -88,13 +88,16 @@ def make_lead_from_contact(source_name):
         "custom_address": doc.address,
         "country": doc.country,
         "email_id": doc.email_id,
+        "lead_owner": doc.assign_to,
         # IMPORTANT: Ensure these attribute names match your Business Contacts field names exactly
         "custom_custom_state": doc.state, 
         "custom_custom_city": doc.city,
         "custom_business_contacts": doc.name,
         "custom_sub_source": doc.sub_source,
         "company_name" : doc.organization_name,
-        "custom_number_of_employee": doc.number_of_employee
+        "custom_number_of_employee": doc.number_of_employee,
+        "custom_expected_revenue": expected_revenue,
+        "custom_expected_closure_date": expected_closure_date
     })
     
     lead.insert(ignore_permissions=True)
