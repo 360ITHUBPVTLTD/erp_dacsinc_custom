@@ -230,8 +230,11 @@ scheduler_events = {
     "cron": {
         "30 20 * * *": [
             "erp_dacsinc_custom.notifications.execute_scheduled_reports"
+        ],
+        "0 2 * * *": [
+            "erp_dacsinc_custom.custom_leave.cancel_expired_leave_ledger_entries"
         ]
-    }
+    },
 	# "all": [
 	# 	"erp_dacsinc_custom.tasks.all"
 	# ],
@@ -244,9 +247,9 @@ scheduler_events = {
 	# "weekly": [
 	# 	"erp_dacsinc_custom.tasks.weekly"
 	# ],
-	# "monthly": [
-	# 	"erp_dacsinc_custom.tasks.monthly"
-	# ],
+	"monthly": [
+		"erp_dacsinc_custom.custom_leave.allocate_monthly_leaves"
+	],
 }
 
 # Testing
