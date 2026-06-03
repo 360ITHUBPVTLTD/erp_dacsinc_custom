@@ -14,8 +14,8 @@ def allocate_monthly_leaves():
     today_date = getdate()
     # today = getdate("2026-02-01") # For testing purposes, set a fixed date
     dates_to_allocate = [today_date]
-    dates_to_allocate.append(add_months(today_date, -1)) # Also allocate for previous month in case of missed runs or new joiners
-    dates_to_allocate.append(add_months(today_date, -2)) # Also allocate for 2 months back to cover more new joiners
+    # dates_to_allocate.append(add_months(today_date, -1)) # Also allocate for previous month in case of missed runs or new joiners
+    # dates_to_allocate.append(add_months(today_date, -2)) # Also allocate for 2 months back to cover more new joiners
     
     for today in dates_to_allocate:
         try:
