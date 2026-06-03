@@ -21,17 +21,17 @@ def allocate_monthly_leaves():
         try:
             start_date = today.replace(day=1) # 1st of this month
             end_date_sl = get_last_day(start_date) # 30th/31st of this month
-            end_date_cl = None
+            # end_date_cl = None
 
-            if today.month >= 4:  # Apr-Dec
-                end_date_cl = today.replace(year=today.year + 1, month=3, day=31)
-            else:  # Jan-Mar
-                end_date_cl = today.replace(month=3, day=31)
+            # if today.month >= 4:  # Apr-Dec
+            #     end_date_cl = today.replace(year=today.year + 1, month=3, day=31)
+            # else:  # Jan-Mar
+            #     end_date_cl = today.replace(month=3, day=31)
             
             # 2. Define Leaves to Allocate
             # Format: {'Leave Type Name': New_Allocation_Amount}
             leaves_to_allocate = {
-                "Casual Leave": 1,
+                # "Casual Leave": 1,
                 "Sick Leave": 1
             }
 
@@ -49,7 +49,8 @@ def allocate_monthly_leaves():
 
             for emp in employees:
                 for leave_type, amount in leaves_to_allocate.items():
-                    end_date = end_date_sl if leave_type == "Sick Leave" else end_date_cl
+                    # end_date = end_date_sl if leave_type == "Sick Leave" else end_date_cl
+                    end_date = end_date_sl 
                     # Check for Idempotency: 
                     # Don't create if an allocation already exists for this emp, type, and period.
                     exists = frappe.db.exists("Leave Allocation", {
