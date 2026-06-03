@@ -12,9 +12,16 @@ def allocate_monthly_leaves():
     
     # 1. Define the period (Current Month)
     today = getdate()
+    # today = getdate("2026-02-01") # For testing purposes, set a fixed date
     start_date = today.replace(day=1) # 1st of this month
     end_date_sl = get_last_day(start_date) # 30th/31st of this month
-    end_date_cl = today.replace(month=12, day=31)
+
+    end_date_cl = None
+
+    if today.month >= 4:  # Apr-Dec
+        end_date_cl = today.replace(year=today.year + 1, month=3, day=31)
+    else:  # Jan-Mar
+        end_date_cl = today.replace(month=3, day=31)
     
     # 2. Define Leaves to Allocate
     # Format: {'Leave Type Name': New_Allocation_Amount}
@@ -70,7 +77,7 @@ def allocate_monthly_leaves():
                     
                 except Exception as e:
                     frappe.log_error(message=f"Failed to allocate {leave_type} for {emp.name}: {str(e)}", title="Monthly Leave Allocation Error")
-
+        # break
     frappe.db.commit()
 
 def cancel_expired_leave_ledger_entries():
