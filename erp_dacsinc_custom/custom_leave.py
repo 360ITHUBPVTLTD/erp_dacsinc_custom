@@ -11,74 +11,82 @@ def allocate_monthly_leaves():
     """
     
     # 1. Define the period (Current Month)
-    today = getdate()
+    today_date = getdate()
     # today = getdate("2026-02-01") # For testing purposes, set a fixed date
-    start_date = today.replace(day=1) # 1st of this month
-    end_date_sl = get_last_day(start_date) # 30th/31st of this month
-
-    end_date_cl = None
-
-    if today.month >= 4:  # Apr-Dec
-        end_date_cl = today.replace(year=today.year + 1, month=3, day=31)
-    else:  # Jan-Mar
-        end_date_cl = today.replace(month=3, day=31)
+    dates_to_allocate = [today_date]
+    dates_to_allocate.append(add_months(today_date, -1)) # Also allocate for previous month in case of missed runs or new joiners
+    dates_to_allocate.append(add_months(today_date, -2)) # Also allocate for 2 months back to cover more new joiners
     
-    # 2. Define Leaves to Allocate
-    # Format: {'Leave Type Name': New_Allocation_Amount}
-    leaves_to_allocate = {
-        "Casual Leave": 1,
-        "Sick Leave": 1
-    }
+    for today in dates_to_allocate:
+        try:
+            start_date = today.replace(day=1) # 1st of this month
+            end_date_sl = get_last_day(start_date) # 30th/31st of this month
+            end_date_cl = None
 
-    # 3. Get Active Employees
-    # Filter: Active, date_of_joining <= today, and not relieved
-    employees = frappe.get_all("Employee", 
-        filters={
-            "status": "Active",
-            "date_of_joining": ["<=", end_date_sl]
-        },
-        fields=["name", "company", "date_of_joining"]
-    )
+            if today.month >= 4:  # Apr-Dec
+                end_date_cl = today.replace(year=today.year + 1, month=3, day=31)
+            else:  # Jan-Mar
+                end_date_cl = today.replace(month=3, day=31)
+            
+            # 2. Define Leaves to Allocate
+            # Format: {'Leave Type Name': New_Allocation_Amount}
+            leaves_to_allocate = {
+                "Casual Leave": 1,
+                "Sick Leave": 1
+            }
 
-    # frappe.log("Starting Monthly Leave Allocation for {} Employees".format(len(employees)))
+            # 3. Get Active Employees
+            # Filter: Active, date_of_joining <= today, and not relieved
+            employees = frappe.get_all("Employee", 
+                filters={
+                    "status": "Active",
+                    "date_of_joining": ["<=", end_date_sl]
+                },
+                fields=["name", "company", "date_of_joining"]
+            )
 
-    for emp in employees:
-        for leave_type, amount in leaves_to_allocate.items():
-            end_date = end_date_sl if leave_type == "Sick Leave" else end_date_cl
-            # Check for Idempotency: 
-            # Don't create if an allocation already exists for this emp, type, and period.
-            exists = frappe.db.exists("Leave Allocation", {
-                "employee": emp.name,
-                "leave_type": leave_type,
-                "from_date": start_date,
-                "to_date": end_date,
-                "docstatus": 1 # Submitted
-            })
+            # frappe.log("Starting Monthly Leave Allocation for {} Employees".format(len(employees)))
 
-            if not exists:
-                try:
-                    # Create the Allocation Doc
-                    allocation = frappe.get_doc({
-                        "doctype": "Leave Allocation",
+            for emp in employees:
+                for leave_type, amount in leaves_to_allocate.items():
+                    end_date = end_date_sl if leave_type == "Sick Leave" else end_date_cl
+                    # Check for Idempotency: 
+                    # Don't create if an allocation already exists for this emp, type, and period.
+                    exists = frappe.db.exists("Leave Allocation", {
                         "employee": emp.name,
-                        "employee_name": emp.employee_name,
                         "leave_type": leave_type,
                         "from_date": start_date,
-                        "to_date": end_date, # This ensures it expires at month end
-                        "new_leaves_allocated": amount,
-                        "total_leaves_allocated": amount,
-                        "description": f"Auto-allocated for {start_date.strftime('%B %Y')}",
-                        "allocation_date": today
+                        "to_date": end_date,
+                        "docstatus": 1 # Submitted
                     })
-                    
-                    # Validate and Submit
-                    allocation.insert(ignore_permissions=True)
-                    allocation.submit()
-                    
-                except Exception as e:
-                    frappe.log_error(message=f"Failed to allocate {leave_type} for {emp.name}: {str(e)}", title="Monthly Leave Allocation Error")
-        # break
-    frappe.db.commit()
+
+                    if not exists:
+                        try:
+                            # Create the Allocation Doc
+                            allocation = frappe.get_doc({
+                                "doctype": "Leave Allocation",
+                                "employee": emp.name,
+                                "employee_name": emp.employee_name,
+                                "leave_type": leave_type,
+                                "from_date": start_date,
+                                "to_date": end_date, # This ensures it expires at month end
+                                "new_leaves_allocated": amount,
+                                "total_leaves_allocated": amount,
+                                "description": f"Auto-allocated for {start_date.strftime('%B %Y')}",
+                                "allocation_date": today
+                            })
+                            
+                            # Validate and Submit
+                            allocation.insert(ignore_permissions=True)
+                            allocation.submit()
+                            
+                        except Exception as e:
+                            frappe.log_error(message=f"Failed to allocate {leave_type} for {emp.name}: {str(e)}", title="Monthly Leave Allocation Error")
+                # break
+        except Exception as e:
+            frappe.log_error(message=f"Failed to process leave allocation for date {today}: {str(e)}", title="Monthly Leave Allocation Error")
+            continue
+        frappe.db.commit()
 
 def cancel_expired_leave_ledger_entries():
     """
