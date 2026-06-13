@@ -18,6 +18,7 @@
   "allow_over_collecting_of_fg",
   "section_break_hbuh",
   "mobile_app_crm_card",
+  "bulk_attendance_mobile_app_visibility",
   "what_apps_tab",
   "enable_whatsapp",
   "section_break_yrwa",
@@ -143,13 +144,19 @@
    "fieldname": "send_daily_summary_wa",
    "fieldtype": "Check",
    "label": "Send Activity Reminders"
+  },
+  {
+   "fieldname": "bulk_attendance_mobile_app_visibility",
+   "fieldtype": "Table MultiSelect",
+   "label": "Bulk Attendance Mobile App Visibility",
+   "options": "Has Role"
   }
  ],
  "grid_page_length": 50,
  "index_web_pages_for_search": 1,
  "issingle": 1,
  "links": [],
- "modified": "2026-05-12 11:37:40.606613",
+ "modified": "2026-06-13 15:41:37.240092",
  "modified_by": "Administrator",
  "module": "Erp Dacsinc Custom",
  "name": "Admin Settings",
