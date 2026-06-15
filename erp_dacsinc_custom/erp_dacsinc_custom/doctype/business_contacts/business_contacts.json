@@ -10,7 +10,6 @@
  "field_order": [
   "contact_name",
   "organization_name",
-  "number_of_employee",
   "mobile_number",
   "email_id",
   "column_break_hhgn",
@@ -18,11 +17,14 @@
   "source",
   "sub_source",
   "industry",
+  "number_of_employee",
   "column_break_txnv",
   "alternative_mobile_number",
   "contact_type",
   "job_title",
   "status",
+  "area__locality",
+  "created_on",
   "section_break_ybfx",
   "address",
   "column_break_zlmw",
@@ -58,8 +60,7 @@
    "in_list_view": 1,
    "in_standard_filter": 1,
    "label": "Mobile No",
-   "reqd": 1,
-   "unique": 1
+   "reqd": 1
   },
   {
    "fieldname": "alternative_mobile_number",
@@ -178,7 +179,7 @@
   {
    "fieldname": "number_of_employee",
    "fieldtype": "Data",
-   "label": "Number Of Employee"
+   "label": "Number Of Employee / Rooms"
   },
   {
    "fieldname": "sub_source",
@@ -237,12 +238,24 @@
    "fieldname": "lead_and_customer_html",
    "fieldtype": "HTML",
    "label": "Lead and Customer HTML"
+  },
+  {
+   "fieldname": "area__locality",
+   "fieldtype": "Small Text",
+   "label": "Area / Locality"
+  },
+  {
+   "default": "Now",
+   "fieldname": "created_on",
+   "fieldtype": "Datetime",
+   "label": "Created On",
+   "read_only": 1
   }
  ],
  "grid_page_length": 50,
  "index_web_pages_for_search": 1,
  "links": [],
- "modified": "2026-05-11 14:59:50.439240",
+ "modified": "2026-06-13 14:33:36.843454",
  "modified_by": "Administrator",
  "module": "Erp Dacsinc Custom",
  "name": "Business Contacts",
