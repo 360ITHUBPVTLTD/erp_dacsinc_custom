@@ -103,7 +103,7 @@
   {
    "fieldname": "what_apps_tab",
    "fieldtype": "Tab Break",
-   "label": "What apps"
+   "label": "Whatsapp"
   },
   {
    "default": "0",
@@ -156,7 +156,7 @@
  "index_web_pages_for_search": 1,
  "issingle": 1,
  "links": [],
- "modified": "2026-06-13 15:41:37.240092",
+ "modified": "2026-05-12 12:06:15.927334",
  "modified_by": "Administrator",
  "module": "Erp Dacsinc Custom",
  "name": "Admin Settings",
