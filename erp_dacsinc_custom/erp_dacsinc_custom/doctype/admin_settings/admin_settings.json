@@ -18,6 +18,7 @@
   "allow_over_collecting_of_fg",
   "section_break_hbuh",
   "mobile_app_crm_card",
+  "bulk_attendance_mobile_app_visibility",
   "what_apps_tab",
   "enable_whatsapp",
   "section_break_yrwa",
@@ -143,6 +144,12 @@
    "fieldname": "send_daily_summary_wa",
    "fieldtype": "Check",
    "label": "Send Activity Reminders"
+  },
+  {
+   "fieldname": "bulk_attendance_mobile_app_visibility",
+   "fieldtype": "Table MultiSelect",
+   "label": "Bulk Attendance Mobile App Visibility",
+   "options": "Has Role"
   }
  ],
  "grid_page_length": 50,
