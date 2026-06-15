@@ -3459,7 +3459,7 @@ def before_insert(doc, method):
 import frappe
 
 def quotation_on_submit(doc, method):
-    """When Quotation submitted → if linked Lead is 'Enquiry', change to 'Pipeline'."""
+    """When Quotation submitted → if linked Lead is 'Enquiry', change to 'Pipeline', and update Expected Revenue."""
     if doc.custom_lead_id:
         lead = frappe.get_doc("Lead", doc.custom_lead_id)
         if lead.custom_lead_category == "Enquiry":
@@ -3468,6 +3468,9 @@ def quotation_on_submit(doc, method):
         if hasattr(lead, "lead_owner"):
             doc.custom_lead_owner = lead.lead_owner
             frappe.db.set_value("Quotation", doc.name, "custom_lead_owner", lead.lead_owner)
+        
+        # Update Expected Revenue from the submitted quotation
+        frappe.db.set_value("Lead", doc.custom_lead_id, "custom_expected_revenue", flt(doc.grand_total))
        
 # def sales_order_on_submit(doc, method):
 #     """When Sales Order is submitted:

@@ -1547,6 +1547,56 @@ def get_quotations_for_lead(lead_name):
         })
     
     return quotation_data
+
+
+@frappe.whitelist()
+def update_expected_revenue_from_quotation(lead_name):
+    """
+    Update the Expected Revenue field of a Lead based on the most recent submitted quotation.
+    Called from list view for existing leads that need revenue sync.
+    """
+    from frappe.utils import flt
+    
+    if not frappe.has_permission('Lead', 'write'):
+        frappe.throw(_("You do not have permission to update Lead records."), frappe.PermissionError)
+    
+    quotations = frappe.get_all(
+        'Quotation',
+        fields=['name', 'grand_total', 'transaction_date'],
+        filters={
+            'custom_lead_id': lead_name,
+            'docstatus': 1
+        },
+        order_by='transaction_date desc'
+    )
+    
+    if quotations:
+        latest_quotation = quotations[0]
+        frappe.db.set_value("Lead", lead_name, "custom_expected_revenue", flt(latest_quotation.grand_total))
+        return {"status": "success", "message": "Expected Revenue updated from Quotation " + latest_quotation.name}
+    
+    return {"status": "info", "message": "No submitted quotations found for this lead"}
+
+
+@frappe.whitelist()
+def update_all_leads_expected_revenue():
+    """
+    Bulk update all leads' expected revenue from their most recent quotations.
+    Returns count of updated leads.
+    """
+    from frappe.utils import flt
+    
+    leads = frappe.get_all("Lead", filters={"custom_lead_category": ["in", ["Enquiry", "Pipeline"]]}, pluck="name")
+    
+    updated_count = 0
+    for lead_name in leads:
+        result = update_expected_revenue_from_quotation(lead_name)
+        if result.get("status") == "success":
+            updated_count += 1
+    
+    return updated_count
+
+
 from frappe.utils.pdf import get_pdf
 from frappe.utils import now_datetime
 import frappe
