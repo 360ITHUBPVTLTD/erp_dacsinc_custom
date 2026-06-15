@@ -49,9 +49,9 @@ app_include_css = "/assets/erp_dacsinc_custom/style.css?v=1.0.3"
 
 # include js in doctype views
 # doctype_js = {"Purchase Order" : "public/js/purchase_order.js"}
-# doctype_list_js = {"doctype" : "public/js/doctype_list.js"}
-# doctype_tree_js = {"doctype" : "public/js/doctype_tree.js"}
-# doctype_calendar_js = {"doctype" : "public/js/doctype_calendar.js"}
+doctype_list_js = {
+	"Lead": "public/js/lead_list.js"
+}
 
 # Svg Icons
 # ------------------
