@@ -10,7 +10,7 @@ class BusinessContacts(Document):
 		# 1. Management of Read/Write permissions
 		if self.assign_to:
 			# Grant Write access to the currently assigned user
-			frappe.share.add("Business Contacts", self.name, self.assign_to, write=1, read=1, notify=1)
+			frappe.share.add("Business Contacts", self.name, self.assign_to, write=1, read=1, notify=1,share=1)
 			
 			# Ensure the Owner (creator) or anyone else only has READ access, not write
 			# We fetch all current shares for this document
