@@ -38,25 +38,172 @@ frappe.ui.form.on("Event Activity", {
 });
 
 function status_update_prompt(frm, status, title, is_new = false) {
-    frappe.prompt([{ label: "Note", fieldname: "notes", fieldtype: "Small Text", reqd: 1 }], (v) => {
-        frappe.call({
-            method: "frappe.client.set_value",
-            args: {
-                doctype: "Event Activity",
-                name: frm.doc.name,
-                fieldname: { status: status, notes: v.notes, ends_on: frappe.datetime.now_datetime() }
+    if (frm.doc.reference_type === 'Lead' && (status === 'Completed' || status === 'Cancelled')) {
+        frappe.db.get_value("Lead", frm.doc.reference_name, "custom_lead_category").then((r) => {
+            let cat = r.message ? r.message.custom_lead_category : 'Enquiry';
+            show_combined_prompt(frm, status, title, is_new, 'Lead', frm.doc.reference_name, cat);
+        });
+    } else {
+        show_combined_prompt(frm, status, title, is_new, frm.doc.reference_type, frm.doc.reference_name, null);
+    }
+}
+
+function show_combined_prompt(frm, status, title, is_new, refType, refName, leadCategory) {
+    let fields = [
+        {
+            fieldname: "notes",
+            label: (status === "Completed" ? "Completed Note" : "Cancelled Note"),
+            fieldtype: "Small Text",
+            reqd: 1
+        }
+    ];
+
+    if ((status === "Completed" || status === "Cancelled") && refType === "Lead") {
+        fields.push(
+            {
+                fieldname: "mark_lost",
+                label: "Mark Lead as Lost",
+                fieldtype: "Check",
+                default: 0
             },
-            callback: () => {
-                if (is_new) {
-                    frappe.new_doc("Event Activity", {
-                        reference_type: frm.doc.reference_type,
-                        reference_name: frm.doc.reference_name
-                    });
-                } else {
-                    frm.reload_doc();
+            {
+                fieldname: "lost_reason",
+                label: (leadCategory === "Enquiry" ? "Reason for Unqualified Lead" : "Reason for Lost"),
+                fieldtype: "Link",
+                options: (leadCategory === "Enquiry" ? "Lost Enquiry Reasons" : "Quotation Lost Reason"),
+                reqd: 1,
+                depends_on: "eval:doc.mark_lost"
+            },
+            {
+                fieldname: "lost_reason_description",
+                label: "Lost Reason Description",
+                fieldtype: "Small Text",
+                reqd: 1,
+                depends_on: "eval:doc.mark_lost"
+            }
+        );
+    }
+
+    if (is_new) {
+        fields.push(
+            {
+                fieldname: "new_sec",
+                fieldtype: "Section Break",
+                label: "Next Activity Details",
+                depends_on: "eval:!doc.mark_lost"
+            },
+            {
+                fieldname: "new_category",
+                label: "Next Category",
+                fieldtype: "Select",
+                options: [
+                    "Initial Call",
+                    "Follow Up Call",
+                    "Offline Initial Meeting",
+                    "Offline Follow up Meeting",
+                    "Offline Sample Meeting",
+                    "Online Meeting",
+                    "Proposal/Quotation",
+                    "Order Closure",
+                    "Others"
+                ].join("\n"),
+                default: "Follow Up Call",
+                reqd: 0,
+                depends_on: "eval:!doc.mark_lost"
+            },
+            {
+                fieldname: "new_subject",
+                label: "Next Subject",
+                fieldtype: "Data",
+                reqd: 0,
+                depends_on: "eval:!doc.mark_lost"
+            },
+            {
+                fieldname: "new_starts_on",
+                label: "Next Followup Date",
+                fieldtype: "Datetime",
+                default: frappe.datetime.add_days(frappe.datetime.now_datetime(), 1),
+                reqd: 0,
+                depends_on: "eval:!doc.mark_lost"
+            },
+            {
+                fieldname: "new_assigned_to",
+                label: "Next Assigned To",
+                fieldtype: "Link",
+                options: "User",
+                default: frappe.session.user,
+                reqd: 0,
+                depends_on: "eval:!doc.mark_lost"
+            }
+        );
+    }
+
+    frappe.prompt(fields, (v) => {
+        if (v.mark_lost) {
+            if (!v.lost_reason || !v.lost_reason_description) {
+                frappe.msgprint("Please fill Lost Reason and Description");
+                return;
+            }
+            frappe.call({
+                method: "erp_dacsinc_custom.custom_lead.mark_lead_lost_backend",
+                args: {
+                    lead_name: refName,
+                    category: leadCategory,
+                    lost_reason: v.lost_reason,
+                    lost_reason_description: v.lost_reason_description,
+                    current_activity_id: frm.doc.name,
+                    completion_note: v.notes
+                },
+                callback: function(r) {
+                    if (!r.exc) {
+                        frappe.show_alert({message: "Lead marked as LOST", indicator: "red"});
+                        frm.reload_doc();
+                    }
+                }
+            });
+        } else {
+            if (is_new) {
+                if (!v.new_subject || !v.new_category || !v.new_starts_on || !v.new_assigned_to) {
+                    frappe.msgprint("Please fill all next activity details");
+                    return;
                 }
             }
-        });
+            frappe.call({
+                method: "frappe.client.set_value",
+                args: {
+                    doctype: "Event Activity",
+                    name: frm.doc.name,
+                    fieldname: { status: status, notes: v.notes, ends_on: status === "Completed" ? frappe.datetime.now_datetime() : null }
+                },
+                callback: () => {
+                    if (is_new) {
+                        frappe.call({
+                            method: "frappe.client.insert",
+                            args: {
+                                doc: {
+                                    doctype: "Event Activity",
+                                    reference_type: refType || '',
+                                    reference_name: refName || '',
+                                    subject: v.new_subject,
+                                    category: v.new_category,
+                                    starts_on: v.new_starts_on,
+                                    assigned_to: v.new_assigned_to,
+                                    status: "Open"
+                                }
+                            },
+                            callback: function(res) {
+                                if (res.message) {
+                                    frappe.show_alert({message: "Next Activity Created Successfully", indicator: "green"});
+                                    frm.reload_doc();
+                                }
+                            }
+                        });
+                    } else {
+                        frm.reload_doc();
+                    }
+                }
+            });
+        }
     }, __(title), __("Submit"));
 }
 

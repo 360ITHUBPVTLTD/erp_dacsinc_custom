@@ -188,6 +188,8 @@ def customer_before_insert(doc, method=None):
                 "allocated_percentage": allocation
             })
 
+        
+
 # def customer_after_insert(doc, method=None):
 #     """
 #     Logic for external updates and sharing AFTER the document is created.
