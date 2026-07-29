@@ -188,6 +188,8 @@ def customer_before_insert(doc, method=None):
                 "allocated_percentage": allocation
             })
 
+        
+
 # def customer_after_insert(doc, method=None):
 #     """
 #     Logic for external updates and sharing AFTER the document is created.
@@ -223,9 +225,14 @@ def customer_after_insert(doc, method=None):
         # 3. Handle Business Contact Status Update
         if lead_data and lead_data.custom_business_contacts:
             # Update the status of the linked Business Contact
-            frappe.db.set_value("Business Contacts", lead_data.custom_business_contacts, {
-                "status": "Existing Customer"
-            })
+            try:
+                bc_doc = frappe.get_doc("Business Contacts", lead_data.custom_business_contacts)
+                if bc_doc.status != "Existing Customer":
+                    bc_doc.status = "Existing Customer"
+                    bc_doc.flags.ignore_permissions = True
+                    bc_doc.save()
+            except Exception as e:
+                frappe.log_error(title="Failed to update Business Contact status during Customer creation", message=frappe.get_traceback())
             # Optional: Add a message for visibility
             # frappe.msgprint(f"Business Contact {lead_data.custom_business_contacts} updated to 'Existing Customer'")
 

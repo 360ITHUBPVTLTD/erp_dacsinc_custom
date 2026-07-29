@@ -14,6 +14,10 @@
   "crm_daily_report_section",
   "send_mail_for_daily",
   "to_mail_id",
+  "crm_report_emails_section",
+  "crm_daily_report_emails",
+  "crm_weekly_report_emails",
+  "crm_monthly_report_emails",
   "buying_settings_section",
   "allow_over_collecting_of_fg",
   "section_break_hbuh",
@@ -79,6 +83,29 @@
    "fieldname": "to_mail_id",
    "fieldtype": "Small Text",
    "label": "To Mail ID"
+  },
+  {
+   "fieldname": "crm_report_emails_section",
+   "fieldtype": "Section Break",
+   "label": "CRM Scheduled Report Email IDs"
+  },
+  {
+   "description": "Comma-separated email IDs to receive the Daily CRM Report (used by scheduler)",
+   "fieldname": "crm_daily_report_emails",
+   "fieldtype": "Small Text",
+   "label": "Daily Report Email IDs"
+  },
+  {
+   "description": "Comma-separated email IDs to receive the Weekly CRM Report (used by scheduler)",
+   "fieldname": "crm_weekly_report_emails",
+   "fieldtype": "Small Text",
+   "label": "Weekly Report Email IDs"
+  },
+  {
+   "description": "Comma-separated email IDs to receive the Monthly CRM Report (used by scheduler)",
+   "fieldname": "crm_monthly_report_emails",
+   "fieldtype": "Small Text",
+   "label": "Monthly Report Email IDs"
   },
   {
    "fieldname": "buying_settings_section",

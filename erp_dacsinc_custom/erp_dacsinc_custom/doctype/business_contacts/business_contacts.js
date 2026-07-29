@@ -80,6 +80,11 @@ frappe.ui.form.on("Business Contacts", {
 }).addClass("btn-primary");
     }
 }
+        if (frm.doc.lead_id) {
+            frm.add_custom_button(__('Go to Lead'), function() {
+                frappe.set_route('Form', 'Lead', frm.doc.lead_id);
+            });
+        }
     },
     country: function(frm) {
         frm.set_value('state', '');

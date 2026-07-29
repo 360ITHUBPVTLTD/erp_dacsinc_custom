@@ -48,7 +48,9 @@ app_include_css = "/assets/erp_dacsinc_custom/style.css?v=1.0.3"
 # page_js = {"page" : "public/js/file.js"}
 
 # include js in doctype views
-# doctype_js = {"Purchase Order" : "public/js/purchase_order.js"}
+doctype_js = {
+	"Lead": "public/js/lead.js"
+}
 doctype_list_js = {
 	"Lead": "public/js/lead_list.js"
 }
@@ -165,7 +167,8 @@ doc_events = {
     "Quotation": {
         "before_insert": "erp_dacsinc_custom.custom_script.before_insert",
         "on_submit": "erp_dacsinc_custom.custom_script.quotation_on_submit",
-        "validate": "erp_dacsinc_custom.custom_script.validate_non_zero_rate"
+        "validate": ["erp_dacsinc_custom.custom_script.validate_non_zero_rate",
+                        "erp_dacsinc_custom.custom_script.validate_quotation"]
         # "on_cancel": "erp_dacsinc_custom.custom_script.quotation_on_cancel"
     },
     "Sales Invoice": {

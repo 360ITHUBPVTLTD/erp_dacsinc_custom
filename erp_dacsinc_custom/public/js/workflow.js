@@ -13,17 +13,6 @@ class WorkflowOverride extends frappe.ui.form.States {
             // console.log("Available transitions:", transitions);
             this.frm.page.clear_actions_menu();
             transitions.forEach((d) => {
-                // 🔹 Restrict specific actions only for System Manager
-                const restricted_actions = ["Move to Pipeline", "Move to Order", "Move Back"];
-                const user_is_system_manager = frappe.user.has_role("System Manager");
-
-                if (
-                    restricted_actions.includes(d.action) &&
-                    !user_is_system_manager
-                ) {
-                    // Skip showing this transition if user is not System Manager
-                    return;
-                }
 
                 // console.log("Checking transition:", d.action);
                 if (frappe.user_roles.includes(d.allowed)) {
@@ -42,7 +31,7 @@ class WorkflowOverride extends frappe.ui.form.States {
 
 
                                     if (d.action === "Move to Order") {
-                                        frappe.prompt([ 
+                                        let p = frappe.prompt([ 
                                             {
                                                 fieldtype: 'Currency',
                                                 label: __('PO Value'),
@@ -61,7 +50,10 @@ class WorkflowOverride extends frappe.ui.form.States {
 
                                             });
 
-                                        }, __('Enter PO Value'));    // Title for the prompt
+                                        }, __('Enter PO Value'));
+                                        if (p && p.$wrapper) {
+                                            p.$wrapper.addClass('dac-wide-modal');
+                                        }    // Title for the prompt
                                     }
 
 
@@ -69,7 +61,7 @@ class WorkflowOverride extends frappe.ui.form.States {
 
 
                                     else if (d.action === "Lost Enquiry") {
-                                        frappe.prompt([
+                                        let p = frappe.prompt([
                                             {
                                                 fieldtype: 'Link',
                                                 options: 'Lost Enquiry Reasons',  // Corrected from 'Option' to 'options'
@@ -95,11 +87,14 @@ class WorkflowOverride extends frappe.ui.form.States {
 
                                             });
 
-                                        }, __('Enter Lost Enquiry Reason'));  // Title for the prompt
+                                        }, __('Enter Lost Enquiry Reason'));
+                                        if (p && p.$wrapper) {
+                                            p.$wrapper.addClass('dac-wide-modal');
+                                        }  // Title for the prompt
                                     }
    
                                     else if (d.action === "Lost Pipeline") {
-                                        frappe.prompt([
+                                        let p = frappe.prompt([
                                             {
                                                 fieldtype: 'Link',
                                                 options: 'Quotation Lost Reason',  // Corrected from 'Option' to 'options'
@@ -125,7 +120,10 @@ class WorkflowOverride extends frappe.ui.form.States {
 
                                             });
 
-                                        }, __('Enter Lost Pipeline'));  // Title for the prompt
+                                        }, __('Enter Lost Pipeline'));
+                                        if (p && p.$wrapper) {
+                                            p.$wrapper.addClass('dac-wide-modal');
+                                        }  // Title for the prompt
                                     }
                                     
 

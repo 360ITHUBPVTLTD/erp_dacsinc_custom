@@ -1782,114 +1782,357 @@ def make_quotation_custom(source_name, target_doc=None):
         # Optional: Fetch and set the Customer Name for display purposes
         doc.customer_name = frappe.db.get_value("Customer", lead.custom_lead_customer, "customer_name")
 
-    # 4. Set the Lead ID in the custom field on Quotation
-    doc.custom_lead_id = source_name
-
     return doc
-import frappe
-from frappe.utils import flt, getdate, get_last_day
-import datetime
-import frappe
-from frappe.utils import flt, getdate, get_last_day
+
 import datetime
 
 @frappe.whitelist()
-def get_target_vs_actual(from_date, to_date):
+def get_crm_dashboard_metadata():
+    """Return users, fiscal years, industries, sources, and current fiscal year for CRM Dashboard filters."""
+    users = frappe.db.sql("""
+        SELECT u.name, u.full_name
+        FROM `tabUser` u
+        JOIN `tabHas Role` hr ON hr.parent = u.name
+        WHERE u.enabled = 1 AND u.user_type = 'System User'
+          AND hr.role IN ('DAC CRM Head', 'DAC CRM')
+        GROUP BY u.name
+        ORDER BY u.full_name ASC
+    """, as_dict=True)
+    
+    fiscal_years = frappe.get_all("Fiscal Year", filters={"disabled": 0}, fields=["name"], order_by="year_start_date desc")
+    industries = frappe.get_all("Industry Type", fields=["name"], order_by="name asc")
+
+    # Fetch distinct lead sources from Lead Source doctype
+    sources = frappe.get_all("Lead Source", fields=["name"], order_by="name asc")
+    # Also grab any sources used in leads but not yet in Lead Source
+    db_sources = frappe.db.sql(
+        "SELECT DISTINCT source FROM `tabLead` WHERE source IS NOT NULL AND source != '' ORDER BY source ASC",
+        as_dict=1)
+    source_names = {s.name for s in sources}
+    for sr in db_sources:
+        if sr.source and sr.source not in source_names:
+            sources.append({"name": sr.source})
+            source_names.add(sr.source)
+    sources = sorted(sources, key=lambda x: x["name"])
+    
+    today_date = frappe.utils.today()
+    current_fy = frappe.db.get_value("Fiscal Year", {"year_start_date": ["<=", today_date], "year_end_date": [">=", today_date], "disabled": 0}, "name")
+    if not current_fy and fiscal_years:
+        current_fy = fiscal_years[0].name
+
+    all_users = frappe.db.get_all("User", fields=["name", "full_name"])
+    user_map = {u.name: u.full_name for u in all_users if u.full_name}
+
+    return {
+        "users": users,
+        "fiscal_years": fiscal_years,
+        "industries": industries,
+        "sources": sources,
+        "current_fiscal_year": current_fy,
+        "user_map": user_map
+    }
+
+@frappe.whitelist()
+def get_target_vs_actual(from_date=None, to_date=None, fiscal_year=None, month=None, user=None):
+    if fiscal_year and frappe.db.exists("Fiscal Year", fiscal_year):
+        fy_doc = frappe.db.get_value("Fiscal Year", fiscal_year, ["year_start_date", "year_end_date"], as_dict=1)
+        if fy_doc:
+            from_date = str(fy_doc.year_start_date)
+            to_date = str(fy_doc.year_end_date)
+            if month:
+                try:
+                    import calendar
+                    m_idx = int(month)
+                    fy_start = getdate(fy_doc.year_start_date)
+                    m_year = fy_start.year if m_idx >= fy_start.month else fy_start.year + 1
+                    from_date = f"{m_year}-{m_idx:02d}-01"
+                    last_day = calendar.monthrange(m_year, m_idx)[1]
+                    to_date = f"{m_year}-{m_idx:02d}-{last_day}"
+                except Exception:
+                    pass
+
+    if not from_date or not to_date:
+        fy_doc = frappe.db.get_value("Fiscal Year", "2025-2026", ["year_start_date", "year_end_date"], as_dict=1)
+        if not fy_doc:
+            fy_doc = frappe.db.get_value("Fiscal Year", {"disabled": 0}, ["year_start_date", "year_end_date"], order_by="year_start_date desc", as_dict=1)
+        if fy_doc:
+            from_date = str(fy_doc.year_start_date)
+            to_date = str(fy_doc.year_end_date)
+            if month:
+                try:
+                    import calendar
+                    m_idx = int(month)
+                    fy_start = getdate(fy_doc.year_start_date)
+                    m_year = fy_start.year if m_idx >= fy_start.month else fy_start.year + 1
+                    from_date = f"{m_year}-{m_idx:02d}-01"
+                    last_day = calendar.monthrange(m_year, m_idx)[1]
+                    to_date = f"{m_year}-{m_idx:02d}-{last_day}"
+                except Exception:
+                    pass
+        else:
+            from_date = "2025-04-01"
+            to_date = "2026-03-31"
+
     from_date_obj = getdate(from_date)
     to_date_obj = getdate(to_date)
     current_user = frappe.session.user
     
     # 1. Role-Based Filtering
     user_roles = frappe.get_roles(current_user)
-    sp_filters = {"enabled": 1}
-    if "DAC CRM Head" not in user_roles and "Administrator" not in user_roles:
+    sp_filters = {"enabled": 1, "is_group": 0}
+    
+    if user:
+        employee_id = frappe.db.get_value("Employee", {"user_id": user}, "name")
+        if employee_id:
+            sp_filters["employee"] = employee_id
+        else:
+            return {"year_start_date": str(from_date), "year_end_date": str(to_date), "data": []}
+    elif "DAC CRM Head" not in user_roles and "Administrator" not in user_roles:
         employees = frappe.get_all("Employee", filters={"user_id": current_user}, fields=["name"])
         employee_names = [e.name for e in employees]
         if not employee_names:
-            return []
+            return {"year_start_date": str(from_date), "year_end_date": str(to_date), "data": []}
         sp_filters["employee"] = ["in", employee_names]
 
     sales_persons = frappe.get_all("Sales Person", fields=["name", "sales_person_name"], filters=sp_filters)
-    if not sales_persons: return []
+    if not sales_persons: 
+        return {"year_start_date": str(from_date), "year_end_date": str(to_date), "data": []}
 
     data = []
 
-    for sp in sales_persons:
-        # Step: Determine the Fiscal Year and its true Start Date
-        # We find the target detail that covers the current 'to_date'
-        sp_targets = frappe.db.get_all("Target Detail", 
-                                       filters={"parent": sp.name}, 
-                                       fields=["fiscal_year", "target_amount", "distribution_id"])
+    if user and not month and len(sales_persons) == 1:
+        sp = sales_persons[0]
+        months_to_show = get_months_in_range(from_date_obj, to_date_obj)
+        sp_targets = frappe.db.get_all("Target Detail", filters={"parent": sp.name}, fields=["fiscal_year", "target_amount", "distribution_id"])
         
-        # If no target, skip
-        if not sp_targets: continue
-
-        # Identify the relevant Fiscal Year for the selected period
         active_fy = None
         for t in sp_targets:
             fy_doc = frappe.get_cached_doc("Fiscal Year", t.fiscal_year)
             if getdate(fy_doc.year_start_date) <= to_date_obj and getdate(fy_doc.year_end_date) >= from_date_obj:
                 active_fy = fy_doc
                 break
+                
+        fy_start_date = getdate(active_fy.year_start_date) if active_fy else from_date_obj
         
-        if not active_fy: continue
-        
-        # This is the dynamic start date (e.g., April 1st or July 1st)
-        fy_start_date = getdate(active_fy.year_start_date)
-
-        # --- A. PREVIOUS DEFICIT CALCULATION (From FY Start to Month-1) ---
-        prev_deficit = 0.0
+        running_bal = 0.0
         if from_date_obj > fy_start_date:
             hist_end = from_date_obj - datetime.timedelta(days=1)
             hist_months = get_months_in_range(fy_start_date, hist_end)
-            
-            running_bal = 0.0
             for m_name in hist_months:
-                # Determine date for the specific month in the loop
                 m_idx = list(calendar_months().values()).index(m_name) + 1
-                # Check if month is in the next calendar year relative to FY start
                 m_year = fy_start_date.year if m_idx >= fy_start_date.month else fy_start_date.year + 1
-                
                 m_start = datetime.date(m_year, m_idx, 1)
                 m_t = get_specific_target(sp.name, [m_name], m_start, get_last_day(m_start))
                 m_a = get_specific_actual(sp.name, m_start, get_last_day(m_start))
-                
                 running_bal += (m_a - m_t)
-                if running_bal > 0: running_bal = 0.0 # Rule: Surplus doesn't carry
+                if running_bal > 0: running_bal = 0.0
+                
+        for m_name in months_to_show:
+            m_idx = list(calendar_months().values()).index(m_name) + 1
+            m_year = fy_start_date.year if m_idx >= fy_start_date.month else fy_start_date.year + 1
+            m_start = datetime.date(m_year, m_idx, 1)
+            m_end = get_last_day(m_start)
+            
+            if m_start < from_date_obj: m_start = from_date_obj
+            if m_end > to_date_obj: m_end = to_date_obj
+            
+            curr_target = get_specific_target(sp.name, [m_name], m_start, m_end)
+            curr_actual = get_specific_actual(sp.name, m_start, m_end)
+            
+            ytd_months_list = get_months_in_range(fy_start_date, m_end)
+            ytd_range_label = f"{fy_start_date.strftime('%b')} to {m_end.strftime('%b')}"
+            ytd_target = get_specific_target(sp.name, ytd_months_list, fy_start_date, m_end)
+            
             prev_deficit = running_bal
-
-        # --- B. CURRENT MONTH DATA ---
-        curr_months = get_months_in_range(from_date_obj, to_date_obj)
-        curr_target = get_specific_target(sp.name, curr_months, from_date_obj, to_date_obj)
-        curr_actual = get_specific_actual(sp.name, from_date_obj, to_date_obj)
-        curr_variance = curr_actual - curr_target
-        curr_ach = (curr_actual / curr_target * 100) if curr_target > 0 else 0.0
-
-        # --- C. OVERALL YTD DATA (FY START TO SELECTED MONTH) ---
-        ytd_months_list = get_months_in_range(fy_start_date, to_date_obj)
-        ytd_range_label = f"{fy_start_date.strftime('%b')} to {to_date_obj.strftime('%b')}"
-        
-        ytd_target = get_specific_target(sp.name, ytd_months_list, fy_start_date, to_date_obj)
-        overall_variance = prev_deficit + curr_variance
-        
-        # Overall Achievement: Actual / (Target + Needed to cover deficit)
-        total_burden = curr_target + abs(prev_deficit)
-        overall_ach = (curr_actual / total_burden * 100) if total_burden > 0 else 0.0
-
-        if curr_target > 0 or curr_actual > 0 or prev_deficit < 0:
+            curr_variance = curr_actual - curr_target
+            curr_ach = (curr_actual / curr_target * 100) if curr_target > 0 else 0.0
+            overall_variance = prev_deficit + curr_variance
+            total_burden = curr_target + abs(prev_deficit)
+            overall_ach = (curr_actual / total_burden * 100) if total_burden > 0 else 0.0
+            
+            running_bal += curr_variance
+            if running_bal > 0: running_bal = 0.0
+            
+            data.append({
+                "sales_person": f"{m_name} {m_year}",
+                "sales_person_name": f"{m_name} {m_year}",
+                "full_name": f"{m_name} {m_year}",
+                "target": curr_target,
+                "target_amount": curr_target,
+                "monthly_target": curr_target,
+                "annual_target": ytd_target,
+                "actual": curr_actual,
+                "actual_closed": curr_actual,
+                "actual_revenue": curr_actual,
+                "curr_variance": curr_variance,
+                "variance_amount": curr_variance,
+                "curr_achievement": curr_ach,
+                "achievement_percent": curr_ach,
+                "ytd_label": ytd_range_label,
+                "ytd_target": ytd_target,
+                "overall_variance": overall_variance,
+                "overall_achievement": overall_ach
+            })
+            
+    else:
+        for sp in sales_persons:
+            curr_actual = get_specific_actual(sp.name, from_date_obj, to_date_obj)
+            sp_targets = frappe.db.get_all("Target Detail", filters={"parent": sp.name}, fields=["fiscal_year", "target_amount", "distribution_id"])
+            
+            active_fy = None
+            curr_target = 0.0
+            ytd_target = 0.0
+            prev_deficit = 0.0
+            ytd_range_label = ""
+    
+            for t in sp_targets:
+                fy_doc = frappe.get_cached_doc("Fiscal Year", t.fiscal_year)
+                if getdate(fy_doc.year_start_date) <= to_date_obj and getdate(fy_doc.year_end_date) >= from_date_obj:
+                    active_fy = fy_doc
+                    break
+            
+            if active_fy:
+                fy_start_date = getdate(active_fy.year_start_date)
+    
+                if from_date_obj > fy_start_date:
+                    hist_end = from_date_obj - datetime.timedelta(days=1)
+                    hist_months = get_months_in_range(fy_start_date, hist_end)
+                    running_bal = 0.0
+                    for m_name in hist_months:
+                        m_idx = list(calendar_months().values()).index(m_name) + 1
+                        m_year = fy_start_date.year if m_idx >= fy_start_date.month else fy_start_date.year + 1
+                        m_start = datetime.date(m_year, m_idx, 1)
+                        m_t = get_specific_target(sp.name, [m_name], m_start, get_last_day(m_start))
+                        m_a = get_specific_actual(sp.name, m_start, get_last_day(m_start))
+                        running_bal += (m_a - m_t)
+                        if running_bal > 0: running_bal = 0.0
+                    prev_deficit = running_bal
+    
+                curr_months = get_months_in_range(from_date_obj, to_date_obj)
+                curr_target = get_specific_target(sp.name, curr_months, from_date_obj, to_date_obj)
+                ytd_months_list = get_months_in_range(fy_start_date, to_date_obj)
+                ytd_range_label = f"{fy_start_date.strftime('%b')} to {to_date_obj.strftime('%b')}"
+                ytd_target = get_specific_target(sp.name, ytd_months_list, fy_start_date, to_date_obj)
+    
+            curr_variance = curr_actual - curr_target
+            curr_ach = (curr_actual / curr_target * 100) if curr_target > 0 else 0.0
+            overall_variance = prev_deficit + curr_variance
+            total_burden = curr_target + abs(prev_deficit)
+            overall_ach = (curr_actual / total_burden * 100) if total_burden > 0 else 0.0
+    
             data.append({
                 "sales_person": sp.sales_person_name,
+                "sales_person_name": sp.sales_person_name,
+                "full_name": sp.sales_person_name,
                 "target": curr_target,
+                "target_amount": curr_target,
+                "monthly_target": curr_target,
+                "annual_target": ytd_target,
                 "actual": curr_actual,
+                "actual_closed": curr_actual,
+                "actual_revenue": curr_actual,
                 "curr_variance": curr_variance,
+                "variance_amount": curr_variance,
                 "curr_achievement": curr_ach,
+                "achievement_percent": curr_ach,
                 "ytd_label": ytd_range_label,
                 "ytd_target": ytd_target,
                 "overall_variance": overall_variance,
                 "overall_achievement": overall_ach
             })
 
+    return {
+        "year_start_date": str(from_date),
+        "year_end_date": str(to_date),
+        "data": data
+    }
+
+
+@frappe.whitelist()
+def get_monthly_target_vs_actual(fiscal_year=None, user=None):
+    if not fiscal_year:
+        fiscal_year = "2025-2026"
+        
+    fy_doc = frappe.db.get_value("Fiscal Year", fiscal_year, ["year_start_date", "year_end_date"], as_dict=1)
+    if not fy_doc:
+        fy_doc = frappe.db.get_value("Fiscal Year", {"disabled": 0}, ["year_start_date", "year_end_date"], order_by="year_start_date desc", as_dict=1)
+        
+    if not fy_doc:
+        return []
+        
+    from_date = fy_doc.year_start_date
+    to_date = fy_doc.year_end_date
+    
+    current_user = frappe.session.user
+    user_roles = frappe.get_roles(current_user)
+    sp_filters = {"enabled": 1, "is_group": 0}
+    
+    if user:
+        employee_id = frappe.db.get_value("Employee", {"user_id": user}, "name")
+        if employee_id:
+            sp_filters["employee"] = employee_id
+        else:
+            return []
+    elif "DAC CRM Head" not in user_roles and "Administrator" not in user_roles:
+        employees = frappe.get_all("Employee", filters={"user_id": current_user}, fields=["name"])
+        employee_names = [e.name for e in employees]
+        if not employee_names:
+            return []
+        sp_filters["employee"] = ["in", employee_names]
+        
+    sales_persons = frappe.get_all("Sales Person", fields=["name", "sales_person_name"], filters=sp_filters)
+    if not sales_persons:
+        return []
+        
+    from_date_obj = getdate(from_date)
+    to_date_obj = getdate(to_date)
+    months_to_show = get_months_in_range(from_date_obj, to_date_obj)
+    
+    data = []
+    running_target = 0.0
+    running_actual = 0.0
+    
+    for m_name in months_to_show:
+        m_idx = list(calendar_months().values()).index(m_name) + 1
+        m_year = from_date_obj.year if m_idx >= from_date_obj.month else from_date_obj.year + 1
+        m_start = datetime.date(m_year, m_idx, 1)
+        m_end = get_last_day(m_start)
+        
+        month_target = 0.0
+        month_actual = 0.0
+        
+        for sp in sales_persons:
+            month_target += get_specific_target(sp.name, [m_name], m_start, m_end)
+            month_actual += get_specific_actual(sp.name, m_start, m_end)
+            
+        month_variance = month_actual - month_target
+        month_ach = (month_actual / month_target * 100) if month_target > 0 else 0.0
+        
+        running_target += month_target
+        running_actual += month_actual
+        cum_variance = running_actual - running_target
+        cum_ach = (running_actual / running_target * 100) if running_target > 0 else 0.0
+        
+        data.append({
+            "month": f"{m_name} {m_year}",
+            "target": month_target,
+            "actual": month_actual,
+            "variance": month_variance,
+            "ach_pct": month_ach,
+            "cum_target": running_target,
+            "cum_actual": running_actual,
+            "cum_variance": cum_variance,
+            "cum_ach_pct": cum_ach
+        })
+        
     return data
+
+
+@frappe.whitelist()
+def get_target_vs_actual_data(fiscal_year=None, from_date=None, to_date=None):
+    """Whitelisted alias for Target vs Actual analysis endpoint."""
+    return get_target_vs_actual(from_date=from_date, to_date=to_date, fiscal_year=fiscal_year)
+
 
 def get_specific_target(sp_name, month_names, f_date, t_date):
     target_val = 0.0
@@ -2142,93 +2385,2383 @@ def validate_lead(doc, method=None):
 
 
 import frappe
-from frappe.utils import flt
+import datetime
+from frappe.utils import flt, getdate, today, get_last_day
+
+def parse_period_and_dates(period=None, fiscal_year=None, from_date=None, to_date=None, month=None):
+    """Resolve period, fiscal_year, month, and custom dates to explicit from_date and to_date."""
+    if from_date and to_date:
+        return str(from_date), str(to_date)
+
+    if period and str(period).startswith("fy:"):
+        fiscal_year = str(period)[3:]
+        period = None
+
+    today_date = getdate(today())
+
+    if month:
+        try:
+            m_str = str(month).strip()
+            # Case 1: YYYY-MM or YYYY-M
+            if '-' in m_str and len(m_str) >= 6:
+                parts = m_str.split('-')
+                yr = int(parts[0])
+                m = int(parts[1])
+                start_d = datetime.date(yr, m, 1)
+                last_d = get_last_day(start_d)
+                return start_d.strftime("%Y-%m-%d"), last_d.strftime("%Y-%m-%d")
+            # Case 2: "Month Year" like "September 2025" or "Sep 2025"
+            import re
+            m_match = re.search(r'([A-Za-z]+)\s*(\d{4})', m_str)
+            if m_match:
+                m_name = m_match.group(1).lower()
+                yr = int(m_match.group(2))
+                months_map = {
+                    'january':1, 'jan':1, 'february':2, 'feb':2, 'march':3, 'mar':3,
+                    'april':4, 'apr':4, 'may':5, 'june':6, 'jun':6, 'july':7, 'jul':7,
+                    'august':8, 'aug':8, 'september':9, 'sep':9, 'sept':9, 'october':10, 'oct':10,
+                    'november':11, 'nov':11, 'december':12, 'dec':12
+                }
+                m = months_map.get(m_name, 1)
+                start_d = datetime.date(yr, m, 1)
+                last_d = get_last_day(start_d)
+                return start_d.strftime("%Y-%m-%d"), last_d.strftime("%Y-%m-%d")
+            # Case 3: integer month "9" or "09"
+            if m_str.isdigit():
+                m = int(m_str)
+                fy_start_year = int(str(fiscal_year).split('-')[0]) if (fiscal_year and '-' in str(fiscal_year)) else today_date.year
+                year = (fy_start_year + 1) if m in (1, 2, 3) else fy_start_year
+                start_d = datetime.date(year, m, 1)
+                last_d = get_last_day(start_d)
+                return start_d.strftime("%Y-%m-%d"), last_d.strftime("%Y-%m-%d")
+        except Exception:
+            pass
+
+    if not fiscal_year:
+        if period == "this_year":
+            fy_s = (today_date.year - 1) if today_date.month in (1, 2, 3) else today_date.year
+            fiscal_year = f"{fy_s}-{fy_s + 1}"
+        elif period == "last_year":
+            fy_s = (today_date.year - 2) if today_date.month in (1, 2, 3) else (today_date.year - 1)
+            fiscal_year = f"{fy_s}-{fy_s + 1}"
+
+    if period:
+        if period == "all":
+            return None, None
+        today_date = getdate(today())
+        if period == "today":
+            t_str = today_date.strftime("%Y-%m-%d")
+            return t_str, t_str
+        elif period == "this_week":
+            start_w = today_date - datetime.timedelta(days=today_date.weekday())
+            end_w = start_w + datetime.timedelta(days=6)
+            return start_w.strftime("%Y-%m-%d"), end_w.strftime("%Y-%m-%d")
+        elif period == "this_month":
+            return today_date.replace(day=1).strftime("%Y-%m-%d"), get_last_day(today_date).strftime("%Y-%m-%d")
+        elif period == "last_month":
+            first_this = today_date.replace(day=1)
+            last_prev = first_this - datetime.timedelta(days=1)
+            return last_prev.replace(day=1).strftime("%Y-%m-%d"), last_prev.strftime("%Y-%m-%d")
+        elif period == "this_quarter":
+            m_curr = today_date.month
+            q_start_month = 3 * ((m_curr - 1) // 3) + 1
+            start_d = today_date.replace(month=q_start_month, day=1)
+            q_end_month = q_start_month + 2
+            last_d = get_last_day(today_date.replace(month=q_end_month, day=1))
+            return start_d.strftime("%Y-%m-%d"), last_d.strftime("%Y-%m-%d")
+        elif period == "last_quarter":
+            m_curr = today_date.month
+            q_start_month = 3 * ((m_curr - 1) // 3) + 1
+            first_this_q = today_date.replace(month=q_start_month, day=1)
+            last_prev_q = first_this_q - datetime.timedelta(days=1)
+            prev_m_curr = last_prev_q.month
+            prev_q_start_month = 3 * ((prev_m_curr - 1) // 3) + 1
+            start_d = last_prev_q.replace(month=prev_q_start_month, day=1)
+            return start_d.strftime("%Y-%m-%d"), last_prev_q.strftime("%Y-%m-%d")
+        elif period == "this_year":
+            fy_start_year = (today_date.year - 1) if today_date.month in (1, 2, 3) else today_date.year
+            return f"{fy_start_year}-04-01", f"{fy_start_year + 1}-03-31"
+        elif period == "last_year":
+            fy_start_year = (today_date.year - 2) if today_date.month in (1, 2, 3) else (today_date.year - 1)
+            return f"{fy_start_year}-04-01", f"{fy_start_year + 1}-03-31"
+
+    if fiscal_year and frappe.db.exists("Fiscal Year", fiscal_year):
+        fy_doc = frappe.db.get_value("Fiscal Year", fiscal_year, ["year_start_date", "year_end_date"], as_dict=1)
+        if fy_doc:
+            return str(fy_doc.year_start_date), str(fy_doc.year_end_date)
+
+    return from_date, to_date
+
+
+# When a Business Contact moved to 'Converted to Lead'. Used by BOTH the
+# Contact -> Lead count and its drilldown; if the two ever use different
+# expressions, a period can show a count whose drilldown comes back empty.
+# Only records currently in 'Converted to Lead' are measured, so no
+# 'Existing Customer' history is read here.
+BC_CONVERSION_DATE_SQL = """
+        DATE(COALESCE(
+            (SELECT MIN(sh.updated_at) FROM `tabLead Status Change History` sh
+             WHERE sh.parent = `tabBusiness Contacts`.name
+               AND sh.parenttype = 'Business Contacts'
+               AND sh.parentfield = 'contact_status_change_history'
+               AND sh.new_status = 'Converted to Lead'),
+            modified,
+            creation
+        ))
+    """
+
+
+# Contact -> Lead counts only contacts whose status is 'Converted to Lead'.
+# 'Existing Customer' is deliberately out of scope for conversion: those records
+# are not evaluated at all, and their history is not consulted. Conversion
+# therefore concerns only the Open -> Converted to Lead move.
+BC_CONVERTED_COND_SQL = """
+        (`tabBusiness Contacts`.status = 'Converted to Lead')
+    """
+
+
+# When a Lead first transitioned to Order.
+# A lead can cycle (Order -> Lost -> reopened -> Order again), so the child table
+# holds several 'Order' rows for it; DAC-LEAD-0730 has five spanning three months.
+# Taking MIN collapses those to one conversion event per lead, so no lead is
+# counted twice and its period is deterministic. Used by both the Lead -> Order
+# count and its drilldown.
+LEAD_ORDER_CONV_DATE_SQL = """
+        (SELECT DATE(MIN(sh.updated_at)) FROM `tabLead Status Change History` sh
+         WHERE sh.parent = l.name AND sh.parenttype = 'Lead'
+           AND sh.parentfield = 'custom_lead_status_change_history'
+           AND sh.new_status = 'Order')
+    """
+
+
+def period_sql_for(date_expr, period_type):
+    """(label, sort, group) SQL for bucketing date_expr by the chosen interval."""
+    if period_type == "daily":
+        return (f"DATE_FORMAT({date_expr}, '%%d-%%b-%%Y (%%a)')",
+                f"DATE_FORMAT({date_expr}, '%%Y-%%m-%%d')",
+                f"DATE_FORMAT({date_expr}, '%%Y-%%m-%%d')")
+    if period_type == "weekly":
+        return (f"CONCAT('Week ', WEEK({date_expr}, 1), ' (', "
+                f"DATE_FORMAT(MIN(DATE_SUB(DATE({date_expr}), INTERVAL WEEKDAY({date_expr}) DAY)), '%%d-%%b-%%Y (%%a)'), "
+                f"' to ', DATE_FORMAT(MIN(DATE_ADD(DATE_SUB(DATE({date_expr}), INTERVAL WEEKDAY({date_expr}) DAY), "
+                f"INTERVAL 6 DAY)), '%%d-%%b-%%Y (%%a)'), ')')",
+                f"CONCAT(YEAR({date_expr}), '-', LPAD(WEEK({date_expr}, 1), 2, '0'))",
+                f"YEAR({date_expr}), WEEK({date_expr}, 1)")
+    return (f"CONCAT(MONTHNAME({date_expr}), ' ', YEAR({date_expr}))",
+            f"CONCAT(CASE WHEN MONTH({date_expr}) >= 4 THEN YEAR({date_expr}) ELSE YEAR({date_expr}) - 1 END, "
+            f"'-', LPAD(CASE WHEN MONTH({date_expr}) >= 4 THEN MONTH({date_expr}) - 3 "
+            f"ELSE MONTH({date_expr}) + 9 END, 2, '0'))",
+            f"YEAR({date_expr}), MONTH({date_expr})")
+
+
+def as_filter_list(value):
+    """Normalise a multiselect dashboard filter into a list of values.
+
+    Accepts a list, a JSON array string (frappe.call serialises arrays that way),
+    or a comma-separated string. Returns [] when nothing is selected (= no filter).
+    """
+    if not value:
+        return []
+    if isinstance(value, (list, tuple, set)):
+        return [str(v).strip() for v in value if str(v).strip()]
+    text = str(value).strip()
+    if text.startswith("["):
+        try:
+            parsed = json.loads(text)
+            if isinstance(parsed, list):
+                return [str(v).strip() for v in parsed if str(v).strip()]
+        except Exception:
+            pass
+    return [v.strip() for v in text.split(",") if v.strip()]
+
+
+def build_in_clause(values, prefix, column, params):
+    """Return ' AND <column> IN (%(prefix_0)s, ...) ' and load params. '' if no values."""
+    if not values:
+        return ""
+    placeholders = ",".join(["%({}_{})s".format(prefix, i) for i in range(len(values))])
+    for i, v in enumerate(values):
+        params["{}_{}".format(prefix, i)] = v
+    return " AND {} IN ({}) ".format(column, placeholders)
+
 
 @frappe.whitelist()
-def get_tabular_dashboard_data(from_date=None, to_date=None, user=None, industry=None):
+def get_tabular_dashboard_data(from_date=None, to_date=None, user=None, industry=None, source=None, period_type="monthly", fiscal_year=None, period=None, month=None, **kwargs):
+    from_date, to_date = parse_period_and_dates(period, fiscal_year, from_date, to_date, month=month or kwargs.get("month"))
+
     # Determine the User Filter based on permissions
     is_head = "DAC CRM Head" in frappe.get_roles()
     effective_user = user if (is_head and user) else (None if (is_head and not user) else frappe.session.user)
 
-    params = {"sd": from_date, "ed": to_date, "usr": effective_user, "ind": industry}
+    # Multiselect filters (list, JSON array string, or comma-separated string)
+    industry_list = as_filter_list(industry)
+    source_list = as_filter_list(source)
+
+    params = {"sd": from_date, "ed": to_date, "usr": effective_user}
     
-    # Filter String building
-    l_filters = " WHERE docstatus < 2 "
-    c_filters = " WHERE docstatus < 2 "
-    
+    where_lead = " WHERE l.docstatus < 2 "
+    where_cont = " WHERE docstatus < 2 "
+
     if effective_user:
-        l_filters += " AND lead_owner = %(usr)s "
-        c_filters += " AND assign_to = %(usr)s "
-    if industry:
-        l_filters += " AND industry = %(ind)s "
-        c_filters += " AND industry = %(ind)s "
+        where_lead += " AND l.lead_owner = %(usr)s "
+        where_cont += " AND assign_to = %(usr)s "
+    where_lead += build_in_clause(industry_list, "ind", "l.industry", params)
+    where_cont += build_in_clause(industry_list, "ind", "industry", params)
+    where_lead += build_in_clause(source_list, "src", "l.source", params)
+    where_cont += build_in_clause(source_list, "src", "source", params)
 
-    # UPDATED DATE FILTER LOGIC: Using DATE(creation) to include the entire end day
-    if from_date and to_date:
-        l_filters += " AND DATE(creation) BETWEEN %(sd)s AND %(ed)s "
-        c_filters += " AND DATE(creation) BETWEEN %(sd)s AND %(ed)s "
-
-    # FISCAL YEAR SORT LOGIC
-    fiscal_logic = """
-        CASE WHEN MONTH(creation) >= 4 
-             THEN YEAR(creation) ELSE YEAR(creation) - 1 END as f_year,
-        CASE WHEN MONTH(creation) >= 4 
-             THEN MONTH(creation) - 3 ELSE MONTH(creation) + 9 END as f_sort
+    lead_action_date = """
+        CASE
+            WHEN l.custom_lead_category = 'Enquiry' THEN DATE(l.creation)
+            ELSE COALESCE(
+                (SELECT DATE(MAX(sh.updated_at)) FROM `tabLead Status Change History` sh
+                 WHERE sh.parent = l.name AND sh.parenttype = 'Lead'
+                   AND sh.parentfield = 'custom_lead_status_change_history'
+                   AND sh.new_status = l.custom_lead_category),
+                DATE(l.creation)
+            )
+        END
     """
 
-    # --- LEAD LOGIC ---
-    leads = frappe.db.sql(f"""
+    contact_action_date = """
+        CASE
+            WHEN status = 'Open' THEN DATE(creation)
+            WHEN status = 'Converted to Lead' THEN DATE(COALESCE(
+                (SELECT MAX(sh.updated_at) FROM `tabLead Status Change History` sh
+                 WHERE sh.parent = `tabBusiness Contacts`.name AND sh.parenttype = 'Business Contacts' AND sh.parentfield = 'contact_status_change_history' AND sh.new_status = 'Converted to Lead'),
+                modified,
+                creation
+            ))
+            WHEN status = 'Existing Customer' THEN DATE(COALESCE(
+                (SELECT MAX(sh.updated_at) FROM `tabLead Status Change History` sh
+                 WHERE sh.parent = `tabBusiness Contacts`.name AND sh.parenttype = 'Business Contacts' AND sh.parentfield = 'contact_status_change_history' AND sh.new_status = 'Existing Customer'),
+                modified,
+                creation
+            ))
+            ELSE DATE(modified)
+        END
+    """
+
+    if from_date and to_date:
+        where_lead_creation = f" AND ({lead_action_date}) BETWEEN %(sd)s AND %(ed)s "
+        where_cont += f" AND ({contact_action_date}) BETWEEN %(sd)s AND %(ed)s "
+    else:
+        where_lead_creation = ""
+
+    # Grouping expressions
+    lead_date_expr = f"({lead_action_date})"
+    contact_date_expr = f"({contact_action_date})"
+    if period_type == "daily":
+        p_label_hist = "DATE_FORMAT(sh.updated_at, '%%d-%%b-%%Y (%%a)')"
+        p_sort_hist = "DATE_FORMAT(sh.updated_at, '%%Y-%%m-%%d')"
+        p_group_hist = "DATE_FORMAT(sh.updated_at, '%%Y-%%m-%%d')"
+
+        p_label_lead = f"DATE_FORMAT({lead_date_expr}, '%%d-%%b-%%Y (%%a)')"
+        p_sort_lead = f"DATE_FORMAT({lead_date_expr}, '%%Y-%%m-%%d')"
+        p_group_lead = f"DATE_FORMAT({lead_date_expr}, '%%Y-%%m-%%d')"
+
+        p_label_cont = f"DATE_FORMAT({contact_date_expr}, '%%d-%%b-%%Y (%%a)')"
+        p_sort_cont = f"DATE_FORMAT({contact_date_expr}, '%%Y-%%m-%%d')"
+        p_group_cont = f"DATE_FORMAT({contact_date_expr}, '%%Y-%%m-%%d')"
+    elif period_type == "weekly":
+        p_label_hist = "CONCAT('Week ', WEEK(sh.updated_at, 1), ' (', DATE_FORMAT(MIN(DATE_SUB(DATE(sh.updated_at), INTERVAL WEEKDAY(sh.updated_at) DAY)), '%%d-%%b-%%Y (%%a)'), ' to ', DATE_FORMAT(MIN(DATE_ADD(DATE_SUB(DATE(sh.updated_at), INTERVAL WEEKDAY(sh.updated_at) DAY), INTERVAL 6 DAY)), '%%d-%%b-%%Y (%%a)'), ')') "
+        p_sort_hist = "CONCAT(YEAR(sh.updated_at), '-', LPAD(WEEK(sh.updated_at, 1), 2, '0'))"
+        p_group_hist = "YEAR(sh.updated_at), WEEK(sh.updated_at, 1)"
+
+        p_label_lead = f"CONCAT('Week ', WEEK({lead_date_expr}, 1), ' (', DATE_FORMAT(MIN(DATE_SUB(DATE({lead_date_expr}), INTERVAL WEEKDAY({lead_date_expr}) DAY)), '%%d-%%b-%%Y (%%a)'), ' to ', DATE_FORMAT(MIN(DATE_ADD(DATE_SUB(DATE({lead_date_expr}), INTERVAL WEEKDAY({lead_date_expr}) DAY), INTERVAL 6 DAY)), '%%d-%%b-%%Y (%%a)'), ')') "
+        p_sort_lead = f"CONCAT(YEAR({lead_date_expr}), '-', LPAD(WEEK({lead_date_expr}, 1), 2, '0'))"
+        p_group_lead = f"YEAR({lead_date_expr}), WEEK({lead_date_expr}, 1)"
+
+        p_label_cont = f"CONCAT('Week ', WEEK({contact_date_expr}, 1), ' (', DATE_FORMAT(MIN(DATE_SUB(DATE({contact_date_expr}), INTERVAL WEEKDAY({contact_date_expr}) DAY)), '%%d-%%b-%%Y (%%a)'), ' to ', DATE_FORMAT(MIN(DATE_ADD(DATE_SUB(DATE({contact_date_expr}), INTERVAL WEEKDAY({contact_date_expr}) DAY), INTERVAL 6 DAY)), '%%d-%%b-%%Y (%%a)'), ')') "
+        p_sort_cont = f"CONCAT(YEAR({contact_date_expr}), '-', LPAD(WEEK({contact_date_expr}, 1), 2, '0'))"
+        p_group_cont = f"YEAR({contact_date_expr}), WEEK({contact_date_expr}, 1)"
+    else: # monthly
+        p_label_hist = "CONCAT(MONTHNAME(sh.updated_at), ' ', YEAR(sh.updated_at))"
+        p_sort_hist = "CONCAT(CASE WHEN MONTH(sh.updated_at) >= 4 THEN YEAR(sh.updated_at) ELSE YEAR(sh.updated_at) - 1 END, '-', LPAD(CASE WHEN MONTH(sh.updated_at) >= 4 THEN MONTH(sh.updated_at) - 3 ELSE MONTH(sh.updated_at) + 9 END, 2, '0'))"
+        p_group_hist = "YEAR(sh.updated_at), MONTH(sh.updated_at)"
+
+        p_label_lead = f"CONCAT(MONTHNAME({lead_date_expr}), ' ', YEAR({lead_date_expr}))"
+        p_sort_lead = f"CONCAT(CASE WHEN MONTH({lead_date_expr}) >= 4 THEN YEAR({lead_date_expr}) ELSE YEAR({lead_date_expr}) - 1 END, '-', LPAD(CASE WHEN MONTH({lead_date_expr}) >= 4 THEN MONTH({lead_date_expr}) - 3 ELSE MONTH({lead_date_expr}) + 9 END, 2, '0'))"
+        p_group_lead = f"YEAR({lead_date_expr}), MONTH({lead_date_expr})"
+
+        p_label_cont = f"CONCAT(MONTHNAME({contact_date_expr}), ' ', YEAR({contact_date_expr}))"
+        p_sort_cont = f"CONCAT(CASE WHEN MONTH({contact_date_expr}) >= 4 THEN YEAR({contact_date_expr}) ELSE YEAR({contact_date_expr}) - 1 END, '-', LPAD(CASE WHEN MONTH({contact_date_expr}) >= 4 THEN MONTH({contact_date_expr}) - 3 ELSE MONTH({contact_date_expr}) + 9 END, 2, '0'))"
+        p_group_cont = f"YEAR({contact_date_expr}), MONTH({contact_date_expr})"
+
+    # 1. Lead Data grouped by period
+    lead_creation_date_where = where_lead_creation
+
+    lead_created_data = frappe.db.sql(f"""
         SELECT 
-            MONTHNAME(creation) as m_name, YEAR(creation) as m_year,
-            {fiscal_logic},
-            custom_lead_category as cat, COUNT(name) as count,
-            SUM(CASE WHEN custom_lead_category = 'Order' THEN IFNULL(custom_po_value, 0) ELSE IFNULL(custom_expected_revenue, 0) END) as val
-        FROM `tabLead` {l_filters}
-        GROUP BY f_year, f_sort, m_name, cat 
-        ORDER BY f_year ASC, f_sort ASC
+            {p_label_lead} as label,
+            {p_sort_lead} as f_sort,
+            DATE_FORMAT(({lead_action_date}), '%%Y-%%m') as ym_num,
+            MONTH({lead_action_date}) as m_num,
+            MIN(DATE({lead_action_date})) as row_from_date,
+            MAX(DATE({lead_action_date})) as row_to_date,
+            SUM(CASE WHEN l.custom_lead_category = 'Enquiry' THEN 1 ELSE 0 END) as enq_c,
+            SUM(CASE WHEN l.custom_lead_category = 'Enquiry' THEN COALESCE(l.custom_expected_revenue, 0) ELSE 0 END) as enq_v,
+            SUM(CASE WHEN l.custom_lead_category = 'Pipeline' THEN 1 ELSE 0 END) as pipe_c,
+            SUM(CASE WHEN l.custom_lead_category = 'Pipeline' THEN COALESCE(l.custom_expected_revenue, 0) ELSE 0 END) as pipe_v,
+            SUM(CASE WHEN l.custom_lead_category = 'Order' THEN 1 ELSE 0 END) as ord_c,
+            SUM(CASE WHEN l.custom_lead_category = 'Order' THEN COALESCE(l.custom_po_value, 0) ELSE 0 END) as ord_v,
+            SUM(CASE WHEN l.custom_lead_category = 'Lost Enquiry' THEN 1 ELSE 0 END) as lenq_c,
+            SUM(CASE WHEN l.custom_lead_category = 'Lost Enquiry' THEN COALESCE(l.custom_expected_revenue, 0) ELSE 0 END) as lenq_v,
+            SUM(CASE WHEN l.custom_lead_category = 'Lost Pipeline' THEN 1 ELSE 0 END) as lpipe_c,
+            SUM(CASE WHEN l.custom_lead_category = 'Lost Pipeline' THEN COALESCE(l.custom_expected_revenue, 0) ELSE 0 END) as lpipe_v
+        FROM `tabLead` l
+        {where_lead} {lead_creation_date_where}
+        GROUP BY {p_group_lead} ORDER BY f_sort ASC
     """, params, as_dict=1)
 
-    lead_map = {}
-    lt = {"enq_c":0,"enq_v":0,"pipe_c":0,"pipe_v":0,"ord_c":0,"ord_v":0,"lenq_c":0,"lenq_v":0,"lpipe_c":0,"lpipe_v":0}
+    # Populate Lead Data
+    lead_period_map = {}
+    for r in lead_created_data:
+        key = r.label
+        if key not in lead_period_map:
+            lead_period_map[key] = {
+                "label": key, "f_sort": str(r.f_sort), "m_num": str(r.ym_num or r.label or ''),
+                "row_from_date": str(r.row_from_date) if r.row_from_date else '',
+                "row_to_date": str(r.row_to_date) if r.row_to_date else '',
+                "enq_c": 0, "enq_v": 0.0, "pipe_c": 0, "pipe_v": 0.0, "ord_c": 0, "ord_v": 0.0,
+                "lenq_c": 0, "lenq_v": 0.0, "lpipe_c": 0, "lpipe_v": 0.0,
+                "conv_bc_to_lead": 0, "conv_lead_to_order": 0, "convert_to": 0
+            }
+        p = lead_period_map[key]
+        p["enq_c"] += int(r.enq_c or 0)
+        p["enq_v"] += float(r.enq_v or 0.0)
+        p["pipe_c"] += int(r.pipe_c or 0)
+        p["pipe_v"] += float(r.pipe_v or 0.0)
+        p["ord_c"] += int(r.ord_c or 0)
+        p["ord_v"] += float(r.ord_v or 0.0)
+        p["lenq_c"] += int(r.lenq_c or 0)
+        p["lenq_v"] += float(r.lenq_v or 0.0)
+        p["lpipe_c"] += int(r.lpipe_c or 0)
+        p["lpipe_v"] += float(r.lpipe_v or 0.0)
 
-    for l in leads:
-        key = f"{l.m_name} {l.m_year}"
-        if key not in lead_map:
-            lead_map[key] = {"label": key, "f_sort": f"{l.f_year}-{l.f_sort:02}", "enq_c":0,"enq_v":0,"pipe_c":0,"pipe_v":0,"ord_c":0,"ord_v":0,"lenq_c":0,"lenq_v":0,"lpipe_c":0,"lpipe_v":0}
-        
-        row, c, v = lead_map[key], int(l.count), flt(l.val)
-        if l.cat == 'Enquiry': row['enq_c'], row['enq_v'] = c, v; lt['enq_c']+=c; lt['enq_v']+=v
-        elif l.cat == 'Pipeline': row['pipe_c'], row['pipe_v'] = c, v; lt['pipe_c']+=c; lt['pipe_v']+=v
-        elif l.cat == 'Order': row['ord_c'], row['ord_v'] = c, v; lt['ord_c']+=c; lt['ord_v']+=v
-        elif l.cat == 'Lost Enquiry': row['lenq_c'], row['lenq_v'] = c, v; lt['lenq_c']+=c; lt['lenq_v']+=v
-        elif l.cat == 'Lost Pipeline': row['lpipe_c'], row['lpipe_v'] = c, v; lt['lpipe_c']+=c; lt['lpipe_v']+=v
+    # Conversions for Lead Performance Table
+    conv_params = {"sd": from_date, "ed": to_date, "usr": effective_user}
+    bc_conv_filter = " WHERE docstatus < 2 AND " + BC_CONVERTED_COND_SQL
+    lead_conv_filter = " WHERE docstatus < 2 "
+    if effective_user:
+        bc_conv_filter += " AND assign_to = %(usr)s "
+        lead_conv_filter += " AND lead_owner = %(usr)s "
+    ind_clause_conv = build_in_clause(industry_list, "ind", "industry", conv_params)
+    src_clause_conv = build_in_clause(source_list, "src", "source", conv_params)
+    bc_conv_filter += ind_clause_conv + src_clause_conv
+    lead_conv_filter += ind_clause_conv + src_clause_conv
+    # Shared with the drilldown so both bucket a contact into the same period
+    bc_lead_conv_date = BC_CONVERSION_DATE_SQL
 
-    # --- CONTACT LOGIC ---
-    contacts = frappe.db.sql(f"""
+    # Dynamically build labels using bc_lead_conv_date
+    if period_type == "daily":
+        p_label_bc_conv = f"DATE_FORMAT({bc_lead_conv_date}, '%%d-%%b-%%Y (%%a)')"
+        p_sort_bc_conv = f"DATE_FORMAT({bc_lead_conv_date}, '%%Y-%%m-%%d')"
+        p_group_bc_conv = f"DATE_FORMAT({bc_lead_conv_date}, '%%Y-%%m-%%d')"
+    elif period_type == "weekly":
+        p_label_bc_conv = f"CONCAT('Week ', WEEK({bc_lead_conv_date}, 1), ' (', DATE_FORMAT(MIN(DATE_SUB(DATE({bc_lead_conv_date}), INTERVAL WEEKDAY({bc_lead_conv_date}) DAY)), '%%d-%%b-%%Y (%%a)'), ' to ', DATE_FORMAT(MIN(DATE_ADD(DATE_SUB(DATE({bc_lead_conv_date}), INTERVAL WEEKDAY({bc_lead_conv_date}) DAY), INTERVAL 6 DAY)), '%%d-%%b-%%Y (%%a)'), ')') "
+        p_sort_bc_conv = f"CONCAT(YEAR({bc_lead_conv_date}), '-', LPAD(WEEK({bc_lead_conv_date}, 1), 2, '0'))"
+        p_group_bc_conv = f"YEAR({bc_lead_conv_date}), WEEK({bc_lead_conv_date}, 1)"
+    else: # monthly
+        p_label_bc_conv = f"CONCAT(MONTHNAME({bc_lead_conv_date}), ' ', YEAR({bc_lead_conv_date}))"
+        p_sort_bc_conv = f"CONCAT(CASE WHEN MONTH({bc_lead_conv_date}) >= 4 THEN YEAR({bc_lead_conv_date}) ELSE YEAR({bc_lead_conv_date}) - 1 END, '-', LPAD(CASE WHEN MONTH({bc_lead_conv_date}) >= 4 THEN MONTH({bc_lead_conv_date}) - 3 ELSE MONTH({bc_lead_conv_date}) + 9 END, 2, '0'))"
+        p_group_bc_conv = f"YEAR({bc_lead_conv_date}), MONTH({bc_lead_conv_date})"
+
+    # Lead -> Order is an event from the history table, one row per lead
+    lead_order_conv_date = LEAD_ORDER_CONV_DATE_SQL
+    p_label_lo, p_sort_lo, p_group_lo = period_sql_for(lead_order_conv_date, period_type)
+    lead_conv_filter += f" AND {lead_order_conv_date} IS NOT NULL "
+
+    if from_date and to_date:
+        bc_conv_filter += f" AND ({bc_lead_conv_date}) BETWEEN %(sd)s AND %(ed)s "
+        lead_conv_filter += f" AND ({lead_order_conv_date}) BETWEEN %(sd)s AND %(ed)s "
+
+    bc_conversions = frappe.db.sql(f"""
+        SELECT {p_label_bc_conv} as label, {p_sort_bc_conv} as f_sort, DATE_FORMAT(({bc_lead_conv_date}), '%%Y-%%m') as ym_num, 
+               MIN(DATE({bc_lead_conv_date})) as row_from_date, MAX(DATE({bc_lead_conv_date})) as row_to_date, COUNT(name) as cnt
+        FROM `tabBusiness Contacts` {bc_conv_filter}
+        GROUP BY {p_group_bc_conv}
+    """, conv_params, as_dict=1)
+
+    lead_conversions = frappe.db.sql(f"""
+        SELECT {p_label_lo} as label, {p_sort_lo} as f_sort,
+               DATE_FORMAT(({lead_order_conv_date}), '%%Y-%%m') as ym_num,
+               MIN({lead_order_conv_date}) as row_from_date,
+               MAX({lead_order_conv_date}) as row_to_date,
+               COUNT(DISTINCT l.name) as cnt
+        FROM `tabLead` l
+        {lead_conv_filter}
+        GROUP BY {p_group_lo}
+    """, conv_params, as_dict=1)
+
+    def widen_row_span(row, frm, to):
+        """Row click drilldowns filter on row_from_date..row_to_date.
+
+        That span is seeded by whichever query created the period row (usually the
+        lead query), so a conversion dated outside it would be counted but then
+        missing from the drilldown. Widen the span to cover every contributor.
+        """
+        frm = str(frm) if frm else ""
+        to = str(to) if to else ""
+        if frm and (not row.get("row_from_date") or frm < row["row_from_date"]):
+            row["row_from_date"] = frm
+        if to and (not row.get("row_to_date") or to > row["row_to_date"]):
+            row["row_to_date"] = to
+
+    for c in bc_conversions:
+        key = c.label
+        if key not in lead_period_map:
+            lead_period_map[key] = {
+                "label": key, "f_sort": str(c.f_sort), "m_num": str(c.ym_num or c.label or ''),
+                "row_from_date": str(c.row_from_date) if c.row_from_date else '',
+                "row_to_date": str(c.row_to_date) if c.row_to_date else '',
+                "enq_c": 0, "enq_v": 0.0, "pipe_c": 0, "pipe_v": 0.0, "ord_c": 0, "ord_v": 0.0,
+                "lenq_c": 0, "lenq_v": 0.0, "lpipe_c": 0, "lpipe_v": 0.0,
+                "conv_bc_to_lead": 0, "conv_lead_to_order": 0, "convert_to": 0
+            }
+        widen_row_span(lead_period_map[key], c.row_from_date, c.row_to_date)
+        lead_period_map[key]["conv_bc_to_lead"] += int(c.cnt or 0)
+        lead_period_map[key]["convert_to"] += int(c.cnt or 0)
+
+    for c in lead_conversions:
+        key = c.label
+        if key not in lead_period_map:
+            lead_period_map[key] = {
+                "label": key, "f_sort": str(c.f_sort), "m_num": str(c.ym_num or c.label or ''),
+                "row_from_date": str(c.row_from_date) if c.row_from_date else '',
+                "row_to_date": str(c.row_to_date) if c.row_to_date else '',
+                "enq_c": 0, "enq_v": 0.0, "pipe_c": 0, "pipe_v": 0.0, "ord_c": 0, "ord_v": 0.0,
+                "lenq_c": 0, "lenq_v": 0.0, "lpipe_c": 0, "lpipe_v": 0.0,
+                "conv_bc_to_lead": 0, "conv_lead_to_order": 0, "convert_to": 0
+            }
+        widen_row_span(lead_period_map[key], c.row_from_date, c.row_to_date)
+        lead_period_map[key]["conv_lead_to_order"] += int(c.cnt or 0)
+        lead_period_map[key]["convert_to"] += int(c.cnt or 0)
+
+    sorted_leads = sorted(lead_period_map.values(), key=lambda x: x["f_sort"])
+
+    # 3. Contact Breakup Data
+    contacts_data = frappe.db.sql(f"""
         SELECT 
-            MONTHNAME(creation) as m_name, YEAR(creation) as m_year, 
-            {fiscal_logic},
-            status, COUNT(name) as count
-        FROM `tabBusiness Contacts` {c_filters}
-        GROUP BY f_year, f_sort, m_name, status 
-        ORDER BY f_year ASC, f_sort ASC
+            {p_label_cont} as label,
+            {p_sort_cont} as f_sort,
+            DATE_FORMAT(({contact_action_date}), '%%Y-%%m') as ym_num,
+            MONTH({contact_action_date}) as m_num,
+            MIN(DATE({contact_action_date})) as row_from_date,
+            MAX(DATE({contact_action_date})) as row_to_date,
+            SUM(CASE WHEN status = 'Open' THEN 1 ELSE 0 END) as o,
+            SUM(CASE WHEN status = 'Converted to Lead' THEN 1 ELSE 0 END) as c,
+            SUM(CASE WHEN status = 'Existing Customer' THEN 1 ELSE 0 END) as e
+        FROM `tabBusiness Contacts`
+        {where_cont}
+        GROUP BY {p_group_cont} ORDER BY f_sort ASC
     """, params, as_dict=1)
 
-    bc_map = {}
+    sorted_contacts = []
+    for r in contacts_data:
+        sorted_contacts.append({
+            "label": r.label, "f_sort": str(r.f_sort), "m_num": str(r.ym_num or r.label or ''),
+            "row_from_date": str(r.row_from_date) if r.row_from_date else '',
+            "row_to_date": str(r.row_to_date) if r.row_to_date else '',
+            "o": int(r.o or 0), "c": int(r.c or 0), "e": int(r.e or 0)
+        })
+
+    # Calculate Totals
+    lt = {"enq_c": 0, "enq_v": 0.0, "pipe_c": 0, "pipe_v": 0.0, "ord_c": 0, "ord_v": 0.0, "lenq_c": 0, "lenq_v": 0.0, "lpipe_c": 0, "lpipe_v": 0.0, "conv_bc_to_lead": 0, "conv_lead_to_order": 0, "convert_to": 0}
+    for l in sorted_leads:
+        lt["enq_c"] += l["enq_c"]
+        lt["enq_v"] += l["enq_v"]
+        lt["pipe_c"] += l["pipe_c"]
+        lt["pipe_v"] += l["pipe_v"]
+        lt["ord_c"] += l["ord_c"]
+        lt["ord_v"] += l["ord_v"]
+        lt["lenq_c"] += l["lenq_c"]
+        lt["lenq_v"] += l["lenq_v"]
+        lt["lpipe_c"] += l["lpipe_c"]
+        lt["lpipe_v"] += l["lpipe_v"]
+        lt["conv_bc_to_lead"] += l["conv_bc_to_lead"]
+        lt["conv_lead_to_order"] += l["conv_lead_to_order"]
+        lt["convert_to"] += l["convert_to"]
+
+    # Calculate active lead category totals directly from tabLead
+    where_lead_creation = f" AND ({lead_action_date}) BETWEEN %(sd)s AND %(ed)s " if (from_date and to_date) else ""
+    active_lead_counts = frappe.db.sql(f"""
+        SELECT 
+            SUM(CASE WHEN l.custom_lead_category = 'Enquiry' THEN 1 ELSE 0 END) as enq_c,
+            SUM(CASE WHEN l.custom_lead_category = 'Enquiry' THEN COALESCE(l.custom_expected_revenue, 0) ELSE 0 END) as enq_v,
+            SUM(CASE WHEN l.custom_lead_category = 'Pipeline' THEN 1 ELSE 0 END) as pipe_c,
+            SUM(CASE WHEN l.custom_lead_category = 'Pipeline' THEN COALESCE(l.custom_expected_revenue, 0) ELSE 0 END) as pipe_v,
+            SUM(CASE WHEN l.custom_lead_category = 'Order' THEN 1 ELSE 0 END) as ord_c,
+            SUM(CASE WHEN l.custom_lead_category = 'Order' THEN COALESCE(l.custom_po_value, 0) ELSE 0 END) as ord_v,
+            SUM(CASE WHEN l.custom_lead_category = 'Lost Enquiry' THEN 1 ELSE 0 END) as lenq_c,
+            SUM(CASE WHEN l.custom_lead_category = 'Lost Enquiry' THEN COALESCE(l.custom_expected_revenue, 0) ELSE 0 END) as lenq_v,
+            SUM(CASE WHEN l.custom_lead_category = 'Lost Pipeline' THEN 1 ELSE 0 END) as lpipe_c,
+            SUM(CASE WHEN l.custom_lead_category = 'Lost Pipeline' THEN COALESCE(l.custom_expected_revenue, 0) ELSE 0 END) as lpipe_v
+        FROM `tabLead` l
+        {where_lead}{where_lead_creation}
+    """, params, as_dict=1)
+
+    if active_lead_counts:
+        alc = active_lead_counts[0]
+        lt["enq_c"] = int(alc.get("enq_c") or 0)
+        lt["enq_v"] = float(alc.get("enq_v") or 0.0)
+        lt["pipe_c"] = int(alc.get("pipe_c") or 0)
+        lt["pipe_v"] = float(alc.get("pipe_v") or 0.0)
+        lt["ord_c"] = int(alc.get("ord_c") or 0)
+        lt["ord_v"] = float(alc.get("ord_v") or 0.0)
+        lt["lenq_c"] = int(alc.get("lenq_c") or 0)
+        lt["lenq_v"] = float(alc.get("lenq_v") or 0.0)
+        lt["lpipe_c"] = int(alc.get("lpipe_c") or 0)
+        lt["lpipe_v"] = float(alc.get("lpipe_v") or 0.0)
+
     ct = {"o": 0, "c": 0, "e": 0}
-    for b in contacts:
-        key = f"{b.m_name} {b.m_year}"
-        if key not in bc_map:
-            bc_map[key] = {"label": key, "o": 0, "c": 0, "e": 0, "f_sort": f"{b.f_year}-{b.f_sort:02}"}
-        
-        cnt = int(b.count)
-        if b.status == "Open": bc_map[key]["o"] = cnt; ct["o"] += cnt
-        elif b.status == "Converted to Lead": bc_map[key]["c"] = cnt; ct["c"] += cnt
-        elif b.status == "Existing Customer": bc_map[key]["e"] = cnt; ct["e"] += cnt
+    for c in sorted_contacts:
+        ct["o"] += c["o"]
+        ct["c"] += c["c"]
+        ct["e"] += c["e"]
 
     return {
-        "leads": sorted(lead_map.values(), key=lambda x: x['f_sort']),
+        "leads": sorted_leads,
         "lead_totals": lt,
-        "contacts": sorted(bc_map.values(), key=lambda x: x['f_sort']),
+        "contacts": sorted_contacts,
         "contact_totals": ct
     }
+
+@frappe.whitelist()
+def get_event_activity_breakup_data(from_date=None, to_date=None, user=None, period_type="monthly", reference_type="All", activity_basis="completed", fiscal_year=None, period=None, month=None, **kwargs):
+    from_date, to_date = parse_period_and_dates(period, fiscal_year, from_date, to_date, month=month or kwargs.get("month"))
+
+    is_head = "DAC CRM Head" in frappe.get_roles()
+    effective_user = user if (is_head and user) else (None if (is_head and not user) else frappe.session.user)
+
+    params = {"sd": from_date, "ed": to_date, "usr": effective_user}
+    
+    # Fetch all distinct non-empty categories from tabEvent Activity
+    cat_docs = frappe.db.sql("""
+        SELECT DISTINCT category 
+        FROM `tabEvent Activity` 
+        WHERE docstatus < 2 AND category IS NOT NULL AND category != ''
+        ORDER BY category ASC
+    """, as_dict=1)
+    categories = [c.category for c in cat_docs]
+
+    # Filter String building
+    base_filter = " WHERE docstatus < 2 "
+    if effective_user:
+        base_filter += " AND assigned_to = %(usr)s "
+    if reference_type and reference_type != "All":
+        base_filter += " AND reference_type = %(ref_type)s "
+        params["ref_type"] = reference_type
+
+    cp_filter = base_filter + " AND status = 'Completed' "
+    if from_date and to_date:
+        cp_filter += " AND DATE(COALESCE(ends_on, actual_checked_out_at, actual_visit_at, modified)) BETWEEN %(sd)s AND %(ed)s "
+
+    if period_type == "daily":
+        cp_group = "DATE(COALESCE(ends_on, actual_checked_out_at, actual_visit_at, modified))"
+        cp_label = "DATE_FORMAT(COALESCE(ends_on, actual_checked_out_at, actual_visit_at, modified), '%%d-%%b-%%Y (%%a)')"
+        cp_sort = "DATE(COALESCE(ends_on, actual_checked_out_at, actual_visit_at, modified))"
+    elif period_type == "weekly":
+        cp_group = "YEAR(COALESCE(ends_on, actual_checked_out_at, actual_visit_at, modified)), WEEK(COALESCE(ends_on, actual_checked_out_at, actual_visit_at, modified), 1)"
+        cp_label = "CONCAT('Week ', WEEK(COALESCE(ends_on, actual_checked_out_at, actual_visit_at, modified), 1), ' (', DATE_FORMAT(MIN(DATE_SUB(DATE(COALESCE(ends_on, actual_checked_out_at, actual_visit_at, modified)), INTERVAL WEEKDAY(COALESCE(ends_on, actual_checked_out_at, actual_visit_at, modified)) DAY)), '%%d-%%b-%%Y (%%a)'), ' to ', DATE_FORMAT(MIN(DATE_ADD(DATE_SUB(DATE(COALESCE(ends_on, actual_checked_out_at, actual_visit_at, modified)), INTERVAL WEEKDAY(COALESCE(ends_on, actual_checked_out_at, actual_visit_at, modified)) DAY), INTERVAL 6 DAY)), '%%d-%%b-%%Y (%%a)'), ')')"
+        cp_sort = "CONCAT(YEAR(COALESCE(ends_on, actual_checked_out_at, actual_visit_at, modified)), '-', LPAD(WEEK(COALESCE(ends_on, actual_checked_out_at, actual_visit_at, modified)), 2, '0'))"
+    else:
+        cp_group = "YEAR(COALESCE(ends_on, actual_checked_out_at, actual_visit_at, modified)), MONTH(COALESCE(ends_on, actual_checked_out_at, actual_visit_at, modified))"
+        cp_label = "CONCAT(MONTHNAME(COALESCE(ends_on, actual_checked_out_at, actual_visit_at, modified)), ' ', YEAR(COALESCE(ends_on, actual_checked_out_at, actual_visit_at, modified)))"
+        cp_sort = "CONCAT(YEAR(COALESCE(ends_on, actual_checked_out_at, actual_visit_at, modified)), '-', LPAD(MONTH(COALESCE(ends_on, actual_checked_out_at, actual_visit_at, modified)), 2, '0'))"
+
+    cat_case_parts = []
+    for idx, cat in enumerate(categories):
+        params[f"cat_{idx}"] = cat
+        cat_case_parts.append(f"SUM(CASE WHEN category = %(cat_{idx})s THEN 1 ELSE 0 END) as cat_{idx}_total")
+        cat_case_parts.append(f"SUM(CASE WHEN category = %(cat_{idx})s AND reference_type = 'Lead' THEN 1 ELSE 0 END) as cat_{idx}_lead")
+        cat_case_parts.append(f"SUM(CASE WHEN category = %(cat_{idx})s AND reference_type = 'Business Contacts' THEN 1 ELSE 0 END) as cat_{idx}_cont")
+
+    cat_case_parts.append("SUM(CASE WHEN reference_type = 'Lead' THEN 1 ELSE 0 END) as lead_cnt")
+    cat_case_parts.append("SUM(CASE WHEN reference_type = 'Business Contacts' THEN 1 ELSE 0 END) as contact_cnt")
+    cat_case_parts.append("COUNT(name) as total_activities")
+    cat_case_parts.append("MIN(DATE(COALESCE(ends_on, actual_checked_out_at, actual_visit_at, modified))) as row_from_date")
+    cat_case_parts.append("MAX(DATE(COALESCE(ends_on, actual_checked_out_at, actual_visit_at, modified))) as row_to_date")
+
+    cat_case_sql = ",\n".join(cat_case_parts)
+
+    cp_activities = frappe.db.sql(f"""
+        SELECT {cp_label} as period_label, {cp_sort} as sort_key, {cat_case_sql}
+        FROM `tabEvent Activity` {cp_filter}
+        GROUP BY {cp_group} ORDER BY sort_key ASC
+    """, params, as_dict=1)
+
+    activities = []
+    category_totals = {c: {"total": 0, "lead": 0, "cont": 0} for c in categories}
+    overall_total = 0
+    overall_lead = 0
+    overall_cont = 0
+
+    for row in cp_activities:
+        act_row = {
+            "period_label": row.period_label,
+            "sort_key": str(row.sort_key),
+            "row_from_date": str(row.row_from_date) if row.row_from_date else "",
+            "row_to_date": str(row.row_to_date) if row.row_to_date else "",
+            "lead_cnt": int(row.lead_cnt or 0),
+            "contact_cnt": int(row.contact_cnt or 0),
+            "total_completed": int(row.total_activities or 0),
+            "categories": {}
+        }
+        overall_total += act_row["total_completed"]
+        overall_lead += act_row["lead_cnt"]
+        overall_cont += act_row["contact_cnt"]
+
+        for idx, cat in enumerate(categories):
+            tot = int(row.get(f"cat_{idx}_total") or 0)
+            ld = int(row.get(f"cat_{idx}_lead") or 0)
+            ct = int(row.get(f"cat_{idx}_cont") or 0)
+
+            act_row["categories"][cat] = {
+                "total": tot,
+                "lead": ld,
+                "cont": ct
+            }
+            category_totals[cat]["total"] += tot
+            category_totals[cat]["lead"] += ld
+            category_totals[cat]["cont"] += ct
+
+        activities.append(act_row)
+
+    # 5 Specific Event Activity Number Card calculations
+    today_str = frappe.utils.today()
+    user_cond_ea = " AND assigned_to = %(usr)s " if effective_user else ""
+    user_cond_lead = " AND l.lead_owner = %(usr)s " if effective_user else ""
+    user_cond_cont = " AND assign_to = %(usr)s " if effective_user else ""
+    
+    date_cond_ea = " AND DATE(COALESCE(ends_on, modified)) BETWEEN %(sd)s AND %(ed)s " if (from_date and to_date) else ""
+    date_cond_lead = " AND DATE(l.creation) BETWEEN %(sd)s AND %(ed)s " if (from_date and to_date) else ""
+    date_cond_cont = " AND DATE(creation) BETWEEN %(sd)s AND %(ed)s " if (from_date and to_date) else ""
+    
+    ref_cond_ea = ""
+    if reference_type == "Lead":
+        ref_cond_ea = " AND reference_type = 'Lead' "
+    elif reference_type == "Business Contacts":
+        ref_cond_ea = " AND reference_type = 'Business Contacts' "
+
+    overdue_count = frappe.db.sql(f"""
+        SELECT COUNT(name) FROM `tabEvent Activity`
+        WHERE docstatus < 2 AND status = 'Open'
+          AND (
+            (ends_on IS NOT NULL AND DATE(ends_on) < '{today_str}')
+            OR (ends_on IS NULL AND starts_on IS NOT NULL AND DATE(starts_on) < '{today_str}')
+          ) {user_cond_ea}{ref_cond_ea}
+    """, params)[0][0] or 0
+
+    today_count = frappe.db.sql(f"""
+        SELECT COUNT(name) FROM `tabEvent Activity`
+        WHERE docstatus < 2 AND status = 'Open'
+          AND (
+            (ends_on IS NOT NULL AND DATE(ends_on) >= '{today_str}')
+            OR (ends_on IS NULL AND starts_on IS NOT NULL AND DATE(starts_on) >= '{today_str}')
+          ) {user_cond_ea}{date_cond_ea}{ref_cond_ea}
+    """, params)[0][0] or 0
+
+    open_total_count = frappe.db.sql(f"""
+        SELECT COUNT(name) FROM `tabEvent Activity`
+        WHERE docstatus < 2 AND status = 'Open' {user_cond_ea}{date_cond_ea}{ref_cond_ea}
+    """, params)[0][0] or 0
+
+    lead_noact_count = 0
+    if reference_type in ("All", "Lead"):
+        lead_noact_count = frappe.db.sql(f"""
+            SELECT COUNT(l.name) FROM `tabLead` l
+            WHERE l.docstatus < 2
+            AND l.name NOT IN (SELECT DISTINCT reference_name FROM `tabEvent Activity` WHERE reference_type = 'Lead' AND docstatus < 2)
+            {user_cond_lead} {date_cond_lead}
+        """, params)[0][0] or 0
+
+    cont_noact_count = 0
+    if reference_type in ("All", "Business Contacts"):
+        cont_noact_count = frappe.db.sql(f"""
+            SELECT COUNT(name) FROM `tabBusiness Contacts`
+            WHERE docstatus < 2
+            AND name NOT IN (SELECT DISTINCT reference_name FROM `tabEvent Activity` WHERE reference_type = 'Business Contacts' AND docstatus < 2)
+            {user_cond_cont} {date_cond_cont}
+        """, params)[0][0] or 0
+
+    return {
+        "categories": categories,
+        "activities": activities,
+        "totals": {
+            "category_totals": category_totals,
+            "total_completed": overall_total,
+            "cp_lead_cnt": overall_lead,
+            "cp_contact_cnt": overall_cont,
+            "overdue_count": overdue_count,
+            "today_count": today_count,
+            "open_total_count": open_total_count,
+            "lead_noact_count": lead_noact_count,
+            "cont_noact_count": cont_noact_count
+        }
+    }
+
+
+@frappe.whitelist()
+def get_card_detail_records(card_type, from_date=None, to_date=None, user=None, industry=None, source=None, fiscal_year=None, period=None, month=None, **kwargs):
+    """Return list of records for a dashboard number-card drilldown modal with 100% exact count parity and rich details."""
+    from_date, to_date = parse_period_and_dates(period, fiscal_year, from_date, to_date, month=month or kwargs.get("month"))
+
+    is_head = "DAC CRM Head" in frappe.get_roles()
+    effective_user = user if (is_head and user) else (None if (is_head and not user) else frappe.session.user)
+
+    # Multiselect filters — must mirror get_tabular_dashboard_data so drilldown counts match the cards
+    industry_list = as_filter_list(industry)
+    source_list = as_filter_list(source)
+
+    params = {"sd": from_date, "ed": to_date, "usr": effective_user}
+    contact_action_date = """
+        CASE
+            WHEN status = 'Open' THEN DATE(creation)
+            WHEN status = 'Converted to Lead' THEN DATE(COALESCE(
+                (SELECT MAX(sh.updated_at) FROM `tabLead Status Change History` sh
+                 WHERE sh.parent = `tabBusiness Contacts`.name AND sh.parenttype = 'Business Contacts' AND sh.parentfield = 'contact_status_change_history' AND sh.new_status = 'Converted to Lead'),
+                modified,
+                creation
+            ))
+            WHEN status = 'Existing Customer' THEN DATE(COALESCE(
+                (SELECT MAX(sh.updated_at) FROM `tabLead Status Change History` sh
+                 WHERE sh.parent = `tabBusiness Contacts`.name AND sh.parenttype = 'Business Contacts' AND sh.parentfield = 'contact_status_change_history' AND sh.new_status = 'Existing Customer'),
+                modified,
+                creation
+            ))
+            ELSE DATE(modified)
+        END
+    """
+    date_cond_cont = f" AND ({contact_action_date}) BETWEEN %(sd)s AND %(ed)s " if (from_date and to_date) else ""
+    # conv_bc is a *conversion* view, not a status view, so it buckets on the
+    # conversion date exactly as get_tabular_dashboard_data counts it.
+    date_cond_conv = (f" AND ({BC_CONVERSION_DATE_SQL}) BETWEEN %(sd)s AND %(ed)s "
+                      if (from_date and to_date) else "")
+    user_cond_lead = " AND l.lead_owner = %(usr)s " if effective_user else ""
+    user_cond_cont = " AND assign_to = %(usr)s " if effective_user else ""
+    scope_cond_lead = (build_in_clause(industry_list, "ind", "l.industry", params)
+                       + build_in_clause(source_list, "src", "l.source", params))
+    scope_cond_cont = (build_in_clause(industry_list, "ind", "industry", params)
+                       + build_in_clause(source_list, "src", "source", params))
+
+    records = []
+
+    # ---- CONTACT cards ----
+    if card_type in ("c_open", "c_conv", "c_exist", "conv_bc"):
+        status_cond = " status = 'Open' " if card_type == "c_open" else (
+            " status = 'Converted to Lead' " if card_type == "c_conv" else (
+                " status = 'Existing Customer' " if card_type == "c_exist" else (
+                    BC_CONVERTED_COND_SQL
+                )
+            )
+        )
+        cont_date_cond = date_cond_conv if card_type == "conv_bc" else date_cond_cont
+        records = frappe.db.sql(f"""
+            SELECT name, contact_name, COALESCE(organization_name, contact_name) as company,
+                   mobile_number as mobile_no, email_id, industry, status, assign_to as owner,
+                   city, country, DATE_FORMAT(creation,'%%d-%%b-%%Y') as created_on,
+                   DATEDIFF(NOW(), creation) as age_days,
+                   DATE_FORMAT(next_follow_up_date,'%%d-%%b-%%Y') as next_followup,
+                   last_completion_notes,
+                   (SELECT COUNT(q.name) FROM `tabQuotation` q
+                    WHERE q.docstatus < 2 AND (q.party_name = lead_id OR q.custom_lead_id = lead_id)) as quotation_count
+            FROM `tabBusiness Contacts`
+            WHERE docstatus < 2 AND {status_cond}
+            {user_cond_cont}{scope_cond_cont}{cont_date_cond}
+            ORDER BY creation DESC LIMIT 1000
+        """, params, as_dict=1)
+        for r in records:
+            r["doctype"] = "Business Contacts"
+
+    # ---- LEAD cards ----
+    elif card_type in ("l_enq", "l_pipe", "l_ord", "l_lenq", "l_lpipe", "conv_lead"):
+        cat_map = {
+            "l_enq": "Enquiry",
+            "l_pipe": "Pipeline",
+            "l_ord": "Order",
+            "l_lenq": "Lost Enquiry",
+            "l_lpipe": "Lost Pipeline",
+            "conv_lead": "Order"
+        }
+        cat = cat_map[card_type]
+        params["cat"] = cat
+
+        lead_action_date = """
+            CASE
+                WHEN l.custom_lead_category = 'Enquiry' THEN DATE(l.creation)
+                ELSE COALESCE(
+                    (SELECT DATE(MAX(sh.updated_at)) FROM `tabLead Status Change History` sh
+                     WHERE sh.parent = l.name AND sh.parenttype = 'Lead'
+                   AND sh.parentfield = 'custom_lead_status_change_history'
+                   AND sh.new_status = l.custom_lead_category),
+                    DATE(l.creation)
+                )
+            END
+        """
+        if card_type == "conv_lead":
+            # Conversion view: leads whose FIRST Order transition lands in range,
+            # matching how get_tabular_dashboard_data counts them.
+            cat_cond = f" AND {LEAD_ORDER_CONV_DATE_SQL} IS NOT NULL "
+            lead_date_cond = (f" AND ({LEAD_ORDER_CONV_DATE_SQL}) BETWEEN %(sd)s AND %(ed)s "
+                              if (from_date and to_date) else "")
+        else:
+            cat_cond = " AND l.custom_lead_category = %(cat)s "
+            lead_date_cond = (f" AND ({lead_action_date}) BETWEEN %(sd)s AND %(ed)s "
+                              if (from_date and to_date) else "")
+
+        records = frappe.db.sql(f"""
+            SELECT l.name, l.lead_name, l.company_name as company,
+                   l.mobile_no, l.email_id, l.industry,
+                   l.custom_lead_category as category, l.lead_owner as owner,
+                   CASE WHEN l.custom_lead_category = 'Order' THEN COALESCE(l.custom_po_value, 0)
+                        ELSE COALESCE(l.custom_expected_revenue, 0) END as po_value,
+                   COALESCE(l.custom_expected_revenue, 0) as expected_revenue,
+                   l.territory, l.city, l.state, l.country, l.source,
+                   l.custom_lead_type, DATE_FORMAT(l.custom_expected_closure_date,'%%d-%%b-%%Y') as expected_close,
+                   DATE_FORMAT(l.creation,'%%d-%%b-%%Y') as created_on,
+                   DATEDIFF(NOW(), l.creation) as age_days,
+                   DATE_FORMAT(l.custom_next_followup_date,'%%d-%%b-%%Y') as next_followup,
+                   (SELECT notes FROM `tabEvent Activity`
+                    WHERE reference_type = 'Lead' AND reference_name = l.name AND status = 'Completed' AND docstatus < 2
+                    ORDER BY ends_on DESC LIMIT 1) as last_completed_notes,
+                   (SELECT COUNT(q.name) FROM `tabQuotation` q
+                    WHERE q.docstatus < 2 AND (q.party_name = l.name OR q.custom_lead_id = l.name)) as quotation_count,
+                   l.custom_expected_closure_date as closure_date
+            FROM `tabLead` l
+            WHERE l.docstatus < 2
+              {cat_cond}
+              {user_cond_lead}{scope_cond_lead}{lead_date_cond}
+            ORDER BY l.creation DESC LIMIT 1000
+        """, params, as_dict=1)
+        for r in records:
+            r["doctype"] = "Lead"
+
+    # ---- ACTIVITY cards ----
+    elif card_type in ("ea_overdue", "ea_today", "ea_lead_noact", "ea_cont_noact", "ea_open"):
+        today_str = frappe.utils.today()
+        date_cond_lead = " AND DATE(l.creation) BETWEEN %(sd)s AND %(ed)s " if (from_date and to_date) else ""
+        date_cond_cont = " AND DATE(bc.creation) BETWEEN %(sd)s AND %(ed)s " if (from_date and to_date) else ""
+
+        reference_type = kwargs.get("reference_type", "All")
+        ref_cond_ea = ""
+        if reference_type == "Lead":
+            ref_cond_ea = " AND ea.reference_type = 'Lead' "
+        elif reference_type == "Business Contacts":
+            ref_cond_ea = " AND ea.reference_type = 'Business Contacts' "
+
+        if card_type in ("ea_overdue", "ea_today", "ea_open"):
+            if card_type == "ea_overdue":
+                date_cond_ea = ""
+                date_cond = f""" AND ea.status = 'Open' AND (
+                    (ea.ends_on IS NOT NULL AND DATE(ea.ends_on) < '{today_str}')
+                    OR (ea.ends_on IS NULL AND ea.starts_on IS NOT NULL AND DATE(ea.starts_on) < '{today_str}')
+                ) """
+            elif card_type == "ea_today":
+                date_cond_ea = " AND DATE(COALESCE(ea.ends_on, ea.modified)) BETWEEN %(sd)s AND %(ed)s " if (from_date and to_date) else ""
+                date_cond = f""" AND ea.status = 'Open' AND (
+                    (ea.ends_on IS NOT NULL AND DATE(ea.ends_on) >= '{today_str}')
+                    OR (ea.ends_on IS NULL AND ea.starts_on IS NOT NULL AND DATE(ea.starts_on) >= '{today_str}')
+                ) """
+            else:
+                date_cond_ea = " AND DATE(COALESCE(ea.ends_on, ea.modified)) BETWEEN %(sd)s AND %(ed)s " if (from_date and to_date) else ""
+                date_cond = " AND ea.status = 'Open' "
+
+            user_cond_ea = " AND ea.assigned_to = %(usr)s " if effective_user else ""
+            records = frappe.db.sql(f"""
+                SELECT ea.name, ea.subject, ea.category, ea.reference_type, ea.reference_name,
+                       ea.assigned_to as owner, ea.status, ea.description, ea.notes,
+                       ea.starts_on,
+                       DATE_FORMAT(ea.starts_on,'%%d-%%b-%%Y %%h:%%i %%p') as start_date,
+                       DATE_FORMAT(ea.ends_on,'%%d-%%b-%%Y %%h:%%i %%p') as end_date,
+                       CASE
+                           WHEN ea.reference_type = 'Lead' THEN l.lead_name
+                           WHEN ea.reference_type = 'Business Contacts' THEN COALESCE(bc.organization_name, bc.contact_name)
+                           ELSE COALESCE(ea.reference_doc_name, ea.reference_name)
+                       END as ref_display_name,
+                       CASE
+                           WHEN ea.reference_type = 'Lead' THEN l.company_name
+                           WHEN ea.reference_type = 'Business Contacts' THEN bc.organization_name
+                           ELSE ''
+                       END as ref_extra,
+                       CASE
+                           WHEN ea.reference_type = 'Lead' THEN l.mobile_no
+                           WHEN ea.reference_type = 'Business Contacts' THEN bc.mobile_number
+                           ELSE ''
+                       END as ref_mobile,
+                       CASE
+                           WHEN ea.reference_type = 'Lead' THEN l.email_id
+                           WHEN ea.reference_type = 'Business Contacts' THEN bc.email_id
+                           ELSE ''
+                       END as ref_email
+                FROM `tabEvent Activity` ea
+                LEFT JOIN `tabLead` l ON l.name = ea.reference_name AND ea.reference_type = 'Lead'
+                LEFT JOIN `tabBusiness Contacts` bc ON bc.name = ea.reference_name AND ea.reference_type = 'Business Contacts'
+                WHERE ea.docstatus < 2 {user_cond_ea}{date_cond}{date_cond_ea}{ref_cond_ea}
+                ORDER BY 
+                    CASE WHEN DATE(COALESCE(ea.ends_on, ea.starts_on)) = '{today_str}' THEN 0 ELSE 1 END ASC,
+                    COALESCE(ea.ends_on, ea.starts_on) ASC LIMIT 1000
+            """, params, as_dict=1)
+            for r in records:
+                r["doctype"] = "Event Activity"
+
+        elif card_type == "ea_lead_noact":
+            if reference_type in ("All", "Lead"):
+                records = frappe.db.sql(f"""
+                    SELECT l.name, l.lead_name, l.company_name as company, l.mobile_no, l.email_id, l.industry,
+                           l.custom_lead_category as category, l.lead_owner as owner,
+                           COALESCE(l.custom_expected_revenue, 0) as expected_revenue,
+                           l.source, l.custom_lead_type, DATE_FORMAT(l.custom_expected_closure_date,'%%d-%%b-%%Y') as expected_close,
+                           DATE_FORMAT(l.creation,'%%d-%%b-%%Y') as created_on,
+                           DATEDIFF(NOW(), l.creation) as age_days,
+                           DATE_FORMAT(l.custom_next_followup_date,'%%d-%%b-%%Y') as next_followup,
+                           (SELECT notes FROM `tabEvent Activity`
+                            WHERE reference_type = 'Lead' AND reference_name = l.name AND status = 'Completed' AND docstatus < 2
+                            ORDER BY ends_on DESC LIMIT 1) as last_completed_notes,
+                           (SELECT COUNT(q.name) FROM `tabQuotation` q
+                            WHERE q.docstatus < 2 AND (q.party_name = l.name OR q.custom_lead_id = l.name)) as quotation_count,
+                           l.custom_expected_closure_date as closure_date
+                    FROM `tabLead` l
+                    WHERE l.docstatus < 2
+                      AND l.name NOT IN (SELECT DISTINCT reference_name FROM `tabEvent Activity` WHERE reference_type = 'Lead' AND docstatus < 2)
+                    {user_cond_lead}{date_cond_lead}
+                    ORDER BY l.creation DESC LIMIT 1000
+                """, params, as_dict=1)
+                for r in records:
+                    r["doctype"] = "Lead"
+            else:
+                records = []
+
+        elif card_type == "ea_cont_noact":
+            if reference_type in ("All", "Business Contacts"):
+                records = frappe.db.sql(f"""
+                    SELECT bc.name, bc.contact_name, COALESCE(bc.organization_name, bc.contact_name) as company,
+                           bc.mobile_number as mobile_no, bc.email_id, bc.industry, bc.status, bc.assign_to as owner,
+                           bc.city, bc.country, DATE_FORMAT(bc.creation,'%%d-%%b-%%Y') as created_on,
+                           DATEDIFF(NOW(), bc.creation) as age_days,
+                           DATE_FORMAT(bc.next_follow_up_date,'%%d-%%b-%%Y') as next_followup,
+                           bc.last_completion_notes
+                    FROM `tabBusiness Contacts` bc
+                    WHERE bc.docstatus < 2
+                      AND bc.name NOT IN (SELECT DISTINCT reference_name FROM `tabEvent Activity` WHERE reference_type = 'Business Contacts' AND docstatus < 2)
+                    {user_cond_cont}{date_cond_cont}
+                    ORDER BY bc.creation DESC LIMIT 1000
+                """, params, as_dict=1)
+                for r in records:
+                    r["doctype"] = "Business Contacts"
+            else:
+                records = []
+
+    return {"records": records, "card_type": card_type}
+
+
+@frappe.whitelist()
+def get_activity_detail_records(category=None, category_group=None, from_date=None, to_date=None, user=None, reference_type="All", fiscal_year=None, period=None, month=None, **kwargs):
+    """Return Event Activity records for a specific category drilldown modal with exact date matching and rich details."""
+    from_date, to_date = parse_period_and_dates(period, fiscal_year, from_date, to_date, month=month or kwargs.get("month"))
+
+    is_head = "DAC CRM Head" in frappe.get_roles()
+    effective_user = user if (is_head and user) else (None if (is_head and not user) else frappe.session.user)
+
+    cat_name = category or category_group
+
+    params = {"sd": from_date, "ed": to_date, "usr": effective_user}
+
+    base_filter = " WHERE ea.docstatus < 2 AND ea.status = 'Completed' "
+    if effective_user:
+        base_filter += " AND ea.assigned_to = %(usr)s "
+    if reference_type and reference_type != "All":
+        params["ref_type"] = reference_type
+        base_filter += " AND ea.reference_type = %(ref_type)s "
+
+    if from_date and to_date:
+        base_filter += " AND DATE(COALESCE(ea.ends_on, ea.actual_checked_out_at, ea.actual_visit_at, ea.modified)) BETWEEN %(sd)s AND %(ed)s "
+
+    if cat_name and cat_name != "All":
+        params["cat"] = cat_name
+        base_filter += " AND ea.category = %(cat)s "
+
+    records = frappe.db.sql(f"""
+        SELECT ea.name, ea.subject, ea.category, ea.reference_type, ea.reference_name,
+               ea.assigned_to as owner, ea.status, ea.description, ea.notes,
+               ea.starts_on,
+               DATE_FORMAT(ea.starts_on,'%%d-%%b-%%Y %%h:%%i %%p') as start_date,
+               DATE_FORMAT(COALESCE(ea.ends_on, ea.modified),'%%d-%%b-%%Y %%h:%%i %%p') as end_date,
+               CASE
+                   WHEN ea.reference_type = 'Lead' THEN l.lead_name
+                   WHEN ea.reference_type = 'Business Contacts' THEN COALESCE(bc.organization_name, bc.contact_name)
+                   ELSE COALESCE(ea.reference_doc_name, ea.reference_name)
+               END as ref_display_name,
+               CASE
+                   WHEN ea.reference_type = 'Lead' THEN l.company_name
+                   WHEN ea.reference_type = 'Business Contacts' THEN bc.organization_name
+                   ELSE ''
+               END as ref_extra,
+               CASE
+                   WHEN ea.reference_type = 'Lead' THEN l.mobile_no
+                   WHEN ea.reference_type = 'Business Contacts' THEN bc.mobile_number
+                   ELSE ''
+               END as ref_mobile,
+               CASE
+                   WHEN ea.reference_type = 'Lead' THEN l.email_id
+                   WHEN ea.reference_type = 'Business Contacts' THEN bc.email_id
+                   ELSE ''
+               END as ref_email
+        FROM `tabEvent Activity` ea
+        LEFT JOIN `tabLead` l ON l.name = ea.reference_name AND ea.reference_type = 'Lead'
+        LEFT JOIN `tabBusiness Contacts` bc ON bc.name = ea.reference_name AND ea.reference_type = 'Business Contacts'
+        {base_filter}
+        ORDER BY ea.ends_on DESC LIMIT 1000
+    """, params, as_dict=1)
+
+    for r in records:
+        r["doctype"] = "Event Activity"
+
+    return {"records": records, "category": cat_name}
+
+
+def require_crm_head():
+    """Admin Review analytics are head-only. Hiding the UI is not a control."""
+    if "DAC CRM Head" not in frappe.get_roles(frappe.session.user):
+        frappe.throw("Only DAC CRM Head can view CRM analytics.", frappe.PermissionError)
+
+
+def _analytics_lead_where(restrict_user, ind_list, src_list, from_date, to_date, params):
+    wh = "WHERE l.docstatus < 2"
+    if restrict_user:
+        wh += " AND l.lead_owner = %(usr)s"
+        params["usr"] = restrict_user
+    wh += build_in_clause(ind_list, "ind", "l.industry", params)
+    wh += build_in_clause(src_list, "src", "l.source", params)
+    if from_date and to_date:
+        wh += " AND DATE(l.creation) BETWEEN %(sd)s AND %(ed)s"
+        params["sd"] = from_date
+        params["ed"] = to_date
+    return wh
+
+
+@frappe.whitelist()
+def get_crm_analytics_breakdowns(from_date=None, to_date=None, user=None, industry=None,
+                                 source=None, fiscal_year=None, period=None, month=None,
+                                 limit=12, **kwargs):
+    """Dimension breakdowns for the Admin Review charts.
+
+    Returns leads / orders / order value / lost per industry, source, territory and
+    product category, plus lost-reason and activity-category splits. One grouped
+    query per dimension, all honouring the same filter set as the rest of the
+    dashboard.
+    """
+    require_crm_head()
+    from_date, to_date = parse_period_and_dates(period, fiscal_year, from_date, to_date,
+                                                month=month or kwargs.get("month"))
+    restrict_user = user or None
+    ind_list = as_filter_list(industry)
+    src_list = as_filter_list(source)
+    try:
+        limit = max(3, min(int(limit or 12), 30))
+    except Exception:
+        limit = 12
+
+    def lead_group(column):
+        p = {}
+        wh = _analytics_lead_where(restrict_user, ind_list, src_list, from_date, to_date, p)
+        rows = frappe.db.sql(
+            "SELECT COALESCE(NULLIF({col}, ''), 'Not Set') label,"
+            " COUNT(*) leads,"
+            " SUM(CASE WHEN l.custom_lead_category='Order' THEN 1 ELSE 0 END) orders,"
+            " SUM(CASE WHEN l.custom_lead_category='Order'"
+            "     THEN COALESCE(l.custom_po_value, 0) ELSE 0 END) order_value,"
+            " SUM(CASE WHEN l.custom_lead_category IN ('Lost Enquiry','Lost Pipeline')"
+            "     THEN 1 ELSE 0 END) lost"
+            " FROM `tabLead` l {wh} GROUP BY label ORDER BY leads DESC LIMIT {lim}".format(
+                col=column, wh=wh, lim=limit),
+            p, as_dict=1)
+        out = []
+        for r in rows:
+            leads = int(r.get("leads") or 0)
+            orders = int(r.get("orders") or 0)
+            out.append({
+                "label": r.get("label") or "Not Set",
+                "leads": leads,
+                "orders": orders,
+                "lost": int(r.get("lost") or 0),
+                "order_value": flt(r.get("order_value") or 0),
+                "conversion": round((orders * 100.0 / leads), 1) if leads else 0.0,
+            })
+        return out
+
+    # Leads by category — the share view, mirroring Contact Status Split
+    p_cat = {}
+    wh_cat = _analytics_lead_where(restrict_user, ind_list, src_list, from_date, to_date, p_cat)
+    cat_rows = frappe.db.sql(
+        "SELECT COALESCE(NULLIF(l.custom_lead_category, ''), 'Not Set') label, COUNT(*) total,"
+        " SUM(CASE WHEN l.custom_lead_category = 'Order' THEN COALESCE(l.custom_po_value, 0)"
+        "          ELSE COALESCE(l.custom_expected_revenue, 0) END) value"
+        " FROM `tabLead` l {wh} GROUP BY label".format(wh=wh_cat), p_cat, as_dict=1)
+    CAT_ORDER = ["Enquiry", "Pipeline", "Order", "Lost Enquiry", "Lost Pipeline"]
+    cat_map = {r.get("label"): r for r in cat_rows}
+    lead_category = []
+    for name in CAT_ORDER:
+        r = cat_map.pop(name, None)
+        lead_category.append({"label": name,
+                              "total": int((r or {}).get("total") or 0),
+                              "value": flt((r or {}).get("value") or 0)})
+    for name, r in cat_map.items():          # anything unexpected still shows
+        lead_category.append({"label": name or "Not Set",
+                              "total": int(r.get("total") or 0),
+                              "value": flt(r.get("value") or 0)})
+
+    # Lost is two distinct things and each stores its reason in its own column,
+    # so they are reported separately rather than merged.
+    def lost_reasons(category, column):
+        p = {}
+        wh = _analytics_lead_where(restrict_user, ind_list, src_list, from_date, to_date, p)
+        wh += " AND l.custom_lead_category = %(cat)s"
+        p["cat"] = category
+        rows = frappe.db.sql(
+            "SELECT COALESCE(NULLIF(TRIM({col}), ''), 'Not Specified') label, COUNT(*) total"
+            " FROM `tabLead` l {wh} GROUP BY label ORDER BY total DESC LIMIT {lim}".format(
+                col=column, wh=wh, lim=limit),
+            p, as_dict=1)
+        return [{"label": r.get("label") or "Not Specified",
+                 "total": int(r.get("total") or 0)} for r in rows]
+
+    lost_enquiry_reason = lost_reasons("Lost Enquiry", "l.custom_lost_enquiry_reason")
+    lost_pipeline_reason = lost_reasons("Lost Pipeline", "l.custom_lost_pipeline_reason")
+    lost_split = [
+        {"label": "Lost Enquiry", "total": sum(r["total"] for r in lost_enquiry_reason)},
+        {"label": "Lost Pipeline", "total": sum(r["total"] for r in lost_pipeline_reason)},
+    ]
+
+    # Overall conversion funnel. Definitions match the Lead Performance table:
+    # Contact -> Lead counts contacts that reached Converted to Lead or Existing
+    # Customer; Lead -> Order counts leads in the Order category.
+    p_cv = {}
+    wh_cv = _analytics_lead_where(restrict_user, ind_list, src_list, from_date, to_date, p_cv)
+    lead_cv = frappe.db.sql(
+        "SELECT COUNT(*) leads,"
+        " SUM(CASE WHEN l.custom_lead_category='Order' THEN 1 ELSE 0 END) orders"
+        " FROM `tabLead` l {wh}".format(wh=wh_cv), p_cv, as_dict=1)
+    # Contacts CREATED in the period — the acquisition base
+    p_cc = {}
+    wh_cc = "WHERE docstatus < 2"
+    if restrict_user:
+        wh_cc += " AND assign_to = %(usr)s"
+        p_cc["usr"] = restrict_user
+    wh_cc += build_in_clause(ind_list, "ind", "industry", p_cc)
+    wh_cc += build_in_clause(src_list, "src", "source", p_cc)
+    if from_date and to_date:
+        wh_cc += " AND DATE(creation) BETWEEN %(sd)s AND %(ed)s"
+        p_cc["sd"] = from_date
+        p_cc["ed"] = to_date
+    cont_cv = frappe.db.sql(
+        "SELECT COUNT(*) contacts FROM `tabBusiness Contacts` {wh}".format(wh=wh_cc),
+        p_cc, as_dict=1)
+
+    # Contacts CONVERTED in the period — dated by when the conversion happened, not
+    # when the contact was created, so this agrees with the Lead Performance table.
+    p_cvd = {}
+    wh_cvd = "WHERE docstatus < 2 AND " + BC_CONVERTED_COND_SQL
+    if restrict_user:
+        wh_cvd += " AND assign_to = %(usr)s"
+        p_cvd["usr"] = restrict_user
+    wh_cvd += build_in_clause(ind_list, "ind", "industry", p_cvd)
+    wh_cvd += build_in_clause(src_list, "src", "source", p_cvd)
+    if from_date and to_date:
+        wh_cvd += " AND ({d}) BETWEEN %(sd)s AND %(ed)s".format(d=BC_CONVERSION_DATE_SQL)
+        p_cvd["sd"] = from_date
+        p_cvd["ed"] = to_date
+    conv_cnt = frappe.db.sql(
+        "SELECT COUNT(*) converted FROM `tabBusiness Contacts` {wh}".format(wh=wh_cvd),
+        p_cvd, as_dict=1)
+
+    # Leads that reached Order in the period, first transition only — same rule as
+    # the Lead -> Order column, so the chart and the table cannot disagree.
+    p_ord = {}
+    wh_ord = "WHERE l.docstatus < 2"
+    if restrict_user:
+        wh_ord += " AND l.lead_owner = %(usr)s"
+        p_ord["usr"] = restrict_user
+    wh_ord += build_in_clause(ind_list, "ind", "l.industry", p_ord)
+    wh_ord += build_in_clause(src_list, "src", "l.source", p_ord)
+    wh_ord += " AND {d} IS NOT NULL".format(d=LEAD_ORDER_CONV_DATE_SQL)
+    if from_date and to_date:
+        wh_ord += " AND ({d}) BETWEEN %(sd)s AND %(ed)s".format(d=LEAD_ORDER_CONV_DATE_SQL)
+        p_ord["sd"] = from_date
+        p_ord["ed"] = to_date
+    ord_cnt = frappe.db.sql(
+        "SELECT COUNT(DISTINCT l.name) orders FROM `tabLead` l {wh}".format(wh=wh_ord),
+        p_ord, as_dict=1)
+
+    _lv = (lead_cv[0] if lead_cv else {}) or {}
+    _cv = (cont_cv[0] if cont_cv else {}) or {}
+    contacts_total = int(_cv.get("contacts") or 0)
+    contacts_converted = int((conv_cnt[0] if conv_cnt else {}).get("converted") or 0)
+    leads_total = int(_lv.get("leads") or 0)
+    orders_total = int((ord_cnt[0] if ord_cnt else {}).get("orders") or 0)
+    conversion_overall = {
+        # counts are dated by their own event: created-in-period for the bases,
+        # converted-in-period for the conversions
+        "contacts": contacts_total,
+        "contacts_converted": contacts_converted,
+        "leads": leads_total,
+        "orders": orders_total,
+        "bc_to_lead_rate": round(contacts_converted * 100.0 / contacts_total, 1) if contacts_total else 0.0,
+        "lead_to_order_rate": round(orders_total * 100.0 / leads_total, 1) if leads_total else 0.0,
+    }
+
+    # Activity mix
+    p_ac = {}
+    wh_ac = "WHERE docstatus < 2"
+    if restrict_user:
+        wh_ac += " AND assigned_to = %(usr)s"
+        p_ac["usr"] = restrict_user
+    if from_date and to_date:
+        wh_ac += " AND DATE(COALESCE(ends_on, starts_on)) BETWEEN %(sd)s AND %(ed)s"
+        p_ac["sd"] = from_date
+        p_ac["ed"] = to_date
+    act_rows = frappe.db.sql(
+        "SELECT COALESCE(NULLIF(category, ''), 'Uncategorised') label, COUNT(*) total,"
+        " SUM(CASE WHEN status='Completed' THEN 1 ELSE 0 END) done,"
+        " SUM(CASE WHEN status!='Completed' THEN 1 ELSE 0 END) pending"
+        " FROM `tabEvent Activity` {wh} GROUP BY label ORDER BY total DESC LIMIT {lim}".format(
+            wh=wh_ac, lim=limit),
+        p_ac, as_dict=1)
+
+    # Contacts per industry / source, so the acquisition mix is visible too
+    def contact_group(column):
+        p = {}
+        wh = "WHERE docstatus < 2"
+        if restrict_user:
+            wh += " AND assign_to = %(usr)s"
+            p["usr"] = restrict_user
+        wh += build_in_clause(ind_list, "ind", "industry", p)
+        wh += build_in_clause(src_list, "src", "source", p)
+        if from_date and to_date:
+            wh += " AND DATE(creation) BETWEEN %(sd)s AND %(ed)s"
+            p["sd"] = from_date
+            p["ed"] = to_date
+        sql = (
+            "SELECT COALESCE(NULLIF({col}, ''), 'Not Set') label, COUNT(*) total,"
+            " SUM(CASE WHEN {conv} THEN 1 ELSE 0 END) converted"
+            " FROM `tabBusiness Contacts` {wh} GROUP BY label ORDER BY total DESC LIMIT {lim}"
+        ).format(col=column, conv=BC_CONVERTED_COND_SQL, wh=wh, lim=limit)
+        rows = frappe.db.sql(sql, p, as_dict=1)
+        return [{"label": r.get("label") or "Not Set",
+                 "total": int(r.get("total") or 0),
+                 "converted": int(r.get("converted") or 0)} for r in rows]
+
+    return {
+        "industry": lead_group("l.industry"),
+        "source": lead_group("l.source"),
+        "territory": lead_group("l.territory"),
+        "product_category": lead_group("l.custom_product_category"),
+        "lead_category": lead_category,
+        "lost_split": lost_split,
+        "lost_enquiry_reason": lost_enquiry_reason,
+        "lost_pipeline_reason": lost_pipeline_reason,
+        "conversion_overall": conversion_overall,
+        "activity_category": [{"label": r.get("label") or "Uncategorised",
+                               "total": int(r.get("total") or 0),
+                               "done": int(r.get("done") or 0),
+                               "pending": int(r.get("pending") or 0)} for r in act_rows],
+        "contact_industry": contact_group("industry"),
+        "contact_source": contact_group("source"),
+    }
+
+
+@frappe.whitelist()
+def get_crm_team_comparison(from_date=None, to_date=None, user=None, industry=None, source=None,
+                            fiscal_year=None, period=None, month=None, **kwargs):
+    """Per-user aggregates for the admin comparison chart.
+
+    One grouped query per entity rather than N per-user dashboard calls, so the
+    chart stays cheap as the team grows.
+    """
+    from_date, to_date = parse_period_and_dates(period, fiscal_year, from_date, to_date,
+                                                month=month or kwargs.get("month"))
+
+    require_crm_head()
+    restrict_user = user or None
+
+    ind_list = as_filter_list(industry)
+    src_list = as_filter_list(source)
+
+    # Leads per owner
+    lp = {}
+    wl = "WHERE l.docstatus < 2"
+    if restrict_user:
+        wl += " AND l.lead_owner = %(usr)s"
+        lp["usr"] = restrict_user
+    wl += build_in_clause(ind_list, "ind", "l.industry", lp)
+    wl += build_in_clause(src_list, "src", "l.source", lp)
+    if from_date and to_date:
+        wl += " AND DATE(l.creation) BETWEEN %(sd)s AND %(ed)s"
+        lp["sd"] = from_date
+        lp["ed"] = to_date
+    leads = frappe.db.sql(
+        "SELECT l.lead_owner uid, COUNT(*) total,"
+        " SUM(CASE WHEN l.custom_lead_category='Order' THEN 1 ELSE 0 END) orders,"
+        " SUM(CASE WHEN l.custom_lead_category='Order'"
+        "     THEN COALESCE(l.custom_po_value, 0) ELSE 0 END) order_value"
+        " FROM `tabLead` l " + wl + " GROUP BY l.lead_owner", lp, as_dict=1)
+
+    # Activities per owner
+    ap = {}
+    wa = "WHERE docstatus < 2"
+    if restrict_user:
+        wa += " AND assigned_to = %(usr)s"
+        ap["usr"] = restrict_user
+    if from_date and to_date:
+        wa += " AND DATE(COALESCE(ends_on, starts_on)) BETWEEN %(sd)s AND %(ed)s"
+        ap["sd"] = from_date
+        ap["ed"] = to_date
+    acts = frappe.db.sql(
+        "SELECT assigned_to uid, COUNT(*) total,"
+        " SUM(CASE WHEN status='Completed' THEN 1 ELSE 0 END) done"
+        " FROM `tabEvent Activity` " + wa + " GROUP BY assigned_to", ap, as_dict=1)
+
+    # Contacts per owner
+    cp = {}
+    wc = "WHERE docstatus < 2"
+    if restrict_user:
+        wc += " AND assign_to = %(usr)s"
+        cp["usr"] = restrict_user
+    wc += build_in_clause(ind_list, "ind", "industry", cp)
+    wc += build_in_clause(src_list, "src", "source", cp)
+    if from_date and to_date:
+        wc += " AND DATE(creation) BETWEEN %(sd)s AND %(ed)s"
+        cp["sd"] = from_date
+        cp["ed"] = to_date
+    conts = frappe.db.sql(
+        "SELECT assign_to uid, COUNT(*) total,"
+        " SUM(CASE WHEN " + BC_CONVERTED_COND_SQL + " THEN 1 ELSE 0 END) converted"
+        " FROM `tabBusiness Contacts` " + wc + " GROUP BY assign_to", cp, as_dict=1)
+
+    rows = {}
+
+    def slot(uid):
+        if not uid:
+            return None
+        return rows.setdefault(uid, {
+            "user": uid, "full_name": uid, "leads": 0, "orders": 0,
+            "order_value": 0.0, "activities": 0, "activities_done": 0,
+            "contacts": 0, "contacts_converted": 0,
+        })
+
+    for r in leads:
+        s = slot(r.get("uid"))
+        if s:
+            s["leads"] = int(r.get("total") or 0)
+            s["orders"] = int(r.get("orders") or 0)
+            s["order_value"] = flt(r.get("order_value") or 0)
+    for r in acts:
+        s = slot(r.get("uid"))
+        if s:
+            s["activities"] = int(r.get("total") or 0)
+            s["activities_done"] = int(r.get("done") or 0)
+    for r in conts:
+        s = slot(r.get("uid"))
+        if s:
+            s["contacts"] = int(r.get("total") or 0)
+            s["contacts_converted"] = int(r.get("converted") or 0)
+
+    names = dict(frappe.db.sql(
+        "SELECT name, COALESCE(NULLIF(full_name, ''), name) FROM `tabUser`") or [])
+    out = []
+    for uid, v in rows.items():
+        v["full_name"] = names.get(uid) or uid
+        out.append(v)
+    out.sort(key=lambda x: (-x["leads"], x["full_name"]))
+    return {"rows": out}
+
+
+@frappe.whitelist()
+def get_crm_report_emails(report_type="daily"):
+    """Return email IDs stored in Admin Settings for the given report type."""
+    field_map = {
+        "daily":   "crm_daily_report_emails",
+        "weekly":  "crm_weekly_report_emails",
+        "monthly": "crm_monthly_report_emails",
+    }
+    field = field_map.get(report_type, "crm_daily_report_emails")
+    try:
+        val = frappe.db.get_single_value("Admin Settings", field) or ""
+    except Exception:
+        val = ""
+    emails = [e.strip() for e in val.split(",") if e.strip()]
+    return {"emails": emails}
+
+
+@frappe.whitelist()
+def export_crm_dashboard_excel(
+    c_user=None, c_fiscal_year=None, c_industry=None, c_source=None, c_period_type="monthly",
+    c_from_date=None, c_to_date=None, c_month=None, c_period=None,
+    l_user=None, l_fiscal_year=None, l_industry=None, l_source=None, l_period_type="monthly",
+    l_from_date=None, l_to_date=None, l_month=None, l_period=None,
+    t_fiscal_year=None,
+    ea_user=None, ea_fiscal_year=None, ea_period_type="monthly", ea_entity="All",
+    ea_from_date=None, ea_to_date=None, ea_month=None, ea_period=None,
+    export_type="applied", send_email=0, email_address=None
+):
+    """Export CRM Analytics: Summary + per-owner tabs + detail tabs. Optionally email."""
+    import base64
+    from io import BytesIO
+    import openpyxl
+    from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
+    from openpyxl.utils import get_column_letter
+    from frappe.utils import flt
+
+    # ── Access guard ──────────────────────────────────────────────
+    if "DAC CRM Head" not in frappe.get_roles(frappe.session.user):
+        frappe.throw("Only DAC CRM Head can export the CRM report.", frappe.PermissionError)
+
+    # ── Period override: compute concrete date range for daily/weekly/monthly ─
+    import datetime as _dt
+    _today = frappe.utils.getdate(frappe.utils.today())
+
+    summary_period_type = c_period_type
+    period_label_str = export_type.title()
+    if export_type == "daily":
+        summary_period_type = "daily"
+        c_period_type = l_period_type = ea_period_type = "daily"
+        _d_str = _today.strftime("%Y-%m-%d")
+        # Override: only today's records
+        c_from_date = l_from_date = ea_from_date = _d_str
+        c_to_date   = l_to_date   = ea_to_date   = _d_str
+        c_period    = l_period    = ea_period     = None  # use explicit from/to
+        period_label_str = "Daily ({})".format(_d_str)
+    elif export_type == "weekly":
+        summary_period_type = "weekly"
+        c_period_type = l_period_type = ea_period_type = "weekly"
+        _wday = _today.weekday()  # Monday=0
+        _week_start = _today - _dt.timedelta(days=_wday)
+        _week_end   = _week_start + _dt.timedelta(days=6)
+        c_from_date = l_from_date = ea_from_date = _week_start.strftime("%Y-%m-%d")
+        c_to_date   = l_to_date   = ea_to_date   = _week_end.strftime("%Y-%m-%d")
+        c_period    = l_period    = ea_period     = None
+        period_label_str = "Weekly ({} to {})".format(
+            _week_start.strftime("%d-%b-%Y"), _week_end.strftime("%d-%b-%Y"))
+    elif export_type == "monthly":
+        summary_period_type = "monthly"
+        c_period_type = l_period_type = ea_period_type = "monthly"
+        _month_start = _today.replace(day=1)
+        import calendar as _cal
+        _last_day = _cal.monthrange(_today.year, _today.month)[1]
+        _month_end = _today.replace(day=_last_day)
+        c_from_date = l_from_date = ea_from_date = _month_start.strftime("%Y-%m-%d")
+        c_to_date   = l_to_date   = ea_to_date   = _month_end.strftime("%Y-%m-%d")
+        c_period    = l_period    = ea_period     = None
+        period_label_str = "Monthly ({} {})".format(
+            _today.strftime("%B"), _today.year)
+
+    # ── Fiscal year ────────────────────────────────────────────────
+    fiscal_year = c_fiscal_year or l_fiscal_year or t_fiscal_year or ea_fiscal_year
+    if not fiscal_year:
+        fy_doc = frappe.db.get_value("Fiscal Year", {"disabled": 0}, "name",
+                                     order_by="year_start_date desc")
+        fiscal_year = fy_doc or "2025-2026"
+
+    c_from, c_to = parse_period_and_dates(c_period, c_fiscal_year or fiscal_year,
+                                          c_from_date, c_to_date, month=c_month)
+    l_from, l_to = parse_period_and_dates(l_period, l_fiscal_year or fiscal_year,
+                                          l_from_date, l_to_date, month=l_month)
+    ea_from, ea_to = parse_period_and_dates(ea_period, ea_fiscal_year or fiscal_year,
+                                            ea_from_date, ea_to_date, month=ea_month)
+
+    # ── Effective users (head sees all by default) ─────────────────
+    eff_c_user  = c_user  or None
+    eff_l_user  = l_user  or None
+    eff_ea_user = ea_user or None
+
+    # ── Multiselect scope filters (Contacts and Leads are filtered independently) ──
+    c_ind_list = as_filter_list(c_industry)
+    c_src_list = as_filter_list(c_source)
+    l_ind_list = as_filter_list(l_industry)
+    l_src_list = as_filter_list(l_source)
+
+    def scope_label(ind_list, src_list):
+        parts = []
+        parts.append(", ".join(ind_list) if ind_list else "All Industries")
+        parts.append(", ".join(src_list) if src_list else "All Sources")
+        return "  |  ".join(parts)
+
+    # ── Style helpers ─────────────────────────────────────────────
+    SLATE  = "0F172A"; BLUE   = "2563EB"; GREEN  = "16A34A"
+    ORANGE = "EA580C"; PURPLE = "7C3AED"; WHITE  = "FFFFFF"
+    SILVER = "F1F5F9"; ALT    = "EFF6FF"
+
+    def _font(bold=False, size=9, color=SLATE, name="Calibri"):
+        return Font(name=name, size=size, bold=bold, color=color)
+    def _fill(h):
+        return PatternFill(start_color=h, end_color=h, fill_type="solid")
+    def _border(c="CBD5E1"):
+        s = Side(style="thin", color=c)
+        return Border(left=s, right=s, top=s, bottom=s)
+    def _align(h="left", v="center", wrap=False):
+        return Alignment(horizontal=h, vertical=v, wrap_text=wrap)
+
+    TITLE_FONT  = _font(bold=True, size=14, color=WHITE)
+    SEC_FONT    = _font(bold=True, size=11, color=BLUE)
+    HDR_FONT    = _font(bold=True, size=9,  color=WHITE)
+    DATA_FONT   = _font(size=9)
+    BOLD_FONT   = _font(bold=True, size=9)
+    LINK_FONT   = Font(name="Calibri", size=9, color=BLUE, underline="single")
+    TOT_FONT    = _font(bold=True, size=9)
+    LBL_FONT    = _font(bold=True, size=9, color="475569")
+    VAL_FONT    = _font(size=9, color=SLATE)
+    THIN        = _border()
+    SILVER_FILL = _fill(SILVER)
+    ALT_FILL    = _fill(ALT)
+    FILTER_FILL = _fill("F8FAFC")
+
+    def apply_row(ws, row, cs, ce, font=None, fill=None):
+        for c in range(cs, ce + 1):
+            cell = ws.cell(row=row, column=c)
+            if font: cell.font = font
+            if fill: cell.fill = fill
+            cell.border = THIN
+
+    def auto_width(ws, mn=10, mx=42):
+        for col in ws.columns:
+            w = max((len(str(cl.value or "")) for cl in col), default=mn)
+            ws.column_dimensions[get_column_letter(col[0].column)].width = min(max(w + 2, mn), mx)
+
+    def title_banner(ws, text, span, fill_color, row=1):
+        ws.merge_cells(start_row=row, start_column=1, end_row=row, end_column=span)
+        c = ws.cell(row=row, column=1, value=text)
+        c.font = TITLE_FONT; c.fill = _fill(fill_color)
+        c.alignment = _align("left", "center")
+        ws.row_dimensions[row].height = 32
+
+    def money(v):
+        return "Rs.{:,.0f}".format(flt(v))
+
+    # ── Fetch active sales persons ────────────────────────────────
+    # Pull all CRM users (not just Sales Persons) for a complete team view
+    crm_users = frappe.db.sql("""
+        SELECT u.name as user_id, u.full_name as sp_name
+        FROM `tabUser` u
+        JOIN `tabHas Role` hr ON hr.parent = u.name
+        WHERE u.enabled = 1 AND u.user_type = 'System User'
+          AND hr.role IN ('DAC CRM Head', 'DAC CRM')
+        GROUP BY u.name
+        ORDER BY u.full_name ASC
+    """, as_dict=True)
+    # Also try Sales Person linkage for backward compat
+    sales_persons = frappe.get_all("Sales Person",
+        fields=["name", "sales_person_name", "employee"],
+        filters={"enabled": 1, "is_group": 0})
+    sp_user_ids = set()
+    sp_users = []
+    for sp in sales_persons:
+        uid = frappe.db.get_value("Employee", sp.employee, "user_id") if sp.employee else None
+        if uid:
+            sp_users.append({"sp_name": sp.sales_person_name, "user_id": uid})
+            sp_user_ids.add(uid)
+    # Add CRM users not already in sp_users
+    for cu in crm_users:
+        if cu["user_id"] not in sp_user_ids:
+            sp_users.append({"sp_name": cu["sp_name"], "user_id": cu["user_id"]})
+    sp_users = sorted(sp_users, key=lambda x: x["sp_name"] or "")
+
+    # user id -> full name. User ids are login/email addresses; the sheets should
+    # never show those where a person's name is meant.
+    _user_names = dict(frappe.db.sql(
+        "SELECT name, COALESCE(NULLIF(full_name, ''), name) FROM `tabUser`") or [])
+
+    def user_name(uid):
+        if not uid:
+            return "-"
+        return _user_names.get(uid) or uid
+
+    def agg_user(uid, from_d=None, to_d=None, use_period=None, all_time=False):
+        """Aggregate contact, lead, and activity counts for a user.
+
+        Contacts and Leads are queried separately: each dashboard section carries its
+        own date range and its own industry/source multiselect, so a single combined
+        call would apply the Lead filters to the Contact figures.
+
+        Pass all_time=True for the unfiltered overview tab — passing from_d/to_d as
+        None means "use the section default", not "no date filter".
+        """
+        if all_time:
+            c_fd = c_td = l_fd = l_td = None
+            fy_arg = period_arg = c_month_arg = l_month_arg = None
+        else:
+            c_fd = from_d if from_d is not None else c_from
+            c_td = to_d   if to_d   is not None else c_to
+            l_fd = from_d if from_d is not None else l_from
+            l_td = to_d   if to_d   is not None else l_to
+            fy_arg = fiscal_year
+            period_arg = use_period
+            c_month_arg, l_month_arg = c_month, l_month
+
+        cd = get_tabular_dashboard_data(
+            from_date=c_fd, to_date=c_td, user=uid,
+            industry=c_ind_list, source=c_src_list,
+            period_type=summary_period_type, fiscal_year=fy_arg,
+            period=period_arg, month=c_month_arg)
+        ld = get_tabular_dashboard_data(
+            from_date=l_fd, to_date=l_td, user=uid,
+            industry=l_ind_list, source=l_src_list,
+            period_type=summary_period_type, fiscal_year=fy_arg,
+            period=period_arg, month=l_month_arg)
+
+        # Activity aggregation below uses the lead window, matching the summary tab
+        fd, td = l_fd, l_td
+
+        d = dict(o=0,c=0,e=0,enq_c=0,enq_v=0.0,pipe_c=0,pipe_v=0.0,
+                 ord_c=0,ord_v=0.0,lenq_c=0,lenq_v=0.0,lpipe_c=0,lpipe_v=0.0,
+                 c_to_l=0,l_to_o=0,conv=0,
+                 act_total=0,act_done=0,act_open=0)
+        # Contact totals
+        ct = cd.get("contact_totals", {})
+        d["o"] = ct.get("o", 0)
+        d["c"] = ct.get("c", 0)
+        d["e"] = ct.get("e", 0)
+        # Lead totals
+        lt = ld.get("lead_totals", {})
+        d["enq_c"]  = lt.get("enq_c", 0);   d["enq_v"]  = flt(lt.get("enq_v", 0))
+        d["pipe_c"] = lt.get("pipe_c", 0);   d["pipe_v"] = flt(lt.get("pipe_v", 0))
+        d["ord_c"]  = lt.get("ord_c", 0);    d["ord_v"]  = flt(lt.get("ord_v", 0))
+        d["lenq_c"] = lt.get("lenq_c", 0);   d["lenq_v"] = flt(lt.get("lenq_v", 0))
+        d["lpipe_c"]= lt.get("lpipe_c", 0);  d["lpipe_v"]= flt(lt.get("lpipe_v", 0))
+        d["c_to_l"] = lt.get("conv_bc_to_lead", 0)
+        d["l_to_o"] = lt.get("conv_lead_to_order", 0)
+        # Activity counts for this user within date range
+        ea_p = {"usr": uid}
+        ea_wh = "WHERE docstatus < 2 AND assigned_to = %(usr)s"
+        if fd and td:
+            ea_wh += " AND DATE(COALESCE(ends_on, starts_on)) BETWEEN %(sd)s AND %(ed)s"
+            ea_p["sd"] = fd; ea_p["ed"] = td
+        ea_agg = frappe.db.sql(
+            f"SELECT COUNT(*) total, "
+            f"SUM(CASE WHEN status='Completed' THEN 1 ELSE 0 END) done, "
+            f"SUM(CASE WHEN status!='Completed' THEN 1 ELSE 0 END) pending "
+            f"FROM `tabEvent Activity` {ea_wh}",
+            ea_p, as_dict=1)
+        if ea_agg:
+            d["act_total"] = int(ea_agg[0].get("total") or 0)
+            d["act_done"]  = int(ea_agg[0].get("done") or 0)
+            d["act_open"]  = int(ea_agg[0].get("pending") or 0)
+        return d
+
+    wb = openpyxl.Workbook()
+
+    # ==========================================================
+    # TAB 1 -- SUMMARY
+    # ==========================================================
+    ws = wb.active
+    ws.title = "Summary"
+    title_banner(ws,
+        "DAC CRM Executive Dashboard Report  |  {}  |  {} Report".format(
+            frappe.utils.today(), period_label_str),
+        15, SLATE)
+
+    r = 3
+    ws.cell(r, 1, "Report Filter Details").font = SEC_FONT; r += 1
+    for lbl, val in [
+        ("Fiscal Year",           fiscal_year),
+        ("Report Period Mode",    summary_period_type.title()),
+        ("Contacts Date Range",   "{} to {}".format(c_from or "All Time", c_to or "All Time")),
+        ("Leads Date Range",      "{} to {}".format(l_from or "All Time", l_to or "All Time")),
+        ("Activities Date Range", "{} to {}".format(ea_from or "All Time", ea_to or "All Time")),
+        ("Contacts Filter",       scope_label(c_ind_list, c_src_list)),
+        ("Leads Filter",          scope_label(l_ind_list, l_src_list)),
+        ("Generated By",          frappe.session.user_fullname or frappe.session.user),
+        ("Generated On",          frappe.utils.today()),
+    ]:
+        lc = ws.cell(r, 1, lbl); lc.font = LBL_FONT; lc.fill = FILTER_FILL; lc.border = THIN
+        vc = ws.cell(r, 2, val); vc.font = VAL_FONT;  vc.fill = FILTER_FILL; vc.border = THIN
+        ws.merge_cells(start_row=r, start_column=2, end_row=r, end_column=5)
+        r += 1
+    r += 1
+
+    # Overall Totals
+    ws.cell(r, 1, "Overall Totals (All Team)").font = SEC_FONT; r += 1
+    for ci, h in enumerate(["Metric", "Count / Value"], 1):
+        c = ws.cell(r, ci, h); c.font = HDR_FONT; c.fill = _fill(BLUE); c.border = THIN
+    r += 1
+
+    p_ct = {}; p_ct_wh_extras = []
+    wh_ct = "WHERE docstatus < 2"
+    if eff_c_user: wh_ct += " AND assign_to = %(cu)s"; p_ct["cu"] = eff_c_user
+    wh_ct += build_in_clause(c_ind_list, "cind", "industry", p_ct)
+    wh_ct += build_in_clause(c_src_list, "csrc", "source", p_ct)
+    if c_from and c_to:
+        wh_ct += " AND DATE(creation) BETWEEN %(csd)s AND %(ced)s"
+        p_ct["csd"] = c_from; p_ct["ced"] = c_to
+    c_tot = frappe.db.sql(
+        "SELECT SUM(CASE WHEN status='Open' THEN 1 ELSE 0 END) oc,"
+        "SUM(CASE WHEN status='Converted to Lead' THEN 1 ELSE 0 END) cc,"
+        "SUM(CASE WHEN status='Existing Customer' THEN 1 ELSE 0 END) ec,"
+        "COUNT(*) tc FROM `tabBusiness Contacts` " + wh_ct,
+        p_ct, as_dict=1)[0] or {}
+
+    p_lt = {}; wh_lt = "WHERE docstatus < 2"
+    if eff_l_user: wh_lt += " AND lead_owner = %(lu)s"; p_lt["lu"] = eff_l_user
+    wh_lt += build_in_clause(l_ind_list, "lind", "industry", p_lt)
+    wh_lt += build_in_clause(l_src_list, "lsrc", "source", p_lt)
+    if l_from and l_to:
+        wh_lt += " AND DATE(creation) BETWEEN %(lsd)s AND %(led)s"
+        p_lt["lsd"] = l_from; p_lt["led"] = l_to
+    l_tot = frappe.db.sql(
+        "SELECT SUM(CASE WHEN custom_lead_category='Enquiry'  THEN 1 ELSE 0 END) enq_c,"
+        "SUM(CASE WHEN custom_lead_category='Enquiry' THEN COALESCE(custom_expected_revenue,0) ELSE 0 END) enq_v,"
+        "SUM(CASE WHEN custom_lead_category='Pipeline' THEN 1 ELSE 0 END) pipe_c,"
+        "SUM(CASE WHEN custom_lead_category='Pipeline' THEN COALESCE(custom_expected_revenue,0) ELSE 0 END) pipe_v,"
+        "SUM(CASE WHEN custom_lead_category='Order'    THEN 1 ELSE 0 END) ord_c,"
+        "SUM(CASE WHEN custom_lead_category='Order' THEN COALESCE(custom_po_value,0) ELSE 0 END) ord_v,"
+        "SUM(CASE WHEN custom_lead_category IN ('Lost Enquiry','Lost Pipeline') THEN 1 ELSE 0 END) lost_c,"
+        "COUNT(*) tl FROM `tabLead` " + wh_lt,
+        p_lt, as_dict=1)[0] or {}
+
+    p_ea = {}; wh_ea = "WHERE docstatus<2"
+    if eff_ea_user: wh_ea += " AND assigned_to = %(eu)s"; p_ea["eu"] = eff_ea_user
+    if ea_from and ea_to:
+        wh_ea += " AND DATE(COALESCE(ends_on,starts_on)) BETWEEN %(esd)s AND %(eed)s"
+        p_ea["esd"] = ea_from; p_ea["eed"] = ea_to
+    ea_tot = frappe.db.sql(
+        "SELECT COUNT(*) total,SUM(CASE WHEN status='Completed' THEN 1 ELSE 0 END) done "
+        "FROM `tabEvent Activity` " + wh_ea, p_ea, as_dict=1)[0] or {}
+
+    for i, (lbl, val) in enumerate([
+        ("Total Contacts",       c_tot.get("tc", 0)),
+        ("  Open",               c_tot.get("oc", 0)),
+        ("  Converted to Lead",  c_tot.get("cc", 0)),
+        ("  Existing Customers", c_tot.get("ec", 0)),
+        ("Total Leads",          l_tot.get("tl", 0)),
+        ("  Enquiry",            "{} ({})".format(l_tot.get("enq_c",0), money(l_tot.get("enq_v",0)))),
+        ("  Pipeline",           "{} ({})".format(l_tot.get("pipe_c",0), money(l_tot.get("pipe_v",0)))),
+        ("  Order",              "{} ({})".format(l_tot.get("ord_c",0), money(l_tot.get("ord_v",0)))),
+        ("  Lost",               l_tot.get("lost_c", 0)),
+        ("Total Activities",     ea_tot.get("total", 0)),
+        ("  Completed",          ea_tot.get("done", 0)),
+    ]):
+        fill = ALT_FILL if i % 2 == 0 else None
+        lc = ws.cell(r, 1, lbl); lc.font = BOLD_FONT if not lbl.startswith("  ") else DATA_FONT
+        vc = ws.cell(r, 2, val); vc.font = DATA_FONT
+        apply_row(ws, r, 1, 2, fill=fill); r += 1
+    r += 1
+
+    # Team Member Wise Comparison (with activity counts)
+    ws.cell(r, 1, "Team Member Performance Summary  –  {} Report".format(period_label_str)).font = SEC_FONT; r += 1
+    tm_hdrs = ["Team Member","Contacts (Open)","Contacts (Conv)","Contacts (Cust)",
+               "Enquiry #","Enquiry Val","Pipeline #","Pipeline Val",
+               "Order #","Order Val","Lost #","BC to Lead","Lead to Order",
+               "Activity (Total)","Activity (Done)","Activity (Open)"]
+    for ci, h in enumerate(tm_hdrs, 1):
+        c = ws.cell(r, ci, h); c.font = HDR_FONT; c.fill = _fill(BLUE)
+        c.border = THIN; c.alignment = _align("center", wrap=True)
+    ws.row_dimensions[r].height = 36; r += 1
+    team_totals = {k: 0 for k in ["o","c","e","enq_c","enq_v","pipe_c","pipe_v",
+                                    "ord_c","ord_v","lenq_c","lpipe_c",
+                                    "c_to_l","l_to_o","act_total","act_done","act_open"]}
+    for idx, sp in enumerate(sp_users):
+        d = agg_user(sp["user_id"])
+        fill = ALT_FILL if idx % 2 == 0 else None
+        for ci, v in enumerate([
+            sp["sp_name"], d["o"], d["c"], d["e"],
+            d["enq_c"],  money(d["enq_v"]),
+            d["pipe_c"], money(d["pipe_v"]),
+            d["ord_c"],  money(d["ord_v"]),
+            d["lenq_c"]+d["lpipe_c"],
+            d["c_to_l"], d["l_to_o"],
+            d["act_total"], d["act_done"], d["act_open"],
+        ], 1):
+            ws.cell(r, ci, v).font = DATA_FONT
+        apply_row(ws, r, 1, len(tm_hdrs), fill=fill); r += 1
+        for k in ["o","c","e","enq_c","pipe_c","ord_c","c_to_l","l_to_o","act_total","act_done","act_open"]:
+            team_totals[k] += d.get(k, 0)
+        team_totals["lenq_c"] += d.get("lenq_c", 0) + d.get("lpipe_c", 0)
+        team_totals["enq_v"]  += d.get("enq_v", 0)
+        team_totals["pipe_v"] += d.get("pipe_v", 0)
+        team_totals["ord_v"]  += d.get("ord_v", 0)
+    # Total row
+    for ci, v in enumerate([
+        "TOTAL", team_totals["o"], team_totals["c"], team_totals["e"],
+        team_totals["enq_c"], money(team_totals["enq_v"]),
+        team_totals["pipe_c"], money(team_totals["pipe_v"]),
+        team_totals["ord_c"],  money(team_totals["ord_v"]),
+        team_totals["lenq_c"],
+        team_totals["c_to_l"], team_totals["l_to_o"],
+        team_totals["act_total"], team_totals["act_done"], team_totals["act_open"],
+    ], 1):
+        ws.cell(r, ci, v).font = TOT_FONT
+    apply_row(ws, r, 1, len(tm_hdrs), font=TOT_FONT, fill=SILVER_FILL); r += 1
+
+    auto_width(ws); ws.column_dimensions["A"].width = 24; ws.freeze_panes = "A2"
+
+    # ==========================================================
+    # TABS 2..N -- PER-OWNER
+    # ==========================================================
+    OWNER_COLORS = ["1D4ED8","0F766E","7C2D12","4C1D95","065F46","92400E","1E3A5F","BE185D"]
+    for oi, sp in enumerate(sp_users):
+        uid   = sp["user_id"]
+        sname = sp["sp_name"]
+        ws_o  = wb.create_sheet(title=sname[:31])
+        oc    = OWNER_COLORS[oi % len(OWNER_COLORS)]
+        title_banner(ws_o,
+            "{}  |  Individual Performance  |  {} Breakup".format(sname, export_type.title()),
+            10, oc)
+        ro = 3
+
+        # Every table below is scoped to the dashboard's selected period and
+        # industry/source filters — spell that out so the numbers are readable.
+        ws_o.cell(ro, 1, "Applied Filters").font = SEC_FONT; ro += 1
+        for lbl, val in [
+            ("Contacts Period",   "{} to {}".format(c_from or "All Time", c_to or "All Time")),
+            ("Contacts Filter",   scope_label(c_ind_list, c_src_list)),
+            ("Leads Period",      "{} to {}".format(l_from or "All Time", l_to or "All Time")),
+            ("Leads Filter",      scope_label(l_ind_list, l_src_list)),
+            ("Activities Period", "{} to {}".format(ea_from or "All Time", ea_to or "All Time")),
+        ]:
+            lc = ws_o.cell(ro, 1, lbl); lc.font = LBL_FONT; lc.fill = FILTER_FILL; lc.border = THIN
+            vc = ws_o.cell(ro, 2, val); vc.font = VAL_FONT;  vc.fill = FILTER_FILL; vc.border = THIN
+            ws_o.merge_cells(start_row=ro, start_column=2, end_row=ro, end_column=4)
+            ro += 1
+        ro += 1
+
+        # Contacts — contact date range + contact industry/source
+        ws_o.cell(ro, 1, "Business Contacts Summary").font = SEC_FONT; ro += 1
+        for ci, h in enumerate(["Open","Conv to Lead","Existing Customer","Total"], 1):
+            c = ws_o.cell(ro, ci, h); c.font = HDR_FONT; c.fill = _fill(oc); c.border = THIN
+        ro += 1
+        p_oc = {"usr": uid}
+        wh_oc = "WHERE docstatus<2 AND assign_to=%(usr)s"
+        wh_oc += build_in_clause(c_ind_list, "cind", "industry", p_oc)
+        wh_oc += build_in_clause(c_src_list, "csrc", "source", p_oc)
+        if c_from and c_to:
+            wh_oc += " AND DATE(creation) BETWEEN %(sd)s AND %(ed)s"
+            p_oc["sd"] = c_from; p_oc["ed"] = c_to
+        ct_r = frappe.db.sql(
+            "SELECT SUM(CASE WHEN status='Open' THEN 1 ELSE 0 END),"
+            "SUM(CASE WHEN status='Converted to Lead' THEN 1 ELSE 0 END),"
+            "SUM(CASE WHEN status='Existing Customer' THEN 1 ELSE 0 END),COUNT(*)"
+            " FROM `tabBusiness Contacts` " + wh_oc, p_oc)
+        for ci, v in enumerate(ct_r[0] if ct_r else [0,0,0,0], 1):
+            ws_o.cell(ro, ci, v or 0).font = DATA_FONT
+        apply_row(ws_o, ro, 1, 4, fill=ALT_FILL); ro += 2
+
+        # Leads — lead date range + lead industry/source
+        ws_o.cell(ro, 1, "Leads by Category").font = SEC_FONT; ro += 1
+        for ci, h in enumerate(["Category","Count","Value"], 1):
+            c = ws_o.cell(ro, ci, h); c.font = HDR_FONT; c.fill = _fill(oc); c.border = THIN
+        ro += 1
+        p_ol = {"usr": uid}
+        wh_ol = "WHERE docstatus<2 AND lead_owner=%(usr)s"
+        wh_ol += build_in_clause(l_ind_list, "lind", "industry", p_ol)
+        wh_ol += build_in_clause(l_src_list, "lsrc", "source", p_ol)
+        if l_from and l_to:
+            wh_ol += " AND DATE(creation) BETWEEN %(sd)s AND %(ed)s"
+            p_ol["sd"] = l_from; p_ol["ed"] = l_to
+        ld_r = frappe.db.sql(
+            "SELECT custom_lead_category,COUNT(*) cnt,"
+            "SUM(CASE WHEN custom_lead_category='Order' THEN COALESCE(custom_po_value,0)"
+            "     ELSE COALESCE(custom_expected_revenue,0) END) val"
+            " FROM `tabLead` " + wh_ol + " GROUP BY custom_lead_category",
+            p_ol, as_dict=1)
+        lead_tot_cnt, lead_tot_val = 0, 0.0
+        for i2, lr in enumerate(ld_r):
+            fill2 = ALT_FILL if i2 % 2 == 0 else None
+            ws_o.cell(ro, 1, lr.get("custom_lead_category") or "-").font = DATA_FONT
+            ws_o.cell(ro, 2, lr.get("cnt", 0)).font = DATA_FONT
+            rv = ws_o.cell(ro, 3, flt(lr.get("val", 0)))
+            rv.font = DATA_FONT; rv.number_format = '"Rs."#,##0.00'
+            lead_tot_cnt += int(lr.get("cnt") or 0)
+            lead_tot_val += flt(lr.get("val", 0))
+            apply_row(ws_o, ro, 1, 3, fill=fill2); ro += 1
+        ws_o.cell(ro, 1, "Total").font = TOT_FONT
+        ws_o.cell(ro, 2, lead_tot_cnt).font = TOT_FONT
+        ltv = ws_o.cell(ro, 3, lead_tot_val); ltv.font = TOT_FONT
+        ltv.number_format = '"Rs."#,##0.00'
+        apply_row(ws_o, ro, 1, 3, font=TOT_FONT, fill=SILVER_FILL); ro += 2
+
+        # Activities — activity date range
+        ws_o.cell(ro, 1, "Activities by Category").font = SEC_FONT; ro += 1
+        for ci, h in enumerate(["Category","Total","Completed","Pending"], 1):
+            c = ws_o.cell(ro, ci, h); c.font = HDR_FONT; c.fill = _fill(oc); c.border = THIN
+        ro += 1
+        p_oa = {"usr": uid}
+        wh_oa = "WHERE docstatus<2 AND assigned_to=%(usr)s"
+        if ea_from and ea_to:
+            wh_oa += " AND DATE(COALESCE(ends_on, starts_on)) BETWEEN %(sd)s AND %(ed)s"
+            p_oa["sd"] = ea_from; p_oa["ed"] = ea_to
+        ea_r = frappe.db.sql(
+            "SELECT category,COUNT(*) total,"
+            "SUM(CASE WHEN status='Completed' THEN 1 ELSE 0 END) done,"
+            "SUM(CASE WHEN status!='Completed' THEN 1 ELSE 0 END) pending"
+            " FROM `tabEvent Activity` " + wh_oa + " GROUP BY category",
+            p_oa, as_dict=1)
+        act_tot = [0, 0, 0]
+        for i3, ar in enumerate(ea_r):
+            fill3 = ALT_FILL if i3 % 2 == 0 else None
+            ws_o.cell(ro, 1, ar.get("category") or "-").font = DATA_FONT
+            ws_o.cell(ro, 2, ar.get("total", 0)).font = DATA_FONT
+            ws_o.cell(ro, 3, ar.get("done", 0)).font = DATA_FONT
+            ws_o.cell(ro, 4, ar.get("pending", 0)).font = DATA_FONT
+            act_tot[0] += int(ar.get("total") or 0)
+            act_tot[1] += int(ar.get("done") or 0)
+            act_tot[2] += int(ar.get("pending") or 0)
+            apply_row(ws_o, ro, 1, 4, fill=fill3); ro += 1
+        ws_o.cell(ro, 1, "Total").font = TOT_FONT
+        for ci, v in enumerate(act_tot, 2):
+            ws_o.cell(ro, ci, v).font = TOT_FONT
+        apply_row(ws_o, ro, 1, 4, font=TOT_FONT, fill=SILVER_FILL)
+
+        auto_width(ws_o, mn=12)
+
+    # ==========================================================
+    # TAB: CONTACTS DETAIL
+    # ==========================================================
+    ws_c = wb.create_sheet(title="Contacts Detail")
+    p_cd = {"usr": eff_c_user, "sd": c_from, "ed": c_to}
+    wh_cd = "WHERE docstatus < 2"
+    if eff_c_user: wh_cd += " AND assign_to = %(usr)s"
+    wh_cd += build_in_clause(c_ind_list, "cind", "industry", p_cd)
+    wh_cd += build_in_clause(c_src_list, "csrc", "source", p_cd)
+    if c_from and c_to: wh_cd += " AND DATE(creation) BETWEEN %(sd)s AND %(ed)s"
+    contacts_list = frappe.db.sql(
+        "SELECT name,contact_name,organization_name,mobile_number,email_id,"
+        "industry,assign_to,status,DATE_FORMAT(creation,'%%d-%%b-%%Y') created_on"
+        " FROM `tabBusiness Contacts` " + wh_cd + " ORDER BY creation DESC",
+        p_cd, as_dict=1)
+    for _rec in contacts_list:
+        _rec["assign_to"] = user_name(_rec.get("assign_to"))
+
+    title_banner(ws_c, "Business Contacts Detail  |  {} Records".format(len(contacts_list)), 10, GREEN)
+    for ci, h in enumerate(["#","Contact ID","Name","Organisation","Mobile","Email","Industry","Owner","Status","Created"], 1):
+        cc = ws_c.cell(3, ci, h); cc.font = HDR_FONT; cc.fill = _fill("22C55E"); cc.border = THIN
+    ws_c.row_dimensions[3].height = 22
+    for idx, rec in enumerate(contacts_list, 1):
+        rw = idx + 3; fill = ALT_FILL if idx % 2 == 0 else None
+        ws_c.cell(rw, 1, idx).font = DATA_FONT
+        lk = ws_c.cell(rw, 2, rec["name"]); lk.font = LINK_FONT
+        lk.hyperlink = "{}/app/business-contacts/{}".format(frappe.utils.get_url(), rec["name"])
+        for ci, fld in enumerate(["contact_name","organization_name","mobile_number",
+                                   "email_id","industry","assign_to","status","created_on"], 3):
+            ws_c.cell(rw, ci, rec.get(fld) or "-").font = DATA_FONT
+        apply_row(ws_c, rw, 1, 10, fill=fill)
+    tr = len(contacts_list) + 4
+    ws_c.cell(tr, 1, "Total:").font = TOT_FONT; ws_c.cell(tr, 2, len(contacts_list)).font = TOT_FONT
+    apply_row(ws_c, tr, 1, 10, font=TOT_FONT, fill=SILVER_FILL)
+    auto_width(ws_c)
+
+    # ==========================================================
+    # TAB: LEADS DETAIL
+    # ==========================================================
+    ws_l = wb.create_sheet(title="Leads Detail")
+    p_ld = {"usr": eff_l_user, "sd": l_from, "ed": l_to}
+    wh_ld = "WHERE l.docstatus < 2"
+    if eff_l_user: wh_ld += " AND l.lead_owner = %(usr)s"
+    wh_ld += build_in_clause(l_ind_list, "lind", "l.industry", p_ld)
+    wh_ld += build_in_clause(l_src_list, "lsrc", "l.source", p_ld)
+    if l_from and l_to: wh_ld += " AND DATE(l.creation) BETWEEN %(sd)s AND %(ed)s"
+    leads_list = frappe.db.sql(
+        "SELECT l.name,l.lead_name,l.company_name,l.custom_lead_category,l.status,"
+        "l.mobile_no,l.email_id,l.lead_owner,"
+        "CASE WHEN l.custom_lead_category='Order' THEN COALESCE(l.custom_po_value,0)"
+        " ELSE COALESCE(l.custom_expected_revenue,0) END est_revenue,"
+        "DATE_FORMAT(l.creation,'%%d-%%b-%%Y') created_on,"
+        "DATEDIFF(NOW(),l.creation) age_days"
+        " FROM `tabLead` l " + wh_ld + " ORDER BY l.creation DESC",
+        p_ld, as_dict=1)
+    for _rec in leads_list:
+        _rec["lead_owner"] = user_name(_rec.get("lead_owner"))
+
+    title_banner(ws_l, "Leads Detail  |  {} Records".format(len(leads_list)), 12, ORANGE)
+    for ci, h in enumerate(["#","Lead ID","Lead Name","Company","Category","Status","Mobile","Email","Owner","Est Revenue","Created","Age(days)"], 1):
+        lc2 = ws_l.cell(3, ci, h); lc2.font = HDR_FONT; lc2.fill = _fill("F97316"); lc2.border = THIN
+    ws_l.row_dimensions[3].height = 22
+    total_rev = 0.0
+    for idx, rec in enumerate(leads_list, 1):
+        rw = idx + 3; fill = ALT_FILL if idx % 2 == 0 else None
+        ws_l.cell(rw, 1, idx).font = DATA_FONT
+        lk2 = ws_l.cell(rw, 2, rec["name"]); lk2.font = LINK_FONT
+        lk2.hyperlink = "{}/app/lead/{}".format(frappe.utils.get_url(), rec["name"])
+        for ci, fld in enumerate(["lead_name","company_name","custom_lead_category","status",
+                                   "mobile_no","email_id","lead_owner"], 3):
+            ws_l.cell(rw, ci, rec.get(fld) or "-").font = DATA_FONT
+        rev = flt(rec.get("est_revenue", 0)); total_rev += rev
+        rv = ws_l.cell(rw, 10, rev); rv.font = DATA_FONT; rv.number_format = '"Rs."#,##0.00'
+        ws_l.cell(rw, 11, rec.get("created_on") or "-").font = DATA_FONT
+        ws_l.cell(rw, 12, rec.get("age_days") or 0).font = DATA_FONT
+        apply_row(ws_l, rw, 1, 12, fill=fill)
+    tr2 = len(leads_list) + 4
+    ws_l.cell(tr2, 1, "Total:").font = TOT_FONT; ws_l.cell(tr2, 2, len(leads_list)).font = TOT_FONT
+    trv = ws_l.cell(tr2, 10, total_rev); trv.font = TOT_FONT; trv.number_format = '"Rs."#,##0.00'
+    apply_row(ws_l, tr2, 1, 12, font=TOT_FONT, fill=SILVER_FILL)
+    auto_width(ws_l)
+
+    # ==========================================================
+    # TAB: ACTIVITIES DETAIL
+    # ==========================================================
+    ws_a = wb.create_sheet(title="Activities Detail")
+    p_ad = {"usr": eff_ea_user, "sd": ea_from, "ed": ea_to}
+    wh_ad = "WHERE ea.docstatus < 2"
+    if eff_ea_user: wh_ad += " AND ea.assigned_to = %(usr)s"
+    if ea_entity != "All": wh_ad += " AND ea.reference_type = %(ent)s"; p_ad["ent"] = ea_entity
+    if ea_from and ea_to: wh_ad += " AND DATE(COALESCE(ea.ends_on,ea.starts_on)) BETWEEN %(sd)s AND %(ed)s"
+    activities_list = frappe.db.sql(
+        "SELECT ea.name,ea.subject,ea.category,ea.reference_type,ea.reference_name,"
+        "ea.assigned_to,ea.status,"
+        "DATE_FORMAT(ea.starts_on,'%%d-%%b-%%Y %%h:%%i %%p') starts_on,"
+        "DATE_FORMAT(ea.ends_on,'%%d-%%b-%%Y %%h:%%i %%p') ends_on,ea.notes"
+        " FROM `tabEvent Activity` ea " + wh_ad + " ORDER BY ea.creation DESC",
+        p_ad, as_dict=1)
+    for _rec in activities_list:
+        _rec["assigned_to"] = user_name(_rec.get("assigned_to"))
+
+    title_banner(ws_a, "Activities Detail  |  {} Records".format(len(activities_list)), 11, PURPLE)
+    for ci, h in enumerate(["#","Activity ID","Subject","Category","Ref Type","Ref Name","Assigned To","Status","Start","End","Notes"], 1):
+        ac2 = ws_a.cell(3, ci, h); ac2.font = HDR_FONT; ac2.fill = _fill("9333EA"); ac2.border = THIN
+    ws_a.row_dimensions[3].height = 22
+    for idx, rec in enumerate(activities_list, 1):
+        rw = idx + 3; fill = ALT_FILL if idx % 2 == 0 else None
+        ws_a.cell(rw, 1, idx).font = DATA_FONT
+        lk3 = ws_a.cell(rw, 2, rec["name"]); lk3.font = LINK_FONT
+        lk3.hyperlink = "{}/app/event-activity/{}".format(frappe.utils.get_url(), rec["name"])
+        for ci, fld in enumerate(["subject","category","reference_type","reference_name",
+                                   "assigned_to","status","starts_on","ends_on","notes"], 3):
+            ws_a.cell(rw, ci, rec.get(fld) or "-").font = DATA_FONT
+        apply_row(ws_a, rw, 1, 11, fill=fill)
+    tr3 = len(activities_list) + 4
+    ws_a.cell(tr3, 1, "Total:").font = TOT_FONT; ws_a.cell(tr3, 2, len(activities_list)).font = TOT_FONT
+    apply_row(ws_a, tr3, 1, 11, font=TOT_FONT, fill=SILVER_FILL)
+    auto_width(ws_a)
+
+    # ==========================================================
+    # TAB: OVERALL (All-Time Team Summary - always included)
+    # ==========================================================
+    ws_ov = wb.create_sheet(title="Overall")
+    title_banner(ws_ov,
+        "DAC CRM  |  Overall All-Time Team Performance Summary  |  Generated {}".format(frappe.utils.today()),
+        16, "1E3A8A")
+    rov = 3
+    ws_ov.cell(rov, 1, "All-Time Team Member Performance (No Date Filter)").font = SEC_FONT; rov += 1
+    ov_hdrs = ["Team Member","Contacts (Open)","Contacts (Conv)","Contacts (Cust)",
+               "Enquiry #","Enquiry Val","Pipeline #","Pipeline Val",
+               "Order #","Order Val","Lost #","BC to Lead","Lead to Order",
+               "Activity (Total)","Activity (Done)","Activity (Open)"]
+    for ci, h in enumerate(ov_hdrs, 1):
+        c = ws_ov.cell(rov, ci, h); c.font = HDR_FONT; c.fill = _fill("1E3A8A")
+        c.border = THIN; c.alignment = _align("center", wrap=True)
+    ws_ov.row_dimensions[rov].height = 36; rov += 1
+    ov_totals = {k: 0 for k in ["o","c","e","enq_c","enq_v","pipe_c","pipe_v",
+                                  "ord_c","ord_v","lenq_c","c_to_l","l_to_o",
+                                  "act_total","act_done","act_open"]}
+    for idx, sp in enumerate(sp_users):
+        d_ov = agg_user(sp["user_id"], all_time=True)  # all-time, no date/fiscal-year filter
+        fill = ALT_FILL if idx % 2 == 0 else None
+        for ci, v in enumerate([
+            sp["sp_name"], d_ov["o"], d_ov["c"], d_ov["e"],
+            d_ov["enq_c"],  money(d_ov["enq_v"]),
+            d_ov["pipe_c"], money(d_ov["pipe_v"]),
+            d_ov["ord_c"],  money(d_ov["ord_v"]),
+            d_ov["lenq_c"]+d_ov["lpipe_c"],
+            d_ov["c_to_l"], d_ov["l_to_o"],
+            d_ov["act_total"], d_ov["act_done"], d_ov["act_open"],
+        ], 1):
+            ws_ov.cell(rov, ci, v).font = DATA_FONT
+        apply_row(ws_ov, rov, 1, len(ov_hdrs), fill=fill); rov += 1
+        for k in ["o","c","e","enq_c","pipe_c","ord_c","c_to_l","l_to_o","act_total","act_done","act_open"]:
+            ov_totals[k] += d_ov.get(k, 0)
+        ov_totals["lenq_c"] += d_ov.get("lenq_c", 0) + d_ov.get("lpipe_c", 0)
+        ov_totals["enq_v"]  += d_ov.get("enq_v", 0)
+        ov_totals["pipe_v"] += d_ov.get("pipe_v", 0)
+        ov_totals["ord_v"]  += d_ov.get("ord_v", 0)
+    # Overall total row
+    for ci, v in enumerate([
+        "TOTAL", ov_totals["o"], ov_totals["c"], ov_totals["e"],
+        ov_totals["enq_c"], money(ov_totals["enq_v"]),
+        ov_totals["pipe_c"], money(ov_totals["pipe_v"]),
+        ov_totals["ord_c"],  money(ov_totals["ord_v"]),
+        ov_totals["lenq_c"],
+        ov_totals["c_to_l"], ov_totals["l_to_o"],
+        ov_totals["act_total"], ov_totals["act_done"], ov_totals["act_open"],
+    ], 1):
+        ws_ov.cell(rov, ci, v).font = TOT_FONT
+    apply_row(ws_ov, rov, 1, len(ov_hdrs), font=TOT_FONT, fill=SILVER_FILL)
+    auto_width(ws_ov); ws_ov.column_dimensions["A"].width = 24; ws_ov.freeze_panes = "A2"
+
+    # ── Save ────────────────────────────────────────────────────
+    output = BytesIO()
+    wb.save(output); output.seek(0)
+    raw_bytes = output.getvalue()
+    fname = "DAC_CRM_{}_Report_{}.xlsx".format(export_type.title(), frappe.utils.today())
+    file_base64 = base64.b64encode(raw_bytes).decode("utf-8")
+
+    # ── Email ────────────────────────────────────────────────────
+    email_sent = False
+    if send_email and email_address:
+        recipients = [e.strip() for e in str(email_address).split(",") if e.strip()]
+        if recipients:
+            plabel = {"daily":"Daily","weekly":"Weekly","monthly":"Monthly","applied":"Custom Filter"}.get(export_type, export_type.title())
+            html_body = """<!DOCTYPE html>
+<html><head><meta charset="UTF-8">
+<style>
+body{{font-family:Arial,sans-serif;background:#f8fafc;margin:0;padding:0;}}
+.wrap{{max-width:640px;margin:32px auto;background:#fff;border-radius:10px;overflow:hidden;box-shadow:0 4px 16px rgba(0,0,0,.10);}}
+.hdr{{background:linear-gradient(135deg,#0f172a 0%,#1e3a8a 100%);padding:32px 40px;}}
+.hdr h1{{color:#fff;margin:0;font-size:22px;font-weight:700;}}
+.hdr p{{color:#93c5fd;margin:6px 0 0;font-size:14px;}}
+.body{{padding:32px 40px;}}
+.body p{{color:#334155;font-size:14px;line-height:1.7;margin:0 0 12px;}}
+table.info{{width:100%;border-collapse:collapse;margin:20px 0;}}
+table.info td{{padding:9px 12px;font-size:13px;border-bottom:1px solid #e2e8f0;color:#334155;}}
+table.info td:first-child{{font-weight:600;color:#1e293b;width:42%;background:#f8fafc;}}
+.badge{{display:inline-block;background:#eff6ff;color:#1d4ed8;padding:3px 10px;border-radius:20px;font-size:12px;font-weight:700;}}
+ul{{color:#334155;font-size:14px;line-height:1.9;}}
+.footer{{background:#f1f5f9;padding:20px 40px;text-align:center;color:#94a3b8;font-size:12px;border-top:1px solid #e2e8f0;}}
+</style></head>
+<body><div class="wrap">
+<div class="hdr">
+  <h1>&#128202; DAC CRM Executive Report</h1>
+  <p>{plabel} Report &nbsp;&#183;&nbsp; Generated on {today}</p>
+</div>
+<div class="body">
+  <p>Dear Manager,</p>
+  <p>Please find attached the <strong>{plabel} CRM Executive Dashboard Report</strong> generated on <strong>{today}</strong>.</p>
+  <table class="info">
+    <tr><td>Report Type</td>     <td><span class="badge">{plabel}</span></td></tr>
+    <tr><td>Fiscal Year</td>     <td>{fy}</td></tr>
+    <tr><td>Contacts Range</td>  <td>{c_rng}</td></tr>
+    <tr><td>Leads Range</td>     <td>{l_rng}</td></tr>
+    <tr><td>Total Contacts</td>  <td><strong>{tc}</strong></td></tr>
+    <tr><td>Open Contacts</td>   <td><strong>{oc}</strong></td></tr>
+    <tr><td>Total Leads</td>     <td><strong>{tl}</strong></td></tr>
+    <tr><td>Order Count</td>     <td><strong>{ord_c}</strong></td></tr>
+    <tr><td>Order Value</td>     <td><strong>{ord_v}</strong></td></tr>
+    <tr><td>Total Activities</td><td><strong>{act}</strong></td></tr>
+  </table>
+  <p>The attached Excel workbook contains:</p>
+  <ul>
+    <li><strong>Summary Tab</strong> &mdash; Overall totals &amp; team-member comparison</li>
+    <li><strong>Owner Tabs</strong> &mdash; Individual performance per sales executive</li>
+    <li><strong>Contacts / Leads / Activities Detail</strong> &mdash; Full filtered records</li>
+  </ul>
+  <p>Best regards,<br><strong style="color:#1e3a8a;">DAC CRM System</strong></p>
+</div>
+<div class="footer">Automated report &mdash; Please do not reply to this email</div>
+</div></body></html>""".format(
+                plabel=plabel, today=frappe.utils.today(),
+                fy=fiscal_year,
+                c_rng="{} to {}".format(c_from or "All Time", c_to or "All Time"),
+                l_rng="{} to {}".format(l_from or "All Time", l_to or "All Time"),
+                tc=c_tot.get("tc",0), oc=c_tot.get("oc",0),
+                tl=l_tot.get("tl",0), ord_c=l_tot.get("ord_c",0),
+                ord_v=money(l_tot.get("ord_v",0)),
+                act=ea_tot.get("total",0))
+
+            frappe.sendmail(
+                recipients=recipients,
+                subject="[DAC CRM] {} Executive Report - {}".format(plabel, frappe.utils.today()),
+                message=html_body,
+                attachments=[{"fname": fname, "fcontent": raw_bytes}]
+            )
+            email_sent = True
+
+    return {"filename": fname, "filecontent": file_base64, "email_sent": email_sent}
+
+
+
+
+
+
+
+
+import frappe
+from frappe import _
+
+@frappe.whitelist()
+def check_linked_quotation(lead_name):
+    has_quotation = frappe.db.exists(
+        "Quotation", 
+        {
+            "quotation_to": "Lead", 
+            "party_name": lead_name, 
+            "docstatus": ["<", 2] 
+        }
+    )
+    return {"has_quotation": bool(has_quotation)}
+
+
+@frappe.whitelist()
+def convert_lead_to_business_contact(lead_name):
+    
+    if not frappe.db.exists("Lead", lead_name):
+        frappe.throw(_("Lead {0} not found").format(lead_name))
+        
+    lead_doc = frappe.get_doc("Lead", lead_name)
+    
+    # Strictly Check for quotation at DB level 
+    has_quotation = frappe.db.exists(
+        "Quotation", 
+        {
+            "quotation_to": "Lead", 
+            "party_name": lead_name, 
+            "docstatus": ["<", 2] 
+        }
+    )
+
+    # 1. Base Field Mappings
+    bc = frappe.new_doc("Business Contacts")
+    bc.contact_name = lead_doc.lead_name or lead_doc.first_name
+    bc.organization_name = lead_doc.company_name
+    bc.mobile_number = lead_doc.mobile_no or lead_doc.phone
+    bc.source = lead_doc.source
+    bc.assign_to = lead_doc.lead_owner
+    
+    if has_quotation:
+        bc.status = "Converted to Lead"
+        bc.lead_id = lead_doc.name
+    else:
+        bc.status = "Open"
+        bc.lead_id = None          
+
+    bc.insert(ignore_permissions=True)
+    
+    # 2. Scenarios 
+    if not has_quotation:
+        # NO QUOTATION = TRANSFER ALL ACTIVITIES TO CONTACT & DELETE LEAD
+        table_mappings = {
+            "Communication": "reference_doctype",
+            "Comment": "reference_doctype",
+            "ToDo": "reference_type",
+            "Event Activity": "reference_type" 
+        }
+        
+        for dt, ref_col in table_mappings.items():
+            if frappe.db.exists("DocType", dt):
+                try:
+                    frappe.db.sql(f"""
+                        UPDATE `tab{dt}` 
+                        SET `{ref_col}`='Business Contacts', reference_name=%s
+                        WHERE `{ref_col}`='Lead' AND reference_name=%s
+                    """, (bc.name, lead_doc.name))
+                except Exception:
+                    continue
+                    
+        frappe.db.commit()
+        
+        frappe.delete_doc("Lead", lead_doc.name, force=True, ignore_permissions=True)
+        return {"action": "deleted", "business_contact_name": bc.name}
+
+    else:
+        # WITH QUOTATION = ACTIVITIES REMAIN IN THE LEAD AND LEAD STAYS ALIVE. WE JUST LINK IT!
+        frappe.db.set_value("Lead", lead_doc.name, "custom_business_contacts", bc.name)
+        frappe.db.commit()
+        return {"action": "linked", "business_contact_name": bc.name}
+
+@frappe.whitelist()
+def mark_lead_lost_backend(lead_name, category, lost_reason, lost_reason_description, current_activity_id=None, completion_note=None):
+    # 1. Complete the current activity if passed
+    if current_activity_id:
+        frappe.db.set_value("Event Activity", current_activity_id, {
+            "status": "Completed",
+            "notes": completion_note or "Lead marked as Lost",
+            "ends_on": frappe.utils.now_datetime()
+        })
+    
+    # 2. Cancel all other Open activities for this Lead
+    frappe.db.sql("""
+        UPDATE `tabEvent Activity`
+        SET status = 'Cancelled', notes = 'Lead marked as Lost'
+        WHERE reference_type = 'Lead' AND reference_name = %s AND status = 'Open'
+    """, lead_name)
+    
+    # 3. Update the Lead status/category and details
+    lead = frappe.get_doc("Lead", lead_name)
+    lead.custom_lead_type = "LOST"
+    
+    if category == "Enquiry":
+        lead.custom_lost_enquiry_reason = lost_reason
+        lead.custom_lost_enquiry_description = lost_reason_description
+        action = "Lost Enquiry"
+    else:
+        lead.custom_lost_pipeline_reason = lost_reason
+        lead.custom_lost_pipeline_description = lost_reason_description
+        action = "Lost Pipeline"
+        
+    # Apply workflow action
+    from frappe.model.workflow import apply_workflow
+    apply_workflow(lead, action)
+    
+    return {"status": "success"}
+
+CRM_DASHBOARD_SOURCE_FILE = "crm_dashboard_v31.html"
+CRM_DASHBOARD_BLOCKS = ["CRM Dashboard", "New CRM Dashboard"]
+
+
+@frappe.whitelist()
+def sync_crm_dashboard_html_block(source_file=None, blocks=None):
+    """Syncs the combined dashboard file into the target Custom HTML Blocks.
+
+    The source file holds <style>, markup and <script> in one document; this splits
+    them into the block's style / html / script columns.
+
+    Frappe's create_shadow_element (dom.js) wraps the script column content inside
+    a backtick template literal:
+        script.textContent = `...(function(){ let root_element=...; ${js} })();`;
+
+    Any backtick inside our JS (from ES6 template literals) breaks Frappe's outer
+    template literal causing: "Failed to execute 'appendChild' on 'Node': Unexpected token"
+
+    Fix: escape all backticks in js_only with backslash before storing.
+
+    Args:
+        source_file: file name inside crm_dashboard_block/ (defaults to CRM_DASHBOARD_SOURCE_FILE)
+        blocks: list or comma-separated names of Custom HTML Blocks to update
+    """
+    import os
+    import re
+    source_file = source_file or CRM_DASHBOARD_SOURCE_FILE
+    target_blocks = as_filter_list(blocks) or CRM_DASHBOARD_BLOCKS
+
+    app_path = frappe.get_app_path("erp_dacsinc_custom")
+    html_file = os.path.normpath(os.path.join(app_path, "..", "crm_dashboard_block", source_file))
+
+    if not os.path.exists(html_file):
+        return "Error: {} not found".format(source_file)
+
+    with open(html_file, "r", encoding="utf-8") as f:
+        full_content = f.read()
+
+    # Split HTML, CSS, and JS: extract style and script content
+    style_match = re.search(r'<style[^>]*>([\s\S]*?)</style>', full_content, re.IGNORECASE)
+    if style_match:
+        css_only = style_match.group(1).strip()
+    else:
+        css_only = ""
+
+    script_match = re.search(r'<script[^>]*>([\s\S]*?)</script>', full_content, re.IGNORECASE)
+    if script_match:
+        js_only = script_match.group(1).strip()
+    else:
+        js_only = ""
+
+    html_only = full_content
+    if style_match:
+        html_only = html_only.replace(style_match.group(0), "")
+    if script_match:
+        html_only = html_only.replace(script_match.group(0), "")
+    html_only = html_only.strip()
+
+    updated, missing = [], []
+    for b_name in target_blocks:
+        if frappe.db.exists("Custom HTML Block", b_name):
+            frappe.db.set_value("Custom HTML Block", b_name, "html", html_only)
+            frappe.db.set_value("Custom HTML Block", b_name, "style", css_only)
+            frappe.db.set_value("Custom HTML Block", b_name, "script", js_only)
+            frappe.clear_cache(doctype="Custom HTML Block")
+            updated.append(b_name)
+        else:
+            missing.append(b_name)
+
+    frappe.db.commit()
+    msg = (f"Synced {source_file} (html: {len(html_only)} bytes, style: {len(css_only)} bytes, "
+           f"script: {len(js_only)} bytes, raw backticks preserved) into: {', '.join(updated) or 'nothing'}")
+    if missing:
+        msg += f" | skipped (no such block): {', '.join(missing)}"
+    return msg
