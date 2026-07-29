@@ -1517,6 +1517,32 @@ def get_lead_category_report(from_date=None, to_date=None):
 
 
 @frappe.whitelist()
+def get_lead_quotation_details(lead_name):
+    """Quotations behind the drilldown's Quotations count.
+
+    Deliberately separate from get_quotations_for_lead (which lead.js relies on):
+    the drilldown counts quotations matching party_name OR custom_lead_id, so this
+    must use the same filter or the number and the list it opens would disagree.
+    """
+    if not frappe.has_permission("Quotation", "read"):
+        frappe.throw(_("You do not have permission to access Quotation records."),
+                     frappe.PermissionError)
+    rows = frappe.db.sql("""
+        SELECT q.name, q.status, q.customer_name, q.party_name, q.currency,
+               DATE_FORMAT(q.transaction_date, '%%d-%%b-%%Y') AS transaction_date,
+               q.grand_total, q.valid_till
+        FROM `tabQuotation` q
+        WHERE q.docstatus < 2
+          AND (q.party_name = %(lead)s OR q.custom_lead_id = %(lead)s)
+        ORDER BY q.transaction_date DESC, q.name DESC
+    """, {"lead": lead_name}, as_dict=1)
+    for r in rows:
+        r["items"] = [i.item_code for i in frappe.get_all(
+            "Quotation Item", fields=["item_code"], filters={"parent": r["name"]})]
+    return rows
+
+
+@frappe.whitelist()
 def get_quotations_for_lead(lead_name):
     if not frappe.has_permission('Quotation', 'read'):
         frappe.throw(_("You do not have permission to access Quotation records."), frappe.PermissionError)
@@ -3208,6 +3234,9 @@ def get_card_detail_records(card_type, from_date=None, to_date=None, user=None, 
         records = frappe.db.sql(f"""
             SELECT name, contact_name, COALESCE(organization_name, contact_name) as company,
                    mobile_number as mobile_no, email_id, industry, status, assign_to as owner,
+                   lead_id,
+                   (SELECT l2.lead_name FROM `tabLead` l2
+                     WHERE l2.name = `tabBusiness Contacts`.lead_id) as lead_title,
                    city, country, DATE_FORMAT(creation,'%%d-%%b-%%Y') as created_on,
                    DATEDIFF(NOW(), creation) as age_days,
                    DATE_FORMAT(next_follow_up_date,'%%d-%%b-%%Y') as next_followup,

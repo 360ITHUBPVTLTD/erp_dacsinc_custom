@@ -614,6 +614,55 @@
         white-space: nowrap !important;
     }
 
+    /* Quotation count: has to read as pressable, not as plain text */
+    .dac-q-btn {
+        display: inline-flex !important;
+        align-items: center !important;
+        gap: 4px !important;
+        background: #eff6ff !important;
+        border: 1px solid #93c5fd !important;
+        color: #1d4ed8 !important;
+        border-radius: 12px !important;
+        padding: 2px 10px !important;
+        font-size: 12px !important;
+        font-weight: 700 !important;
+        line-height: 18px !important;
+        cursor: pointer !important;
+        white-space: nowrap !important;
+        transition: all 0.15s ease-in-out !important;
+    }
+
+    .dac-q-btn:hover {
+        background: #dbeafe !important;
+        border-color: #2563eb !important;
+        box-shadow: 0 1px 3px rgba(37, 99, 235, 0.25) !important;
+    }
+
+    .dac-q-btn.dac-q-open {
+        background: #2563eb !important;
+        border-color: #1d4ed8 !important;
+        color: #ffffff !important;
+    }
+
+    .dac-q-caret {
+        font-size: 9px !important;
+        line-height: 1 !important;
+        transition: transform 0.15s ease-in-out !important;
+    }
+
+    .dac-q-btn.dac-q-open .dac-q-caret {
+        transform: rotate(180deg) !important;
+    }
+
+    /* Inline quotation panel opened under a lead row */
+    .dac-wide-modal tr.dac-q-expand > td,
+    tr.dac-q-expand > td {
+        background: #f8fafc !important;
+        padding: 0 !important;
+        white-space: normal !important;
+        border-bottom: 2px solid #cbd5e1 !important;
+    }
+
     /* Long free-text columns: wrap inside a sane width instead of letting one
        outlier value stretch the column (and the whole table) across the screen. */
     .dac-wide-modal td.dac-text-cell,
@@ -994,7 +1043,7 @@
                 style="cursor:pointer; background: #f0fdf4; border: 1px solid #bbf7d0; border-radius: 8px; padding: 10px 14px; text-align: center; transition: all 0.2s ease;">
                 <div id="c_card_conv" style="font-size: 20px; font-weight: 800; color: #16a34a; line-height: 1.2;">-
                 </div>
-                <div style="font-size: 11px; font-weight: 700; color: #16a34a; margin-top: 4px;">Converted Contacts
+                <div style="font-size: 11px; font-weight: 700; color: #16a34a; margin-top: 4px;">Converted to Lead
                 </div>
             </div>
             <div class="dac-card" onclick="openDrilldownModal('c_exist', 'Existing Customer Contacts Total')"
@@ -1014,7 +1063,7 @@
                     <tr style="background: #f8fafc; border-bottom: 2px solid #cbd5e1; color: #334155;">
                         <th style="padding: 10px 12px; font-weight: 700; border-right: 1px solid #cbd5e1;"><span id="c_first_header">Period</span></th>
                         <th style="padding: 10px 12px; font-weight: 700; text-align: center; border-right: 1px solid #cbd5e1; width: 160px;">Open</th>
-                        <th style="padding: 10px 12px; font-weight: 700; text-align: center; color: #16a34a; border-right: 1px solid #cbd5e1; width: 160px;">Converted</th>
+                        <th style="padding: 10px 12px; font-weight: 700; text-align: center; color: #16a34a; border-right: 1px solid #cbd5e1; width: 160px;">Converted to Lead</th>
                         <th style="padding: 10px 12px; font-weight: 700; text-align: center; color: #ea580c; width: 160px;">Existing Customer</th>
                     </tr>
                 </thead>
@@ -3142,6 +3191,121 @@
             d.show();
         }
 
+        // Quotations open inline underneath the lead row rather than as a second
+        // dialog stacked on the drilldown. Clicking the same count closes it.
+        function buildQuotationPanel(leadId, rows) {
+            const esc = v => frappe.utils.escape_html(String(v == null ? '' : v));
+            let total = 0;
+            (rows || []).forEach(q => { total += parseFloat(q.grand_total || 0); });
+
+            const statusColour = st => {
+                const t = String(st || '').toLowerCase();
+                if (t === 'ordered') return ['#dcfce7', '#15803d', '#bbf7d0'];
+                if (t === 'lost' || t === 'cancelled') return ['#fef2f2', '#b91c1c', '#fecaca'];
+                if (t === 'expired') return ['#f1f5f9', '#475569', '#e2e8f0'];
+                return ['#eff6ff', '#1e40af', '#bfdbfe'];
+            };
+
+            if (!rows || !rows.length) {
+                return '<div style="padding:14px 18px; color:#94a3b8; font-weight:500; font-size:12.5px;">No quotations found for this lead.</div>';
+            }
+
+            const body = rows.map((q, i) => {
+                const [bg, fg, bd] = statusColour(q.status);
+                const url = '/app/quotation/' + encodeURIComponent(q.name);
+                return `
+                <tr style="border-bottom:1px solid #e2e8f0; font-size:12.5px;">
+                    <td style="padding:7px 12px; text-align:center; font-weight:700; color:#475569;">${i + 1}</td>
+                    <td style="padding:7px 12px;">
+                        <a href="${url}" target="_blank" style="color:#2563eb; font-weight:700; text-decoration:none;"
+                           title="Open ${esc(q.name)}">${esc(q.name)}</a>
+                    </td>
+                    <td style="padding:7px 12px; color:#0f172a;">${esc(q.transaction_date || '-')}</td>
+                    <td style="padding:7px 12px;"><span style="background:${bg}; color:${fg}; border:1px solid ${bd}; padding:1px 8px; border-radius:12px; font-size:11px; font-weight:700; white-space:nowrap;">${esc(q.status || '-')}</span></td>
+                    <td style="padding:7px 12px; color:#0f172a;">${esc(q.customer_name || q.party_name || '-')}</td>
+                    <td class="dac-text-cell" style="padding:7px 12px; color:#475569;">${esc((q.items || []).join(', ') || '-')}</td>
+                    <td style="padding:7px 12px; text-align:right; font-weight:700; color:#0f172a;">${fmtVal(q.grand_total || 0)}</td>
+                </tr>`;
+            }).join('');
+
+            return `
+                <div style="padding:10px 14px 12px;">
+                    <div style="display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:8px; margin-bottom:8px;">
+                        <div style="font-size:12px; font-weight:700; color:#0f172a;">
+                            Quotations for <span style="color:#2563eb;">${esc(leadId)}</span>
+                            <span style="color:#64748b; font-weight:600;">&nbsp;&middot;&nbsp;${rows.length} record(s)&nbsp;&middot;&nbsp;Total ${fmtVal(total)}</span>
+                        </div>
+                        <span class="dac-q-close" onclick="closeLeadQuotations(this)"
+                              style="cursor:pointer; font-size:11px; font-weight:700; color:#1d4ed8;">&times; Close</span>
+                    </div>
+                    <div style="overflow-x:auto; border:1px solid #cbd5e1; border-radius:6px; background:#ffffff;">
+                        <table style="width:100%; border-collapse:separate; border-spacing:0;">
+                            <thead>
+                                <tr style="background:#e2e8f0; color:#0f172a; font-size:11.5px; text-align:left;">
+                                    <th style="padding:7px 12px; width:40px; text-align:center;">S.No</th>
+                                    <th style="padding:7px 12px;">Quotation</th>
+                                    <th style="padding:7px 12px;">Date</th>
+                                    <th style="padding:7px 12px;">Status</th>
+                                    <th style="padding:7px 12px;">Customer</th>
+                                    <th style="padding:7px 12px;">Items</th>
+                                    <th style="padding:7px 12px; text-align:right;">Grand Total</th>
+                                </tr>
+                            </thead>
+                            <tbody>${body}</tbody>
+                        </table>
+                    </div>
+                </div>`;
+        }
+
+        window.closeLeadQuotations = function (el) {
+            const tr = el.closest('tr.dac-q-expand');
+            if (!tr) return;
+            const owner = tr.previousElementSibling;
+            if (owner) {
+                const btn = owner.querySelector('.dac-q-btn');
+                if (btn) btn.classList.remove('dac-q-open');
+            }
+            tr.remove();
+        };
+
+        window.toggleLeadQuotations = function (leadId, el) {
+            const row = el.closest('tr');
+            if (!row || !row.parentNode) return;
+
+            // Same count clicked again -> collapse
+            const next = row.nextElementSibling;
+            if (next && next.classList && next.classList.contains('dac-q-expand')) {
+                next.remove();
+                el.classList.remove('dac-q-open');
+                return;
+            }
+
+            // Only one panel open at a time, so the table never turns into a maze
+            const tbody = row.parentNode;
+            tbody.querySelectorAll('tr.dac-q-expand').forEach(t => t.remove());
+            tbody.querySelectorAll('.dac-q-btn.dac-q-open').forEach(b => b.classList.remove('dac-q-open'));
+
+            const tr = document.createElement('tr');
+            tr.className = 'dac-q-expand';
+            const td = document.createElement('td');
+            td.colSpan = row.children.length;
+            td.innerHTML = '<div style="padding:12px 16px; color:#64748b; font-size:12px; font-weight:600;">Loading quotations&hellip;</div>';
+            tr.appendChild(td);
+            tbody.insertBefore(tr, row.nextSibling);
+            el.classList.add('dac-q-open');
+
+            frappe.call({
+                method: "erp_dacsinc_custom.custom_lead.get_lead_quotation_details",
+                args: { lead_name: leadId },
+                callback: function (r) {
+                    td.innerHTML = buildQuotationPanel(leadId, r.message || []);
+                },
+                error: function () {
+                    td.innerHTML = '<div style="padding:12px 16px; color:#b91c1c; font-size:12px; font-weight:600;">Could not load quotations.</div>';
+                }
+            });
+        };
+
         // Number Card & Breakup Table Drilldown Modal
         window.openDrilldownModal = function (cardType, cardTitle, rowMonth, expectedCountParam, rowFromDate, rowToDate, rowUser) {
             let expectedCount = expectedCountParam;
@@ -3284,34 +3448,36 @@
                 let headersHtml = "";
                 let colCount = 9;
                 if (isLeadCard) {
-                    colCount = 16;
+                    colCount = 17;
                     headersHtml = `
                         <tr style="background: #3498db; font-size: 13px; color: #ffffff; text-align: left;">
                             <th style="padding: 10px 14px; width: 40px; border-right: 1px solid #2980b9; text-align: center;">S.No</th>
-                            <th style="padding: 10px 14px; border-right: 1px solid #2980b9;">Full Name</th>
-                            <th style="padding: 10px 14px; border-right: 1px solid #2980b9;">Organization Name</th>
-                            <th style="padding: 10px 14px; border-right: 1px solid #2980b9; width: 180px;">Email ID</th>
-                            <th style="padding: 10px 14px; border-right: 1px solid #2980b9;">Mobile No</th>
+                            <th class="dac-text-cell" style="padding: 10px 14px; border-right: 1px solid #2980b9;">Full Name</th>
+                            <th class="dac-text-cell" style="padding: 10px 14px; border-right: 1px solid #2980b9;">Org Name</th>
                             <th style="padding: 10px 14px; border-right: 1px solid #2980b9;">Lead Type</th>
                             <th style="padding: 10px 14px; border-right: 1px solid #2980b9;">Source</th>
-                            <th style="padding: 10px 14px; border-right: 1px solid #2980b9;">Industry</th>
                             <th style="padding: 10px 14px; border-right: 1px solid #2980b9; text-align: left;">Expected Revenue</th>
-                            <th style="padding: 10px 14px; border-right: 1px solid #2980b9;">Expected Closure Month</th>
+                            <th style="padding: 10px 14px; border-right: 1px solid #2980b9; text-align: left;">PO Value</th>
+                            <th style="padding: 10px 14px; border-right: 1px solid #2980b9;">Expected Closure</th>
                             <th style="padding: 10px 14px; border-right: 1px solid #2980b9;">Lead Owner</th>
                             <th style="padding: 10px 14px; border-right: 1px solid #2980b9;">Created On</th>
                             <th style="padding: 10px 14px; border-right: 1px solid #2980b9;">Age</th>
+                            <th style="padding: 10px 14px; border-right: 1px solid #2980b9;">Last Comment</th>
                             <th style="padding: 10px 14px; border-right: 1px solid #2980b9;">Next Follow Up Date</th>
                             <th style="padding: 10px 14px; border-right: 1px solid #2980b9; text-align: center;">Quotations</th>
-                            <th style="padding: 10px 14px;">Last Completed Notes</th>
+                            <th style="padding: 10px 14px; border-right: 1px solid #2980b9; width: 180px;">Email ID</th>
+                            <th style="padding: 10px 14px; border-right: 1px solid #2980b9;">Mobile No</th>
+                            <th style="padding: 10px 14px;">Industry</th>
                         </tr>
                     `;
                 } else if (isContactCard) {
-                    colCount = 12;
+                    colCount = 13;
                     headersHtml = `
                         <tr style="background: #3498db; font-size: 13px; color: #ffffff; text-align: left;">
                             <th style="padding: 10px 14px; width: 40px; border-right: 1px solid #2980b9; text-align: center;">S.No</th>
-                            <th style="padding: 10px 14px; border-right: 1px solid #2980b9;">Full Name</th>
-                            <th style="padding: 10px 14px; border-right: 1px solid #2980b9;">Organization Name</th>
+                            <th class="dac-text-cell" style="padding: 10px 14px; border-right: 1px solid #2980b9;">Full Name</th>
+                            <th class="dac-text-cell" style="padding: 10px 14px; border-right: 1px solid #2980b9;">Org Name</th>
+                            <th style="padding: 10px 14px; border-right: 1px solid #2980b9;">Converted to Lead</th>
                             <th style="padding: 10px 14px; border-right: 1px solid #2980b9;">Mobile No</th>
                             <th style="padding: 10px 14px; border-right: 1px solid #2980b9; width: 180px;">Email ID</th>
                             <th style="padding: 10px 14px; border-right: 1px solid #2980b9;">Industry</th>
@@ -3368,10 +3534,31 @@
                         const ltype = rec.custom_lead_type || '-';
                         const src = rec.source || '-';
                         const expClose = rec.expected_close || 'No Closure Date';
-                        const valStr = val ? val : '₹0';
+                        // Expected Revenue is always the expected figure; PO Value is only
+                        // meaningful once the lead is an Order, so it stays blank otherwise.
+                        const expRevStr = fmtVal(rec.expected_revenue || 0);
+                        const isOrderRow = rec.category === 'Order';
+                        const poValStr = isOrderRow ? fmtVal(rec.po_value || 0) : '&mdash;';
+                        const qCount = parseInt(rec.quotation_count, 10) || 0;
+                        const quotationCellHtml = qCount
+                            ? `<span class="dac-q-btn" title="Show the ${qCount} quotation(s) for ${name}" onclick="toggleLeadQuotations('${name}', this)">${qCount}<span class="dac-q-caret">&#9662;</span></span>`
+                            : '<span class="dac-zero-cell">0</span>';
+
+                        // A lead that is already an Order, or already Lost, has closed.
+                        // Running a closure countdown on it produces nonsense like
+                        // "Closure Overdue" on a won deal, so show its final state instead.
+                        const CLOSED_LEAD_CATEGORIES = ['Order', 'Lost Enquiry', 'Lost Pipeline'];
+                        const isClosedLead = CLOSED_LEAD_CATEGORIES.indexOf(rec.category) !== -1;
+                        const isWon = rec.category === 'Order';
 
                         let closureIndicatorHtml = '';
-                        if (rec.closure_date) {
+                        if (isClosedLead) {
+                            const bg = isWon ? '#dcfce7' : '#f1f5f9';
+                            const fg = isWon ? '#15803d' : '#475569';
+                            const bd = isWon ? '#bbf7d0' : '#e2e8f0';
+                            const txt = isWon ? 'Closed &mdash; Won' : 'Closed &mdash; Lost';
+                            closureIndicatorHtml = ` <span style="background: ${bg}; color: ${fg}; border: 1px solid ${bd}; padding: 2px 6px; border-radius: 4px; font-size: 11px; font-weight: 700; margin-left: 6px; white-space: nowrap;">${txt}</span>`;
+                        } else if (rec.closure_date) {
                             const cDate = new Date(rec.closure_date);
                             const today = new Date();
                             cDate.setHours(0, 0, 0, 0);
@@ -3389,33 +3576,42 @@
                         rowsHtml += `
                             <tr class="dac-prompt-row" data-search="${searchStr}" style="border-bottom: 1px solid #cbd5e1; font-size: 13px; color: #0f172a;">
                                 <td style="padding: 10px 14px; color: #1e293b; font-weight: 700; text-align: center;">${idx + 1}</td>
-                                <td style="padding: 10px 14px; color: #0f172a; font-weight: 700; cursor: pointer;" onclick="window.open('${linkUrl}', '_blank')">
+                                <td class="dac-text-cell" style="padding: 10px 14px; color: #0f172a; font-weight: 700; cursor: pointer;" onclick="window.open('${linkUrl}', '_blank')">
                                     <a href="${linkUrl}" target="_blank" style="color: #2563eb; font-weight: 700; text-decoration: none;" title="Open Lead Record (${name})">${leadName}</a>
                                 </td>
-                                <td style="padding: 10px 14px; color: #0f172a; font-weight: 500;">${company}</td>
-                                <td class="dac-email-cell" style="padding: 10px 14px; color: #0f172a; font-weight: 500;" title="${email}">${email}</td>
-                                <td style="padding: 10px 14px; color: #0f172a; font-weight: 500;">${mobile}</td>
+                                <td class="dac-text-cell" style="padding: 10px 14px; color: #0f172a; font-weight: 500;">${company}</td>
                                 <td style="padding: 10px 14px; color: #0f172a; font-weight: 500;">${ltype}</td>
                                 <td style="padding: 10px 14px; color: #0f172a; font-weight: 500;">${src}</td>
-                                <td style="padding: 10px 14px; color: #0f172a; font-weight: 500;">${industry}</td>
-                                <td style="padding: 10px 14px; text-align: left; color: #0f172a; font-weight: 700;">${valStr}</td>
-                                <td style="padding: 10px 14px; color: #0f172a; font-weight: 500;">${expClose}${closureIndicatorHtml}</td>
+                                <td style="padding: 10px 14px; text-align: left; color: #0f172a; font-weight: 700;">${expRevStr}</td>
+                                <td style="padding: 10px 14px; text-align: left; font-weight: 700; ${isWon ? 'color:#15803d;' : 'color:#94a3b8;'}">${poValStr}</td>
+                                <td style="padding: 10px 14px; color: #0f172a; font-weight: 500;"><span style="${isClosedLead ? 'color:#94a3b8;' : ''}">${expClose}</span>${closureIndicatorHtml}</td>
                                 <td style="padding: 10px 14px; color: #0f172a; font-weight: 500;">${getUserDisplayName(owner)}</td>
                                 <td style="padding: 10px 14px; color: #0f172a; font-weight: 500;">${date}</td>
                                 <td style="padding: 10px 14px; color: #0f172a; font-weight: 700;">${rec.age_days || 0} Days</td>
-                                <td style="padding: 10px 14px; color: #0f172a; font-weight: 600;">${rec.next_followup || '-'}</td>
-                                <td style="padding: 10px 14px; color: #2563eb; font-weight: 700; text-align: center;">${rec.quotation_count || 0}</td>
                                 <td class="dac-notes-cell" style="padding: 10px 14px; color: #475569; font-weight: 500;" title="${rec.last_completed_notes || ''}">${rec.last_completed_notes || '-'}</td>
+                                <td style="padding: 10px 14px; font-weight: 600; ${isClosedLead ? 'color:#94a3b8;' : 'color:#0f172a;'}">${isClosedLead ? '&mdash;' : (rec.next_followup || '-')}</td>
+                                <td style="padding: 10px 14px; text-align: center;">${quotationCellHtml}</td>
+                                <td class="dac-email-cell" style="padding: 10px 14px; color: #0f172a; font-weight: 500;" title="${email}">${email}</td>
+                                <td style="padding: 10px 14px; color: #0f172a; font-weight: 500;">${mobile}</td>
+                                <td style="padding: 10px 14px; color: #0f172a; font-weight: 500;">${industry}</td>
                             </tr>
                         `;
                     } else if (isContactCard) {
+                        // Once a contact converts it carries the lead it became; surface
+                        // that as a link so the two records join up from either side.
+                        const cLeadId = rec.lead_id || '';
+                        const cLeadTitle = rec.lead_title || '';
+                        const convertedLeadHtml = cLeadId
+                            ? `<a href="/app/lead/${encodeURIComponent(cLeadId)}" target="_blank" style="color:#2563eb; font-weight:700; text-decoration:none;" title="Open Lead ${cLeadId}">${cLeadTitle ? cLeadTitle + ' ' : ''}<span style="color:#1d4ed8;">(${cLeadId})</span></a>`
+                            : '<span style="color:#94a3b8; font-weight:500;">&mdash;</span>';
                         rowsHtml += `
                             <tr class="dac-prompt-row" data-search="${searchStr}" style="border-bottom: 1px solid #cbd5e1; font-size: 13px; color: #0f172a;">
                                 <td style="padding: 10px 14px; color: #1e293b; font-weight: 700; text-align: center;">${idx + 1}</td>
-                                <td style="padding: 10px 14px; color: #0f172a; font-weight: 700; cursor: pointer;" onclick="window.open('${linkUrl}', '_blank')">
+                                <td class="dac-text-cell" style="padding: 10px 14px; color: #0f172a; font-weight: 700; cursor: pointer;" onclick="window.open('${linkUrl}', '_blank')">
                                     <a href="${linkUrl}" target="_blank" style="color: #2563eb; font-weight: 700; text-decoration: none;" title="Open Business Contact Record (${name})">${leadName}</a>
                                 </td>
-                                <td style="padding: 10px 14px; color: #0f172a; font-weight: 500;">${company}</td>
+                                <td class="dac-text-cell" style="padding: 10px 14px; color: #0f172a; font-weight: 500;">${company}</td>
+                                <td class="dac-text-cell" style="padding: 10px 14px;">${convertedLeadHtml}</td>
                                 <td style="padding: 10px 14px; color: #0f172a; font-weight: 500;">${mobile}</td>
                                 <td class="dac-email-cell" style="padding: 10px 14px; color: #0f172a; font-weight: 500;" title="${email}">${email}</td>
                                 <td style="padding: 10px 14px; color: #0f172a; font-weight: 500;">${industry}</td>
