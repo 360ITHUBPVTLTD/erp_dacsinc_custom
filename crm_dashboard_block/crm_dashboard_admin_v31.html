@@ -847,6 +847,10 @@
                 <select id="l_m_filter" class="dac-select" style="display:none;"></select>
                 <div id="l_custom_dates_wrap" class="dac-dr-container" style="display:none;"></div>
                 <select id="l_period_sel" class="dac-select" title="Breakup Interval"></select>
+                <select id="l_group_by" class="dac-select" title="Group the breakup table by period or by team member" style="display:none;">
+                    <option value="period">Breakup: By Period</option>
+                    <option value="user">Breakup: By Team Member</option>
+                </select>
             </div>
             <div id="l_applied_chips" class="dac-chips"></div>
         </div>
@@ -904,7 +908,7 @@
                     <tr style="background: #f8fafc; border-bottom: 1px solid #cbd5e1; color: #334155;">
                         <th rowspan="2"
                             style="padding: 8px 10px; font-weight: 700; vertical-align: middle; border-right: 1px solid #cbd5e1;">
-                            Month Name</th>
+                            <span id="l_first_header">Month Name</span></th>
                         <th colspan="2"
                             style="padding: 8px 10px; font-weight: 700; text-align: center; color: #6b21a8; background: #faf5ff; border-right: 1px solid #cbd5e1;">
                             Enquiry</th>
@@ -969,6 +973,10 @@
                 <select id="c_m_filter" class="dac-select" style="display:none;"></select>
                 <div id="c_custom_dates_wrap" class="dac-dr-container" style="display:none;"></div>
                 <select id="c_period_sel" class="dac-select" title="Breakup Interval"></select>
+                <select id="c_group_by" class="dac-select" title="Group the breakup table by period or by team member" style="display:none;">
+                    <option value="period">Breakup: By Period</option>
+                    <option value="user">Breakup: By Team Member</option>
+                </select>
             </div>
             <div id="c_applied_chips" class="dac-chips"></div>
         </div>
@@ -1004,7 +1012,7 @@
             <table style="width: 100%; border-collapse: separate; border-spacing: 0; font-size: 12px; text-align: left;">
                 <thead>
                     <tr style="background: #f8fafc; border-bottom: 2px solid #cbd5e1; color: #334155;">
-                        <th style="padding: 10px 12px; font-weight: 700; border-right: 1px solid #cbd5e1;">Period</th>
+                        <th style="padding: 10px 12px; font-weight: 700; border-right: 1px solid #cbd5e1;"><span id="c_first_header">Period</span></th>
                         <th style="padding: 10px 12px; font-weight: 700; text-align: center; border-right: 1px solid #cbd5e1; width: 160px;">Open</th>
                         <th style="padding: 10px 12px; font-weight: 700; text-align: center; color: #16a34a; border-right: 1px solid #cbd5e1; width: 160px;">Converted</th>
                         <th style="padding: 10px 12px; font-weight: 700; text-align: center; color: #ea580c; width: 160px;">Existing Customer</th>
@@ -1041,6 +1049,10 @@
                 <select id="ea_m_filter" class="dac-select" style="display:none;"></select>
                 <div id="ea_custom_dates_wrap" class="dac-dr-container" style="display:none;"></div>
                 <select id="ea_period_sel" class="dac-select" title="Breakup Interval"></select>
+                <select id="ea_group_by" class="dac-select" title="Group the breakup table by period or by team member" style="display:none;">
+                    <option value="period">Breakup: By Period</option>
+                    <option value="user">Breakup: By Team Member</option>
+                </select>
             </div>
             <div id="ea_applied_chips" class="dac-chips"></div>
         </div>
@@ -1700,6 +1712,12 @@
             <option value="Business Contacts">Contact Only</option>
         `);
 
+            // Grouping by team member is a head-only view of the whole team
+            if (is_crm_head) {
+                showSelect('#l_group_by');
+                showSelect('#c_group_by');
+                showSelect('#ea_group_by');
+            }
             if (!is_crm_head) {
                 hideSelect('#c_u_filter');
                 hideSelect('#l_u_filter');
@@ -1761,6 +1779,7 @@
                 user: $('#c_u_filter').val() || '',
                 industry: getMultiValue('c_ind'),
                 source: getMultiValue('c_src'),
+                group_by: $('#c_group_by').val() || 'period',
                 period_type: $('#c_period_sel').val() || 'daily',
                 ...datePart,
                 month: rowMonth || $('#c_m_filter').val() || datePart.month || ''
@@ -1790,6 +1809,7 @@
                 user: $('#l_u_filter').val() || '',
                 industry: getMultiValue('l_ind'),
                 source: getMultiValue('l_src'),
+                group_by: $('#l_group_by').val() || 'period',
                 period_type: $('#l_period_sel').val() || 'daily',
                 ...datePart,
                 month: rowMonth || $('#l_m_filter').val() || datePart.month || ''
@@ -1870,6 +1890,7 @@
             }
             return {
                 user: $('#ea_user_sel').val() || '',
+                group_by: $('#ea_group_by').val() || 'period',
                 period_type: $('#ea_period_sel').val() || 'daily',
                 reference_type: $('#ea_entity_sel').val() || 'All',
                 month: $('#ea_m_filter').val() || datePart.month || '',
@@ -2046,6 +2067,17 @@
                     loadChartData();
                 }
             });
+
+            // Interval only means something when rows are periods
+            function applyGroupMode(prefix, reload) {
+                const byUser = $('#' + prefix + '_group_by').val() === 'user';
+                if (byUser) hideSelect('#' + prefix + '_period_sel');
+                else showSelect('#' + prefix + '_period_sel');
+                reload();
+            }
+            $('#l_group_by').on('change', function () { applyGroupMode('l', loadLeadData); });
+            $('#c_group_by').on('change', function () { applyGroupMode('c', loadContactData); });
+            $('#ea_group_by').on('change', function () { applyGroupMode('ea', loadActivityData); });
 
             $('#dac_export_excel_btn').on('click', exportDashboardToExcel);
         }
@@ -2602,6 +2634,11 @@
             });
         }
 
+        // Which axis each breakup table is currently grouped on
+        let leadGroupBy = 'period';
+        let contactGroupBy = 'period';
+        let activityGroupBy = 'period';
+
         function renderCountBadge(cnt, onclickJs) {
             const val = parseInt(cnt) || 0;
             if (val === 0) {
@@ -2617,6 +2654,8 @@
                 callback: function (r) {
                     renderAppliedChips('c');
                     if (!r.message) return;
+                    contactGroupBy = r.message.group_by || 'period';
+                    $('#c_first_header').text(contactGroupBy === 'user' ? 'Team Member' : 'Period');
                     const ct = r.message.contact_totals || { o: 0, c: 0, e: 0 };
                     $('#c_card_open').text(ct.o || 0);
                     $('#c_card_conv').text(ct.c || 0);
@@ -2627,9 +2666,9 @@
                         rowsHtml += `
                         <tr style="border-bottom: 1px solid #e2e8f0; font-size: 14px;">
                             <td style="padding: 10px 12px; font-weight: 600; color: #0f172a; border-right: 1px solid #e2e8f0;">${row.label}</td>
-                            <td style="padding: 6px 8px; text-align: center; border-right: 1px solid #e2e8f0;">${renderCountBadge(row.o, `openDrilldownModal('c_open', 'Open Contacts (${row.label})', '${row.m_num}', ${row.o}, '${row.row_from_date}', '${row.row_to_date}')`)}</td>
-                            <td style="padding: 6px 8px; text-align: center; border-right: 1px solid #e2e8f0;">${renderCountBadge(row.c, `openDrilldownModal('c_conv', 'Converted Contacts (${row.label})', '${row.m_num}', ${row.c}, '${row.row_from_date}', '${row.row_to_date}')`)}</td>
-                            <td style="padding: 6px 8px; text-align: center;">${renderCountBadge(row.e, `openDrilldownModal('c_exist', 'Existing Customers (${row.label})', '${row.m_num}', ${row.e}, '${row.row_from_date}', '${row.row_to_date}')`)}</td>
+                            <td style="padding: 6px 8px; text-align: center; border-right: 1px solid #e2e8f0;">${renderCountBadge(row.o, `openDrilldownModal('c_open', 'Open Contacts (${row.label})', '${row.m_num}', ${row.o}, '${row.row_from_date}', '${row.row_to_date}', '${row.grp_user || ''}')`)}</td>
+                            <td style="padding: 6px 8px; text-align: center; border-right: 1px solid #e2e8f0;">${renderCountBadge(row.c, `openDrilldownModal('c_conv', 'Converted Contacts (${row.label})', '${row.m_num}', ${row.c}, '${row.row_from_date}', '${row.row_to_date}', '${row.grp_user || ''}')`)}</td>
+                            <td style="padding: 6px 8px; text-align: center;">${renderCountBadge(row.e, `openDrilldownModal('c_exist', 'Existing Customers (${row.label})', '${row.m_num}', ${row.e}, '${row.row_from_date}', '${row.row_to_date}', '${row.grp_user || ''}')`)}</td>
                         </tr>
                     `;
                     });
@@ -2653,6 +2692,8 @@
                 callback: function (r) {
                     renderAppliedChips('l');
                     if (!r.message) return;
+                    leadGroupBy = r.message.group_by || 'period';
+                    $('#l_first_header').text(leadGroupBy === 'user' ? 'Team Member' : 'Month Name');
                     const lt = r.message.lead_totals || {};
                     $('#l_card_enq_cnt').text(lt.enq_c || 0);
                     $('#l_card_enq_val').text(fmtVal(lt.enq_v));
@@ -2675,30 +2716,30 @@
                         <tr style="border-bottom: 1px solid #cbd5e1; font-size: 14px;">
                             <td style="padding: 10px 12px; font-weight: 600; color: #0f172a; border-right: 1px solid #cbd5e1;">${row.label}</td>
                             <td style="padding: 6px 8px; text-align: center; border-right: 1px solid #e2e8f0;">
-                                ${renderCountBadge(row.enq_c, `openDrilldownModal('l_enq', 'Enquiry Leads (${row.label})', '${row.m_num}', ${row.enq_c}, '${row.row_from_date}', '${row.row_to_date}')`)}
+                                ${renderCountBadge(row.enq_c, `openDrilldownModal('l_enq', 'Enquiry Leads (${row.label})', '${row.m_num}', ${row.enq_c}, '${row.row_from_date}', '${row.row_to_date}', '${row.grp_user || ''}')`)}
                             </td>
                             <td style="padding: 10px 12px; text-align: right; color: #334155; font-weight: 600; border-right: 1px solid #cbd5e1;">${fmtVal(row.enq_v)}</td>
                             <td style="padding: 6px 8px; text-align: center; border-right: 1px solid #e2e8f0;">
-                                ${renderCountBadge(row.pipe_c, `openDrilldownModal('l_pipe', 'Pipeline Leads (${row.label})', '${row.m_num}', ${row.pipe_c}, '${row.row_from_date}', '${row.row_to_date}')`)}
+                                ${renderCountBadge(row.pipe_c, `openDrilldownModal('l_pipe', 'Pipeline Leads (${row.label})', '${row.m_num}', ${row.pipe_c}, '${row.row_from_date}', '${row.row_to_date}', '${row.grp_user || ''}')`)}
                             </td>
                             <td style="padding: 10px 12px; text-align: right; color: #334155; font-weight: 600; border-right: 1px solid #cbd5e1;">${fmtVal(row.pipe_v)}</td>
                             <td style="padding: 6px 8px; text-align: center; border-right: 1px solid #e2e8f0;">
-                                ${renderCountBadge(row.ord_c, `openDrilldownModal('l_ord', 'Order Leads (${row.label})', '${row.m_num}', ${row.ord_c}, '${row.row_from_date}', '${row.row_to_date}')`)}
+                                ${renderCountBadge(row.ord_c, `openDrilldownModal('l_ord', 'Order Leads (${row.label})', '${row.m_num}', ${row.ord_c}, '${row.row_from_date}', '${row.row_to_date}', '${row.grp_user || ''}')`)}
                             </td>
                             <td style="padding: 10px 12px; text-align: right; color: #15803d; font-weight: 700; border-right: 1px solid #cbd5e1;">${fmtVal(row.ord_v)}</td>
                             <td style="padding: 6px 8px; text-align: center; border-right: 1px solid #e2e8f0;">
-                                ${renderCountBadge(row.lenq_c, `openDrilldownModal('l_lenq', 'Lost Enquiry (${row.label})', '${row.m_num}', ${row.lenq_c}, '${row.row_from_date}', '${row.row_to_date}')`)}
+                                ${renderCountBadge(row.lenq_c, `openDrilldownModal('l_lenq', 'Lost Enquiry (${row.label})', '${row.m_num}', ${row.lenq_c}, '${row.row_from_date}', '${row.row_to_date}', '${row.grp_user || ''}')`)}
                             </td>
                             <td style="padding: 10px 12px; text-align: right; color: #dc2626; font-weight: 600; border-right: 1px solid #cbd5e1;">${fmtVal(row.lenq_v)}</td>
                             <td style="padding: 6px 8px; text-align: center; border-right: 1px solid #e2e8f0;">
-                                ${renderCountBadge(row.lpipe_c, `openDrilldownModal('l_lpipe', 'Lost Pipeline (${row.label})', '${row.m_num}', ${row.lpipe_c}, '${row.row_from_date}', '${row.row_to_date}')`)}
+                                ${renderCountBadge(row.lpipe_c, `openDrilldownModal('l_lpipe', 'Lost Pipeline (${row.label})', '${row.m_num}', ${row.lpipe_c}, '${row.row_from_date}', '${row.row_to_date}', '${row.grp_user || ''}')`)}
                             </td>
                             <td style="padding: 10px 12px; text-align: right; color: #dc2626; font-weight: 600; border-right: 2px solid #cbd5e1;">${fmtVal(row.lpipe_v)}</td>
                             <td style="padding: 6px 8px; text-align: center; border-right: 1px solid #e2e8f0;">
-                                ${renderCountBadge(row.conv_bc_to_lead, `openDrilldownModal('conv_bc', 'Contact &rarr; Lead (${row.label})', '${row.m_num}', ${row.conv_bc_to_lead}, '${row.row_from_date}', '${row.row_to_date}')`)}
+                                ${renderCountBadge(row.conv_bc_to_lead, `openDrilldownModal('conv_bc', 'Contact &rarr; Lead (${row.label})', '${row.m_num}', ${row.conv_bc_to_lead}, '${row.row_from_date}', '${row.row_to_date}', '${row.grp_user || ''}')`)}
                             </td>
                             <td style="padding: 6px 8px; text-align: center;">
-                                ${renderCountBadge(row.conv_lead_to_order, `openDrilldownModal('conv_lead', 'Lead &rarr; Order (${row.label})', '${row.m_num}', ${row.conv_lead_to_order}, '${row.row_from_date}', '${row.row_to_date}')`)}
+                                ${renderCountBadge(row.conv_lead_to_order, `openDrilldownModal('conv_lead', 'Lead &rarr; Order (${row.label})', '${row.m_num}', ${row.conv_lead_to_order}, '${row.row_from_date}', '${row.row_to_date}', '${row.grp_user || ''}')`)}
                             </td>
                         </tr>
                     `;
@@ -2815,6 +2856,7 @@
                 callback: function (r) {
                     renderAppliedChips('ea');
                     if (!r.message) return;
+                    activityGroupBy = r.message.group_by || 'period';
                     const tot = r.message.totals || {};
                     $('#ea_card_overdue').text(tot.overdue_count || 0);
                     $('#ea_card_today').text(tot.today_count || 0);
@@ -2829,9 +2871,10 @@
                     const entitySel = $('#ea_entity_sel').val() || 'All';
 
                     // RENDER SUMMARY HEADERS FIRST
+                    let eaFirstCol = (activityGroupBy === 'user') ? 'Team Member' : 'Period';
                     let headHtml = `
                     <tr style="background: #f8fafc; color: #334155;">
-                        <th rowspan="${entitySel === 'All' ? 2 : 1}" style="padding: 8px 10px; font-weight: 700; vertical-align: middle; border-bottom: 2px solid #cbd5e1; border-right: 1px solid #cbd5e1; min-width: 90px;">Period</th>
+                        <th rowspan="${entitySel === 'All' ? 2 : 1}" style="padding: 8px 10px; font-weight: 700; vertical-align: middle; border-bottom: 2px solid #cbd5e1; border-right: 1px solid #cbd5e1; min-width: 90px;">${eaFirstCol}</th>
                 `;
 
                     if (entitySel === 'All') {
@@ -3100,7 +3143,7 @@
         }
 
         // Number Card & Breakup Table Drilldown Modal
-        window.openDrilldownModal = function (cardType, cardTitle, rowMonth, expectedCountParam, rowFromDate, rowToDate) {
+        window.openDrilldownModal = function (cardType, cardTitle, rowMonth, expectedCountParam, rowFromDate, rowToDate, rowUser) {
             let expectedCount = expectedCountParam;
             let monthFilter = rowMonth;
 
@@ -3127,7 +3170,9 @@
                     delete filterArgs.month;
                     delete filterArgs.fiscal_year;
                 }
-                userDisp = getSelectedOptionText('#c_u_filter', 'All Team Members');
+                if (rowUser) { filterArgs.user = rowUser; }
+                userDisp = rowUser ? getUserDisplayName(rowUser)
+                                   : getSelectedOptionText('#c_u_filter', 'All Team Members');
                 scopeDisp = buildScopeDisp('c_ind', 'c_src');
                 dateDisp = hasRowDates ? cardTitle : (monthFilter ? cardTitle : (cArgs.fiscal_year ? cArgs.fiscal_year + (cArgs.month ? ` (Month: ${cArgs.month})` : '') : (cArgs.from_date ? `${cArgs.from_date} to ${cArgs.to_date}` : getSelectedOptionText('#c_p_filter', 'All Time'))));
             } else if (cardType.startsWith('l_') || cardType.startsWith('conv_')) {
@@ -3141,7 +3186,9 @@
                     delete filterArgs.month;
                     delete filterArgs.fiscal_year;
                 }
-                userDisp = getSelectedOptionText('#l_u_filter', 'All Team Members');
+                if (rowUser) { filterArgs.user = rowUser; }
+                userDisp = rowUser ? getUserDisplayName(rowUser)
+                                   : getSelectedOptionText('#l_u_filter', 'All Team Members');
                 scopeDisp = buildScopeDisp('l_ind', 'l_src');
                 dateDisp = hasRowDates ? cardTitle : (monthFilter ? cardTitle : (lArgs.fiscal_year ? lArgs.fiscal_year + (lArgs.month ? ` (Month: ${lArgs.month})` : '') : (lArgs.from_date ? `${lArgs.from_date} to ${lArgs.to_date}` : getSelectedOptionText('#l_p_filter', 'All Time'))));
             } else if (cardType.startsWith('ea_')) {
