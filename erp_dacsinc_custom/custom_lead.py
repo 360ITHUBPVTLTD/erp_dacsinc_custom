@@ -2586,7 +2586,7 @@ def build_in_clause(values, prefix, column, params):
 
 
 @frappe.whitelist()
-def get_tabular_dashboard_data(from_date=None, to_date=None, user=None, industry=None, source=None, period_type="monthly", fiscal_year=None, period=None, month=None, **kwargs):
+def get_tabular_dashboard_data(from_date=None, to_date=None, user=None, industry=None, source=None, period_type="monthly", fiscal_year=None, period=None, month=None, group_by="period", **kwargs):
     from_date, to_date = parse_period_and_dates(period, fiscal_year, from_date, to_date, month=month or kwargs.get("month"))
 
     # Determine the User Filter based on permissions
@@ -2688,6 +2688,27 @@ def get_tabular_dashboard_data(from_date=None, to_date=None, user=None, industry
         p_sort_cont = f"CONCAT(CASE WHEN MONTH({contact_date_expr}) >= 4 THEN YEAR({contact_date_expr}) ELSE YEAR({contact_date_expr}) - 1 END, '-', LPAD(CASE WHEN MONTH({contact_date_expr}) >= 4 THEN MONTH({contact_date_expr}) - 3 ELSE MONTH({contact_date_expr}) + 9 END, 2, '0'))"
         p_group_cont = f"YEAR({contact_date_expr}), MONTH({contact_date_expr})"
 
+    # Team-member mode: swap the period buckets for owner buckets. Everything
+    # downstream (row assembly, totals, drilldown) is unchanged — only what a row
+    # represents changes. Head-only; enforced below.
+    is_user_grouping = str(group_by or "period").lower() in ("user", "owner", "team", "team_member")
+    if is_user_grouping and not is_head:
+        is_user_grouping = False
+
+    p_user_lead = p_user_cont = "''"
+    if is_user_grouping:
+        owner_name = ("COALESCE(NULLIF((SELECT u.full_name FROM `tabUser` u WHERE u.name = {col}), ''), "
+                      "{col}, 'Unassigned')")
+        p_label_lead = owner_name.format(col="l.lead_owner")
+        p_sort_lead = p_label_lead
+        p_group_lead = "l.lead_owner"
+        p_user_lead = "COALESCE(l.lead_owner, '')"
+
+        p_label_cont = owner_name.format(col="assign_to")
+        p_sort_cont = p_label_cont
+        p_group_cont = "assign_to"
+        p_user_cont = "COALESCE(assign_to, '')"
+
     # 1. Lead Data grouped by period
     lead_creation_date_where = where_lead_creation
 
@@ -2695,6 +2716,7 @@ def get_tabular_dashboard_data(from_date=None, to_date=None, user=None, industry
         SELECT 
             {p_label_lead} as label,
             {p_sort_lead} as f_sort,
+            {p_user_lead} as grp_user,
             DATE_FORMAT(({lead_action_date}), '%%Y-%%m') as ym_num,
             MONTH({lead_action_date}) as m_num,
             MIN(DATE({lead_action_date})) as row_from_date,
@@ -2721,6 +2743,7 @@ def get_tabular_dashboard_data(from_date=None, to_date=None, user=None, industry
         if key not in lead_period_map:
             lead_period_map[key] = {
                 "label": key, "f_sort": str(r.f_sort), "m_num": str(r.ym_num or r.label or ''),
+                "grp_user": str(r.get("grp_user") or ''),
                 "row_from_date": str(r.row_from_date) if r.row_from_date else '',
                 "row_to_date": str(r.row_to_date) if r.row_to_date else '',
                 "enq_c": 0, "enq_v": 0.0, "pipe_c": 0, "pipe_v": 0.0, "ord_c": 0, "ord_v": 0.0,
@@ -2754,7 +2777,11 @@ def get_tabular_dashboard_data(from_date=None, to_date=None, user=None, industry
     bc_lead_conv_date = BC_CONVERSION_DATE_SQL
 
     # Dynamically build labels using bc_lead_conv_date
-    if period_type == "daily":
+    if is_user_grouping:
+        p_label_bc_conv = p_label_cont
+        p_sort_bc_conv = p_sort_cont
+        p_group_bc_conv = p_group_cont
+    elif period_type == "daily":
         p_label_bc_conv = f"DATE_FORMAT({bc_lead_conv_date}, '%%d-%%b-%%Y (%%a)')"
         p_sort_bc_conv = f"DATE_FORMAT({bc_lead_conv_date}, '%%Y-%%m-%%d')"
         p_group_bc_conv = f"DATE_FORMAT({bc_lead_conv_date}, '%%Y-%%m-%%d')"
@@ -2769,7 +2796,10 @@ def get_tabular_dashboard_data(from_date=None, to_date=None, user=None, industry
 
     # Lead -> Order is an event from the history table, one row per lead
     lead_order_conv_date = LEAD_ORDER_CONV_DATE_SQL
-    p_label_lo, p_sort_lo, p_group_lo = period_sql_for(lead_order_conv_date, period_type)
+    if is_user_grouping:
+        p_label_lo, p_sort_lo, p_group_lo = p_label_lead, p_sort_lead, p_group_lead
+    else:
+        p_label_lo, p_sort_lo, p_group_lo = period_sql_for(lead_order_conv_date, period_type)
     lead_conv_filter += f" AND {lead_order_conv_date} IS NOT NULL "
 
     if from_date and to_date:
@@ -2845,6 +2875,7 @@ def get_tabular_dashboard_data(from_date=None, to_date=None, user=None, industry
         SELECT 
             {p_label_cont} as label,
             {p_sort_cont} as f_sort,
+            {p_user_cont} as grp_user,
             DATE_FORMAT(({contact_action_date}), '%%Y-%%m') as ym_num,
             MONTH({contact_action_date}) as m_num,
             MIN(DATE({contact_action_date})) as row_from_date,
@@ -2861,6 +2892,7 @@ def get_tabular_dashboard_data(from_date=None, to_date=None, user=None, industry
     for r in contacts_data:
         sorted_contacts.append({
             "label": r.label, "f_sort": str(r.f_sort), "m_num": str(r.ym_num or r.label or ''),
+            "grp_user": str(r.get("grp_user") or ''),
             "row_from_date": str(r.row_from_date) if r.row_from_date else '',
             "row_to_date": str(r.row_to_date) if r.row_to_date else '',
             "o": int(r.o or 0), "c": int(r.c or 0), "e": int(r.e or 0)
@@ -2921,6 +2953,7 @@ def get_tabular_dashboard_data(from_date=None, to_date=None, user=None, industry
         ct["e"] += c["e"]
 
     return {
+        "group_by": "user" if is_user_grouping else "period",
         "leads": sorted_leads,
         "lead_totals": lt,
         "contacts": sorted_contacts,
@@ -2928,7 +2961,7 @@ def get_tabular_dashboard_data(from_date=None, to_date=None, user=None, industry
     }
 
 @frappe.whitelist()
-def get_event_activity_breakup_data(from_date=None, to_date=None, user=None, period_type="monthly", reference_type="All", activity_basis="completed", fiscal_year=None, period=None, month=None, **kwargs):
+def get_event_activity_breakup_data(from_date=None, to_date=None, user=None, period_type="monthly", reference_type="All", activity_basis="completed", fiscal_year=None, period=None, month=None, group_by="period", **kwargs):
     from_date, to_date = parse_period_and_dates(period, fiscal_year, from_date, to_date, month=month or kwargs.get("month"))
 
     is_head = "DAC CRM Head" in frappe.get_roles()
@@ -2970,6 +3003,19 @@ def get_event_activity_breakup_data(from_date=None, to_date=None, user=None, per
         cp_label = "CONCAT(MONTHNAME(COALESCE(ends_on, actual_checked_out_at, actual_visit_at, modified)), ' ', YEAR(COALESCE(ends_on, actual_checked_out_at, actual_visit_at, modified)))"
         cp_sort = "CONCAT(YEAR(COALESCE(ends_on, actual_checked_out_at, actual_visit_at, modified)), '-', LPAD(MONTH(COALESCE(ends_on, actual_checked_out_at, actual_visit_at, modified)), 2, '0'))"
 
+    # Team-member mode: bucket by the person the activity is assigned to instead
+    # of by date. Head-only, same as the lead/contact tables.
+    ea_user_grouping = str(group_by or "period").lower() in ("user", "owner", "team", "team_member")
+    if ea_user_grouping and not is_head:
+        ea_user_grouping = False
+    cp_user = "''"
+    if ea_user_grouping:
+        cp_label = ("COALESCE(NULLIF((SELECT u.full_name FROM `tabUser` u WHERE u.name = assigned_to), ''), "
+                    "assigned_to, 'Unassigned')")
+        cp_sort = cp_label
+        cp_group = "assigned_to"
+        cp_user = "COALESCE(assigned_to, '')"
+
     cat_case_parts = []
     for idx, cat in enumerate(categories):
         params[f"cat_{idx}"] = cat
@@ -2986,7 +3032,7 @@ def get_event_activity_breakup_data(from_date=None, to_date=None, user=None, per
     cat_case_sql = ",\n".join(cat_case_parts)
 
     cp_activities = frappe.db.sql(f"""
-        SELECT {cp_label} as period_label, {cp_sort} as sort_key, {cat_case_sql}
+        SELECT {cp_label} as period_label, {cp_sort} as sort_key, {cp_user} as grp_user, {cat_case_sql}
         FROM `tabEvent Activity` {cp_filter}
         GROUP BY {cp_group} ORDER BY sort_key ASC
     """, params, as_dict=1)
@@ -3001,6 +3047,7 @@ def get_event_activity_breakup_data(from_date=None, to_date=None, user=None, per
         act_row = {
             "period_label": row.period_label,
             "sort_key": str(row.sort_key),
+            "grp_user": str(row.get("grp_user") or ""),
             "row_from_date": str(row.row_from_date) if row.row_from_date else "",
             "row_to_date": str(row.row_to_date) if row.row_to_date else "",
             "lead_cnt": int(row.lead_cnt or 0),
@@ -3086,6 +3133,7 @@ def get_event_activity_breakup_data(from_date=None, to_date=None, user=None, per
         """, params)[0][0] or 0
 
     return {
+        "group_by": "user" if ea_user_grouping else "period",
         "categories": categories,
         "activities": activities,
         "totals": {
