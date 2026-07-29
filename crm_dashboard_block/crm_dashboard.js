@@ -134,11 +134,16 @@
                 box-shadow: 0 1px 2px rgba(0,0,0,0.05) !important;
                 width: 220px !important;
             }
-            .dac-wide-modal .modal-dialog {
-                max-width: 92vw !important;
-                width: 92vw !important;
-                margin: 20px auto !important;
-            }
+             .dac-wide-modal {
+                 transition: none !important;
+             }
+             .dac-wide-modal .modal-dialog {
+                 transition: none !important;
+                 transform: none !important;
+                 max-width: 95vw !important;
+                 width: 95vw !important;
+                 margin: 20px auto !important;
+             }
             .dac-wide-modal .modal-content {
                 border-radius: 12px !important;
                 border: none !important;
@@ -355,7 +360,13 @@
     }
 
     function populateFilters() {
-        const uOptions = `<option value="">All Team Members</option>` + usersList.map(u => `<option value="${u.name}">${u.full_name}</option>`).join('');
+        const is_crm_head = (frappe.user_roles || []).includes('DAC CRM Head');
+        let uOptions = "";
+        if (is_crm_head) {
+            uOptions = `<option value="">All Team Members</option>` + usersList.map(u => `<option value="${u.name}">${u.full_name}</option>`).join('');
+        } else {
+            uOptions = `<option value="${frappe.session.user}">${frappe.session.user_fullname || frappe.session.user}</option>`;
+        }
         const breakupOptions = `
             <option value="daily">Daily Breakup</option>
             <option value="weekly">Weekly Breakup</option>
@@ -394,6 +405,16 @@
             <option value="Business Contacts">Contact Only</option>
         `);
 
+        if (!is_crm_head) {
+            hideSelect('#c_u_filter');
+            hideSelect('#l_u_filter');
+            hideSelect('#t_u_filter');
+            hideSelect('#ea_user_sel');
+        } else {
+            // Only CRM Head can see the export button
+            $('#dac_export_bar').css('display', 'flex');
+        }
+
         // Update Breakup options based on initialized period selector value
         updateBreakupOptions('#c_p_filter', '#c_period_sel');
         updateBreakupOptions('#l_p_filter', '#l_period_sel');
@@ -410,12 +431,6 @@
         $('#ea_p_filter').val('all');
         hideSelect('#ea_fy_filter');
         hideSelect('#ea_m_filter');
-
-        if (frappe.boot && frappe.boot.user && (frappe.boot.user.roles || []).includes('DAC CRM Head')) {
-            $('#dac_export_excel_btn').show();
-        } else {
-            $('#dac_export_excel_btn').hide();
-        }
 
         enforceSelectStyles();
         setupEventListeners();
@@ -501,7 +516,36 @@
     }
 
     function parsePeriodArg(pVal) {
-        if (pVal === 'custom' || pVal === 'fiscal_year') return {};
+        if (pVal === 'custom' || pVal === 'fiscal_year' || !pVal || pVal === 'all') return { period: pVal };
+        // Compute concrete from/to dates client-side so drilldown loads ONLY filtered records
+        const today = new Date();
+        const fmt = d => d.toISOString().split('T')[0];
+        let from = null, to = null;
+        if (pVal === 'today') {
+            from = to = fmt(today);
+        } else if (pVal === 'this_week') {
+            const day = today.getDay();
+            const mon = new Date(today); mon.setDate(today.getDate() - ((day + 6) % 7));
+            const sun = new Date(mon); sun.setDate(mon.getDate() + 6);
+            from = fmt(mon); to = fmt(sun);
+        } else if (pVal === 'this_month') {
+            from = fmt(new Date(today.getFullYear(), today.getMonth(), 1));
+            to = fmt(new Date(today.getFullYear(), today.getMonth() + 1, 0));
+        } else if (pVal === 'last_month') {
+            from = fmt(new Date(today.getFullYear(), today.getMonth() - 1, 1));
+            to = fmt(new Date(today.getFullYear(), today.getMonth(), 0));
+        } else if (pVal === 'this_quarter') {
+            const q = Math.floor(today.getMonth() / 3);
+            from = fmt(new Date(today.getFullYear(), q * 3, 1));
+            to = fmt(new Date(today.getFullYear(), q * 3 + 3, 0));
+        } else if (pVal === 'last_quarter') {
+            const q = Math.floor(today.getMonth() / 3) - 1;
+            const yr = q < 0 ? today.getFullYear() - 1 : today.getFullYear();
+            const qn = ((q + 4) % 4);
+            from = fmt(new Date(yr, qn * 3, 1));
+            to = fmt(new Date(yr, qn * 3 + 3, 0));
+        }
+        if (from && to) return { from_date: from, to_date: to, period: pVal };
         return { period: pVal };
     }
 
@@ -959,49 +1003,104 @@
     }
 
     function exportDashboardToExcel() {
-        const btn = $('#dac_export_excel_btn');
-        btn.prop('disabled', true).text('⏳ Generating Excel...');
-
-        const cArgs = getContactArgs();
-        const lArgs = getLeadArgs();
-        const eaArgs = getActivityArgs();
-
-        const payload = {
-            c_user: cArgs.user, c_fiscal_year: cArgs.fiscal_year, c_industry: cArgs.industry, c_period_type: cArgs.period_type, c_from_date: cArgs.from_date, c_to_date: cArgs.to_date, c_month: cArgs.month, c_period: cArgs.period,
-            l_user: lArgs.user, l_fiscal_year: lArgs.fiscal_year, l_industry: lArgs.industry, l_period_type: lArgs.period_type, l_from_date: lArgs.from_date, l_to_date: lArgs.to_date, l_month: lArgs.month, l_period: lArgs.period,
-            t_fiscal_year: $('#t_fy_filter').val(),
-            ea_user: eaArgs.user, ea_fiscal_year: eaArgs.fiscal_year, ea_period_type: eaArgs.period_type, ea_entity: eaArgs.reference_type, ea_from_date: eaArgs.from_date, ea_to_date: eaArgs.to_date, ea_month: eaArgs.month, ea_period: eaArgs.period
-        };
-
-        frappe.call({
-            method: "erp_dacsinc_custom.custom_lead.export_crm_dashboard_excel",
-            args: payload,
-            callback: function(r) {
-                btn.prop('disabled', false).html('<span style="font-size: 13px;">📊</span> Export Excel');
-                if (r.message && r.message.filename && r.message.filecontent) {
-                    const byteCharacters = atob(r.message.filecontent);
-                    const byteNumbers = new Array(byteCharacters.length);
-                    for (let i = 0; i < byteCharacters.length; i++) {
-                        byteNumbers[i] = byteCharacters.charCodeAt(i);
-                    }
-                    const byteArray = new Uint8Array(byteNumbers);
-                    const blob = new Blob([byteArray], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
-                    
-                    const link = document.createElement('a');
-                    link.href = window.URL.createObjectURL(blob);
-                    link.download = r.message.filename;
-                    document.body.appendChild(link);
-                    link.click();
-                    document.body.removeChild(link);
-                    frappe.show_alert({ message: "CRM Dashboard Excel exported successfully!", indicator: "green" });
-                } else {
-                    frappe.msgprint({ title: __("Export Failed"), indicator: "red", message: __("Could not generate Excel export file.") });
+        const d = new frappe.ui.Dialog({
+            title: '📊 Export CRM Executive Report',
+            fields: [
+                {
+                    label: 'Report Period Type / Breakup',
+                    fieldname: 'export_type',
+                    fieldtype: 'Select',
+                    options: [
+                        { value: 'applied', label: 'Applied Filter Breakup (Dashboard Active)' },
+                        { value: 'daily', label: 'Daily Breakup Report' },
+                        { value: 'weekly', label: 'Weekly Breakup Report' },
+                        { value: 'monthly', label: 'Monthly Breakup Report' }
+                    ],
+                    default: 'applied'
+                },
+                {
+                    label: 'Send Report via Email to Manager',
+                    fieldname: 'send_email',
+                    fieldtype: 'Check',
+                    default: 0
+                },
+                {
+                    label: 'Manager Email Address',
+                    fieldname: 'email_address',
+                    fieldtype: 'Data',
+                    depends_on: 'eval:doc.send_email == 1',
+                    description: 'Separate multiple emails with commas'
                 }
-            },
-            error: function() {
-                btn.prop('disabled', false).html('<span style="font-size: 13px;">📊</span> Export Excel');
+            ],
+            primary_action_label: 'Generate & Export',
+            primary_action: function(values) {
+                if (values.send_email && !values.email_address) {
+                    frappe.msgprint({
+                        title: __('Validation Error'),
+                        indicator: 'orange',
+                        message: __('Please specify at least one Manager Email Address to send the report.')
+                    });
+                    return;
+                }
+
+                d.hide();
+                const btn = $('#dac_export_excel_btn');
+                const origHtml = btn.html();
+                btn.prop('disabled', true).text('⏳ Generating Excel...');
+
+                const cArgs = getContactArgs();
+                const lArgs = getLeadArgs();
+                const eaArgs = getActivityArgs();
+
+                const payload = {
+                    c_user: cArgs.user, c_fiscal_year: cArgs.fiscal_year, c_industry: cArgs.industry, c_period_type: cArgs.period_type, c_from_date: cArgs.from_date, c_to_date: cArgs.to_date, c_month: cArgs.month, c_period: cArgs.period,
+                    l_user: lArgs.user, l_fiscal_year: lArgs.fiscal_year, l_industry: lArgs.industry, l_period_type: lArgs.period_type, l_from_date: lArgs.from_date, l_to_date: lArgs.to_date, l_month: lArgs.month, l_period: lArgs.period,
+                    t_fiscal_year: $('#t_fy_filter').val(),
+                    ea_user: eaArgs.user, ea_fiscal_year: eaArgs.fiscal_year, ea_period_type: eaArgs.period_type, ea_entity: eaArgs.reference_type, ea_from_date: eaArgs.from_date, ea_to_date: eaArgs.to_date, ea_month: eaArgs.month, ea_period: eaArgs.period,
+                    export_type: values.export_type,
+                    send_email: values.send_email ? 1 : 0,
+                    email_address: values.email_address || ''
+                };
+
+                frappe.call({
+                    method: "erp_dacsinc_custom.custom_lead.export_crm_dashboard_excel",
+                    args: payload,
+                    callback: function(r) {
+                        btn.prop('disabled', false).html(origHtml);
+                        if (r.message && r.message.filename && r.message.filecontent) {
+                            const byteCharacters = atob(r.message.filecontent);
+                            const byteNumbers = new Array(byteCharacters.length);
+                            for (let i = 0; i < byteCharacters.length; i++) {
+                                byteNumbers[i] = byteCharacters.charCodeAt(i);
+                            }
+                            const byteArray = new Uint8Array(byteNumbers);
+                            const blob = new Blob([byteArray], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+                            
+                            const link = document.createElement('a');
+                            link.href = window.URL.createObjectURL(blob);
+                            link.download = r.message.filename;
+                            document.body.appendChild(link);
+                            link.click();
+                            document.body.removeChild(link);
+
+                            let msg = "CRM Dashboard Excel exported successfully!";
+                            if (r.message.email_sent) {
+                                msg += " and sent to Manager email.";
+                            }
+                            frappe.show_alert({ message: msg, indicator: "green" });
+                        } else {
+                            frappe.msgprint({ title: __("Export Failed"), indicator: "red", message: __("Could not generate Excel export file.") });
+                        }
+                    },
+                    error: function() {
+                        btn.prop('disabled', false).html(origHtml);
+                    }
+                });
             }
         });
+
+        d.$wrapper.addClass('dac-wide-modal');
+        d.show();
     }
 
     // Number Card & Breakup Table Drilldown Modal
@@ -1208,7 +1307,9 @@
                             <tr class="dac-prompt-row" data-search="${searchStr}" style="border-bottom: 1px solid #cbd5e1; font-size: 13px; color: #0f172a;">
                                 <td style="padding: 8px 10px; color: #1e293b; font-weight: 700;">${idx + 1}</td>
                                 <td style="padding: 8px 10px; color: #0f172a; font-weight: 700; cursor: pointer;" onclick="window.open('${linkUrl}', '_blank')">
-                                    <a href="${linkUrl}" target="_blank" style="color: #2563eb; font-weight: 700; text-decoration: none;" title="Open Event Activity Record (${name})">${leadName}</a>
+                                    <div style="white-space: normal; word-break: break-word; min-width: 150px; max-width: 250px; line-height: 1.4;">
+                                        <a href="${linkUrl}" target="_blank" style="color: #2563eb; font-weight: 700; text-decoration: none;" title="Open Event Activity Record (${name})">${leadName}</a>
+                                    </div>
                                 </td>
                                 <td style="padding: 8px 10px;"><span style="background: #f3f4f6; color: #1e293b; padding: 3px 6px; border-radius: 4px; font-size: 12px; font-weight: 700;">${category}</span></td>
                                 <td style="padding: 8px 10px;">
@@ -1238,7 +1339,7 @@
                     <style>
                         .dac-prompt-row:nth-child(even) { background-color: #f9fafb; }
                     </style>
-                    <div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;">
+                    <div style="font-family: -apple-system, BlinkMacSystemFont, Segoe UI, Roboto, sans-serif;">
                         ${topHeaderHtml}
                         ${searchBarHtml}
                         <div class="dac-modal-scroll-wrap" style="max-height: 520px; overflow-y: auto; border: 1px solid #e2e8f0; border-radius: 6px; box-shadow: 0 1px 3px rgba(0,0,0,0.02);">
@@ -1257,7 +1358,6 @@
                 const d = new frappe.ui.Dialog({
                     title: `${cardTitle} (${totalCount} Records)`,
                     size: 'extra-large',
-                    custom_class: 'dac-wide-modal',
                     fields: [
                         {
                             fieldtype: 'HTML',
@@ -1266,17 +1366,12 @@
                         }
                     ]
                 });
-
+                d.$wrapper.addClass('dac-wide-modal');
                 d.show();
 
                 setTimeout(() => {
                     const dlgWrapper = d.$wrapper;
                     if (dlgWrapper && dlgWrapper.length) {
-                        dlgWrapper.find('.modal-dialog').css({
-                            'max-width': '95vw',
-                            'width': '95vw',
-                            'margin': '20px auto'
-                        });
                         
                         const searchInput = dlgWrapper.find('#dac_prompt_search_input');
                         searchInput.on('input', function() {
@@ -1522,7 +1617,9 @@
                         <tr class="dac-prompt-act-row" data-search="${searchStr}" style="border-bottom: 1px solid #cbd5e1; font-size: 13px; color: #0f172a;">
                             <td style="padding: 8px 10px; color: #1e293b; font-weight: 700;">${idx + 1}</td>
                             <td style="padding: 8px 10px; color: #0f172a; font-weight: 700; cursor: pointer;" onclick="window.open('${linkUrl}', '_blank')">
-                                <a href="${linkUrl}" target="_blank" style="color: #2563eb; font-weight: 700; text-decoration: none;" title="Open Event Activity Record (${name})">${subject}</a>
+                                <div style="white-space: normal; word-break: break-word; min-width: 150px; max-width: 250px; line-height: 1.4;">
+                                    <a href="${linkUrl}" target="_blank" style="color: #2563eb; font-weight: 700; text-decoration: none;" title="Open Event Activity Record (${name})">${subject}</a>
+                                </div>
                             </td>
                             <td style="padding: 8px 10px;"><span style="background: #f3f4f6; color: #1e293b; padding: 3px 6px; border-radius: 4px; font-size: 12px; font-weight: 700;">${rec.category || catName}</span></td>
                             <td style="padding: 8px 10px;">
@@ -1547,7 +1644,7 @@
                     <style>
                         .dac-prompt-act-row:nth-child(even) { background-color: #f9fafb; }
                     </style>
-                    <div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;">
+                    <div style="font-family: -apple-system, BlinkMacSystemFont, Segoe UI, Roboto, sans-serif;">
                         ${topHeaderHtml}
                         ${searchBarHtml}
                         <div class="dac-modal-scroll-wrap" style="max-height: 520px; overflow-y: auto; border: 1px solid #e2e8f0; border-radius: 6px; box-shadow: 0 1px 3px rgba(0,0,0,0.02);">
@@ -1575,7 +1672,6 @@
                 const d = new frappe.ui.Dialog({
                     title: `Event Activity Audit: ${catTitle} (${totalCount} Records)`,
                     size: 'extra-large',
-                    custom_class: 'dac-wide-modal',
                     fields: [
                         {
                             fieldtype: 'HTML',
@@ -1584,6 +1680,7 @@
                         }
                     ]
                 });
+                d.$wrapper.addClass('dac-wide-modal');
                 d.show();
 
                 setTimeout(() => {

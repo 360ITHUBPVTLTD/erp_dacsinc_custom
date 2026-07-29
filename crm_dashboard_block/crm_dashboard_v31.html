@@ -1,5 +1,5 @@
 <style>
-    .dac-clickable-cell,
+.dac-clickable-cell,
     .dac-clickable-cell *,
     div.dac-clickable-cell,
     td .dac-clickable-cell {
@@ -87,10 +87,51 @@
         overflow-y: auto !important;
     }
 
-    /* Remove Frappe's default footer space when empty */
     .dac-wide-modal .modal-footer:empty {
         display: none !important;
         padding: 0 !important;
+    }
+
+    .dac-wide-modal .dac-modal-scroll-wrap {
+        overflow-x: auto !important;
+        overflow-y: auto !important;
+        width: 100% !important;
+        max-width: 100% !important;
+    }
+
+    .dac-wide-modal table {
+        width: max-content !important;
+        min-width: 100% !important;
+        table-layout: auto !important;
+        border-collapse: separate !important;
+        border-spacing: 0 !important;
+    }
+
+    .dac-wide-modal th,
+    .dac-wide-modal td {
+        white-space: nowrap !important;
+        word-break: normal !important;
+        overflow-wrap: normal !important;
+        font-size: 13.5px !important;
+        padding: 10px 14px !important;
+    }
+
+    /* Restrict Email column width and force long email wrapping */
+    .dac-wide-modal td.dac-email-cell {
+        white-space: normal !important;
+        max-width: 180px !important;
+        width: 180px !important;
+        word-break: break-all !important;
+        overflow-wrap: anywhere !important;
+    }
+
+    /* Wrap long text ONLY for Notes column */
+    .dac-wide-modal td.dac-notes-cell {
+        white-space: normal !important;
+        max-width: 250px !important;
+        min-width: 180px !important;
+        word-break: break-word !important;
+        overflow-wrap: anywhere !important;
     }
 
     .dac-modal-scroll-wrap::-webkit-scrollbar {
@@ -148,33 +189,10 @@
         overflow: visible !important;
     }
 
-    .dac-wide-modal table {
-        min-width: 100% !important;
-        width: 100% !important;
-        table-layout: auto !important;
-    }
-
-    .dac-wide-modal th {
-        white-space: normal !important;
-        font-size: 13px !important;
-        padding: 8px 10px !important;
-        word-break: keep-all !important;
-    }
-
-    .dac-wide-modal td {
-        white-space: normal !important;
-        word-break: break-all !important;
-        overflow-wrap: break-word !important;
-        font-size: 13px !important;
-        padding: 8px 10px !important;
-        max-width: 300px !important;
-    }
-
     #dac_crm_dashboard_root table {
         white-space: nowrap !important;
     }
 
-    /* Enlarge font size on all dashboard tables and details */
     #dac_crm_dashboard_root table th {
         font-size: 14.5px !important;
         padding: 10px 12px !important;
@@ -213,12 +231,10 @@
     .dac-modal-scroll-wrap thead tr:nth-child(2) th {
         position: sticky !important;
         top: 35px !important;
-        /* height of row 1 */
         z-index: 9 !important;
         border-bottom: 2px solid #cbd5e1 !important;
     }
 
-    /* Sticky first column in horizontal scroll - target ONLY tr:first-child for header */
     .dac-modal-scroll-wrap table thead tr:first-child th:first-child {
         position: sticky !important;
         left: 0 !important;
@@ -245,7 +261,6 @@
     .dac-modal-scroll-wrap thead th,
     #dac_crm_dashboard_root table thead th {
         background-color: #f8fafc;
-        /* default background */
     }
 
     .dac-modal-scroll-wrap thead th:not([style*="background"]),
@@ -253,7 +268,6 @@
         background-color: #f8fafc !important;
     }
 
-    /* For main dashboard tables (not modals) */
     #dac_crm_dashboard_root table {
         border-collapse: separate !important;
         border-spacing: 0 !important;
@@ -294,10 +308,9 @@
         background-color: #f1f5f9 !important;
     }
 
-    /* Specific overrides for Activity breakup table columns to prevent squishing */
     #ea_breakup_table th,
     #ea_breakup_table td {
-        min-width: 100px !important;
+        min-width: 90px !important;
         text-align: center !important;
         white-space: nowrap !important;
     }
@@ -306,6 +319,234 @@
     #ea_breakup_table tbody tr td:first-child {
         min-width: 140px !important;
         text-align: left !important;
+    }
+
+    /* Multiselect filter controls (Industry / Source) — matched to .dac-select */
+    .dac-ms-container {
+        display: inline-flex !important;
+        align-items: center !important;
+        min-width: 160px !important;
+        max-width: 220px !important;
+        height: 30px !important;
+        vertical-align: middle !important;
+    }
+
+    /* Frappe controls ship a label, a help box and form-group margins; all of
+       that pushes the input off the filter-bar baseline. Strip it. */
+    .dac-ms-container .frappe-control,
+    .dac-ms-container .form-group,
+    .dac-ms-container .control-input-wrapper,
+    .dac-ms-container .control-input {
+        margin: 0 !important;
+        padding: 0 !important;
+        width: 100% !important;
+    }
+
+    .dac-ms-container .clearfix,
+    .dac-ms-container label,
+    .dac-ms-container .help-box,
+    .dac-ms-container .control-value {
+        display: none !important;
+        margin: 0 !important;
+        height: 0 !important;
+    }
+
+    .dac-ms-container .multiselect-list > .form-control {
+        height: 30px !important;
+        min-height: 30px !important;
+        line-height: 20px !important;
+        padding: 4px 24px 4px 10px !important;
+        font-size: 12px !important;
+        font-weight: 500 !important;
+        color: #1e293b !important;
+        background-color: #ffffff !important;
+        border: 1px solid #cbd5e1 !important;
+        border-radius: 6px !important;
+        box-shadow: 0 1px 2px rgba(0, 0, 0, 0.05) !important;
+        cursor: pointer !important;
+        background-image: url("data:image/svg+xml,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 fill=%22none%22 viewBox=%220 0 24 24%22 stroke=%22%2364748b%22 stroke-width=%222%22%3E%3Cpath stroke-linecap=%22round%22 stroke-linejoin=%22round%22 d=%22M19 9l-7 7-7-7%22/%3E%3C/svg%3E") !important;
+        background-repeat: no-repeat !important;
+        background-position: right 8px center !important;
+        background-size: 12px !important;
+    }
+
+    .dac-ms-container .multiselect-list > .form-control:focus {
+        border-color: #2563eb !important;
+        box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.15) !important;
+        outline: none !important;
+    }
+
+    .dac-ms-container .multiselect-list .status-text {
+        font-size: 12px !important;
+        color: #1e293b !important;
+    }
+
+    .dac-ms-container .multiselect-list {
+        position: relative !important;
+    }
+
+    /* Open/close is driven by JS inside the shadow root, so don't rely on
+       Bootstrap's own .show rules being present. */
+    .dac-ms-container .dropdown-menu {
+        display: none !important;
+        position: absolute !important;
+        top: 100% !important;
+        left: 0 !important;
+        margin: 2px 0 0 !important;
+        padding: 4px 0 !important;
+        list-style: none !important;
+        background: #ffffff !important;
+        border: 1px solid #e2e8f0 !important;
+        border-radius: 6px !important;
+        box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.1), 0 4px 6px -2px rgba(0, 0, 0, 0.05) !important;
+        max-height: 320px !important;
+        overflow-y: auto !important;
+        min-width: 240px !important;
+        font-size: 12px !important;
+        z-index: 1050 !important;
+    }
+
+    .dac-ms-container .dropdown-menu.show {
+        display: block !important;
+    }
+
+    .dac-ms-container .dropdown-input-wrapper {
+        padding: 4px 8px !important;
+    }
+
+    .dac-ms-container .dropdown-input-wrapper input {
+        height: 28px !important;
+        font-size: 12px !important;
+        border: 1px solid #cbd5e1 !important;
+        border-radius: 4px !important;
+        width: 100% !important;
+    }
+
+    /* Custom Date Range control — same baseline treatment as the multiselects */
+    /* No `display` rule here on purpose: the period dropdown shows/hides this
+       wrapper with an inline style, and an !important display would beat it. */
+    .dac-dr-container {
+        align-items: center !important;
+        height: 30px !important;
+        vertical-align: middle !important;
+    }
+
+    .dac-dr-container .frappe-control,
+    .dac-dr-container .form-group,
+    .dac-dr-container .control-input-wrapper,
+    .dac-dr-container .control-input {
+        margin: 0 !important;
+        padding: 0 !important;
+    }
+
+    .dac-dr-container .clearfix,
+    .dac-dr-container label,
+    .dac-dr-container .help-box,
+    .dac-dr-container .control-value {
+        display: none !important;
+        margin: 0 !important;
+        height: 0 !important;
+    }
+
+    .dac-dr-container input {
+        height: 30px !important;
+        min-height: 30px !important;
+        line-height: 20px !important;
+        margin: 0 !important;
+    }
+
+    /* Applied-filter summary chips */
+    .dac-chips {
+        display: flex !important;
+        flex-wrap: wrap !important;
+        align-items: center !important;
+        gap: 6px !important;
+        margin-top: 8px !important;
+        min-height: 0 !important;
+    }
+
+    .dac-chips:empty {
+        display: none !important;
+    }
+
+    .dac-chip-label {
+        font-size: 10px !important;
+        font-weight: 700 !important;
+        color: #64748b !important;
+        text-transform: uppercase !important;
+        letter-spacing: 0.04em !important;
+    }
+
+    .dac-chip {
+        display: inline-flex !important;
+        align-items: center !important;
+        gap: 5px !important;
+        background: #eff6ff !important;
+        border: 1px solid #bfdbfe !important;
+        color: #1e3a8a !important;
+        border-radius: 12px !important;
+        padding: 2px 9px !important;
+        font-size: 11px !important;
+        font-weight: 600 !important;
+        line-height: 18px !important;
+        max-width: 100% !important;
+    }
+
+    .dac-chip b {
+        font-weight: 700 !important;
+        color: #0f172a !important;
+    }
+
+    .dac-chip-clear {
+        cursor: pointer !important;
+        color: #1d4ed8 !important;
+        font-weight: 800 !important;
+        font-size: 12px !important;
+        line-height: 1 !important;
+        opacity: 0.65 !important;
+    }
+
+    .dac-chip-clear:hover {
+        opacity: 1 !important;
+    }
+
+    /* Multiselect summary must read as values, not "2 values selected" */
+    .dac-ms-container .multiselect-list .status-text {
+        overflow: hidden !important;
+        text-overflow: ellipsis !important;
+        white-space: nowrap !important;
+    }
+
+    /* Long free-text columns: wrap inside a sane width instead of letting one
+       outlier value stretch the column (and the whole table) across the screen. */
+    .dac-wide-modal td.dac-text-cell,
+    .dac-wide-modal th.dac-text-cell {
+        white-space: normal !important;
+        max-width: 260px !important;
+        min-width: 150px !important;
+        word-break: break-word !important;
+        overflow-wrap: anywhere !important;
+    }
+
+    .dac-ms-container .dropdown-menu .selectable-item {
+        display: flex !important;
+        justify-content: space-between !important;
+        align-items: center !important;
+        padding: 6px 12px !important;
+        cursor: pointer !important;
+    }
+
+    .dac-ms-container .dropdown-menu .selectable-item strong {
+        font-weight: 500 !important;
+        font-size: 12px !important;
+    }
+
+    .dac-ms-container .dropdown-menu .selectable-item:hover {
+        background-color: #f1f5f9 !important;
+    }
+
+    .dac-ms-container .dropdown-menu .selectable-item.selected {
+        background-color: #eff6ff !important;
     }
 </style>
 
@@ -318,156 +559,6 @@
             style="background: linear-gradient(135deg, #16a34a 0%, #15803d 100%); color: #ffffff; border: none; border-radius: 6px; padding: 6px 14px; font-size: 12px; font-weight: 700; cursor: pointer; display: flex; align-items: center; gap: 6px; box-shadow: 0 2px 4px rgba(22, 163, 74, 0.2); transition: all 0.2s ease;">
             <span style="font-size: 13px;">📊</span> Export Report
         </button>
-    </div>
-
-    <!-- SECTION 1: TEAM ACTIVITY & PRODUCTIVITY OVERVIEW -->
-    <div
-        style="background: #ffffff; border: 1px solid #e2e8f0; border-radius: 10px; padding: 16px; margin-bottom: 20px; box-shadow: 0 2px 4px -1px rgba(0,0,0,0.03);">
-        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px;">
-            <div style="display: flex; align-items: center; gap: 8px;">
-                <span style="font-size: 18px;">📅</span>
-                <h3 style="margin: 0; font-size: 16px; font-weight: 700; color: #0f172a;">Team Activity &amp;
-                    Productivity Overview</h3>
-            </div>
-            <button id="ea_breakup_btn"
-                style="background: #ffffff; border: 1px solid #cbd5e1; border-radius: 6px; padding: 5px 12px; font-size: 12px; font-weight: 600; color: #334155; cursor: pointer; display: flex; align-items: center; gap: 6px;">
-                <span>►</span> Show Breakup
-            </button>
-        </div>
-
-        <div style="margin-bottom: 14px;">
-            <div style="font-size: 10px; font-weight: 700; color: #64748b; margin-bottom: 4px;">Filter:</div>
-            <div style="display: flex; flex-wrap: wrap; gap: 8px; align-items: center;">
-                <select id="ea_user_sel" class="dac-select"></select>
-                <select id="ea_entity_sel" class="dac-select"></select>
-                <select id="ea_p_filter" class="dac-select"></select>
-                <select id="ea_fy_filter" class="dac-select" style="display:none;"></select>
-                <select id="ea_m_filter" class="dac-select" style="display:none;"></select>
-                <div id="ea_custom_dates_wrap" class="dac-dr-container" style="display:none;"></div>
-                <select id="ea_period_sel" class="dac-select" title="Breakup Interval"></select>
-            </div>
-        </div>
-
-        <!-- NUMBER CARDS -->
-        <div
-            style="display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 10px; margin-bottom: 16px;">
-            <div class="dac-card" onclick="openDrilldownModal('ea_overdue', 'Overdue Activities')"
-                style="cursor:pointer; background: #fff5f5; border: 1px solid #fed7d7; border-radius: 8px; padding: 10px 12px; text-align: center; transition: all 0.2s ease;">
-                <div id="ea_card_overdue" style="font-size: 20px; font-weight: 800; color: #e53e3e; line-height: 1.2;">-
-                </div>
-                <div style="font-size: 11px; font-weight: 700; color: #742a2a; margin-top: 2px;">Overdue Activity</div>
-            </div>
-            <div class="dac-card" onclick="openDrilldownModal('ea_today', 'Today + Upcoming Activities')"
-                style="cursor:pointer; background: #f0fdf4; border: 1px solid #bbf7d0; border-radius: 8px; padding: 10px 12px; text-align: center; transition: all 0.2s ease;">
-                <div id="ea_card_today" style="font-size: 20px; font-weight: 800; color: #16a34a; line-height: 1.2;">-
-                </div>
-                <div style="font-size: 11px; font-weight: 700; color: #14532d; margin-top: 2px;">Today + Upcoming</div>
-            </div>
-            <div class="dac-card" onclick="openDrilldownModal('ea_lead_noact', 'Leads Without Activity')"
-                style="cursor:pointer; background: #fffbe6; border: 1px solid #fef08a; border-radius: 8px; padding: 10px 12px; text-align: center; transition: all 0.2s ease;">
-                <div id="ea_card_lead_noact"
-                    style="font-size: 20px; font-weight: 800; color: #d97706; line-height: 1.2;">-</div>
-                <div style="font-size: 11px; font-weight: 700; color: #713f12; margin-top: 2px;">Lead Without Activity
-                </div>
-            </div>
-            <div class="dac-card" onclick="openDrilldownModal('ea_cont_noact', 'Contacts Without Activity')"
-                style="cursor:pointer; background: #f0f9ff; border: 1px solid #bae6fd; border-radius: 8px; padding: 10px 12px; text-align: center; transition: all 0.2s ease;">
-                <div id="ea_card_cont_noact"
-                    style="font-size: 20px; font-weight: 800; color: #0284c7; line-height: 1.2;">-</div>
-                <div style="font-size: 11px; font-weight: 700; color: #0c4a6e; margin-top: 2px;">Contact Without
-                    Activity</div>
-            </div>
-            <div class="dac-card" onclick="openDrilldownModal('ea_open', 'Open Activities Total')"
-                style="cursor:pointer; background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 8px; padding: 10px 12px; text-align: center; transition: all 0.2s ease;">
-                <div id="ea_card_open" style="font-size: 20px; font-weight: 800; color: #475569; line-height: 1.2;">-
-                </div>
-                <div style="font-size: 11px; font-weight: 700; color: #334155; margin-top: 2px;">Open Activity (Total)
-                </div>
-            </div>
-        </div>
-
-        <!-- BREAKUP TABLE WITH DYNAMIC INDIVIDUAL CATEGORIES -->
-        <div id="ea_breakup_wrap" class="dac-modal-scroll-wrap"
-            style="display: none; max-height: 400px; overflow: auto; border: 1px solid #cbd5e1; border-radius: 6px; box-shadow: 0 1px 3px rgba(0,0,0,0.02);">
-            <table style="width: 100%; border-collapse: collapse; font-size: 12px; text-align: left;"
-                id="ea_breakup_table">
-                <thead id="ea_breakup_head"></thead>
-                <tbody id="ea_breakup_body"></tbody>
-            </table>
-        </div>
-    </div>
-
-    <!-- SECTION 2: CONTACT ANALYSIS SUMMARY -->
-    <div
-        style="background: #ffffff; border: 1px solid #e2e8f0; border-radius: 10px; padding: 16px; margin-bottom: 20px; box-shadow: 0 2px 4px -1px rgba(0,0,0,0.03);">
-        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px;">
-            <div style="display: flex; align-items: center; gap: 8px;">
-                <span style="font-size: 18px;">👥</span>
-                <h3 style="margin: 0; font-size: 16px; font-weight: 700; color: #0f172a;">Contact Analysis Summary</h3>
-            </div>
-            <button id="c_breakup_btn"
-                style="background: #ffffff; border: 1px solid #cbd5e1; border-radius: 6px; padding: 5px 12px; font-size: 12px; font-weight: 600; color: #334155; cursor: pointer; display: flex; align-items: center; gap: 6px;">
-                <span>►</span> Show Breakup
-            </button>
-        </div>
-
-        <!-- FILTER BAR -->
-        <div style="margin-bottom: 14px;">
-            <div style="font-size: 10px; font-weight: 700; color: #64748b; margin-bottom: 4px;">Filter:</div>
-            <div style="display: flex; flex-wrap: wrap; gap: 8px; align-items: center;">
-                <select id="c_u_filter" class="dac-select"></select>
-                <div id="c_i_multisel" class="dac-multisel-wrap" style="position:relative; display:inline-block;"></div>
-                <div id="c_s_multisel" class="dac-multisel-wrap" style="position:relative; display:inline-block;"></div>
-                <select id="c_p_filter" class="dac-select"></select>
-                <select id="c_fy_filter" class="dac-select" style="display:none;"></select>
-                <select id="c_m_filter" class="dac-select" style="display:none;"></select>
-                <div id="c_custom_dates_wrap" class="dac-dr-container" style="display:none;"></div>
-                <select id="c_period_sel" class="dac-select" title="Breakup Interval"></select>
-            </div>
-        </div>
-
-        <!-- NUMBER CARDS -->
-        <div
-            style="display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 12px; margin-bottom: 16px;">
-            <div class="dac-card" onclick="openDrilldownModal('c_open', 'Open Contacts Total')"
-                style="cursor:pointer; background: #ffffff; border: 1px solid #e2e8f0; border-radius: 8px; padding: 10px 14px; text-align: center; transition: all 0.2s ease;">
-                <div id="c_card_open" style="font-size: 20px; font-weight: 800; color: #0f172a; line-height: 1.2;">-
-                </div>
-                <div style="font-size: 11px; font-weight: 700; color: #64748b; margin-top: 4px;">Open Contacts</div>
-            </div>
-            <div class="dac-card" onclick="openDrilldownModal('c_conv', 'Converted Contacts Total')"
-                style="cursor:pointer; background: #ffffff; border: 1px solid #e2e8f0; border-radius: 8px; padding: 10px 14px; text-align: center; transition: all 0.2s ease;">
-                <div id="c_card_conv" style="font-size: 20px; font-weight: 800; color: #16a34a; line-height: 1.2;">-
-                </div>
-                <div style="font-size: 11px; font-weight: 700; color: #16a34a; margin-top: 4px;">Converted Contacts
-                </div>
-            </div>
-            <div class="dac-card" onclick="openDrilldownModal('c_exist', 'Existing Customer Contacts Total')"
-                style="cursor:pointer; background: #ffffff; border: 1px solid #e2e8f0; border-radius: 8px; padding: 10px 14px; text-align: center; transition: all 0.2s ease;">
-                <div id="c_card_exist" style="font-size: 20px; font-weight: 800; color: #ea580c; line-height: 1.2;">-
-                </div>
-                <div style="font-size: 11px; font-weight: 700; color: #ea580c; margin-top: 4px;">Existing Customers
-                </div>
-            </div>
-        </div>
-
-        <!-- BREAKUP TABLE -->
-        <div id="c_breakup_wrap" class="dac-modal-scroll-wrap"
-            style="display: none; max-height: 400px; overflow: auto; border: 1px solid #cbd5e1; border-radius: 6px; box-shadow: 0 1px 3px rgba(0,0,0,0.02);">
-            <table style="width: 100%; border-collapse: collapse; font-size: 12px; text-align: left;">
-                <thead>
-                    <tr style="background: #f8fafc; border-bottom: 2px solid #cbd5e1; color: #334155;">
-                        <th style="padding: 8px 10px; font-weight: 700;">Period</th>
-                        <th style="padding: 8px 10px; font-weight: 700; text-align: center;">Open</th>
-                        <th style="padding: 8px 10px; font-weight: 700; text-align: center; color: #16a34a;">Converted
-                        </th>
-                        <th style="padding: 8px 10px; font-weight: 700; text-align: center; color: #ea580c;">Existing
-                            Customer</th>
-                    </tr>
-                </thead>
-                <tbody id="c_breakup_body"></tbody>
-            </table>
-        </div>
     </div>
 
     <!-- SECTION 3: LEAD PERFORMANCE ANALYSIS -->
@@ -489,34 +580,35 @@
             <div style="font-size: 10px; font-weight: 700; color: #64748b; margin-bottom: 4px;">Filter:</div>
             <div style="display: flex; flex-wrap: wrap; gap: 8px; align-items: center;">
                 <select id="l_u_filter" class="dac-select"></select>
-                <div id="l_i_multisel" class="dac-multisel-wrap" style="position:relative; display:inline-block;"></div>
-                <div id="l_s_multisel" class="dac-multisel-wrap" style="position:relative; display:inline-block;"></div>
+                <div id="l_i_filter_wrap" class="dac-ms-container"></div>
+                <div id="l_src_filter_wrap" class="dac-ms-container"></div>
                 <select id="l_p_filter" class="dac-select"></select>
                 <select id="l_fy_filter" class="dac-select" style="display:none;"></select>
                 <select id="l_m_filter" class="dac-select" style="display:none;"></select>
                 <div id="l_custom_dates_wrap" class="dac-dr-container" style="display:none;"></div>
                 <select id="l_period_sel" class="dac-select" title="Breakup Interval"></select>
             </div>
+            <div id="l_applied_chips" class="dac-chips"></div>
         </div>
 
         <!-- NUMBER CARDS -->
         <div
             style="display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 10px; margin-bottom: 16px;">
             <div class="dac-card" onclick="openDrilldownModal('l_enq', 'Enquiry Leads')"
-                style="cursor:pointer; background: #ffffff; border: 1px solid #e2e8f0; border-radius: 8px; padding: 10px 12px; text-align: center; transition: all 0.2s ease;">
+                style="cursor:pointer; background: #faf5ff; border: 1px solid #e9d5ff; border-radius: 8px; padding: 10px 12px; text-align: center; transition: all 0.2s ease;">
                 <div style="line-height: 1.2; display: flex; flex-direction: column; align-items: center; gap: 2px;">
-                    <span id="l_card_enq_cnt" style="font-size: 20px; font-weight: 800; color: #0f172a;">-</span>
-                    <span id="l_card_enq_val" style="font-size: 12px; font-weight: 700; color: #2563eb;">-</span>
+                    <span id="l_card_enq_cnt" style="font-size: 20px; font-weight: 800; color: #6b21a8;">-</span>
+                    <span id="l_card_enq_val" style="font-size: 12px; font-weight: 700; color: #7c3aed;">-</span>
                 </div>
-                <div style="font-size: 11px; font-weight: 700; color: #64748b; margin-top: 6px;">Enquiry</div>
+                <div style="font-size: 11px; font-weight: 700; color: #6b21a8; margin-top: 6px;">Enquiry</div>
             </div>
             <div class="dac-card" onclick="openDrilldownModal('l_pipe', 'Pipeline Leads')"
-                style="cursor:pointer; background: #ffffff; border: 1px solid #e2e8f0; border-radius: 8px; padding: 10px 12px; text-align: center; transition: all 0.2s ease;">
+                style="cursor:pointer; background: #eff6ff; border: 1px solid #bfdbfe; border-radius: 8px; padding: 10px 12px; text-align: center; transition: all 0.2s ease;">
                 <div style="line-height: 1.2; display: flex; flex-direction: column; align-items: center; gap: 2px;">
-                    <span id="l_card_pipe_cnt" style="font-size: 20px; font-weight: 800; color: #0f172a;">-</span>
+                    <span id="l_card_pipe_cnt" style="font-size: 20px; font-weight: 800; color: #1d4ed8;">-</span>
                     <span id="l_card_pipe_val" style="font-size: 12px; font-weight: 700; color: #2563eb;">-</span>
                 </div>
-                <div style="font-size: 11px; font-weight: 700; color: #64748b; margin-top: 6px;">Pipeline</div>
+                <div style="font-size: 11px; font-weight: 700; color: #1d4ed8; margin-top: 6px;">Pipeline</div>
             </div>
             <div class="dac-card" onclick="openDrilldownModal('l_ord', 'Order Leads')"
                 style="cursor:pointer; background: #f0fdf4; border: 1px solid #bbf7d0; border-radius: 8px; padding: 10px 12px; text-align: center; transition: all 0.2s ease;">
@@ -573,39 +665,17 @@
                             Conversions</th>
                     </tr>
                     <tr style="background: #f8fafc; border-bottom: 2px solid #cbd5e1; color: #475569; font-size: 11px;">
-                        <th
-                            style="padding: 6px 10px; font-weight: 700; text-align: center; border-right: 1px solid #e2e8f0;">
-                            Count</th>
-                        <th
-                            style="padding: 6px 10px; font-weight: 700; text-align: right; border-right: 1px solid #cbd5e1;">
-                            Expected Revenue</th>
-                        <th
-                            style="padding: 6px 10px; font-weight: 700; text-align: center; border-right: 1px solid #e2e8f0;">
-                            Count</th>
-                        <th
-                            style="padding: 6px 10px; font-weight: 700; text-align: right; border-right: 1px solid #cbd5e1;">
-                            Expected Revenue</th>
-                        <th
-                            style="padding: 6px 10px; font-weight: 700; text-align: center; border-right: 1px solid #e2e8f0;">
-                            Count</th>
-                        <th
-                            style="padding: 6px 10px; font-weight: 700; text-align: right; border-right: 1px solid #cbd5e1;">
-                            PO Value</th>
-                        <th
-                            style="padding: 6px 10px; font-weight: 700; text-align: center; border-right: 1px solid #e2e8f0;">
-                            Count</th>
-                        <th
-                            style="padding: 6px 10px; font-weight: 700; text-align: right; border-right: 1px solid #cbd5e1;">
-                            Expected Revenue</th>
-                        <th
-                            style="padding: 6px 10px; font-weight: 700; text-align: center; border-right: 1px solid #e2e8f0;">
-                            Count</th>
-                        <th
-                            style="padding: 6px 10px; font-weight: 700; text-align: right; border-right: 2px solid #cbd5e1;">
-                            Expected Revenue</th>
-                        <th
-                            style="padding: 6px 10px; font-weight: 700; text-align: center; border-right: 1px solid #e2e8f0;">
-                            Contact &rarr; Lead</th>
+                        <th style="padding: 6px 10px; font-weight: 700; text-align: center; border-right: 1px solid #e2e8f0;">Count</th>
+                        <th style="padding: 6px 10px; font-weight: 700; text-align: right; border-right: 1px solid #cbd5e1;">Expected Revenue</th>
+                        <th style="padding: 6px 10px; font-weight: 700; text-align: center; border-right: 1px solid #e2e8f0;">Count</th>
+                        <th style="padding: 6px 10px; font-weight: 700; text-align: right; border-right: 1px solid #cbd5e1;">Expected Revenue</th>
+                        <th style="padding: 6px 10px; font-weight: 700; text-align: center; border-right: 1px solid #e2e8f0;">Count</th>
+                        <th style="padding: 6px 10px; font-weight: 700; text-align: right; border-right: 1px solid #cbd5e1;">PO Value</th>
+                        <th style="padding: 6px 10px; font-weight: 700; text-align: center; border-right: 1px solid #e2e8f0;">Count</th>
+                        <th style="padding: 6px 10px; font-weight: 700; text-align: right; border-right: 1px solid #cbd5e1;">Expected Revenue</th>
+                        <th style="padding: 6px 10px; font-weight: 700; text-align: center; border-right: 1px solid #e2e8f0;">Count</th>
+                        <th style="padding: 6px 10px; font-weight: 700; text-align: right; border-right: 2px solid #cbd5e1;">Expected Revenue</th>
+                        <th style="padding: 6px 10px; font-weight: 700; text-align: center; border-right: 1px solid #e2e8f0;">Contact &rarr; Lead</th>
                         <th style="padding: 6px 10px; font-weight: 700; text-align: center;">Lead &rarr; Order</th>
                     </tr>
                 </thead>
@@ -613,6 +683,157 @@
             </table>
         </div>
     </div>
+    <!-- SECTION 2: CONTACT ANALYSIS SUMMARY -->
+    <div
+        style="background: #ffffff; border: 1px solid #e2e8f0; border-radius: 10px; padding: 16px; margin-bottom: 20px; box-shadow: 0 2px 4px -1px rgba(0,0,0,0.03);">
+        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px;">
+            <div style="display: flex; align-items: center; gap: 8px;">
+                <span style="font-size: 18px;">👥</span>
+                <h3 style="margin: 0; font-size: 16px; font-weight: 700; color: #0f172a;">Contact Analysis Summary</h3>
+            </div>
+            <button id="c_breakup_btn"
+                style="background: #ffffff; border: 1px solid #cbd5e1; border-radius: 6px; padding: 5px 12px; font-size: 12px; font-weight: 600; color: #334155; cursor: pointer; display: flex; align-items: center; gap: 6px;">
+                <span>►</span> Show Breakup
+            </button>
+        </div>
+
+        <!-- FILTER BAR -->
+        <div style="margin-bottom: 14px;">
+            <div style="font-size: 10px; font-weight: 700; color: #64748b; margin-bottom: 4px;">Filter:</div>
+            <div style="display: flex; flex-wrap: wrap; gap: 8px; align-items: center;">
+                <select id="c_u_filter" class="dac-select"></select>
+                <div id="c_i_filter_wrap" class="dac-ms-container"></div>
+                <div id="c_src_filter_wrap" class="dac-ms-container"></div>
+                <select id="c_p_filter" class="dac-select"></select>
+                <select id="c_fy_filter" class="dac-select" style="display:none;"></select>
+                <select id="c_m_filter" class="dac-select" style="display:none;"></select>
+                <div id="c_custom_dates_wrap" class="dac-dr-container" style="display:none;"></div>
+                <select id="c_period_sel" class="dac-select" title="Breakup Interval"></select>
+            </div>
+            <div id="c_applied_chips" class="dac-chips"></div>
+        </div>
+
+        <!-- NUMBER CARDS -->
+        <div
+            style="display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 12px; margin-bottom: 16px;">
+            <div class="dac-card" onclick="openDrilldownModal('c_open', 'Open Contacts Total')"
+                style="cursor:pointer; background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 8px; padding: 10px 14px; text-align: center; transition: all 0.2s ease;">
+                <div id="c_card_open" style="font-size: 20px; font-weight: 800; color: #0f172a; line-height: 1.2;">-
+                </div>
+                <div style="font-size: 11px; font-weight: 700; color: #64748b; margin-top: 4px;">Open Contacts</div>
+            </div>
+            <div class="dac-card" onclick="openDrilldownModal('c_conv', 'Converted Contacts Total')"
+                style="cursor:pointer; background: #f0fdf4; border: 1px solid #bbf7d0; border-radius: 8px; padding: 10px 14px; text-align: center; transition: all 0.2s ease;">
+                <div id="c_card_conv" style="font-size: 20px; font-weight: 800; color: #16a34a; line-height: 1.2;">-
+                </div>
+                <div style="font-size: 11px; font-weight: 700; color: #16a34a; margin-top: 4px;">Converted Contacts
+                </div>
+            </div>
+            <div class="dac-card" onclick="openDrilldownModal('c_exist', 'Existing Customer Contacts Total')"
+                style="cursor:pointer; background: #fff7ed; border: 1px solid #ffedd5; border-radius: 8px; padding: 10px 14px; text-align: center; transition: all 0.2s ease;">
+                <div id="c_card_exist" style="font-size: 20px; font-weight: 800; color: #ea580c; line-height: 1.2;">-
+                </div>
+                <div style="font-size: 11px; font-weight: 700; color: #ea580c; margin-top: 4px;">Existing Customers
+                </div>
+            </div>
+        </div>
+
+        <!-- BREAKUP TABLE -->
+        <div id="c_breakup_wrap" class="dac-modal-scroll-wrap"
+            style="display: none; max-height: 400px; overflow: auto; border: 1px solid #cbd5e1; border-radius: 6px; box-shadow: 0 1px 3px rgba(0,0,0,0.02);">
+            <table style="width: 100%; border-collapse: separate; border-spacing: 0; font-size: 12px; text-align: left;">
+                <thead>
+                    <tr style="background: #f8fafc; border-bottom: 2px solid #cbd5e1; color: #334155;">
+                        <th style="padding: 10px 12px; font-weight: 700; border-right: 1px solid #cbd5e1;">Period</th>
+                        <th style="padding: 10px 12px; font-weight: 700; text-align: center; border-right: 1px solid #cbd5e1; width: 160px;">Open</th>
+                        <th style="padding: 10px 12px; font-weight: 700; text-align: center; color: #16a34a; border-right: 1px solid #cbd5e1; width: 160px;">Converted</th>
+                        <th style="padding: 10px 12px; font-weight: 700; text-align: center; color: #ea580c; width: 160px;">Existing Customer</th>
+                    </tr>
+                </thead>
+                <tbody id="c_breakup_body"></tbody>
+            </table>
+        </div>
+    </div>
+
+    
+    
+    <!-- SECTION 1: TEAM ACTIVITY & PRODUCTIVITY OVERVIEW -->
+    <div
+        style="background: #ffffff; border: 1px solid #e2e8f0; border-radius: 10px; padding: 16px; margin-bottom: 20px; box-shadow: 0 2px 4px -1px rgba(0,0,0,0.03);">
+        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px;">
+            <div style="display: flex; align-items: center; gap: 8px;">
+                <span style="font-size: 18px;">📅</span>
+                <h3 style="margin: 0; font-size: 16px; font-weight: 700; color: #0f172a;">Team Activity</h3>
+            </div>
+            <button id="ea_breakup_btn"
+                style="background: #ffffff; border: 1px solid #cbd5e1; border-radius: 6px; padding: 5px 12px; font-size: 12px; font-weight: 600; color: #334155; cursor: pointer; display: flex; align-items: center; gap: 6px;">
+                <span>►</span> Show Breakup
+            </button>
+        </div>
+
+        <div style="margin-bottom: 14px;">
+            <div style="font-size: 10px; font-weight: 700; color: #64748b; margin-bottom: 4px;">Filter:</div>
+            <div style="display: flex; flex-wrap: wrap; gap: 8px; align-items: center;">
+                <select id="ea_user_sel" class="dac-select"></select>
+                <select id="ea_entity_sel" class="dac-select"></select>
+                <select id="ea_p_filter" class="dac-select"></select>
+                <select id="ea_fy_filter" class="dac-select" style="display:none;"></select>
+                <select id="ea_m_filter" class="dac-select" style="display:none;"></select>
+                <div id="ea_custom_dates_wrap" class="dac-dr-container" style="display:none;"></div>
+                <select id="ea_period_sel" class="dac-select" title="Breakup Interval"></select>
+            </div>
+            <div id="ea_applied_chips" class="dac-chips"></div>
+        </div>
+
+        <!-- NUMBER CARDS -->
+        <div
+            style="display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 10px; margin-bottom: 16px;">
+            <div class="dac-card" onclick="openDrilldownModal('ea_overdue', 'Overdue Activities')"
+                style="cursor:pointer; background: #fff5f5; border: 1px solid #fed7d7; border-radius: 8px; padding: 10px 12px; text-align: center; transition: all 0.2s ease;">
+                <div id="ea_card_overdue" style="font-size: 20px; font-weight: 800; color: #e53e3e; line-height: 1.2;">-
+                </div>
+                <div style="font-size: 11px; font-weight: 700; color: #742a2a; margin-top: 2px;">Overdue Activity</div>
+            </div>
+            <div class="dac-card" onclick="openDrilldownModal('ea_today', 'Today + Upcoming Activities')"
+                style="cursor:pointer; background: #f0fdf4; border: 1px solid #bbf7d0; border-radius: 8px; padding: 10px 12px; text-align: center; transition: all 0.2s ease;">
+                <div id="ea_card_today" style="font-size: 20px; font-weight: 800; color: #16a34a; line-height: 1.2;">-
+                </div>
+                <div style="font-size: 11px; font-weight: 700; color: #14532d; margin-top: 2px;">Today + Upcoming</div>
+            </div>
+            <div class="dac-card" onclick="openDrilldownModal('ea_lead_noact', 'Leads Without Activity')"
+                style="cursor:pointer; background: #fffbe6; border: 1px solid #fef08a; border-radius: 8px; padding: 10px 12px; text-align: center; transition: all 0.2s ease;">
+                <div id="ea_card_lead_noact"
+                    style="font-size: 20px; font-weight: 800; color: #d97706; line-height: 1.2;">-</div>
+                <div style="font-size: 11px; font-weight: 700; color: #713f12; margin-top: 2px;">Lead Without Activity
+                </div>
+            </div>
+            <div class="dac-card" onclick="openDrilldownModal('ea_cont_noact', 'Contacts Without Activity')"
+                style="cursor:pointer; background: #f0f9ff; border: 1px solid #bae6fd; border-radius: 8px; padding: 10px 12px; text-align: center; transition: all 0.2s ease;">
+                <div id="ea_card_cont_noact"
+                    style="font-size: 20px; font-weight: 800; color: #0284c7; line-height: 1.2;">-</div>
+                <div style="font-size: 11px; font-weight: 700; color: #0c4a6e; margin-top: 2px;">Contact Without
+                    Activity</div>
+            </div>
+            <div class="dac-card" onclick="openDrilldownModal('ea_open', 'Open Activities Total')"
+                style="cursor:pointer; background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 8px; padding: 10px 12px; text-align: center; transition: all 0.2s ease;">
+                <div id="ea_card_open" style="font-size: 20px; font-weight: 800; color: #475569; line-height: 1.2;">-
+                </div>
+                <div style="font-size: 11px; font-weight: 700; color: #334155; margin-top: 2px;">Open Activity (Total)
+                </div>
+            </div>
+        </div>
+
+        <!-- BREAKUP TABLE WITH SUMMARY COLUMNS FIRST -->
+        <div id="ea_breakup_wrap" class="dac-modal-scroll-wrap"
+            style="display: none; max-height: 400px; overflow: auto; border: 1px solid #cbd5e1; border-radius: 6px; box-shadow: 0 1px 3px rgba(0,0,0,0.02);">
+            <table style="width: 100%; border-collapse: collapse; font-size: 12px; text-align: left;"
+                id="ea_breakup_table">
+                <thead id="ea_breakup_head"></thead>
+                <tbody id="ea_breakup_body"></tbody>
+            </table>
+        </div>
+    </div>
+
 
     <!-- SECTION 4: TARGET VS ACTUAL (SALES TEAM) -->
     <div
@@ -651,13 +872,9 @@
                     </tr>
                     <tr style="background: #f8fafc; border-bottom: 2px solid #cbd5e1; color: #334155;">
                         <th style="padding: 6px 10px; font-weight: 700; background: #eff6ff;">Target</th>
-                        <th
-                            style="padding: 6px 10px; font-weight: 700; background: #eff6ff; border-right: 1px solid #cbd5e1;">
-                            Actual</th>
+                        <th style="padding: 6px 10px; font-weight: 700; background: #eff6ff; border-right: 1px solid #cbd5e1;">Actual</th>
                         <th style="padding: 6px 10px; font-weight: 700; background: #fff7ed;">Variance</th>
-                        <th
-                            style="padding: 6px 10px; font-weight: 700; background: #fff7ed; border-right: 1px solid #cbd5e1;">
-                            Ach %</th>
+                        <th style="padding: 6px 10px; font-weight: 700; background: #fff7ed; border-right: 1px solid #cbd5e1;">Ach %</th>
                         <th style="padding: 6px 10px; font-weight: 700; background: #f0fdf4;">YTD Months</th>
                         <th style="padding: 6px 10px; font-weight: 700; background: #f0fdf4;">YTD Target</th>
                         <th style="padding: 6px 10px; font-weight: 700; background: #f0fdf4;">YTD Variance</th>
@@ -671,8 +888,8 @@
 </div>
 
 <script type="text/javascript">
-    (function () {
-        console.log("Initializing DAC Executive CRM Dashboard v29 - Unified Stable Build...");
+(function () {
+        console.log("Initializing DAC Executive CRM Dashboard v31 - Multiselect Industry/Source Build...");
 
         (function injectModalCSS() {
             const css = `
@@ -680,26 +897,54 @@
                 max-width: 95% !important;
                 width: 95% !important;
             }
+            .dac-wide-modal .dac-modal-scroll-wrap {
+                overflow-x: auto !important;
+                overflow-y: auto !important;
+                width: 100% !important;
+                max-width: 100% !important;
+            }
             .dac-wide-modal table {
                 border-collapse: separate !important;
                 border-spacing: 0 !important;
                 min-width: 100% !important;
-                width: 100% !important;
+                width: max-content !important;
                 table-layout: auto !important;
             }
             .dac-wide-modal th {
-                white-space: normal !important;
+                white-space: nowrap !important;
                 font-size: 13px !important;
-                padding: 8px 10px !important;
+                padding: 10px 14px !important;
                 border-right: 1px solid rgba(255,255,255,0.15) !important;
                 word-break: keep-all !important;
             }
             .dac-wide-modal td {
+                white-space: nowrap !important;
+                word-break: normal !important;
+                overflow-wrap: normal !important;
+                font-size: 13.5px !important;
+                padding: 10px 14px !important;
+            }
+            .dac-wide-modal td.dac-email-cell {
                 white-space: normal !important;
-                font-size: 13px !important;
-                padding: 8px 10px !important;
+                max-width: 180px !important;
+                width: 180px !important;
                 word-break: break-all !important;
-                overflow-wrap: break-word !important;
+                overflow-wrap: anywhere !important;
+            }
+            .dac-wide-modal td.dac-notes-cell {
+                white-space: normal !important;
+                max-width: 250px !important;
+                min-width: 180px !important;
+                word-break: break-word !important;
+                overflow-wrap: anywhere !important;
+            }
+            .dac-wide-modal td.dac-text-cell,
+            .dac-wide-modal th.dac-text-cell {
+                white-space: normal !important;
+                max-width: 260px !important;
+                min-width: 150px !important;
+                word-break: break-word !important;
+                overflow-wrap: anywhere !important;
             }
         `;
             const style = document.createElement('style');
@@ -823,168 +1068,167 @@
             return "₹" + Number(v).toLocaleString('en-IN');
         }
 
-        (function injectDashboardCSS() {
-            const styleContent = `
-            select.dac-select {
-                min-width: 140px !important;
-                display: inline-block !important;
-                box-sizing: border-box !important;
-            }
-            .dac-card:hover {
-                transform: translateY(-2px);
-                box-shadow: 0 4px 8px -1px rgba(0,0,0,0.08) !important;
-                border-color: #94a3b8 !important;
-            }
-            .dac-clickable-cell,
-            .dac-clickable-cell *,
-            div.dac-clickable-cell,
-            td .dac-clickable-cell {
-                cursor: pointer !important;
-                color: #2563eb !important;
-                font-weight: 700 !important;
-                font-size: 13px !important;
-                background-color: transparent !important;
-                border: 1px solid transparent !important;
-                border-radius: 4px !important;
-                padding: 2px 8px !important;
-                text-decoration: none !important;
-                text-decoration-line: none !important;
-                -webkit-text-decoration: none !important;
-                transition: background-color 0.15s ease, border-color 0.15s ease !important;
-                display: inline-block !important;
-            }
-            .dac-clickable-cell:hover,
-            .dac-clickable-cell:hover *,
-            div.dac-clickable-cell:hover,
-            td .dac-clickable-cell:hover {
-                color: #1e3a8a !important;
-                background-color: #e0f2fe !important;
-                border-color: #93c5fd !important;
-                text-decoration: none !important;
-                box-shadow: 0 1px 3px rgba(0,0,0,0.06) !important;
-            }
-            .dac-zero-cell,
-            .dac-zero-cell * {
-                color: #94a3b8 !important;
-                font-size: 13px !important;
-                font-weight: 500 !important;
-                text-decoration: none !important;
-                border-bottom: none !important;
-            }
-            .dac-dr-container .frappe-control {
-                margin-bottom: 0 !important;
-            }
-            .dac-dr-container input {
-                height: 30px !important;
-                font-size: 12px !important;
-                font-weight: 500 !important;
-                border: 1px solid #cbd5e1 !important;
-                border-radius: 6px !important;
-                padding: 4px 8px !important;
-                background: #ffffff !important;
-                color: #1e293b !important;
-                box-shadow: 0 1px 2px rgba(0,0,0,0.05) !important;
-                width: 220px !important;
-            }
-            .dac-wide-modal {
-                transition: none !important;
-            }
-            .dac-wide-modal .modal-dialog {
-                transition: none !important;
-                transform: none !important;
-                max-width: 95vw !important;
-                width: 95vw !important;
-                margin: 20px auto !important;
-            }
-            .dac-wide-modal .modal-content {
-                border-radius: 12px !important;
-                border: none !important;
-                box-shadow: 0 20px 25px -5px rgba(0,0,0,0.1), 0 10px 10px -5px rgba(0,0,0,0.04) !important;
-                overflow: hidden !important;
-            }
-            .dac-wide-modal .modal-header {
-                background: #f8fafc !important;
-                border-bottom: 1px solid #e2e8f0 !important;
-                padding: 12px 20px !important;
-            }
-            .dac-wide-modal .modal-title {
-                font-size: 16px !important;
-                font-weight: 700 !important;
-                color: #0f172a !important;
-            }
-            .dac-wide-modal .modal-body {
-                padding: 12px 16px !important;
-                max-height: calc(88vh - 56px) !important;
-                overflow-y: auto !important;
-            }
-            .dac-wide-modal .modal-footer:empty {
-                display: none !important;
-                padding: 0 !important;
-            }
-            .dac-modal-scroll-wrap::-webkit-scrollbar {
-                width: 6px !important;
-                height: 6px !important;
-            }
-            .dac-modal-scroll-wrap::-webkit-scrollbar-track {
-                background: #f1f5f9 !important;
-            }
-            .dac-modal-scroll-wrap::-webkit-scrollbar-thumb {
-                background: #cbd5e1 !important;
-                border-radius: 4px !important;
-            }
-            .dac-modal-scroll-wrap::-webkit-scrollbar-thumb:hover {
-                background: #94a3b8 !important;
-            }
-            #dac_prompt_search_input:focus, #dac_prompt_act_search:focus {
-                border-color: #2563eb !important;
-                background-color: #ffffff !important;
-                box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.15) !important;
-            }
-            .dac-prompt-row:hover, .dac-prompt-act-row:hover {
-                background-color: #f8fafc !important;
-                transition: background-color 0.15s ease-in-out !important;
-            }
-            .dac-modal-scroll-wrap {
-                overflow: auto !important;
-            }
-            .dac-wide-modal table {
-                min-width: 100% !important;
-                width: 100% !important;
-                table-layout: auto !important;
-            }
-            .dac-wide-modal th {
-                white-space: normal !important;
-                word-break: keep-all !important;
-            }
-            .dac-wide-modal td {
-                white-space: normal !important;
-                word-break: break-all !important;
-                overflow-wrap: break-word !important;
-            }
-            #dac_crm_dashboard_root table {
-                white-space: nowrap !important;
-            }
-        `;
-            let style = document.getElementById('dac_crm_styles_v29');
-            if (!style) {
-                style = document.createElement('style');
-                style.id = 'dac_crm_styles_v29';
-                document.head.appendChild(style);
-            }
-            style.innerHTML = styleContent;
-
-            if (typeof root_element !== 'undefined' && root_element && root_element.appendChild) {
-                let shadowStyle = root_element.querySelector('#dac_crm_styles_v29');
-                if (!shadowStyle) {
-                    shadowStyle = document.createElement('style');
-                    shadowStyle.id = 'dac_crm_styles_v29';
-                    root_element.appendChild(shadowStyle);
-                }
-                shadowStyle.innerHTML = styleContent;
-            }
-        })();
-
         const dateRangeControls = {};
+
+        // ── Multiselect filter controls (Industry / Source) ───────────────
+        const multiSelectControls = {};
+
+        function initMultiSelect(wrapperId, ctrlKey, placeholder, optionsFn, onChangeCallback) {
+            const container = $(wrapperId);
+            if (!container.length) return null;
+            if (multiSelectControls[ctrlKey]) return multiSelectControls[ctrlKey];
+
+            container.html('');
+            if (typeof frappe === 'undefined' || !frappe.ui || !frappe.ui.form || !frappe.ui.form.make_control) {
+                return null;
+            }
+            try {
+                const ctrl = frappe.ui.form.make_control({
+                    df: {
+                        fieldtype: 'MultiSelectList',
+                        fieldname: ctrlKey,
+                        placeholder: placeholder,
+                        get_data: function (txt) {
+                            const opts = optionsFn() || [];
+                            if (!txt) return opts;
+                            const needle = String(txt).toLowerCase();
+                            return opts.filter(o => String(o.label || o.value).toLowerCase().indexOf(needle) !== -1);
+                        },
+                        change: function () {
+                            if (onChangeCallback) onChangeCallback();
+                        }
+                    },
+                    parent: container,
+                    render_input: true
+                });
+                multiSelectControls[ctrlKey] = ctrl;
+
+                // Frappe's default reads "2 values selected", which hides *which*
+                // filters are on. Show the actual values instead.
+                ctrl.update_status = function () {
+                    const vals = (this.values || []).filter(v => v);
+                    if (!vals.length) {
+                        this.set_status(this.get_placeholder_text());
+                        this.$list_wrapper.attr('title', placeholder);
+                        return;
+                    }
+                    const labelFor = v => {
+                        const opt = (this._options || []).find(o => o.value === v);
+                        return (opt && opt.label) || v;
+                    };
+                    const names = vals.map(labelFor);
+                    const shown = names.length <= 2
+                        ? names.join(', ')
+                        : names.slice(0, 2).join(', ') + ' +' + (names.length - 2);
+                    this.set_status('<span style="color:#0f172a;font-weight:600;">' + frappe.utils.escape_html(shown) + '</span>');
+                    this.$list_wrapper.attr('title', names.join(', '));
+                };
+
+                bindShadowDropdown(ctrl);
+                return ctrl;
+            } catch (e) {
+                console.error("Failed to build MultiSelectList control for " + ctrlKey + ":", e);
+            }
+            return null;
+        }
+
+        // The Custom HTML Block renders inside a shadow root, where Bootstrap's
+        // document-level [data-toggle="dropdown"] delegation never matches (events
+        // retarget to the host element). Drive open/close ourselves.
+        function closeAllMultiSelects(exceptWrapper) {
+            Object.keys(multiSelectControls).forEach(k => {
+                const c = multiSelectControls[k];
+                if (!c || !c.$list_wrapper) return;
+                if (exceptWrapper && c.$list_wrapper[0] === exceptWrapper) return;
+                c.$list_wrapper.removeClass('show open');
+                c.$list_wrapper.find('.dropdown-menu').removeClass('show');
+            });
+        }
+
+        function bindShadowDropdown(ctrl) {
+            if (!ctrl || !ctrl.$list_wrapper) return;
+            const $wrap = ctrl.$list_wrapper;
+            const $toggle = $wrap.find('[data-toggle="dropdown"]');
+            const $menu = $wrap.find('.dropdown-menu');
+            if (!$toggle.length || !$menu.length) return;
+
+            $toggle.on('click', function (e) {
+                e.preventDefault();
+                e.stopPropagation();
+                const wasOpen = $menu.hasClass('show');
+                closeAllMultiSelects();
+                if (wasOpen) return;
+                // Lets the control populate its selectable items and place the menu
+                $wrap.trigger('show.bs.dropdown');
+                $wrap.addClass('show open');
+                $menu.addClass('show');
+                const $filter = $wrap.find('input.form-control');
+                if ($filter.length) $filter.val('').focus();
+            });
+
+            $toggle.on('keydown', function (e) {
+                if (e.key === 'Escape') closeAllMultiSelects();
+            });
+        }
+
+        let multiSelectOutsideBound = false;
+
+        function bindMultiSelectOutsideClick() {
+            if (multiSelectOutsideBound) return;
+            multiSelectOutsideBound = true;
+
+            const rootEl = (typeof root_element !== 'undefined' && root_element) ? root_element : null;
+
+            // Clicks elsewhere *inside* the block bubble to the shadow root.
+            if (rootEl) {
+                rootEl.addEventListener('click', function (e) {
+                    if (jQuery(e.target).closest('.dac-ms-container').length) return;
+                    closeAllMultiSelects();
+                }, true);
+            }
+
+            // Clicks *outside* the block never enter the shadow root at all, so the
+            // shadow-root listener above never sees them. The toggle and menu both
+            // stopPropagation, so anything reaching document is genuinely outside.
+            // .off() first so re-mounting the block does not stack duplicate handlers
+            jQuery(document).off('click.dacMultiSelect').on('click.dacMultiSelect', function () {
+                closeAllMultiSelects();
+            });
+
+            jQuery(document).off('keydown.dacMultiSelect').on('keydown.dacMultiSelect', function (e) {
+                if (e.key === 'Escape') closeAllMultiSelects();
+            });
+        }
+
+        // Returns the selected values as a comma-separated string ('' = no filter / All)
+        function getMultiValue(ctrlKey) {
+            const ctrl = multiSelectControls[ctrlKey];
+            if (!ctrl || !ctrl.get_value) return '';
+            const vals = ctrl.get_value();
+            if (!vals || !vals.length) return '';
+            return vals.filter(v => v).join(',');
+        }
+
+        // Human-readable label for headers/modals
+        function getMultiLabel(ctrlKey, defaultText) {
+            const ctrl = multiSelectControls[ctrlKey];
+            if (!ctrl || !ctrl.get_value) return defaultText || '';
+            const vals = (ctrl.get_value() || []).filter(v => v);
+            if (!vals.length) return defaultText || '';
+            if (vals.length <= 3) return vals.join(', ');
+            return vals.length + ' selected';
+        }
+
+        // Renders the active Industry/Source scope for drilldown headers ('' when both are All)
+        function buildScopeDisp(indKey, srcKey) {
+            const parts = [];
+            const ind = getMultiLabel(indKey, '');
+            const src = getMultiLabel(srcKey, '');
+            if (ind) parts.push('Industry: <span style="color: #0f172a; font-weight: 700;">' + ind + '</span>');
+            if (src) parts.push('Source: <span style="color: #0f172a; font-weight: 700;">' + src + '</span>');
+            if (!parts.length) return '';
+            return ' &nbsp;|&nbsp; ' + parts.join(' &nbsp;|&nbsp; ');
+        }
 
         function initFrappeDateRange(wrapperId, ctrlKey, onChangeCallback) {
             const container = $(wrapperId);
@@ -1049,130 +1293,6 @@
         let sourcesList = [];
         let currentFY = "";
 
-        // ── Multiselect dropdown helper ──────────────────────────────
-        function buildMultiselect(containerId, label, items, onChange) {
-            const $container = $('#' + containerId);
-            if (!$container.length) return;
-            const container = $container[0];
-            const uid = 'dms_' + containerId;
-            container.innerHTML = '';
-
-            // Button that shows the label
-            const btn = document.createElement('button');
-            btn.type = 'button';
-            btn.id = uid + '_btn';
-            btn.style.cssText = 'background:#fff;border:1px solid #cbd5e1;border-radius:6px;padding:4px 28px 4px 10px;font-size:12px;font-weight:500;color:#1e293b;height:30px;min-width:140px;cursor:pointer;text-align:left;position:relative;box-shadow:0 1px 2px rgba(0,0,0,.05);white-space:nowrap;';
-            btn.innerHTML = label + ' <span style="position:absolute;right:8px;top:50%;transform:translateY(-50%);font-size:10px;color:#64748b;">▼</span>';
-
-            // Dropdown panel
-            const panel = document.createElement('div');
-            panel.id = uid + '_panel';
-            panel.style.cssText = 'display:none;position:fixed;z-index:99999;background:#fff;border:1px solid #cbd5e1;border-radius:8px;min-width:200px;max-height:260px;overflow-y:auto;box-shadow:0 8px 24px rgba(0,0,0,.12);padding:6px 0;';
-
-            // "All" checkbox
-            const allDiv = document.createElement('div');
-            allDiv.style.cssText = 'padding:5px 12px;display:flex;align-items:center;gap:8px;cursor:pointer;font-size:12px;font-weight:700;color:#2563eb;border-bottom:1px solid #e2e8f0;';
-            const allChk = document.createElement('input');
-            allChk.type = 'checkbox'; allChk.id = uid + '_all'; allChk.checked = true;
-            allChk.style.cssText = 'width:14px;height:14px;cursor:pointer;accent-color:#2563eb;';
-            const allLbl = document.createElement('label');
-            allLbl.htmlFor = uid + '_all'; allLbl.textContent = 'All'; allLbl.style.cursor = 'pointer';
-            allDiv.appendChild(allChk); allDiv.appendChild(allLbl);
-            panel.appendChild(allDiv);
-
-            // Item checkboxes
-            items.forEach(function(item) {
-                const d = document.createElement('div');
-                d.style.cssText = 'padding:4px 12px;display:flex;align-items:center;gap:8px;cursor:pointer;font-size:12px;';
-                d.onmouseenter = function() { d.style.background = '#f1f5f9'; };
-                d.onmouseleave = function() { d.style.background = ''; };
-                const chk = document.createElement('input');
-                chk.type = 'checkbox'; chk.value = item.name; chk.id = uid + '_' + item.name.replace(/[^a-zA-Z0-9]/g,'_');
-                chk.style.cssText = 'width:14px;height:14px;cursor:pointer;accent-color:#2563eb;';
-                const lbl = document.createElement('label');
-                lbl.htmlFor = chk.id; lbl.textContent = item.name; lbl.style.cursor = 'pointer';
-                d.appendChild(chk); d.appendChild(lbl);
-                panel.appendChild(d);
-            });
-
-            container.appendChild(btn);
-            document.body.appendChild(panel);
-
-            // Position panel below button
-            function positionPanel() {
-                const rect = btn.getBoundingClientRect();
-                panel.style.left = rect.left + 'px';
-                panel.style.top = (rect.bottom + 4) + 'px';
-                panel.style.minWidth = Math.max(rect.width, 200) + 'px';
-            }
-
-            function getSelected() {
-                return Array.from(panel.querySelectorAll('input[type=checkbox]:not([id$=_all]):checked')).map(function(c) { return c.value; });
-            }
-
-            function updateBtnLabel() {
-                const sel = getSelected();
-                if (sel.length === 0 || sel.length === items.length) {
-                    btn.innerHTML = label + ' <span style="position:absolute;right:8px;top:50%;transform:translateY(-50%);font-size:10px;color:#64748b;">▼</span>';
-                    allChk.checked = true;
-                } else {
-                    btn.innerHTML = label + ': <span style="background:#2563eb;color:#fff;border-radius:10px;padding:1px 7px;font-size:11px;">' + sel.length + '</span> <span style="position:absolute;right:8px;top:50%;transform:translateY(-50%);font-size:10px;color:#64748b;">▼</span>';
-                    allChk.checked = false;
-                }
-            }
-
-            // Toggle panel
-            btn.addEventListener('click', function(e) {
-                e.stopPropagation();
-                var isOpen = panel.style.display !== 'none';
-                // Close all other panels
-                document.querySelectorAll('.dac-ms-panel').forEach(function(p2) { p2.style.display = 'none'; });
-                if (!isOpen) {
-                    positionPanel();
-                    panel.style.display = 'block';
-                } else {
-                    panel.style.display = 'none';
-                }
-            });
-
-            panel.classList.add('dac-ms-panel');
-
-            // All checkbox
-            allChk.addEventListener('change', function() {
-                var allChks = panel.querySelectorAll('input[type=checkbox]:not([id$=_all])');
-                allChks.forEach(function(c) { c.checked = false; });
-                updateBtnLabel();
-                if (onChange) onChange();
-            });
-
-            // Individual checkboxes
-            panel.querySelectorAll('input[type=checkbox]:not([id$=_all])').forEach(function(c) {
-                c.addEventListener('change', function() {
-                    updateBtnLabel();
-                    if (onChange) onChange();
-                });
-            });
-
-            // Close on outside click
-            document.addEventListener('click', function(e) {
-                if (!container.contains(e.target) && !panel.contains(e.target)) {
-                    panel.style.display = 'none';
-                }
-            });
-
-            // Store getter on the DOM element
-            container._getSelected = function() { return getSelected(); };
-        }
-
-        function getMultiselVal(containerId) {
-            var $container = $('#' + containerId);
-            if ($container.length && $container[0]._getSelected) {
-                var sel = $container[0]._getSelected();
-                return sel.length > 0 ? sel.join(',') : '';
-            }
-            return '';
-        }
-
         frappe.call({
             method: "erp_dacsinc_custom.custom_lead.get_crm_dashboard_metadata",
             callback: function (r) {
@@ -1195,26 +1315,27 @@
         function updateBreakupOptions(periodId, breakupId) {
             const periodVal = $(periodId).val();
             const breakupSelect = $(breakupId);
-            const currentVal = breakupSelect.val() || 'weekly';
+            // Default fallback changed to 'daily'
+            const currentVal = breakupSelect.val() || 'daily';
 
             let html = '';
             if (periodVal === 'today') {
                 html = `<option value="daily">Daily Breakup</option>`;
             } else if (periodVal === 'this_week') {
                 html = `
-                <option value="weekly">Weekly Breakup</option>
                 <option value="daily">Daily Breakup</option>
+                <option value="weekly">Weekly Breakup</option>
             `;
             } else if (periodVal === 'this_month' || periodVal === 'last_month') {
                 html = `
-                <option value="weekly">Weekly Breakup</option>
                 <option value="daily">Daily Breakup</option>
+                <option value="weekly">Weekly Breakup</option>
                 <option value="monthly">Monthly Breakup</option>
             `;
             } else {
                 html = `
-                <option value="weekly">Weekly Breakup</option>
                 <option value="daily">Daily Breakup</option>
+                <option value="weekly">Weekly Breakup</option>
                 <option value="monthly">Monthly Breakup</option>
             `;
             }
@@ -1223,7 +1344,7 @@
             if (breakupSelect.find(`option[value="${currentVal}"]`).length > 0) {
                 breakupSelect.val(currentVal);
             } else {
-                breakupSelect.val(breakupSelect.find('option').first().val());
+                breakupSelect.val('daily');
             }
         }
 
@@ -1259,27 +1380,34 @@
             } else {
                 uOptions = `<option value="${frappe.session.user}">${frappe.session.user_fullname || frappe.session.user}</option>`;
             }
+
+            // Daily Breakup set as default selected option
             const breakupOptions = `
+            <option value="daily" selected>Daily Breakup</option>
             <option value="weekly">Weekly Breakup</option>
-            <option value="daily">Daily Breakup</option>
             <option value="monthly">Monthly Breakup</option>
         `;
             const fyOptions = fiscalYearsList.map(f => `<option value="${f.name}" ${f.name === currentFY ? 'selected' : ''}>${f.name}</option>`).join('');
             const monthOptions = getMonthsOptions();
 
+            // Multiselect option providers (label/value pairs for MultiSelectList)
+            const industryOptions = () => industriesList.map(i => ({ value: i.name, label: i.name, description: '' }));
+            const sourceOptions = () => sourcesList.map(s => ({ value: s.name, label: s.name, description: '' }));
+
+            initMultiSelect('#c_i_filter_wrap', 'c_ind', 'All Industries', industryOptions, loadContactData);
+            initMultiSelect('#c_src_filter_wrap', 'c_src', 'All Sources', sourceOptions, loadContactData);
+            initMultiSelect('#l_i_filter_wrap', 'l_ind', 'All Industries', industryOptions, loadLeadData);
+            initMultiSelect('#l_src_filter_wrap', 'l_src', 'All Sources', sourceOptions, loadLeadData);
+            bindMultiSelectOutsideClick();
+            bindChipClears();
+
             $('#c_u_filter').html(uOptions);
-            // Build multiselect for Contact Industry and Source
-            buildMultiselect('c_i_multisel', 'Industry', industriesList, loadContactData);
-            buildMultiselect('c_s_multisel', 'Source', sourcesList, loadContactData);
             $('#c_period_sel').html(breakupOptions);
             $('#c_p_filter').html(buildPeriodOptions());
             $('#c_fy_filter').html(fyOptions);
             $('#c_m_filter').html(monthOptions);
 
             $('#l_u_filter').html(uOptions);
-            // Build multiselect for Lead Industry and Source
-            buildMultiselect('l_i_multisel', 'Industry', industriesList, loadLeadData);
-            buildMultiselect('l_s_multisel', 'Source', sourcesList, loadLeadData);
             $('#l_period_sel').html(breakupOptions);
             $('#l_p_filter').html(buildPeriodOptions());
             $('#l_fy_filter').html(fyOptions);
@@ -1306,7 +1434,6 @@
                 hideSelect('#t_u_filter');
                 hideSelect('#ea_user_sel');
             } else {
-                // Only CRM Head can see the export button
                 $('#dac_export_bar').css('display', 'flex');
             }
             updateBreakupOptions('#c_p_filter', '#c_period_sel');
@@ -1329,6 +1456,7 @@
 
             enforceSelectStyles();
             setupEventListeners();
+            renderAllAppliedChips();
         }
 
         function getContactArgs(rowMonth) {
@@ -1352,9 +1480,9 @@
             }
             return {
                 user: $('#c_u_filter').val() || '',
-                industry: getMultiselVal('c_i_multisel'),
-                source: getMultiselVal('c_s_multisel'),
-                period_type: $('#c_period_sel').val() || 'monthly',
+                industry: getMultiValue('c_ind'),
+                source: getMultiValue('c_src'),
+                period_type: $('#c_period_sel').val() || 'daily',
                 ...datePart,
                 month: rowMonth || $('#c_m_filter').val() || datePart.month || ''
             };
@@ -1381,9 +1509,9 @@
             }
             return {
                 user: $('#l_u_filter').val() || '',
-                industry: getMultiselVal('l_i_multisel'),
-                source: getMultiselVal('l_s_multisel'),
-                period_type: $('#l_period_sel').val() || 'monthly',
+                industry: getMultiValue('l_ind'),
+                source: getMultiValue('l_src'),
+                period_type: $('#l_period_sel').val() || 'daily',
                 ...datePart,
                 month: rowMonth || $('#l_m_filter').val() || datePart.month || ''
             };
@@ -1404,7 +1532,7 @@
             }
             return {
                 user: $('#ea_user_sel').val() || '',
-                period_type: $('#ea_period_sel').val() || 'monthly',
+                period_type: $('#ea_period_sel').val() || 'daily',
                 reference_type: $('#ea_entity_sel').val() || 'All',
                 month: $('#ea_m_filter').val() || datePart.month || '',
                 activity_basis: 'completed',
@@ -1414,14 +1542,13 @@
 
         function parsePeriodArg(pVal) {
             if (pVal === 'custom' || pVal === 'fiscal_year' || !pVal || pVal === 'all') return { period: pVal };
-            // Compute concrete from/to dates client-side so drilldown loads ONLY filtered data
             const today = new Date();
             const fmt = d => d.toISOString().split('T')[0];
             let from = null, to = null;
             if (pVal === 'today') {
                 from = to = fmt(today);
             } else if (pVal === 'this_week') {
-                const day = today.getDay(); // 0=Sun
+                const day = today.getDay();
                 const mon = new Date(today); mon.setDate(today.getDate() - ((day + 6) % 7));
                 const sun = new Date(mon); sun.setDate(mon.getDate() + 6);
                 from = fmt(mon); to = fmt(sun);
@@ -1470,6 +1597,7 @@
             if (lBtn) lBtn.addEventListener('click', function () { toggleBreakup('#l_breakup_btn', '#l_breakup_wrap'); });
             if (eaBtn) eaBtn.addEventListener('click', function () { toggleBreakup('#ea_breakup_btn', '#ea_breakup_wrap'); });
 
+            // Industry/Source are MultiSelectList controls — they fire their own change callback
             $('#c_u_filter, #c_period_sel, #c_fy_filter, #c_m_filter').on('change', loadContactData);
             $('#c_p_filter').on('change', function () {
                 const val = $(this).val();
@@ -1478,7 +1606,7 @@
                 if (val === 'custom') {
                     hideSelect('#c_fy_filter');
                     hideSelect('#c_m_filter');
-                    $('#c_custom_dates_wrap').css('display', 'inline-block');
+                    $('#c_custom_dates_wrap').css('display', 'inline-flex');
                     initFrappeDateRange('#c_custom_dates_wrap', 'c_dr', loadContactData);
                 } else if (val === 'fiscal_year') {
                     $('#c_custom_dates_wrap').hide();
@@ -1506,7 +1634,7 @@
                 if (val === 'custom') {
                     hideSelect('#l_fy_filter');
                     hideSelect('#l_m_filter');
-                    $('#l_custom_dates_wrap').css('display', 'inline-block');
+                    $('#l_custom_dates_wrap').css('display', 'inline-flex');
                     initFrappeDateRange('#l_custom_dates_wrap', 'l_dr', loadLeadData);
                 } else if (val === 'fiscal_year') {
                     $('#l_custom_dates_wrap').hide();
@@ -1536,7 +1664,7 @@
                 if (val === 'custom') {
                     hideSelect('#ea_fy_filter');
                     hideSelect('#ea_m_filter');
-                    $('#ea_custom_dates_wrap').css('display', 'inline-block');
+                    $('#ea_custom_dates_wrap').css('display', 'inline-flex');
                     initFrappeDateRange('#ea_custom_dates_wrap', 'ea_dr', loadActivityData);
                 } else if (val === 'fiscal_year') {
                     $('#ea_custom_dates_wrap').hide();
@@ -1559,6 +1687,104 @@
             $('#dac_export_excel_btn').on('click', exportDashboardToExcel);
         }
 
+
+        // ── Applied-filter summary ────────────────────────────────────────
+        // Spells out every active filter for a section, so what you are looking
+        // at is readable without opening each dropdown.
+        const CHIP_SECTIONS = {
+            c: { chips: '#c_applied_chips', user: '#c_u_filter', period: '#c_p_filter',
+                 fy: '#c_fy_filter', month: '#c_m_filter', ind: 'c_ind', src: 'c_src',
+                 dr: 'c_dr', reload: 'contact' },
+            l: { chips: '#l_applied_chips', user: '#l_u_filter', period: '#l_p_filter',
+                 fy: '#l_fy_filter', month: '#l_m_filter', ind: 'l_ind', src: 'l_src',
+                 dr: 'l_dr', reload: 'lead' },
+            ea: { chips: '#ea_applied_chips', user: '#ea_user_sel', period: '#ea_p_filter',
+                  fy: '#ea_fy_filter', month: '#ea_m_filter', entity: '#ea_entity_sel',
+                  dr: 'ea_dr', reload: 'activity' }
+        };
+
+        function chipHtml(kind, label, value, clearKey) {
+            const clear = clearKey
+                ? ' <span class="dac-chip-clear" data-clear="' + clearKey + '" title="Remove this filter">&times;</span>'
+                : '';
+            return '<span class="dac-chip">' + label + ': <b>' + frappe.utils.escape_html(String(value)) + '</b>' + clear + '</span>';
+        }
+
+        function renderAppliedChips(key) {
+            const cfg = CHIP_SECTIONS[key];
+            if (!cfg) return;
+            const wrap = $(cfg.chips);
+            if (!wrap.length) return;
+
+            const parts = [];
+
+            const userVal = $(cfg.user).val();
+            if (userVal) parts.push(chipHtml('user', 'User', getSelectedOptionText(cfg.user, userVal), key + ':user'));
+
+            if (cfg.entity) {
+                const ent = $(cfg.entity).val();
+                if (ent && ent !== 'All') parts.push(chipHtml('entity', 'Entity', getSelectedOptionText(cfg.entity, ent), key + ':entity'));
+            }
+
+            if (cfg.ind) {
+                const inds = (multiSelectControls[cfg.ind] && multiSelectControls[cfg.ind].get_value() || []).filter(v => v);
+                if (inds.length) parts.push(chipHtml('ind', 'Industry', inds.join(', '), key + ':ind'));
+            }
+            if (cfg.src) {
+                const srcs = (multiSelectControls[cfg.src] && multiSelectControls[cfg.src].get_value() || []).filter(v => v);
+                if (srcs.length) parts.push(chipHtml('src', 'Source', srcs.join(', '), key + ':src'));
+            }
+
+            const pVal = $(cfg.period).val();
+            if (pVal === 'custom') {
+                const ctrl = dateRangeControls[cfg.dr];
+                const val = ctrl && ctrl.get_value ? ctrl.get_value() : null;
+                parts.push(chipHtml('period', 'Period',
+                    (val && val[0] && val[1]) ? (val[0] + ' to ' + val[1]) : 'Custom range — pick dates'));
+            } else if (pVal === 'fiscal_year') {
+                const m = $(cfg.month).val();
+                parts.push(chipHtml('period', 'Period',
+                    ($(cfg.fy).val() || '') + (m ? ' · ' + getSelectedOptionText(cfg.month, m) : '')));
+            } else if (pVal && pVal !== 'all') {
+                parts.push(chipHtml('period', 'Period', getSelectedOptionText(cfg.period, pVal)));
+            }
+
+            wrap.html(parts.length
+                ? '<span class="dac-chip-label">Applied</span>' + parts.join('')
+                : '');
+        }
+
+        function renderAllAppliedChips() {
+            Object.keys(CHIP_SECTIONS).forEach(renderAppliedChips);
+        }
+
+        function reloadSection(name) {
+            if (name === 'contact') loadContactData();
+            else if (name === 'lead') loadLeadData();
+            else if (name === 'activity') loadActivityData();
+        }
+
+        function bindChipClears() {
+            const rootEl = (typeof root_element !== 'undefined' && root_element) ? root_element : document;
+            jQuery(rootEl).on('click', '.dac-chip-clear', function (e) {
+                e.preventDefault();
+                e.stopPropagation();
+                const spec = String(jQuery(this).data('clear') || '');
+                const [key, what] = spec.split(':');
+                const cfg = CHIP_SECTIONS[key];
+                if (!cfg) return;
+                if (what === 'user') $(cfg.user).val('');
+                else if (what === 'entity') $(cfg.entity).val('All');
+                else if (what === 'ind' && multiSelectControls[cfg.ind]) {
+                    multiSelectControls[cfg.ind].clear_all_selections();
+                } else if (what === 'src' && multiSelectControls[cfg.src]) {
+                    multiSelectControls[cfg.src].clear_all_selections();
+                }
+                reloadSection(cfg.reload);
+                renderAppliedChips(key);
+            });
+        }
+
         function renderCountBadge(cnt, onclickJs) {
             const val = parseInt(cnt) || 0;
             if (val === 0) {
@@ -1572,6 +1798,7 @@
                 method: "erp_dacsinc_custom.custom_lead.get_tabular_dashboard_data",
                 args: getContactArgs(),
                 callback: function (r) {
+                    renderAppliedChips('c');
                     if (!r.message) return;
                     const ct = r.message.contact_totals || { o: 0, c: 0, e: 0 };
                     $('#c_card_open').text(ct.o || 0);
@@ -1582,19 +1809,19 @@
                     (r.message.contacts || []).forEach(row => {
                         rowsHtml += `
                         <tr style="border-bottom: 1px solid #e2e8f0; font-size: 14px;">
-                            <td style="padding: 10px 12px; font-weight: 600; color: #0f172a;">${row.label}</td>
-                            <td style="padding: 6px 8px; text-align: center; border-left: 1px solid #e2e8f0;">${renderCountBadge(row.o, `openDrilldownModal('c_open', 'Open Contacts (${row.label})', '${row.m_num}', ${row.o}, '${row.row_from_date}', '${row.row_to_date}')`)}</td>
-                            <td style="padding: 6px 8px; text-align: center; border-left: 1px solid #e2e8f0;">${renderCountBadge(row.c, `openDrilldownModal('c_conv', 'Converted Contacts (${row.label})', '${row.m_num}', ${row.c}, '${row.row_from_date}', '${row.row_to_date}')`)}</td>
-                            <td style="padding: 6px 8px; text-align: center; border-left: 1px solid #e2e8f0;">${renderCountBadge(row.e, `openDrilldownModal('c_exist', 'Existing Customers (${row.label})', '${row.m_num}', ${row.e}, '${row.row_from_date}', '${row.row_to_date}')`)}</td>
+                            <td style="padding: 10px 12px; font-weight: 600; color: #0f172a; border-right: 1px solid #e2e8f0;">${row.label}</td>
+                            <td style="padding: 6px 8px; text-align: center; border-right: 1px solid #e2e8f0;">${renderCountBadge(row.o, `openDrilldownModal('c_open', 'Open Contacts (${row.label})', '${row.m_num}', ${row.o}, '${row.row_from_date}', '${row.row_to_date}')`)}</td>
+                            <td style="padding: 6px 8px; text-align: center; border-right: 1px solid #e2e8f0;">${renderCountBadge(row.c, `openDrilldownModal('c_conv', 'Converted Contacts (${row.label})', '${row.m_num}', ${row.c}, '${row.row_from_date}', '${row.row_to_date}')`)}</td>
+                            <td style="padding: 6px 8px; text-align: center;">${renderCountBadge(row.e, `openDrilldownModal('c_exist', 'Existing Customers (${row.label})', '${row.m_num}', ${row.e}, '${row.row_from_date}', '${row.row_to_date}')`)}</td>
                         </tr>
                     `;
                     });
                     rowsHtml += `
                     <tr style="background: #f1f5f9; font-weight: 700; border-top: 2px solid #cbd5e1; font-size: 14px;">
-                        <td style="padding: 10px 12px; color: #0f172a;">Total</td>
-                        <td style="padding: 6px 8px; text-align: center; border-left: 1px solid #cbd5e1;">${renderCountBadge(ct.o, `openDrilldownModal('c_open', 'Open Contacts Total', null, ${ct.o})`)}</td>
-                        <td style="padding: 6px 8px; text-align: center; border-left: 1px solid #cbd5e1;">${renderCountBadge(ct.c, `openDrilldownModal('c_conv', 'Converted Contacts Total', null, ${ct.c})`)}</td>
-                        <td style="padding: 6px 8px; text-align: center; border-left: 1px solid #cbd5e1;">${renderCountBadge(ct.e, `openDrilldownModal('c_exist', 'Existing Customers Total', null, ${ct.e})`)}</td>
+                        <td style="padding: 10px 12px; color: #0f172a; border-right: 1px solid #cbd5e1;">Total</td>
+                        <td style="padding: 6px 8px; text-align: center; border-right: 1px solid #cbd5e1;">${renderCountBadge(ct.o, `openDrilldownModal('c_open', 'Open Contacts Total', null, ${ct.o})`)}</td>
+                        <td style="padding: 6px 8px; text-align: center; border-right: 1px solid #cbd5e1;">${renderCountBadge(ct.c, `openDrilldownModal('c_conv', 'Converted Contacts Total', null, ${ct.c})`)}</td>
+                        <td style="padding: 6px 8px; text-align: center;">${renderCountBadge(ct.e, `openDrilldownModal('c_exist', 'Existing Customers Total', null, ${ct.e})`)}</td>
                     </tr>
                 `;
                     $('#c_breakup_body').html(rowsHtml);
@@ -1607,6 +1834,7 @@
                 method: "erp_dacsinc_custom.custom_lead.get_tabular_dashboard_data",
                 args: getLeadArgs(),
                 callback: function (r) {
+                    renderAppliedChips('l');
                     if (!r.message) return;
                     const lt = r.message.lead_totals || {};
                     $('#l_card_enq_cnt').text(lt.enq_c || 0);
@@ -1700,7 +1928,6 @@
             const user = $('#t_u_filter').val() || '';
             const m = $('#t_m_filter').val() || '';
 
-            // Dynamically change header label based on user selection
             $('#t_first_header').text(user ? 'Month' : 'Sales Executive');
 
             frappe.call({
@@ -1769,6 +1996,7 @@
                 method: "erp_dacsinc_custom.custom_lead.get_event_activity_breakup_data",
                 args: getActivityArgs(),
                 callback: function (r) {
+                    renderAppliedChips('ea');
                     if (!r.message) return;
                     const tot = r.message.totals || {};
                     $('#ea_card_overdue').text(tot.overdue_count || 0);
@@ -1783,29 +2011,32 @@
 
                     const entitySel = $('#ea_entity_sel').val() || 'All';
 
+                    // RENDER SUMMARY HEADERS FIRST
                     let headHtml = `
                     <tr style="background: #f8fafc; color: #334155;">
                         <th rowspan="${entitySel === 'All' ? 2 : 1}" style="padding: 8px 10px; font-weight: 700; vertical-align: middle; border-bottom: 2px solid #cbd5e1; border-right: 1px solid #cbd5e1; min-width: 90px;">Period</th>
                 `;
-                    categories.forEach(cat => {
-                        headHtml += `<th ${entitySel === 'All' ? 'colspan="2"' : ''} style="padding: 6px 10px; font-weight: 700; text-align: center; background: #f0f9ff; color: #0369a1; border-bottom: 1px solid #cbd5e1; border-right: 1px solid #cbd5e1; min-width: 65px; white-space: pre-wrap;">${cat}</th>`;
-                    });
 
                     if (entitySel === 'All') {
                         headHtml += `
-                        <th rowspan="2" style="padding: 8px 10px; font-weight: 700; text-align: right; color: #2563eb; vertical-align: middle; border-bottom: 2px solid #cbd5e1; border-left: 1px solid #cbd5e1; min-width: 65px; white-space: nowrap;">Lead Act.</th>
-                        <th rowspan="2" style="padding: 8px 10px; font-weight: 700; text-align: right; color: #0284c7; vertical-align: middle; border-bottom: 2px solid #cbd5e1; min-width: 65px; white-space: nowrap;">Contact Act.</th>
+                        <th rowspan="2" style="padding: 8px 10px; font-weight: 700; text-align: center; color: #2563eb; vertical-align: middle; border-bottom: 2px solid #cbd5e1; border-right: 1px solid #cbd5e1; min-width: 75px; white-space: nowrap; background: #f0f9ff;">Lead Act.</th>
+                        <th rowspan="2" style="padding: 8px 10px; font-weight: 700; text-align: center; color: #0284c7; vertical-align: middle; border-bottom: 2px solid #cbd5e1; border-right: 1px solid #cbd5e1; min-width: 75px; white-space: nowrap; background: #f0f9ff;">Contact Act.</th>
                     `;
                     } else if (entitySel === 'Lead') {
-                        headHtml += `<th rowspan="1" style="padding: 8px 10px; font-weight: 700; text-align: right; color: #2563eb; vertical-align: middle; border-bottom: 2px solid #cbd5e1; border-left: 1px solid #cbd5e1; min-width: 65px; white-space: nowrap;">Lead Act.</th>`;
+                        headHtml += `<th rowspan="1" style="padding: 8px 10px; font-weight: 700; text-align: center; color: #2563eb; vertical-align: middle; border-bottom: 2px solid #cbd5e1; border-right: 1px solid #cbd5e1; min-width: 75px; white-space: nowrap; background: #f0f9ff;">Lead Act.</th>`;
                     } else {
-                        headHtml += `<th rowspan="1" style="padding: 8px 10px; font-weight: 700; text-align: right; color: #0284c7; vertical-align: middle; border-bottom: 2px solid #cbd5e1; border-left: 1px solid #cbd5e1; min-width: 65px; white-space: nowrap;">Contact Act.</th>`;
+                        headHtml += `<th rowspan="1" style="padding: 8px 10px; font-weight: 700; text-align: center; color: #0284c7; vertical-align: middle; border-bottom: 2px solid #cbd5e1; border-right: 1px solid #cbd5e1; min-width: 75px; white-space: nowrap; background: #f0f9ff;">Contact Act.</th>`;
                     }
 
                     headHtml += `
-                        <th rowspan="${entitySel === 'All' ? 2 : 1}" style="padding: 8px 10px; font-weight: 700; text-align: right; color: #16a34a; vertical-align: middle; border-bottom: 2px solid #cbd5e1; min-width: 80px;">Total Completed</th>
-                    </tr>
-                `;
+                        <th rowspan="${entitySel === 'All' ? 2 : 1}" style="padding: 8px 10px; font-weight: 700; text-align: center; color: #16a34a; vertical-align: middle; border-bottom: 2px solid #cbd5e1; border-right: 2px solid #cbd5e1; min-width: 90px; background: #f0fdf4;">Total Completed</th>
+                    `;
+
+                    categories.forEach(cat => {
+                        headHtml += `<th ${entitySel === 'All' ? 'colspan="2"' : ''} style="padding: 6px 10px; font-weight: 700; text-align: center; background: #ffffff; color: #0f172a; border-bottom: 1px solid #cbd5e1; border-right: 1px solid #cbd5e1; min-width: 65px; white-space: pre-wrap;">${cat}</th>`;
+                    });
+
+                    headHtml += `</tr>`;
 
                     if (entitySel === 'All') {
                         headHtml += `<tr style="background: #f8fafc; color: #475569;">`;
@@ -1823,6 +2054,38 @@
                     let rowsHtml = "";
                     activities.forEach(row => {
                         rowsHtml += `<tr style="border-bottom: 1px solid #e2e8f0;"><td style="padding: 8px 10px; font-weight: 600; border-right: 1px solid #cbd5e1; white-space: nowrap;">${row.period_label}</td>`;
+
+                        // SUMMARY COLUMNS FIRST (CLICKABLE)
+                        if (entitySel === 'All') {
+                            rowsHtml += `
+                            <td style="padding: 8px 10px; text-align: center; border-right: 1px solid #e2e8f0;">
+                                ${row.lead_cnt > 0 ? `<div class="dac-clickable-cell" style="color: #2563eb;" onclick="openActivityCategoryModal('', 'Lead Activities (${row.period_label})', 'Lead', '${row.row_from_date}', '${row.row_to_date}', '${row.period_label}')">${row.lead_cnt}</div>` : '<span style="color:#94a3b8;">-</span>'}
+                            </td>
+                            <td style="padding: 8px 10px; text-align: center; border-right: 1px solid #cbd5e1;">
+                                ${row.contact_cnt > 0 ? `<div class="dac-clickable-cell" style="color: #0284c7;" onclick="openActivityCategoryModal('', 'Contact Activities (${row.period_label})', 'Business Contacts', '${row.row_from_date}', '${row.row_to_date}', '${row.period_label}')">${row.contact_cnt}</div>` : '<span style="color:#94a3b8;">-</span>'}
+                            </td>
+                        `;
+                        } else if (entitySel === 'Lead') {
+                            rowsHtml += `
+                            <td style="padding: 8px 10px; text-align: center; border-right: 1px solid #cbd5e1;">
+                                ${row.lead_cnt > 0 ? `<div class="dac-clickable-cell" style="color: #2563eb;" onclick="openActivityCategoryModal('', 'Lead Activities (${row.period_label})', 'Lead', '${row.row_from_date}', '${row.row_to_date}', '${row.period_label}')">${row.lead_cnt}</div>` : '<span style="color:#94a3b8;">-</span>'}
+                            </td>
+                        `;
+                        } else {
+                            rowsHtml += `
+                            <td style="padding: 8px 10px; text-align: center; border-right: 1px solid #cbd5e1;">
+                                ${row.contact_cnt > 0 ? `<div class="dac-clickable-cell" style="color: #0284c7;" onclick="openActivityCategoryModal('', 'Contact Activities (${row.period_label})', 'Business Contacts', '${row.row_from_date}', '${row.row_to_date}', '${row.period_label}')">${row.contact_cnt}</div>` : '<span style="color:#94a3b8;">-</span>'}
+                            </td>
+                        `;
+                        }
+
+                        rowsHtml += `
+                        <td style="padding: 8px 10px; text-align: center; font-weight: 700; border-right: 2px solid #cbd5e1;">
+                            ${row.total_completed > 0 ? `<div class="dac-clickable-cell" style="color: #16a34a;" onclick="openActivityCategoryModal('', 'Total Completed Activities (${row.period_label})', '${entitySel}', '${row.row_from_date}', '${row.row_to_date}', '${row.period_label}')">${row.total_completed}</div>` : '<span style="color:#94a3b8;">-</span>'}
+                        </td>
+                    `;
+
+                        // CATEGORIES COLUMNS
                         categories.forEach(cat => {
                             const cData = (row.categories && row.categories[cat]) ? row.categories[cat] : { lead: 0, cont: 0 };
                             const lCnt = cData.lead || 0;
@@ -1845,21 +2108,41 @@
                             }
                         });
 
-                        if (entitySel === 'All') {
-                            rowsHtml += `
-                            <td style="padding: 8px 10px; text-align: right; color: #2563eb; font-weight:600; border-left: 1px solid #cbd5e1;">${row.lead_cnt}</td>
-                            <td style="padding: 8px 10px; text-align: right; color: #0284c7; font-weight:600;">${row.contact_cnt}</td>
-                        `;
-                        } else if (entitySel === 'Lead') {
-                            rowsHtml += `<td style="padding: 8px 10px; text-align: right; color: #2563eb; font-weight:600; border-left: 1px solid #cbd5e1;">${row.lead_cnt}</td>`;
-                        } else {
-                            rowsHtml += `<td style="padding: 8px 10px; text-align: right; color: #0284c7; font-weight:600; border-left: 1px solid #cbd5e1;">${row.contact_cnt}</td>`;
-                        }
-
-                        rowsHtml += `<td style="padding: 8px 10px; text-align: right; font-weight: 700; color: #16a34a;">${row.total_completed}</td></tr>`;
+                        rowsHtml += `</tr>`;
                     });
 
+                    // SUMMARY TOTAL ROW
                     let totRowHtml = `<tr style="background: #f1f5f9; font-weight: 700; border-top: 2px solid #cbd5e1;"><td style="padding: 8px 10px; border-right: 1px solid #cbd5e1; white-space: nowrap;">Total</td>`;
+
+                    if (entitySel === 'All') {
+                        totRowHtml += `
+                        <td style="padding: 8px 10px; text-align: center; font-weight:700; border-right: 1px solid #e2e8f0;">
+                            ${tot.cp_lead_cnt > 0 ? `<div class="dac-clickable-cell" style="color: #2563eb;" onclick="openActivityCategoryModal('', 'Total Lead Activities', 'Lead', '', '', 'All Time')">${tot.cp_lead_cnt}</div>` : '0'}
+                        </td>
+                        <td style="padding: 8px 10px; text-align: center; font-weight:700; border-right: 1px solid #cbd5e1;">
+                            ${tot.cp_contact_cnt > 0 ? `<div class="dac-clickable-cell" style="color: #0284c7;" onclick="openActivityCategoryModal('', 'Total Contact Activities', 'Business Contacts', '', '', 'All Time')">${tot.cp_contact_cnt}</div>` : '0'}
+                        </td>
+                    `;
+                    } else if (entitySel === 'Lead') {
+                        totRowHtml += `
+                        <td style="padding: 8px 10px; text-align: center; font-weight:700; border-right: 1px solid #cbd5e1;">
+                            ${tot.cp_lead_cnt > 0 ? `<div class="dac-clickable-cell" style="color: #2563eb;" onclick="openActivityCategoryModal('', 'Total Lead Activities', 'Lead', '', '', 'All Time')">${tot.cp_lead_cnt}</div>` : '0'}
+                        </td>
+                    `;
+                    } else {
+                        totRowHtml += `
+                        <td style="padding: 8px 10px; text-align: center; font-weight:700; border-right: 1px solid #cbd5e1;">
+                            ${tot.cp_contact_cnt > 0 ? `<div class="dac-clickable-cell" style="color: #0284c7;" onclick="openActivityCategoryModal('', 'Total Contact Activities', 'Business Contacts', '', '', 'All Time')">${tot.cp_contact_cnt}</div>` : '0'}
+                        </td>
+                    `;
+                    }
+
+                    totRowHtml += `
+                    <td style="padding: 8px 10px; text-align: center; font-weight: 800; border-right: 2px solid #cbd5e1;">
+                        ${tot.total_completed > 0 ? `<div class="dac-clickable-cell" style="color: #16a34a;" onclick="openActivityCategoryModal('', 'Total Completed Activities', '${entitySel}', '', '', 'All Time')">${tot.total_completed}</div>` : '0'}
+                    </td>
+                `;
+
                     categories.forEach(cat => {
                         const lCnt = (catTotals[cat] && catTotals[cat].lead) ? catTotals[cat].lead : 0;
                         const cCnt = (catTotals[cat] && catTotals[cat].cont) ? catTotals[cat].cont : 0;
@@ -1881,18 +2164,7 @@
                         }
                     });
 
-                    if (entitySel === 'All') {
-                        totRowHtml += `
-                        <td style="padding: 8px 10px; text-align: right; font-weight:700; color: #2563eb; border-left: 1px solid #cbd5e1;">${tot.cp_lead_cnt || 0}</td>
-                        <td style="padding: 8px 10px; text-align: right; font-weight:700; color: #0284c7;">${tot.cp_contact_cnt || 0}</td>
-                    `;
-                    } else if (entitySel === 'Lead') {
-                        totRowHtml += `<td style="padding: 8px 10px; text-align: right; font-weight:700; color: #2563eb; border-left: 1px solid #cbd5e1;">${tot.cp_lead_cnt || 0}</td>`;
-                    } else {
-                        totRowHtml += `<td style="padding: 8px 10px; text-align: right; font-weight:700; color: #0284c7; border-left: 1px solid #cbd5e1;">${tot.cp_contact_cnt || 0}</td>`;
-                    }
-
-                    totRowHtml += `<td style="padding: 8px 10px; text-align: right; font-weight: 800; color: #16a34a;">${tot.total_completed || 0}</td></tr>`;
+                    totRowHtml += `</tr>`;
 
                     $('#ea_breakup_body').html(rowsHtml + totRowHtml);
                 }
@@ -1901,7 +2173,7 @@
 
         function exportDashboardToExcel() {
             const d = new frappe.ui.Dialog({
-                title: '&#128202; Export CRM Executive Report',
+                title: '📊 Export CRM Executive Report',
                 fields: [
                     {
                         label: 'Report Type',
@@ -1961,11 +2233,13 @@
                     const eaArgs = getActivityArgs();
                     const payload = {
                         c_user: cArgs.user, c_fiscal_year: cArgs.fiscal_year,
-                        c_industry: cArgs.industry, c_period_type: cArgs.period_type,
+                        c_industry: cArgs.industry, c_source: cArgs.source,
+                        c_period_type: cArgs.period_type,
                         c_from_date: cArgs.from_date, c_to_date: cArgs.to_date,
                         c_month: cArgs.month, c_period: cArgs.period,
                         l_user: lArgs.user, l_fiscal_year: lArgs.fiscal_year,
-                        l_industry: lArgs.industry, l_period_type: lArgs.period_type,
+                        l_industry: lArgs.industry, l_source: lArgs.source,
+                        l_period_type: lArgs.period_type,
                         l_from_date: lArgs.from_date, l_to_date: lArgs.to_date,
                         l_month: lArgs.month, l_period: lArgs.period,
                         t_fiscal_year: $('#t_fy_filter').val(),
@@ -2021,6 +2295,7 @@
             let filterArgs = { card_type: cardType };
             let userDisp = "All Team Members";
             let dateDisp = "All Time";
+            let scopeDisp = "";
 
             let hasRowDates = rowFromDate && rowToDate;
 
@@ -2036,6 +2311,7 @@
                     delete filterArgs.fiscal_year;
                 }
                 userDisp = getSelectedOptionText('#c_u_filter', 'All Team Members');
+                scopeDisp = buildScopeDisp('c_ind', 'c_src');
                 dateDisp = hasRowDates ? cardTitle : (monthFilter ? cardTitle : (cArgs.fiscal_year ? cArgs.fiscal_year + (cArgs.month ? ` (Month: ${cArgs.month})` : '') : (cArgs.from_date ? `${cArgs.from_date} to ${cArgs.to_date}` : getSelectedOptionText('#c_p_filter', 'All Time'))));
             } else if (cardType.startsWith('l_') || cardType.startsWith('conv_')) {
                 const lArgs = getLeadArgs(monthFilter || '');
@@ -2049,6 +2325,7 @@
                     delete filterArgs.fiscal_year;
                 }
                 userDisp = getSelectedOptionText('#l_u_filter', 'All Team Members');
+                scopeDisp = buildScopeDisp('l_ind', 'l_src');
                 dateDisp = hasRowDates ? cardTitle : (monthFilter ? cardTitle : (lArgs.fiscal_year ? lArgs.fiscal_year + (lArgs.month ? ` (Month: ${lArgs.month})` : '') : (lArgs.from_date ? `${lArgs.from_date} to ${lArgs.to_date}` : getSelectedOptionText('#l_p_filter', 'All Time'))));
             } else if (cardType.startsWith('ea_')) {
                 const eaArgs = getActivityArgs();
@@ -2058,7 +2335,6 @@
             }
 
             if (typeof expectedCount === 'undefined') {
-                // Find count element dynamically for main dashboard cards
                 const countSelectors = {
                     'ea_overdue': '#ea_card_overdue',
                     'ea_today': '#ea_card_today',
@@ -2110,7 +2386,7 @@
                             <div>
                                 <div style="font-size: 16px; font-weight: 700; color: #0f172a; letter-spacing: -0.025em;">${cardTitle}</div>
                                 <div style="font-size: 12px; color: #64748b; margin-top: 4px; font-weight: 500;">
-                                    User: <span style="color: #0f172a; font-weight: 700;">${userDisp}</span> &nbsp;|&nbsp; Period: <span style="color: #0f172a; font-weight: 700;">${dateDisp}</span>
+                                    User: <span style="color: #0f172a; font-weight: 700;">${userDisp}</span> &nbsp;|&nbsp; Period: <span style="color: #0f172a; font-weight: 700;">${dateDisp}</span>${scopeDisp}
                                 </div>
                             </div>
                             <div style="display: flex; align-items: center; gap: 10px;">
@@ -2147,56 +2423,56 @@
                     colCount = 16;
                     headersHtml = `
                         <tr style="background: #3498db; font-size: 13px; color: #ffffff; text-align: left;">
-                            <th style="padding: 8px 10px; width: 40px; border-right: 1px solid #2980b9;">S.No</th>
-                            <th style="padding: 8px 10px; border-right: 1px solid #2980b9;">Full Name</th>
-                            <th style="padding: 8px 10px; border-right: 1px solid #2980b9;">Organization Name</th>
-                            <th style="padding: 8px 10px; border-right: 1px solid #2980b9;">Email ID</th>
-                            <th style="padding: 8px 10px; border-right: 1px solid #2980b9;">Mobile No</th>
-                            <th style="padding: 8px 10px; border-right: 1px solid #2980b9;">Lead Type</th>
-                            <th style="padding: 8px 10px; border-right: 1px solid #2980b9;">Source</th>
-                            <th style="padding: 8px 10px; border-right: 1px solid #2980b9;">Industry</th>
-                            <th style="padding: 8px 10px; border-right: 1px solid #2980b9; text-align: left;">Expected Revenue</th>
-                            <th style="padding: 8px 10px; border-right: 1px solid #2980b9;">Expected Closure Month</th>
-                            <th style="padding: 8px 10px; border-right: 1px solid #2980b9;">Lead Owner</th>
-                            <th style="padding: 8px 10px; border-right: 1px solid #2980b9;">Created On</th>
-                            <th style="padding: 8px 10px; border-right: 1px solid #2980b9;">Age</th>
-                            <th style="padding: 8px 10px; border-right: 1px solid #2980b9;">Next Follow Up Date</th>
-                            <th style="padding: 8px 10px; border-right: 1px solid #2980b9;">Quotations</th>
-                            <th style="padding: 8px 10px;">Last Completed Notes</th>
+                            <th style="padding: 10px 14px; width: 40px; border-right: 1px solid #2980b9; text-align: center;">S.No</th>
+                            <th style="padding: 10px 14px; border-right: 1px solid #2980b9;">Full Name</th>
+                            <th style="padding: 10px 14px; border-right: 1px solid #2980b9;">Organization Name</th>
+                            <th style="padding: 10px 14px; border-right: 1px solid #2980b9; width: 180px;">Email ID</th>
+                            <th style="padding: 10px 14px; border-right: 1px solid #2980b9;">Mobile No</th>
+                            <th style="padding: 10px 14px; border-right: 1px solid #2980b9;">Lead Type</th>
+                            <th style="padding: 10px 14px; border-right: 1px solid #2980b9;">Source</th>
+                            <th style="padding: 10px 14px; border-right: 1px solid #2980b9;">Industry</th>
+                            <th style="padding: 10px 14px; border-right: 1px solid #2980b9; text-align: left;">Expected Revenue</th>
+                            <th style="padding: 10px 14px; border-right: 1px solid #2980b9;">Expected Closure Month</th>
+                            <th style="padding: 10px 14px; border-right: 1px solid #2980b9;">Lead Owner</th>
+                            <th style="padding: 10px 14px; border-right: 1px solid #2980b9;">Created On</th>
+                            <th style="padding: 10px 14px; border-right: 1px solid #2980b9;">Age</th>
+                            <th style="padding: 10px 14px; border-right: 1px solid #2980b9;">Next Follow Up Date</th>
+                            <th style="padding: 10px 14px; border-right: 1px solid #2980b9; text-align: center;">Quotations</th>
+                            <th style="padding: 10px 14px;">Last Completed Notes</th>
                         </tr>
                     `;
                 } else if (isContactCard) {
                     colCount = 12;
                     headersHtml = `
                         <tr style="background: #3498db; font-size: 13px; color: #ffffff; text-align: left;">
-                            <th style="padding: 8px 10px; width: 40px; border-right: 1px solid #2980b9;">S.No</th>
-                            <th style="padding: 8px 10px; border-right: 1px solid #2980b9;">Full Name</th>
-                            <th style="padding: 8px 10px; border-right: 1px solid #2980b9;">Organization Name</th>
-                            <th style="padding: 8px 10px; border-right: 1px solid #2980b9;">Mobile No</th>
-                            <th style="padding: 8px 10px; border-right: 1px solid #2980b9;">Email ID</th>
-                            <th style="padding: 8px 10px; border-right: 1px solid #2980b9;">Industry</th>
-                            <th style="padding: 8px 10px; border-right: 1px solid #2980b9;">Assigned Owner</th>
-                            <th style="padding: 8px 10px; border-right: 1px solid #2980b9;">Location</th>
-                            <th style="padding: 8px 10px; border-right: 1px solid #2980b9;">Created On</th>
-                            <th style="padding: 8px 10px; border-right: 1px solid #2980b9;">Age</th>
-                            <th style="padding: 8px 10px; border-right: 1px solid #2980b9;">Next Follow Up Date</th>
-                            <th style="padding: 8px 10px;">Last Completed Notes</th>
+                            <th style="padding: 10px 14px; width: 40px; border-right: 1px solid #2980b9; text-align: center;">S.No</th>
+                            <th style="padding: 10px 14px; border-right: 1px solid #2980b9;">Full Name</th>
+                            <th style="padding: 10px 14px; border-right: 1px solid #2980b9;">Organization Name</th>
+                            <th style="padding: 10px 14px; border-right: 1px solid #2980b9;">Mobile No</th>
+                            <th style="padding: 10px 14px; border-right: 1px solid #2980b9; width: 180px;">Email ID</th>
+                            <th style="padding: 10px 14px; border-right: 1px solid #2980b9;">Industry</th>
+                            <th style="padding: 10px 14px; border-right: 1px solid #2980b9;">Assigned Owner</th>
+                            <th style="padding: 10px 14px; border-right: 1px solid #2980b9;">Location</th>
+                            <th style="padding: 10px 14px; border-right: 1px solid #2980b9;">Created On</th>
+                            <th style="padding: 10px 14px; border-right: 1px solid #2980b9;">Age</th>
+                            <th style="padding: 10px 14px; border-right: 1px solid #2980b9;">Next Follow Up Date</th>
+                            <th style="padding: 10px 14px;">Last Completed Notes</th>
                         </tr>
                     `;
                 } else {
                     colCount = 10;
                     headersHtml = `
                         <tr style="background: #3498db; font-size: 13px; color: #ffffff; text-align: left;">
-                            <th style="padding: 8px 10px; width: 40px; border-right: 1px solid #2980b9;">S.No</th>
-                            <th style="padding: 8px 10px; border-right: 1px solid #2980b9;">Activity Subject</th>
-                            <th style="padding: 8px 10px; border-right: 1px solid #2980b9;">Category</th>
-                            <th style="padding: 8px 10px; border-right: 1px solid #2980b9;">Reference Entity</th>
-                            <th style="padding: 8px 10px; border-right: 1px solid #2980b9;">Contact Mobile</th>
-                            <th style="padding: 8px 10px; border-right: 1px solid #2980b9;">Contact Email</th>
-                            <th style="padding: 8px 10px; border-right: 1px solid #2980b9;">Assigned To</th>
-                            <th style="padding: 8px 10px; border-right: 1px solid #2980b9;">Next Follow Up Date</th>
-                            <th style="padding: 8px 10px; border-right: 1px solid #2980b9;">Days Left</th>
-                            <th style="padding: 8px 10px;">Status &amp; Actions</th>
+                            <th style="padding: 10px 14px; width: 40px; border-right: 1px solid #2980b9; text-align: center;">S.No</th>
+                            <th style="padding: 10px 14px; border-right: 1px solid #2980b9;">Activity Subject</th>
+                            <th style="padding: 10px 14px; border-right: 1px solid #2980b9;">Category</th>
+                            <th style="padding: 10px 14px; border-right: 1px solid #2980b9;">Reference Entity</th>
+                            <th style="padding: 10px 14px; border-right: 1px solid #2980b9;">Contact Mobile</th>
+                            <th style="padding: 10px 14px; border-right: 1px solid #2980b9; width: 180px;">Contact Email</th>
+                            <th style="padding: 10px 14px; border-right: 1px solid #2980b9;">Assigned To</th>
+                            <th style="padding: 10px 14px; border-right: 1px solid #2980b9;">Next Follow Up Date</th>
+                            <th style="padding: 10px 14px; border-right: 1px solid #2980b9; text-align: center;">Days Left</th>
+                            <th style="padding: 10px 14px;">Status &amp; Actions</th>
                         </tr>
                     `;
                 }
@@ -2248,43 +2524,43 @@
 
                         rowsHtml += `
                             <tr class="dac-prompt-row" data-search="${searchStr}" style="border-bottom: 1px solid #cbd5e1; font-size: 13px; color: #0f172a;">
-                                <td style="padding: 8px 10px; color: #1e293b; font-weight: 700;">${idx + 1}</td>
-                                <td style="padding: 8px 10px; color: #0f172a; font-weight: 700; cursor: pointer;" onclick="window.open('${linkUrl}', '_blank')">
+                                <td style="padding: 10px 14px; color: #1e293b; font-weight: 700; text-align: center;">${idx + 1}</td>
+                                <td style="padding: 10px 14px; color: #0f172a; font-weight: 700; cursor: pointer;" onclick="window.open('${linkUrl}', '_blank')">
                                     <a href="${linkUrl}" target="_blank" style="color: #2563eb; font-weight: 700; text-decoration: none;" title="Open Lead Record (${name})">${leadName}</a>
                                 </td>
-                                <td style="padding: 8px 10px; color: #0f172a; font-weight: 500; overflow-wrap: break-word; word-wrap: break-word; white-space: normal;">${company}</td>
-                                <td style="padding: 8px 10px; color: #0f172a; font-weight: 500; overflow-wrap: break-word; word-wrap: break-word; white-space: normal;">${email}</td>
-                                <td style="padding: 8px 10px; color: #0f172a; font-weight: 500; overflow-wrap: break-word; word-wrap: break-word; white-space: normal;">${mobile}</td>
-                                <td style="padding: 8px 10px; color: #0f172a; font-weight: 500; overflow-wrap: break-word; word-wrap: break-word; white-space: normal;">${ltype}</td>
-                                <td style="padding: 8px 10px; color: #0f172a; font-weight: 500; overflow-wrap: break-word; word-wrap: break-word; white-space: normal;">${src}</td>
-                                <td style="padding: 8px 10px; color: #0f172a; font-weight: 500; overflow-wrap: break-word; word-wrap: break-word; white-space: normal;">${industry}</td>
-                                <td style="padding: 8px 10px; text-align: left; color: #0f172a; font-weight: 700; overflow-wrap: break-word; word-wrap: break-word; white-space: normal;">${valStr}</td>
-                                <td style="padding: 8px 10px; color: #0f172a; font-weight: 500; overflow-wrap: break-word; word-wrap: break-word; white-space: normal;">${expClose}${closureIndicatorHtml}</td>
-                                <td style="padding: 8px 10px; color: #0f172a; font-weight: 500; overflow-wrap: break-word; word-wrap: break-word; white-space: normal;">${getUserDisplayName(owner)}</td>
-                                <td style="padding: 8px 10px; color: #0f172a; font-weight: 500; overflow-wrap: break-word; word-wrap: break-word; white-space: normal;">${date}</td>
-                                <td style="padding: 8px 10px; color: #0f172a; font-weight: 700;">${rec.age_days || 0} Days</td>
-                                <td style="padding: 8px 10px; color: #0f172a; font-weight: 600; overflow-wrap: break-word; word-wrap: break-word; white-space: normal;">${rec.next_followup || '-'}</td>
-                                <td style="padding: 8px 10px; color: #2563eb; font-weight: 700; text-align: center;">${rec.quotation_count || 0}</td>
-                                <td style="padding: 8px 10px; color: #475569; font-weight: 500; max-width: 250px; overflow-wrap: break-word; word-wrap: break-word; white-space: normal;" title="${rec.last_completed_notes || ''}">${rec.last_completed_notes || '-'}</td>
+                                <td style="padding: 10px 14px; color: #0f172a; font-weight: 500;">${company}</td>
+                                <td class="dac-email-cell" style="padding: 10px 14px; color: #0f172a; font-weight: 500;" title="${email}">${email}</td>
+                                <td style="padding: 10px 14px; color: #0f172a; font-weight: 500;">${mobile}</td>
+                                <td style="padding: 10px 14px; color: #0f172a; font-weight: 500;">${ltype}</td>
+                                <td style="padding: 10px 14px; color: #0f172a; font-weight: 500;">${src}</td>
+                                <td style="padding: 10px 14px; color: #0f172a; font-weight: 500;">${industry}</td>
+                                <td style="padding: 10px 14px; text-align: left; color: #0f172a; font-weight: 700;">${valStr}</td>
+                                <td style="padding: 10px 14px; color: #0f172a; font-weight: 500;">${expClose}${closureIndicatorHtml}</td>
+                                <td style="padding: 10px 14px; color: #0f172a; font-weight: 500;">${getUserDisplayName(owner)}</td>
+                                <td style="padding: 10px 14px; color: #0f172a; font-weight: 500;">${date}</td>
+                                <td style="padding: 10px 14px; color: #0f172a; font-weight: 700;">${rec.age_days || 0} Days</td>
+                                <td style="padding: 10px 14px; color: #0f172a; font-weight: 600;">${rec.next_followup || '-'}</td>
+                                <td style="padding: 10px 14px; color: #2563eb; font-weight: 700; text-align: center;">${rec.quotation_count || 0}</td>
+                                <td class="dac-notes-cell" style="padding: 10px 14px; color: #475569; font-weight: 500;" title="${rec.last_completed_notes || ''}">${rec.last_completed_notes || '-'}</td>
                             </tr>
                         `;
                     } else if (isContactCard) {
                         rowsHtml += `
                             <tr class="dac-prompt-row" data-search="${searchStr}" style="border-bottom: 1px solid #cbd5e1; font-size: 13px; color: #0f172a;">
-                                <td style="padding: 8px 10px; color: #1e293b; font-weight: 700;">${idx + 1}</td>
-                                <td style="padding: 8px 10px; color: #0f172a; font-weight: 700; cursor: pointer;" onclick="window.open('${linkUrl}', '_blank')">
+                                <td style="padding: 10px 14px; color: #1e293b; font-weight: 700; text-align: center;">${idx + 1}</td>
+                                <td style="padding: 10px 14px; color: #0f172a; font-weight: 700; cursor: pointer;" onclick="window.open('${linkUrl}', '_blank')">
                                     <a href="${linkUrl}" target="_blank" style="color: #2563eb; font-weight: 700; text-decoration: none;" title="Open Business Contact Record (${name})">${leadName}</a>
                                 </td>
-                                <td style="padding: 8px 10px; color: #0f172a; font-weight: 500; overflow-wrap: break-word; word-wrap: break-word; white-space: normal;">${company}</td>
-                                <td style="padding: 8px 10px; color: #0f172a; font-weight: 500; overflow-wrap: break-word; word-wrap: break-word; white-space: normal;">${mobile}</td>
-                                <td style="padding: 8px 10px; color: #0f172a; font-weight: 500; overflow-wrap: break-word; word-wrap: break-word; white-space: normal;">${email}</td>
-                                <td style="padding: 8px 10px; color: #0f172a; font-weight: 500; overflow-wrap: break-word; word-wrap: break-word; white-space: normal;">${industry}</td>
-                                <td style="padding: 8px 10px; color: #0f172a; font-weight: 500; overflow-wrap: break-word; word-wrap: break-word; white-space: normal;">${getUserDisplayName(owner)}</td>
-                                <td style="padding: 8px 10px; color: #0f172a; font-weight: 500; overflow-wrap: break-word; word-wrap: break-word; white-space: normal;">${loc}</td>
-                                <td style="padding: 8px 10px; color: #0f172a; font-weight: 500; overflow-wrap: break-word; word-wrap: break-word; white-space: normal;">${date}</td>
-                                <td style="padding: 8px 10px; color: #0f172a; font-weight: 700;">${rec.age_days || 0} Days</td>
-                                <td style="padding: 8px 10px; color: #0f172a; font-weight: 600; overflow-wrap: break-word; word-wrap: break-word; white-space: normal;">${rec.next_followup || '-'}</td>
-                                <td style="padding: 8px 10px; color: #475569; font-weight: 500; max-width: 250px; overflow-wrap: break-word; word-wrap: break-word; white-space: normal;" title="${rec.last_completion_notes || ''}">${rec.last_completion_notes || '-'}</td>
+                                <td style="padding: 10px 14px; color: #0f172a; font-weight: 500;">${company}</td>
+                                <td style="padding: 10px 14px; color: #0f172a; font-weight: 500;">${mobile}</td>
+                                <td class="dac-email-cell" style="padding: 10px 14px; color: #0f172a; font-weight: 500;" title="${email}">${email}</td>
+                                <td style="padding: 10px 14px; color: #0f172a; font-weight: 500;">${industry}</td>
+                                <td style="padding: 10px 14px; color: #0f172a; font-weight: 500;">${getUserDisplayName(owner)}</td>
+                                <td style="padding: 10px 14px; color: #0f172a; font-weight: 500;">${loc}</td>
+                                <td style="padding: 10px 14px; color: #0f172a; font-weight: 500;">${date}</td>
+                                <td style="padding: 10px 14px; color: #0f172a; font-weight: 700;">${rec.age_days || 0} Days</td>
+                                <td style="padding: 10px 14px; color: #0f172a; font-weight: 600;">${rec.next_followup || '-'}</td>
+                                <td class="dac-notes-cell" style="padding: 10px 14px; color: #475569; font-weight: 500;" title="${rec.last_completion_notes || ''}">${rec.last_completion_notes || '-'}</td>
                             </tr>
                         `;
                     } else {
@@ -2309,12 +2585,12 @@
 
                         rowsHtml += `
                             <tr class="dac-prompt-row" data-search="${searchStr}" style="border-bottom: 1px solid #cbd5e1; font-size: 13px; color: #0f172a;">
-                                <td style="padding: 8px 10px; color: #1e293b; font-weight: 700;">${idx + 1}</td>
-                                <td style="padding: 8px 10px; color: #0f172a; font-weight: 700; cursor: pointer;" onclick="window.open('${linkUrl}', '_blank')">
+                                <td style="padding: 10px 14px; color: #1e293b; font-weight: 700; text-align: center;">${idx + 1}</td>
+                                <td class="dac-text-cell" style="padding: 10px 14px; color: #0f172a; font-weight: 700; cursor: pointer;" onclick="window.open('${linkUrl}', '_blank')">
                                     <a href="${linkUrl}" target="_blank" style="color: #2563eb; font-weight: 700; text-decoration: none;" title="Open Event Activity Record (${name})">${leadName}</a>
                                 </td>
-                                <td style="padding: 8px 10px; vertical-align: middle;"><span style="background: #eff6ff; color: #1e40af; border: 1px solid #bfdbfe; padding: 4px 10px; border-radius: 12px; font-size: 12px; font-weight: 700; white-space: nowrap;">${category}</span></td>
-                                <td style="padding: 8px 10px;">
+                                <td style="padding: 10px 14px; vertical-align: middle;"><span style="background: #eff6ff; color: #1e40af; border: 1px solid #bfdbfe; padding: 4px 10px; border-radius: 12px; font-size: 12px; font-weight: 700; white-space: nowrap;">${category}</span></td>
+                                <td class="dac-text-cell" style="padding: 10px 14px;">
                                     ${refLinkUrl ? `
                                         <div style="font-weight: 700; color: #0f172a; font-size: 13px;">
                                             <a href="${refLinkUrl}" target="_blank" style="color: #2563eb; font-weight: 700; text-decoration: none;" title="Open ${rec.reference_type} (${rec.reference_name})">
@@ -2326,12 +2602,12 @@
                                     `}
                                     ${company !== '-' ? `<div style="font-size: 11px; color: #475569; margin-top: 1px;">${company}</div>` : ''}
                                 </td>
-                                <td style="padding: 8px 10px; color: #0f172a; font-weight: 500; overflow-wrap: break-word; word-wrap: break-word; white-space: normal;">${mobile}</td>
-                                <td style="padding: 8px 10px; color: #0f172a; font-weight: 500; overflow-wrap: break-word; word-wrap: break-word; white-space: normal;">${email}</td>
-                                <td style="padding: 8px 10px; color: #0f172a; font-weight: 500; overflow-wrap: break-word; word-wrap: break-word; white-space: normal;">${getUserDisplayName(owner)}</td>
-                                <td style="padding: 8px 10px; color: #0f172a; font-weight: 600; overflow-wrap: break-word; word-wrap: break-word; white-space: normal;">${rec.start_date || '-'}</td>
-                                <td style="padding: 8px 10px; text-align: center;">${daysLeftHtml}</td>
-                                <td style="padding: 8px 10px; text-align: left; min-width: 170px;">
+                                <td style="padding: 10px 14px; color: #0f172a; font-weight: 500;">${mobile}</td>
+                                <td class="dac-email-cell" style="padding: 10px 14px; color: #0f172a; font-weight: 500;" title="${email}">${email}</td>
+                                <td style="padding: 10px 14px; color: #0f172a; font-weight: 500;">${getUserDisplayName(owner)}</td>
+                                <td style="padding: 10px 14px; color: #0f172a; font-weight: 600;">${rec.start_date || '-'}</td>
+                                <td style="padding: 10px 14px; text-align: center;">${daysLeftHtml}</td>
+                                <td style="padding: 10px 14px; text-align: left; min-width: 170px;">
                                     ${actDropdown}
                                 </td>
                             </tr>
@@ -2350,9 +2626,9 @@
                     <div style="font-family: -apple-system, BlinkMacSystemFont, Segoe UI, Roboto, sans-serif;">
                         ${topHeaderHtml}
                         ${searchBarHtml}
-                        <div class="dac-modal-scroll-wrap" style="max-height: calc(70vh - 180px); min-height: 80px; overflow-y: auto; border: 1px solid #e2e8f0; border-radius: 6px; box-shadow: 0 1px 3px rgba(0,0,0,0.02);">
-                            <table style="width: 100%; border-collapse: collapse; text-align: left;">
-                                <thead style="position: sticky; top: 0; z-index: 1;">
+                        <div class="dac-modal-scroll-wrap" style="max-height: calc(75vh - 180px); min-height: 100px; overflow-x: auto !important; overflow-y: auto !important; border: 1px solid #cbd5e1; border-radius: 6px; box-shadow: 0 1px 3px rgba(0,0,0,0.02);">
+                            <table style="width: max-content !important; min-width: 100% !important; border-collapse: separate; border-spacing: 0; text-align: left;">
+                                <thead style="position: sticky; top: 0; z-index: 10; background: #3498db;">
                                     ${headersHtml}
                                 </thead>
                                 <tbody>
@@ -2695,7 +2971,7 @@
             }
 
             const filterArgs = {
-                category: catName,
+                category: catName || '',
                 reference_type: refType || 'All',
                 user: userSel,
                 from_date: fromDate,
@@ -2720,7 +2996,7 @@
                             <div>
                                 <div style="font-size: 16px; font-weight: 700; color: #0f172a; letter-spacing: -0.025em;">${catTitle}</div>
                                 <div style="font-size: 12px; color: #64748b; margin-top: 4px; font-weight: 500;">
-                                    Category: <span style="color: #0f172a; font-weight: 700;">${catName}</span> &nbsp;|&nbsp; Entity: <span style="color: #0f172a; font-weight: 700;">${refType}</span> &nbsp;|&nbsp; User: <span style="color: #0f172a; font-weight: 700;">${userDisp}</span> &nbsp;|&nbsp; Period: <span style="color: #0f172a; font-weight: 700;">${dateDisp}</span>
+                                    Category: <span style="color: #0f172a; font-weight: 700;">${catName || 'All Categories'}</span> &nbsp;|&nbsp; Entity: <span style="color: #0f172a; font-weight: 700;">${refType}</span> &nbsp;|&nbsp; User: <span style="color: #0f172a; font-weight: 700;">${userDisp}</span> &nbsp;|&nbsp; Period: <span style="color: #0f172a; font-weight: 700;">${dateDisp}</span>
                                 </div>
                             </div>
                             <div style="background: #f8fafc; padding: 6px 14px; border-radius: 6px; text-align: center; border: 1px solid #e2e8f0; box-shadow: 0 1px 2px rgba(0,0,0,0.02);">
@@ -2762,21 +3038,21 @@
 
                         rowsHtml += `
                         <tr class="dac-prompt-act-row" data-search="${searchStr}" style="border-bottom: 1px solid #cbd5e1; font-size: 13px; color: #0f172a;">
-                            <td style="padding: 8px 10px; color: #1e293b; font-weight: 700;">${idx + 1}</td>
-                            <td style="padding: 8px 10px; color: #0f172a; font-weight: 700; cursor: pointer;" onclick="window.open('${linkUrl}', '_blank')">
+                            <td style="padding: 10px 14px; color: #1e293b; font-weight: 700; text-align: center;">${idx + 1}</td>
+                            <td class="dac-text-cell" style="padding: 10px 14px; color: #0f172a; font-weight: 700; cursor: pointer;" onclick="window.open('${linkUrl}', '_blank')">
                                 <a href="${linkUrl}" target="_blank" style="color: #2563eb; font-weight: 700; text-decoration: none;" title="Open Event Activity Record (${name})">${subject}</a>
                             </td>
-                            <td style="padding: 8px 10px; vertical-align: middle;"><span style="background: #eff6ff; color: #1e40af; border: 1px solid #bfdbfe; padding: 4px 10px; border-radius: 12px; font-size: 12px; font-weight: 700; white-space: nowrap;">${rec.category || catName}</span></td>
-                            <td style="padding: 8px 10px;">
+                            <td style="padding: 10px 14px; vertical-align: middle;"><span style="background: #eff6ff; color: #1e40af; border: 1px solid #bfdbfe; padding: 4px 10px; border-radius: 12px; font-size: 12px; font-weight: 700; white-space: nowrap;">${rec.category || catName || 'Activity'}</span></td>
+                            <td class="dac-text-cell" style="padding: 10px 14px;">
                                 <div style="font-weight: 700; font-size: 13px;">
                                     ${rType !== '-' ? `<a href="${refLink}" target="_blank" style="color: #0f172a; text-decoration: none;" title="Open ${rType}">${rType}: <span style="color:#2563eb;">${refName}</span></a>` : '-'}
                                 </div>
                                 ${companyName !== '-' ? `<div style="font-size: 11px; color: #475569; margin-top: 1px;">${companyName}</div>` : ''}
                             </td>
-                            <td style="padding: 8px 10px; color: #0f172a; font-weight: 500;">${mobile}</td>
-                            <td style="padding: 8px 10px; color: #0f172a; font-weight: 500;">${email}</td>
-                            <td style="padding: 8px 10px; color: #0f172a; font-weight: 500;">${getUserDisplayName(owner)}</td>
-                            <td style="padding: 8px 10px; color: #0f172a; font-weight: 500; white-space: nowrap;">${date}</td>
+                            <td style="padding: 10px 14px; color: #0f172a; font-weight: 500;">${mobile}</td>
+                            <td class="dac-email-cell" style="padding: 10px 14px; color: #0f172a; font-weight: 500;" title="${email}">${email}</td>
+                            <td style="padding: 10px 14px; color: #0f172a; font-weight: 500;">${getUserDisplayName(owner)}</td>
+                            <td style="padding: 10px 14px; color: #0f172a; font-weight: 500;">${date}</td>
                         </tr>
                     `;
                     });
@@ -2792,18 +3068,18 @@
                     <div style="font-family: -apple-system, BlinkMacSystemFont, Segoe UI, Roboto, sans-serif;">
                         ${topHeaderHtml}
                         ${searchBarHtml}
-                        <div class="dac-modal-scroll-wrap" style="max-height: 520px; overflow-y: auto; border: 1px solid #e2e8f0; border-radius: 6px; box-shadow: 0 1px 3px rgba(0,0,0,0.02);">
-                            <table style="width: 100%; border-collapse: collapse; text-align: left;">
-                                <thead style="position: sticky; top: 0; z-index: 1;">
+                        <div class="dac-modal-scroll-wrap" style="max-height: 520px; overflow-y: auto; overflow-x: auto; border: 1px solid #e2e8f0; border-radius: 6px; box-shadow: 0 1px 3px rgba(0,0,0,0.02);">
+                            <table style="width: max-content !important; min-width: 100% !important; border-collapse: separate; border-spacing: 0; text-align: left;">
+                                <thead style="position: sticky; top: 0; z-index: 10; background: #3498db;">
                                     <tr style="background: #3498db; font-size: 13px; color: #ffffff; text-align: left;">
-                                        <th style="padding: 8px 10px; width: 40px; border-right: 1px solid #2980b9;">S.No</th>
-                                        <th style="padding: 8px 10px; border-right: 1px solid #2980b9;">Activity Subject</th>
-                                        <th style="padding: 8px 10px; border-right: 1px solid #2980b9;">Category</th>
-                                        <th style="padding: 8px 10px; border-right: 1px solid #2980b9;">Reference Entity</th>
-                                        <th style="padding: 8px 10px; border-right: 1px solid #2980b9;">Contact Mobile</th>
-                                        <th style="padding: 8px 10px; border-right: 1px solid #2980b9;">Contact Email</th>
-                                        <th style="padding: 8px 10px; border-right: 1px solid #2980b9;">Assigned To</th>
-                                        <th style="padding: 8px 10px;">Completion Date</th>
+                                        <th style="padding: 10px 14px; width: 40px; border-right: 1px solid #2980b9; text-align: center;">S.No</th>
+                                        <th style="padding: 10px 14px; border-right: 1px solid #2980b9;">Activity Subject</th>
+                                        <th style="padding: 10px 14px; border-right: 1px solid #2980b9;">Category</th>
+                                        <th style="padding: 10px 14px; border-right: 1px solid #2980b9;">Reference Entity</th>
+                                        <th style="padding: 10px 14px; border-right: 1px solid #2980b9;">Contact Mobile</th>
+                                        <th style="padding: 10px 14px; border-right: 1px solid #2980b9; width: 180px;">Contact Email</th>
+                                        <th style="padding: 10px 14px; border-right: 1px solid #2980b9;">Assigned To</th>
+                                        <th style="padding: 10px 14px;">Completion Date</th>
                                     </tr>
                                 </thead>
                                 <tbody>

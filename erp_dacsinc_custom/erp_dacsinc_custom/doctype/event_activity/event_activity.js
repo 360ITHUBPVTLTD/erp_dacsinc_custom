@@ -71,14 +71,14 @@ function show_combined_prompt(frm, status, title, is_new, refType, refName, lead
                 label: (leadCategory === "Enquiry" ? "Reason for Unqualified Lead" : "Reason for Lost"),
                 fieldtype: "Link",
                 options: (leadCategory === "Enquiry" ? "Lost Enquiry Reasons" : "Quotation Lost Reason"),
-                reqd: 1,
+                reqd: 0,
                 depends_on: "eval:doc.mark_lost"
             },
             {
                 fieldname: "lost_reason_description",
                 label: "Lost Reason Description",
                 fieldtype: "Small Text",
-                reqd: 1,
+                reqd: 0,
                 depends_on: "eval:doc.mark_lost"
             }
         );

@@ -3545,7 +3545,68 @@ def quotation_on_submit(doc, method):
 
         
 
+# import frappe
 
+# def validate_quotation(doc, method=None):
+#     """
+#     Server-side validation hook for Quotation.
+#     Keeps custom_lead_id and custom_lead_owner updated.
+#     """
+#     if doc.quotation_to == "Lead" and doc.party_name:
+#         # Sync custom_lead_id with party_name
+#         doc.custom_lead_id = doc.party_name
+
+#         # If custom_lead_owner is empty, fetch lead_owner from the Lead document
+#         if not doc.custom_lead_owner:
+#             doc.custom_lead_owner = frappe.db.get_value("Lead", doc.party_name, "lead_owner")
+            
+#     else:
+#         # Clear custom_lead_id if quotation_to is not "Lead" or party_name is removed
+#         doc.custom_lead_id = None
+
+
+
+
+import frappe
+from frappe import _
+
+def validate_quotation(doc, method=None):
+    """
+    Server-side validation hook for Quotation.
+    Blocks selection of Leads with category "Order".
+    """
+    if doc.quotation_to == "Lead" and doc.party_name:
+        lead_data = frappe.db.get_value(
+            "Lead", 
+            doc.party_name, 
+            ["custom_lead_category", "custom_lead_customer"], 
+            as_dict=True
+        )
+        
+        # Throw error if Lead Category is "Order"
+        if lead_data and lead_data.get("custom_lead_category") == "Order":
+            cust_id = lead_data.get("custom_lead_customer") or "N/A"
+            cust_name = frappe.db.get_value("Customer", cust_id, "customer_name") if cust_id != "N/A" else ""
+            
+            cust_info = f"Customer Name: {cust_name} | Customer ID: {cust_id}" if cust_name else f"Customer ID: {cust_id}"
+
+            frappe.throw(
+                _("This Lead (<b>{0}</b>) has already been converted to an <b>Order</b>.<br><br>"
+                  "Please create the Quotation against the <b>Customer</b> instead.<br><br>"
+                  "<small style='color: #64748b;'>{1}</small>")
+                .format(doc.party_name, cust_info)
+            )
+
+        # Sync custom_lead_id with party_name
+        doc.custom_lead_id = doc.party_name
+
+        # Sync custom_lead_owner if missing
+        if not doc.custom_lead_owner:
+            doc.custom_lead_owner = frappe.db.get_value("Lead", doc.party_name, "lead_owner")
+            
+    else:
+        # Clear custom_lead_id if quotation_to is not "Lead" or party_name is empty
+        doc.custom_lead_id = None
 
 
 
@@ -3613,12 +3674,68 @@ def get_lead_from_so_items(doc):
                 return lead_id
     return None
 
+# def sync_lead_data(lead_name, exclude_so_name=None):
+#     """
+#     Synchronizes Lead data. 
+#     PRIORITY: Latest Submitted Sales Order (docstatus 1) > Latest Draft (docstatus 0).
+#     """
+#     if not lead_name:
+#         return
+
+#     # Prepare SQL filters and arguments
+#     query_filters = "AND so.docstatus < 2"  # Exclude Cancelled
+#     args = [lead_name]
+    
+#     if exclude_so_name:
+#         query_filters += " AND so.name != %s"
+#         args.append(exclude_so_name)
+
+#     # SQL logic: 
+#     # 1. 'ORDER BY so.docstatus DESC' ensures Submitted (1) comes before Draft (0).
+#     # 2. 'ORDER BY so.creation DESC' ensures the newest record within that status is picked.
+#     latest_so = frappe.db.sql(f"""
+#         SELECT so.grand_total, so.customer, so.name, so.docstatus
+#         FROM `tabSales Order` so
+#         WHERE EXISTS (
+#             SELECT 1 FROM `tabSales Order Item` soi
+#             INNER JOIN `tabQuotation` q ON soi.prevdoc_docname = q.name
+#             WHERE soi.parent = so.name AND q.custom_lead_id = %s
+#         )
+#         {query_filters}
+#         ORDER BY so.docstatus DESC, so.creation DESC
+#         LIMIT 1
+#     """, tuple(args), as_dict=True)
+
+#     if latest_so:
+#         data = latest_so[0]
+#         # Valid SO exists: Update Lead
+#         frappe.db.set_value("Lead", lead_name, {
+#             "custom_po_value": flt(data.grand_total),
+#             "custom_lead_category": "Order",
+#             "custom_lead_type": "WON",
+#             "custom_lead_customer": data.customer or ""
+#         }, update_modified=True)
+#     else:
+#         # No valid Sales Orders remain: Revert Lead
+#         frappe.db.set_value("Lead", lead_name, {
+#             "custom_po_value": 0,
+#             "custom_lead_category": "Pipeline",
+#             "custom_lead_type": "WARM"
+#         }, update_modified=True)
+
+
+
+
+import frappe
+from frappe.utils import flt
+
 def sync_lead_data(lead_name, exclude_so_name=None):
     """
     Synchronizes Lead data. 
     PRIORITY: Latest Submitted Sales Order (docstatus 1) > Latest Draft (docstatus 0).
     """
-    if not lead_name:
+    # Safety Check: Return if lead_name is empty or doesn't exist
+    if not lead_name or not frappe.db.exists("Lead", lead_name):
         return
 
     # Prepare SQL filters and arguments
@@ -3645,22 +3762,24 @@ def sync_lead_data(lead_name, exclude_so_name=None):
         LIMIT 1
     """, tuple(args), as_dict=True)
 
+    # Load the document using ORM so hooks (validate_lead) will execute
+    lead_doc = frappe.get_doc("Lead", lead_name)
+
     if latest_so:
         data = latest_so[0]
-        # Valid SO exists: Update Lead
-        frappe.db.set_value("Lead", lead_name, {
-            "custom_po_value": flt(data.grand_total),
-            "custom_lead_category": "Order",
-            "custom_lead_type": "WON",
-            "custom_lead_customer": data.customer or ""
-        }, update_modified=True)
+        # Valid SO exists: Update Lead fields
+        lead_doc.custom_po_value = flt(data.grand_total)
+        lead_doc.custom_lead_category = "Order"
+        lead_doc.custom_lead_type = "WON"
+        lead_doc.custom_lead_customer = data.customer or ""
     else:
-        # No valid Sales Orders remain: Revert Lead
-        frappe.db.set_value("Lead", lead_name, {
-            "custom_po_value": 0,
-            "custom_lead_category": "Pipeline",
-            "custom_lead_type": "WARM"
-        }, update_modified=True)
+        # No valid Sales Orders remain: Revert Lead fields
+        lead_doc.custom_po_value = 0
+        lead_doc.custom_lead_category = "Pipeline"
+        lead_doc.custom_lead_type = "WARM"
+
+    # CRITICAL: .save() triggers validate_lead() and appends rows to `custom_lead_status_change_history`
+    lead_doc.save(ignore_permissions=True)
 
 # -------------------------------------------------------------------------
 # EVENT HOOKS (Sales Order)

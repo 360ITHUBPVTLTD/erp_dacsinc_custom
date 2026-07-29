@@ -6,6 +6,27 @@ from frappe.model.document import Document
 
 
 class BusinessContacts(Document):
+	def before_save(self):
+		if not self.is_new():
+			old_status = frappe.db.get_value("Business Contacts", self.name, "status")
+			if old_status and old_status != self.status:
+				reason = self.get("status_change_reason") or self.flags.status_change_reason
+				if not reason:
+					if self.status == "Converted to Lead":
+						reason = "Converted to Lead"
+					elif self.status == "Existing Customer":
+						reason = "Converted to Customer"
+					else:
+						reason = f"Status changed to {self.status}"
+				
+				self.append("contact_status_change_history", {
+					"old_status": old_status,
+					"new_status": self.status,
+					"changed_by": frappe.session.user or "Administrator",
+					"updated_at": frappe.utils.now_datetime(),
+					"reason": reason
+				})
+
 	def on_update(self):
 		# 1. Management of Read/Write permissions
 		if self.assign_to:

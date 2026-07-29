@@ -23,18 +23,20 @@
   "contact_type",
   "job_title",
   "status",
-  "area__locality",
-  "created_on",
+  "custom_property_type",
   "section_break_ybfx",
   "address",
   "column_break_zlmw",
   "country",
   "state",
   "city",
+  "column_break_aqnw",
+  "area__locality",
   "section_break_iwpi",
   "lead_and_customer_html",
   "description_section",
   "details",
+  "created_on",
   "section_break_ffzd",
   "lead_id",
   "last_completed_activity_type",
@@ -43,7 +45,8 @@
   "last_completion_notes",
   "next_follow_up_date",
   "activity_tab",
-  "activity_html"
+  "activity_html",
+  "contact_status_change_history"
  ],
  "fields": [
   {
@@ -248,14 +251,31 @@
    "default": "Now",
    "fieldname": "created_on",
    "fieldtype": "Datetime",
+   "hidden": 1,
    "label": "Created On",
    "read_only": 1
+  },
+  {
+   "fieldname": "contact_status_change_history",
+   "fieldtype": "Table",
+   "label": "Contact Status Change History",
+   "options": "Lead Status Change History",
+   "read_only": 1
+  },
+  {
+   "fieldname": "custom_property_type",
+   "fieldtype": "Data",
+   "label": "Property Type"
+  },
+  {
+   "fieldname": "column_break_aqnw",
+   "fieldtype": "Column Break"
   }
  ],
  "grid_page_length": 50,
  "index_web_pages_for_search": 1,
  "links": [],
- "modified": "2026-06-13 14:33:36.843454",
+ "modified": "2026-07-27 14:24:24.300237",
  "modified_by": "Administrator",
  "module": "Erp Dacsinc Custom",
  "name": "Business Contacts",
