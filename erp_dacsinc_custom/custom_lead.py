@@ -4651,8 +4651,98 @@ ul{{color:#334155;font-size:14px;line-height:1.9;}}
 import frappe
 from frappe import _
 
+# @frappe.whitelist()
+# def check_linked_quotation(lead_name):
+#     has_quotation = frappe.db.exists(
+#         "Quotation", 
+#         {
+#             "quotation_to": "Lead", 
+#             "party_name": lead_name, 
+#             "docstatus": ["<", 2] 
+#         }
+#     )
+#     return {"has_quotation": bool(has_quotation)}
+
+
+# @frappe.whitelist()
+# def convert_lead_to_business_contact(lead_name):
+    
+#     if not frappe.db.exists("Lead", lead_name):
+#         frappe.throw(_("Lead {0} not found").format(lead_name))
+        
+#     lead_doc = frappe.get_doc("Lead", lead_name)
+    
+#     # Strictly Check for quotation at DB level 
+#     has_quotation = frappe.db.exists(
+#         "Quotation", 
+#         {
+#             "quotation_to": "Lead", 
+#             "party_name": lead_name, 
+#             "docstatus": ["<", 2] 
+#         }
+#     )
+
+#     # 1. Base Field Mappings
+#     bc = frappe.new_doc("Business Contacts")
+#     bc.contact_name = lead_doc.lead_name or lead_doc.first_name
+#     bc.organization_name = lead_doc.company_name
+#     bc.mobile_number = lead_doc.mobile_no or lead_doc.phone
+#     bc.source = lead_doc.source
+#     bc.assign_to = lead_doc.lead_owner
+    
+#     if has_quotation:
+#         bc.status = "Converted to Lead"
+#         bc.lead_id = lead_doc.name
+#     else:
+#         bc.status = "Open"
+#         bc.lead_id = None          
+
+#     bc.insert(ignore_permissions=True)
+    
+#     # 2. Scenarios 
+#     if not has_quotation:
+#         # NO QUOTATION = TRANSFER ALL ACTIVITIES TO CONTACT & DELETE LEAD
+#         table_mappings = {
+#             "Communication": "reference_doctype",
+#             "Comment": "reference_doctype",
+#             "ToDo": "reference_type",
+#             "Event Activity": "reference_type" 
+#         }
+        
+#         for dt, ref_col in table_mappings.items():
+#             if frappe.db.exists("DocType", dt):
+#                 try:
+#                     frappe.db.sql(f"""
+#                         UPDATE `tab{dt}` 
+#                         SET `{ref_col}`='Business Contacts', reference_name=%s
+#                         WHERE `{ref_col}`='Lead' AND reference_name=%s
+#                     """, (bc.name, lead_doc.name))
+#                 except Exception:
+#                     continue
+                    
+#         frappe.db.commit()
+        
+#         frappe.delete_doc("Lead", lead_doc.name, force=True, ignore_permissions=True)
+#         return {"action": "deleted", "business_contact_name": bc.name}
+
+#     else:
+#         # WITH QUOTATION = ACTIVITIES REMAIN IN THE LEAD AND LEAD STAYS ALIVE. WE JUST LINK IT!
+#         frappe.db.set_value("Lead", lead_doc.name, "custom_business_contacts", bc.name)
+#         frappe.db.commit()
+#         return {"action": "linked", "business_contact_name": bc.name}
+
+
+
+
+
+import frappe
+from frappe import _
+
 @frappe.whitelist()
 def check_linked_quotation(lead_name):
+    # Override permissions for checking linked quotation
+    frappe.flags.ignore_permissions = True
+    
     has_quotation = frappe.db.exists(
         "Quotation", 
         {
@@ -4666,6 +4756,8 @@ def check_linked_quotation(lead_name):
 
 @frappe.whitelist()
 def convert_lead_to_business_contact(lead_name):
+    # OVERRIDE ALL PERMISSIONS (Create, Read, Write, Delete, Attachments)
+    frappe.flags.ignore_permissions = True
     
     if not frappe.db.exists("Lead", lead_name):
         frappe.throw(_("Lead {0} not found").format(lead_name))
@@ -4701,7 +4793,7 @@ def convert_lead_to_business_contact(lead_name):
     
     # 2. Scenarios 
     if not has_quotation:
-        # NO QUOTATION = TRANSFER ALL ACTIVITIES TO CONTACT & DELETE LEAD
+        # NO QUOTATION = TRANSFER ALL ACTIVITIES & LINKS TO CONTACT & DELETE LEAD
         table_mappings = {
             "Communication": "reference_doctype",
             "Comment": "reference_doctype",
@@ -4719,14 +4811,25 @@ def convert_lead_to_business_contact(lead_name):
                     """, (bc.name, lead_doc.name))
                 except Exception:
                     continue
+
+        # Re-link attached Addresses / Contacts from Lead to Business Contacts
+        try:
+            frappe.db.sql("""
+                UPDATE `tabDynamic Link`
+                SET link_doctype='Business Contacts', link_name=%s
+                WHERE link_doctype='Lead' AND link_name=%s
+            """, (bc.name, lead_doc.name))
+        except Exception:
+            pass
                     
         frappe.db.commit()
         
+        # Delete Lead - Bypass all permission checks
         frappe.delete_doc("Lead", lead_doc.name, force=True, ignore_permissions=True)
         return {"action": "deleted", "business_contact_name": bc.name}
 
     else:
-        # WITH QUOTATION = ACTIVITIES REMAIN IN THE LEAD AND LEAD STAYS ALIVE. WE JUST LINK IT!
+        # WITH QUOTATION = ACTIVITIES REMAIN IN THE LEAD. LINK IT!
         frappe.db.set_value("Lead", lead_doc.name, "custom_business_contacts", bc.name)
         frappe.db.commit()
         return {"action": "linked", "business_contact_name": bc.name}
