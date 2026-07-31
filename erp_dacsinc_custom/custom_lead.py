@@ -4783,13 +4783,23 @@ def convert_lead_to_business_contact(lead_name):
     bc.assign_to = lead_doc.lead_owner
     
     # ----------------------------------------------------
-    # MAP LEAD custom_address TO BUSINESS CONTACTS address
+    # MAP ADDRESS
     # ----------------------------------------------------
     if lead_doc.get("custom_address"):
         bc.address = lead_doc.custom_address
-        # Also set custom_address if the field exists on Business Contacts
         if "custom_address" in [f.fieldname for f in bc.meta.fields]:
             bc.custom_address = lead_doc.custom_address
+
+    # ----------------------------------------------------
+    # MAP INDUSTRY
+    # ----------------------------------------------------
+    industry_value = lead_doc.get("industry") or lead_doc.get("custom_industry")
+    if industry_value:
+        bc_fields = [f.fieldname for f in bc.meta.fields]
+        if "industry" in bc_fields:
+            bc.industry = industry_value
+        if "custom_industry" in bc_fields:
+            bc.custom_industry = industry_value
 
     if has_quotation:
         bc.status = "Converted to Lead"
