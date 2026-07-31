@@ -1,6 +1,6 @@
 // frappe.ui.form.on('Lead', {
 // 	refresh(frm) {
-	        
+
 // 	         setTimeout(() => {
 //                     frm.page.remove_inner_button('Add to Prospect', 'Action');
 //                     frm.page.remove_inner_button('Prospect', 'Create');
@@ -96,7 +96,7 @@
 //                                     </tr>
 //                                 </thead>
 //                                 <tbody>`;
-                        
+
 //                         activities.todos.forEach(todo => {
 //                             let todo_link = `/app/todo/${todo.name}`;
 //                             let formatted_due_date = todo.date ? frappe.datetime.str_to_user(todo.date) : 'Not set';
@@ -124,7 +124,7 @@
 //                                     </tr>
 //                                 </thead>
 //                                 <tbody>`;
-                        
+
 //                         activities.events.forEach(event => {
 //                             let event_link = `/app/event/${event.name}`;
 //                             let formatted_starts_on = event.starts_on ? frappe.datetime.str_to_user(event.starts_on) : 'Not set';
@@ -384,7 +384,7 @@
 
 // function open_lead_activity_prompt(frm) {
 //     frappe.prompt([
-       
+
 //         {
 //             fieldname: "category",
 //             label: "Category",
@@ -423,7 +423,7 @@
 //             default: frappe.session.user,
 //             reqd: 1
 //         },
-        
+
 //         // {
 //         //     fieldname: "description",
 //         //     label: "Description",
@@ -443,7 +443,7 @@
 //                     starts_on: values.starts_on,
 //                     assigned_to: values.assigned_to,
 //                     description: values.description,
-                    
+
 //                     status: "Open"
 //                 }
 //             },
@@ -503,7 +503,7 @@
 //                         <h4>Completed Activities</h4>
 //                         <p style="font-weight: bold; font-size: 18px; color: #721c24;">${closedCount}</p>
 //                     </div>
-                    
+
 //                 </div>
 //             `;
 
@@ -521,14 +521,14 @@
 
 
 frappe.ui.form.on('Lead', {
-	refresh(frm) {
-         setTimeout(() => {
-                    frm.page.remove_inner_button('Add to Prospect', 'Action');
-                    frm.page.remove_inner_button('Prospect', 'Create');
-                    frm.page.remove_inner_button('Opportunity', 'Create');
-                    frm.page.remove_inner_button('Customer', 'Create');
-                    frm.page.remove_inner_button('Quotation', 'Create');
-                }, 500);
+    refresh(frm) {
+        setTimeout(() => {
+            frm.page.remove_inner_button('Add to Prospect', 'Action');
+            frm.page.remove_inner_button('Prospect', 'Create');
+            frm.page.remove_inner_button('Opportunity', 'Create');
+            frm.page.remove_inner_button('Customer', 'Create');
+            frm.page.remove_inner_button('Quotation', 'Create');
+        }, 500);
 
         // If the User is editing an existing Lead and Country is set,
         // we need to reload the State options in the background so they are valid.
@@ -536,7 +536,7 @@ frappe.ui.form.on('Lead', {
             frappe.db.get_single_value('Location Master', 'data_json').then(val => {
                 if (val) {
                     frm.location_data = JSON.parse(val);
-                    
+
                     // If opening an existing lead, populate options immediately
                     if (frm.doc.country) {
                         set_state_options(frm);
@@ -548,20 +548,20 @@ frappe.ui.form.on('Lead', {
             });
         }
         if (frm.doc.custom_lead_category !== 'Order') {
-             frm.add_custom_button(__('Create Quotation'), function() {
-                 frappe.call({
-                     method: 'erp_dacsinc_custom.custom_lead.get_quotations_for_lead',
-                     args: {
-                         lead_name: frm.doc.name
-                     },
-                     callback: function(r) {
-                         let quotations = r.message || [];
-                         if (quotations.length > 0) {
-                             let tableRows = quotations.map(q => {
-                                 let q_link = `/app/quotation/${q.quotation_id}`;
-                                 let formatted_date = frappe.datetime.str_to_user(q.transaction_date);
-                                 let formatted_total = format_currency(q.grand_total, 'INR');
-                                 return `
+            frm.add_custom_button(__('Create Quotation'), function () {
+                frappe.call({
+                    method: 'erp_dacsinc_custom.custom_lead.get_quotations_for_lead',
+                    args: {
+                        lead_name: frm.doc.name
+                    },
+                    callback: function (r) {
+                        let quotations = r.message || [];
+                        if (quotations.length > 0) {
+                            let tableRows = quotations.map(q => {
+                                let q_link = `/app/quotation/${q.quotation_id}`;
+                                let formatted_date = frappe.datetime.str_to_user(q.transaction_date);
+                                let formatted_total = format_currency(q.grand_total, 'INR');
+                                return `
                                      <tr>
                                          <td style="border: 1px solid #d1d8dd; padding: 6px 8px;"><a href="${q_link}" target="_blank">${q.quotation_id}</a></td>
                                          <td style="border: 1px solid #d1d8dd; padding: 6px 8px;">${q.status}</td>
@@ -569,9 +569,9 @@ frappe.ui.form.on('Lead', {
                                          <td style="border: 1px solid #d1d8dd; padding: 6px 8px;">${formatted_total}</td>
                                      </tr>
                                  `;
-                             }).join('');
+                            }).join('');
 
-                             let htmlContent = `
+                            let htmlContent = `
                                  <div style="margin-bottom: 15px;">
                                      <p style="color: #d9534f; font-weight: bold;">
                                          ⚠️ Quotation(s) already exist for this Lead:
@@ -595,48 +595,48 @@ frappe.ui.form.on('Lead', {
                                  </div>
                              `;
 
-                             let d = new frappe.ui.Dialog({
-                                 title: __('Existing Quotation(s) Found'),
-                                 fields: [
-                                     {
-                                         fieldtype: 'HTML',
-                                         options: htmlContent
-                                     }
-                                 ],
-                                 primary_action_label: __('Create New Quotation'),
-                                 primary_action: function() {
-                                     d.hide();
-                                     create_quotation();
-                                 },
-                                 secondary_action_label: __('Cancel'),
-                                 secondary_action: function() {
-                                     d.hide();
-                                 }
-                             });
-                             d.$wrapper.addClass('dac-wide-modal');
-                             d.show();
+                            let d = new frappe.ui.Dialog({
+                                title: __('Existing Quotation(s) Found'),
+                                fields: [
+                                    {
+                                        fieldtype: 'HTML',
+                                        options: htmlContent
+                                    }
+                                ],
+                                primary_action_label: __('Create New Quotation'),
+                                primary_action: function () {
+                                    d.hide();
+                                    create_quotation();
+                                },
+                                secondary_action_label: __('Cancel'),
+                                secondary_action: function () {
+                                    d.hide();
+                                }
+                            });
+                            d.$wrapper.addClass('dac-wide-modal');
+                            d.show();
 
-                         } else {
-                             create_quotation();
-                         }
-                     }
-                 });
+                        } else {
+                            create_quotation();
+                        }
+                    }
+                });
 
-                 function create_quotation() {
-                     frappe.model.open_mapped_doc({
-                         method: "erp_dacsinc_custom.custom_lead.make_quotation_custom",
-                         frm: frm,
-                         freeze_message: __("Creating Quotation...")
-                     });
-                 }
-             });
+                function create_quotation() {
+                    frappe.model.open_mapped_doc({
+                        method: "erp_dacsinc_custom.custom_lead.make_quotation_custom",
+                        frm: frm,
+                        freeze_message: __("Creating Quotation...")
+                    });
+                }
+            });
         }
-        
-         if (frm.doc.custom_lead_category === 'Order') {
-            frm.add_custom_button(__('Duplicate Lead'), function() {
+
+        if (frm.doc.custom_lead_category === 'Order') {
+            frm.add_custom_button(__('Duplicate Lead'), function () {
                 frappe.confirm(
                     'Are you sure you want to duplicate this Lead?',
-                    function() {
+                    function () {
                         // Yes: Trigger the server function
                         frappe.call({
                             method: "erp_dacsinc_custom.custom_lead.create_duplicate_lead", // UPDATE THIS PATH
@@ -645,7 +645,7 @@ frappe.ui.form.on('Lead', {
                             },
                             freeze: true,
                             freeze_message: __("Duplicating Lead..."),
-                            callback: function(r) {
+                            callback: function (r) {
                                 if (r.message) {
                                     frappe.msgprint(__("Lead Duplicated Successfully"));
                                     // Route to the new Lead
@@ -659,13 +659,15 @@ frappe.ui.form.on('Lead', {
         }
 
         if (!frm.doc.__islocal && !frm.doc.custom_business_contacts) {
-            frm.add_custom_button(__('Convert to Business Contact'), function() {
+            frm.add_custom_button(__('Convert to Business Contact'), function () {
                 frappe.call({
                     method: "erp_dacsinc_custom.custom_lead.check_linked_quotation",
                     args: {
                         lead_name: frm.doc.name
                     },
-                    callback: function(r) {
+                    freeze: true,
+                    freeze_message: __("Checking Quotation..."),
+                    callback: function (r) {
                         let has_quotation = r.message && r.message.has_quotation;
                         let msg = "";
                         if (has_quotation) {
@@ -674,7 +676,7 @@ frappe.ui.form.on('Lead', {
                             msg = __('No quotation exists for this Lead. Converting this Lead to a Business Contact will migrate all activities to the contact and DELETE this Lead document. Do you want to proceed?');
                         }
 
-                        frappe.confirm(msg, function() {
+                        frappe.confirm(msg, function () {
                             frappe.call({
                                 method: "erp_dacsinc_custom.custom_lead.convert_lead_to_business_contact",
                                 args: {
@@ -682,7 +684,7 @@ frappe.ui.form.on('Lead', {
                                 },
                                 freeze: true,
                                 freeze_message: __("Converting to Business Contact..."),
-                                callback: function(r) {
+                                callback: function (r) {
                                     if (r.message) {
                                         frappe.msgprint(__("Converted to Business Contact successfully"));
                                         if (r.message.action === "deleted") {
@@ -698,29 +700,29 @@ frappe.ui.form.on('Lead', {
                 });
             });
         }
-	    		if (!frm.doc.__islocal) {
-	    		    render_lead_activities(frm);
-	    		    
-	    		    
-	    		    
-	    		    
-	    		    
-	    		    const wrapper = frm.fields_dict.custom_attachment_html.$wrapper;
-		wrapper.empty(); // Clear previous HTML
+        if (!frm.doc.__islocal) {
+            render_lead_activities(frm);
 
-		// Fetch all attachments linked to this Lead
-		frappe.call({
-			method: "frappe.client.get_list",
-			args: {
-				doctype: "File",
-				filters: {
-					attached_to_doctype: "Lead",
-					attached_to_name: frm.doc.name
-				},
-				fields: ["name", "file_name", "file_url", "creation", "attached_to_field"]
-			},
-			callback: function (r) {
-				let html = `
+
+
+
+
+            const wrapper = frm.fields_dict.custom_attachment_html.$wrapper;
+            wrapper.empty(); // Clear previous HTML
+
+            // Fetch all attachments linked to this Lead
+            frappe.call({
+                method: "frappe.client.get_list",
+                args: {
+                    doctype: "File",
+                    filters: {
+                        attached_to_doctype: "Lead",
+                        attached_to_name: frm.doc.name
+                    },
+                    fields: ["name", "file_name", "file_url", "creation", "attached_to_field"]
+                },
+                callback: function (r) {
+                    let html = `
 					<style>
 						.custom-attachment-table {
 							width: 100%;
@@ -748,8 +750,8 @@ frappe.ui.form.on('Lead', {
 					<h4>📎 Attachments</h4>
 				`;
 
-				if (r.message && r.message.length) {
-					html += `
+                    if (r.message && r.message.length) {
+                        html += `
 						<table class="custom-attachment-table">
 							<thead>
 								<tr>
@@ -762,8 +764,8 @@ frappe.ui.form.on('Lead', {
 							<tbody>
 					`;
 
-					r.message.forEach((file, i) => {
-						html += `
+                        r.message.forEach((file, i) => {
+                            html += `
 							<tr>
 								<td>${i + 1}</td>
 								<td>${file.file_name}</td>
@@ -771,32 +773,32 @@ frappe.ui.form.on('Lead', {
 								<td><a href="${file.file_url}" target="_blank">View</a></td>
 							</tr>
 						`;
-					});
+                        });
 
-					html += `
+                        html += `
 							</tbody>
 						</table>
 					`;
-				} else {
-					html += `<p>No attachments found.</p>`;
-				}
+                    } else {
+                        html += `<p>No attachments found.</p>`;
+                    }
 
-				// Append HTML inside the wrapper
-				wrapper.append(html);
-			}
-		});
-	    		    
-	    		    
-			// Fetch and render tasks + button inside HTML field
-			frappe.call({
-				method: 'erp_dacsinc_custom.custom_lead.get_tasks_for_lead',
-				args: {
-					lead_name: frm.doc.name
-				},
-				callback: function (r) {
-					let rows = '';
-					if (r.message && r.message.length > 0) {
-						rows = r.message.map(task => `
+                    // Append HTML inside the wrapper
+                    wrapper.append(html);
+                }
+            });
+
+
+            // Fetch and render tasks + button inside HTML field
+            frappe.call({
+                method: 'erp_dacsinc_custom.custom_lead.get_tasks_for_lead',
+                args: {
+                    lead_name: frm.doc.name
+                },
+                callback: function (r) {
+                    let rows = '';
+                    if (r.message && r.message.length > 0) {
+                        rows = r.message.map(task => `
 							<tr>
 								<td style="border: solid 2px #bcb9b4;"><a href="/app/task/${task.name}" target="_blank">${task.name}</a></td>
 								<td style="border: solid 2px #bcb9b4;">${task.subject}</td>
@@ -804,11 +806,11 @@ frappe.ui.form.on('Lead', {
 								<td style="border: solid 2px #bcb9b4;">${frappe.datetime.str_to_user(task.exp_end_date || '')}</td>
 							</tr>
 						`).join('');
-					} else {
-						rows = `<tr><td colspan="4" class="text-center">No tasks found.</td></tr>`;
-					}
+                    } else {
+                        rows = `<tr><td colspan="4" class="text-center">No tasks found.</td></tr>`;
+                    }
 
-					let html = `
+                    let html = `
 						<div style="margin-top: 10px">
 							<button class="btn btn-primary btn-sm create-task-btn" style="margin-bottom: 15px;">
 								+ Create Task
@@ -830,31 +832,31 @@ frappe.ui.form.on('Lead', {
 						</div>
 					`;
 
-					// Inject into custom HTML field
-					frm.fields_dict.custom_task_html.$wrapper.html(html);
+                    // Inject into custom HTML field
+                    frm.fields_dict.custom_task_html.$wrapper.html(html);
 
-					// Attach click handler for the button inside the HTML
-					frm.fields_dict.custom_task_html.$wrapper
-						.find('.create-task-btn')
-						.on('click', function () {
-							frappe.new_doc('Task', {
-								custom_lead_id: frm.doc.name
-							});
-						});
-				}
-			});
-		}
+                    // Attach click handler for the button inside the HTML
+                    frm.fields_dict.custom_task_html.$wrapper
+                        .find('.create-task-btn')
+                        .on('click', function () {
+                            frappe.new_doc('Task', {
+                                custom_lead_id: frm.doc.name
+                            });
+                        });
+                }
+            });
+        }
 
-		calculate_lead_age(frm);
-		quotation_html(frm)
+        calculate_lead_age(frm);
+        quotation_html(frm)
         // if (frm.doc.name ) { 
 
-            frappe.call({
+        frappe.call({
             method: 'erp_dacsinc_custom.custom_lead.get_activities_for_lead', // Replace with your app and module path
             args: {
                 lead_name: frm.doc.name
             },
-            callback: function(r) {
+            callback: function (r) {
                 let wrapper = $(frm.fields_dict.custom_todo_and_event_html.wrapper);
                 let activities = r.message;
 
@@ -875,7 +877,7 @@ frappe.ui.form.on('Lead', {
                                     </tr>
                                 </thead>
                                 <tbody>`;
-                        
+
                         activities.todos.forEach(todo => {
                             let todo_link = `/app/todo/${todo.name}`;
                             let formatted_due_date = todo.date ? frappe.datetime.str_to_user(todo.date) : 'Not set';
@@ -903,7 +905,7 @@ frappe.ui.form.on('Lead', {
                                     </tr>
                                 </thead>
                                 <tbody>`;
-                        
+
                         activities.events.forEach(event => {
                             let event_link = `/app/event/${event.name}`;
                             let formatted_starts_on = event.starts_on ? frappe.datetime.str_to_user(event.starts_on) : 'Not set';
@@ -927,37 +929,37 @@ frappe.ui.form.on('Lead', {
         });
         // }
 
-	},
+    },
 
-    country: function(frm) {
+    country: function (frm) {
         // Reset dependent fields
         frm.set_value('custom_custom_state', '');
         frm.set_value('custom_custom_city', '');
         set_state_options(frm);
     },
 
-    custom_custom_state: function(frm) {
+    custom_custom_state: function (frm) {
         // Reset dependent fields
         frm.set_value('custom_custom_city', '');
         set_city_options(frm);
     }
 })
 
-function quotation_html(frm){
-                frappe.call({
-                method: 'erp_dacsinc_custom.custom_lead.get_quotations_for_lead',  // Replace with your app and module path
-                args: {
-                    lead_name: frm.doc.name
-                },
-                callback: function(r) {
-                    if (r.message && r.message.length) {
-                        let quotations = r.message;
+function quotation_html(frm) {
+    frappe.call({
+        method: 'erp_dacsinc_custom.custom_lead.get_quotations_for_lead',  // Replace with your app and module path
+        args: {
+            lead_name: frm.doc.name
+        },
+        callback: function (r) {
+            if (r.message && r.message.length) {
+                let quotations = r.message;
 
-                        // Get the count of quotations
-                        let quotationCount = quotations.length;
+                // Get the count of quotations
+                let quotationCount = quotations.length;
 
-                        // Start building the HTML content
-                        let htmlContent = `
+                // Start building the HTML content
+                let htmlContent = `
                             <div class="quotation-summary">
                                 <p><strong>Total Quotations: ${quotationCount}</strong></p>
                             </div>
@@ -975,14 +977,14 @@ function quotation_html(frm){
                                     </thead>
                                     <tbody>`;
 
-                        // Iterate over the quotations to build each row
-                        quotations.forEach(quotation => {
-                            let items = quotation.items.length > 0 ? quotation.items.join(', ') : 'No items';
-                            let quotation_link = `/app/quotation/${quotation.quotation_id}`;
-                            let formatted_date = frappe.datetime.str_to_user(quotation.transaction_date);
-                            let formatted_total = format_currency(quotation.grand_total, 'INR');
+                // Iterate over the quotations to build each row
+                quotations.forEach(quotation => {
+                    let items = quotation.items.length > 0 ? quotation.items.join(', ') : 'No items';
+                    let quotation_link = `/app/quotation/${quotation.quotation_id}`;
+                    let formatted_date = frappe.datetime.str_to_user(quotation.transaction_date);
+                    let formatted_total = format_currency(quotation.grand_total, 'INR');
 
-                            htmlContent += `
+                    htmlContent += `
                                 <tr>
                                     <td style="border: solid 2px #bcb9b4;"><a href="${quotation_link}" target="_blank">${quotation.quotation_id}</a></td>
                                     <td style="border: solid 2px #bcb9b4;">${quotation.status}</td>
@@ -991,18 +993,18 @@ function quotation_html(frm){
                                     <td style="border: solid 2px #bcb9b4;">${items}</td>
                                     <td style="border: solid 2px #bcb9b4;">${formatted_total}</td>
                                 </tr>`;
-                        });
+                });
 
-                        htmlContent += `</tbody></table></div>`;
+                htmlContent += `</tbody></table></div>`;
 
-                        // Insert the HTML content into the custom_quotation_html field
-                        $(frm.fields_dict.custom_quotation_html.wrapper).html(htmlContent);
-                    } else {
-                        // If no quotations are found
-                        $(frm.fields_dict.custom_quotation_html.wrapper).html('<p>No quotations found for this lead.</p>');
-                    }
-                }
-            });
+                // Insert the HTML content into the custom_quotation_html field
+                $(frm.fields_dict.custom_quotation_html.wrapper).html(htmlContent);
+            } else {
+                // If no quotations are found
+                $(frm.fields_dict.custom_quotation_html.wrapper).html('<p>No quotations found for this lead.</p>');
+            }
+        }
+    });
 
 }
 
@@ -1019,7 +1021,7 @@ function render_lead_activities(frm) {
             fields: ["name", "subject", "category", "status", "starts_on", "assigned_to", "description", "notes"],
             order_by: "creation desc"
         },
-        callback: function(r) {
+        callback: function (r) {
             if (!frm.fields_dict.custom_lead_activity_html) return;
             let wrapper = $(frm.fields_dict.custom_lead_activity_html.wrapper);
             let activities = r.message || [];
@@ -1039,11 +1041,11 @@ function render_lead_activities(frm) {
             let categorySummaryHtml = `
                 <div  style="margin-bottom: 10px; padding: 8px; background: #f8f9fa; border: 1px solid #ddd; border-radius: 4px;">
                     <strong>Category Summary:</strong> 
-                    ${Object.keys(categoryCounts).map(cat => 
-                        `<span style="margin-right:15px;">
+                    ${Object.keys(categoryCounts).map(cat =>
+                `<span style="margin-right:15px;">
                             ${cat}: <span style="color:#3498DB; font-weight:bold;">${categoryCounts[cat]}</span>
                         </span>`
-                    ).join("")}
+            ).join("")}
                 </div>
             `;
 
@@ -1051,11 +1053,11 @@ function render_lead_activities(frm) {
                 <div style="margin-bottom: 10px; padding: 8px; background: #f8f9fa; border: 1px solid #ddd; border-radius: 4px;">
                     <strong>Status Summary:</strong> 
                     ${Object.keys(statusCounts).map(stat => {
-                        let color = (stat === "Open") ? "green" : (stat === "Completed") ? "blue" : "red";
-                        return `<span style="margin-right:15px;">
+                let color = (stat === "Open") ? "green" : (stat === "Completed") ? "blue" : "red";
+                return `<span style="margin-right:15px;">
                             ${stat}: <span style="color:${color}; font-weight:bold;">${statusCounts[stat]}</span>
                         </span>`;
-                    }).join("")}
+            }).join("")}
                 </div>
             `;
             let rows = (r.message || []).map(activity => {
@@ -1116,23 +1118,23 @@ function render_lead_activities(frm) {
 
             // Bind create new (only for active leads)
             if (!isLost) {
-                wrapper.find("#create-lead-activity-btn").on("click", function() {
+                wrapper.find("#create-lead-activity-btn").on("click", function () {
                     open_lead_activity_prompt(frm);
                 });
             }
 
             // Bind dropdown actions
-            wrapper.find(".complete-action").on("click", function(e) {
+            wrapper.find(".complete-action").on("click", function (e) {
                 e.preventDefault();
                 handle_update_activity($(this).data("id"), "Completed", frm, false);
             });
 
-            wrapper.find(".complete-new-action").on("click", function(e) {
+            wrapper.find(".complete-new-action").on("click", function (e) {
                 e.preventDefault();
                 handle_update_activity($(this).data("id"), "Completed", frm, true);
             });
 
-            wrapper.find(".cancel-action").on("click", function(e) {
+            wrapper.find(".cancel-action").on("click", function (e) {
                 e.preventDefault();
                 handle_update_activity($(this).data("id"), "Cancelled", frm, false);
             });
@@ -1232,82 +1234,82 @@ function handle_update_activity(activity_id, status, frm, create_new) {
     }
 
     let d = frappe.prompt(fields,
-    function(values) {
-        if (values.mark_lost) {
-            if (!values.lost_reason || !values.lost_reason_description) {
-                frappe.msgprint("Please fill Lost Reason and Description");
-                return;
-            }
-            frappe.call({
-                method: "erp_dacsinc_custom.custom_lead.mark_lead_lost_backend",
-                args: {
-                    lead_name: frm.doc.name,
-                    category: frm.doc.custom_lead_category,
-                    lost_reason: values.lost_reason,
-                    lost_reason_description: values.lost_reason_description,
-                    current_activity_id: activity_id,
-                    completion_note: values.notes
-                },
-                callback: function(r) {
-                    if (!r.exc) {
-                        frappe.show_alert({message: "Lead marked as LOST", indicator: "red"});
-                        frm.reload_doc();
-                    }
-                }
-            });
-        } else {
-            if (create_new) {
-                if (!values.new_subject || !values.new_category || !values.new_starts_on || !values.new_assigned_to) {
-                    frappe.msgprint("Please fill all next activity details");
+        function (values) {
+            if (values.mark_lost) {
+                if (!values.lost_reason || !values.lost_reason_description) {
+                    frappe.msgprint("Please fill Lost Reason and Description");
                     return;
                 }
-            }
-            frappe.call({
-                method: "frappe.client.set_value",
-                args: {
-                    doctype: "Event Activity",
-                    name: activity_id,
-                    fieldname: {
-                        status: status,
-                        notes: values.notes,
-                        ends_on: status === "Completed" ? frappe.datetime.now_datetime() : null
-                    }
-                },
-                callback: function(r) {
-                    if (!r.exc) {
-                        frappe.show_alert({message: `Activity marked as ${status}`, indicator: (status === "Completed" ? "green" : "red")});
-                        render_lead_activities(frm);
-
-                        if (create_new) {
-                            frappe.call({
-                                method: "frappe.client.insert",
-                                args: {
-                                    doc: {
-                                        doctype: "Event Activity",
-                                        reference_type: "Lead",
-                                        reference_name: frm.doc.name,
-                                        subject: values.new_subject,
-                                        category: values.new_category,
-                                        starts_on: values.new_starts_on,
-                                        assigned_to: values.new_assigned_to,
-                                        status: "Open"
-                                    }
-                                },
-                                callback: function(res) {
-                                    if (res.message) {
-                                        frappe.show_alert({message: "Next Activity Created Successfully", indicator: "green"});
-                                        render_lead_activities(frm);
-                                    }
-                                }
-                            });
+                frappe.call({
+                    method: "erp_dacsinc_custom.custom_lead.mark_lead_lost_backend",
+                    args: {
+                        lead_name: frm.doc.name,
+                        category: frm.doc.custom_lead_category,
+                        lost_reason: values.lost_reason,
+                        lost_reason_description: values.lost_reason_description,
+                        current_activity_id: activity_id,
+                        completion_note: values.notes
+                    },
+                    callback: function (r) {
+                        if (!r.exc) {
+                            frappe.show_alert({ message: "Lead marked as LOST", indicator: "red" });
+                            frm.reload_doc();
                         }
                     }
+                });
+            } else {
+                if (create_new) {
+                    if (!values.new_subject || !values.new_category || !values.new_starts_on || !values.new_assigned_to) {
+                        frappe.msgprint("Please fill all next activity details");
+                        return;
+                    }
                 }
-            });
-        }
-    },
-    `Mark as ${status}`,
-    "Submit"
+                frappe.call({
+                    method: "frappe.client.set_value",
+                    args: {
+                        doctype: "Event Activity",
+                        name: activity_id,
+                        fieldname: {
+                            status: status,
+                            notes: values.notes,
+                            ends_on: status === "Completed" ? frappe.datetime.now_datetime() : null
+                        }
+                    },
+                    callback: function (r) {
+                        if (!r.exc) {
+                            frappe.show_alert({ message: `Activity marked as ${status}`, indicator: (status === "Completed" ? "green" : "red") });
+                            render_lead_activities(frm);
+
+                            if (create_new) {
+                                frappe.call({
+                                    method: "frappe.client.insert",
+                                    args: {
+                                        doc: {
+                                            doctype: "Event Activity",
+                                            reference_type: "Lead",
+                                            reference_name: frm.doc.name,
+                                            subject: values.new_subject,
+                                            category: values.new_category,
+                                            starts_on: values.new_starts_on,
+                                            assigned_to: values.new_assigned_to,
+                                            status: "Open"
+                                        }
+                                    },
+                                    callback: function (res) {
+                                        if (res.message) {
+                                            frappe.show_alert({ message: "Next Activity Created Successfully", indicator: "green" });
+                                            render_lead_activities(frm);
+                                        }
+                                    }
+                                });
+                            }
+                        }
+                    }
+                });
+            }
+        },
+        `Mark as ${status}`,
+        "Submit"
     );
     if (d && d.$wrapper) {
         d.$wrapper.addClass('dac-wide-modal');
@@ -1402,82 +1404,82 @@ function open_lead_activity_prompt(frm) {
             depends_on: "eval:!doc.mark_lost"
         }
     ],
-    function(values) {
-        // Case 1: Mark as Lost
-        if (values.mark_completed && values.mark_lost) {
-            if (!values.lost_reason || !values.lost_reason_description) {
-                frappe.msgprint("Please fill Lost Reason and Description before marking as Lost.");
-                return;
-            }
-            frappe.call({
-                method: "frappe.client.insert",
-                args: {
-                    doc: {
-                        doctype: "Event Activity",
-                        reference_type: "Lead",
-                        reference_name: frm.doc.name,
-                        subject: values.subject || "Lead Marked as Lost",
-                        category: values.category || "Others",
-                        starts_on: values.starts_on || frappe.datetime.now_datetime(),
-                        assigned_to: values.assigned_to || frappe.session.user,
-                        status: "Completed",
-                        notes: values.completion_note || "Lead marked as Lost"
-                    }
-                },
-                callback: function(r) {
-                    if (!r.exc && r.message) {
-                        frappe.call({
-                            method: "erp_dacsinc_custom.custom_lead.mark_lead_lost_backend",
-                            args: {
-                                lead_name: frm.doc.name,
-                                category: leadCategory,
-                                lost_reason: values.lost_reason,
-                                lost_reason_description: values.lost_reason_description,
-                                current_activity_id: r.message.name,
-                                completion_note: values.completion_note || "Lead marked as Lost"
-                            },
-                            callback: function() {
-                                frappe.show_alert({message: "Lead marked as LOST", indicator: "red"});
-                                frm.reload_doc();
-                            }
-                        });
-                    }
+        function (values) {
+            // Case 1: Mark as Lost
+            if (values.mark_completed && values.mark_lost) {
+                if (!values.lost_reason || !values.lost_reason_description) {
+                    frappe.msgprint("Please fill Lost Reason and Description before marking as Lost.");
+                    return;
                 }
-            });
-        } else {
-            // Case 2: Normal activity creation
-            if (!values.subject || !values.category || !values.starts_on || !values.assigned_to) {
-                frappe.msgprint("Please fill Subject, Category, Starts On and Assigned To.");
-                return;
-            }
-            frappe.call({
-                method: "frappe.client.insert",
-                args: {
-                    doc: {
-                        doctype: "Event Activity",
-                        reference_type: "Lead",
-                        reference_name: frm.doc.name,
-                        subject: values.subject,
-                        category: values.category,
-                        starts_on: values.starts_on,
-                        assigned_to: values.assigned_to,
-                        status: values.mark_completed ? "Completed" : "Open",
-                        notes: values.completion_note || ""
+                frappe.call({
+                    method: "frappe.client.insert",
+                    args: {
+                        doc: {
+                            doctype: "Event Activity",
+                            reference_type: "Lead",
+                            reference_name: frm.doc.name,
+                            subject: values.subject || "Lead Marked as Lost",
+                            category: values.category || "Others",
+                            starts_on: values.starts_on || frappe.datetime.now_datetime(),
+                            assigned_to: values.assigned_to || frappe.session.user,
+                            status: "Completed",
+                            notes: values.completion_note || "Lead marked as Lost"
+                        }
+                    },
+                    callback: function (r) {
+                        if (!r.exc && r.message) {
+                            frappe.call({
+                                method: "erp_dacsinc_custom.custom_lead.mark_lead_lost_backend",
+                                args: {
+                                    lead_name: frm.doc.name,
+                                    category: leadCategory,
+                                    lost_reason: values.lost_reason,
+                                    lost_reason_description: values.lost_reason_description,
+                                    current_activity_id: r.message.name,
+                                    completion_note: values.completion_note || "Lead marked as Lost"
+                                },
+                                callback: function () {
+                                    frappe.show_alert({ message: "Lead marked as LOST", indicator: "red" });
+                                    frm.reload_doc();
+                                }
+                            });
+                        }
                     }
-                },
-                callback: function(r) {
-                    if (r.message) {
-                        frappe.show_alert({message: "Activity Created Successfully", indicator: "green"});
-                        frm.reload_doc();
-                        frm.refresh_field('custom_is_activity_created');
-                        render_lead_activities(frm);
-                    }
+                });
+            } else {
+                // Case 2: Normal activity creation
+                if (!values.subject || !values.category || !values.starts_on || !values.assigned_to) {
+                    frappe.msgprint("Please fill Subject, Category, Starts On and Assigned To.");
+                    return;
                 }
-            });
-        }
-    },
-    "New Activity",
-    "Create"
+                frappe.call({
+                    method: "frappe.client.insert",
+                    args: {
+                        doc: {
+                            doctype: "Event Activity",
+                            reference_type: "Lead",
+                            reference_name: frm.doc.name,
+                            subject: values.subject,
+                            category: values.category,
+                            starts_on: values.starts_on,
+                            assigned_to: values.assigned_to,
+                            status: values.mark_completed ? "Completed" : "Open",
+                            notes: values.completion_note || ""
+                        }
+                    },
+                    callback: function (r) {
+                        if (r.message) {
+                            frappe.show_alert({ message: "Activity Created Successfully", indicator: "green" });
+                            frm.reload_doc();
+                            frm.refresh_field('custom_is_activity_created');
+                            render_lead_activities(frm);
+                        }
+                    }
+                });
+            }
+        },
+        "New Activity",
+        "Create"
     );
     if (d && d.$wrapper) {
         d.$wrapper.addClass('dac-wide-modal');
@@ -1503,7 +1505,7 @@ function calculate_lead_age(frm) {
         args: {
             lead_id: leadId
         },
-        callback: function(response) {
+        callback: function (response) {
             let openCount = response.message.open || 0;
             let closedCount = response.message.closed || 0;
             let totalCount = response.message.total || 0;
