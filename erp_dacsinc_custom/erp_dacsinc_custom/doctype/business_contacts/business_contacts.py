@@ -30,8 +30,8 @@ class BusinessContacts(Document):
 	def on_update(self):
 		# 1. Management of Read/Write permissions
 		if self.assign_to:
-			# Grant Write access to the currently assigned user
-			frappe.share.add("Business Contacts", self.name, self.assign_to, write=1, read=1, notify=1,share=1)
+			from erp_dacsinc_custom.order_flow_api import add_docshare
+			add_docshare("Business Contacts", self.name, self.assign_to, read=1, write=1, share=1, notify=0)
 			
 			# Ensure the Owner (creator) or anyone else only has READ access, not write
 			# We fetch all current shares for this document

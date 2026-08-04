@@ -115,13 +115,48 @@ from frappe.utils import today, format_datetime, get_url, format_date
 @frappe.whitelist()
 def execute_scheduled_reports():
     """
-    Called by Cron at 8:30 PM.
+    Kept for backwards compatibility with any existing schedule entry.
+    The three reports now run on their own cron slots — see hooks.py.
     """
-    # 1. Update Overdue statuses so the reports show the latest numbers
-    # update_overdue_activities_status()
-    
-    # 2. Trigger the Mailing Logic (Dispatch Email to Team)
-    generate_daily_report(send_mail=1)
+    send_daily_crm_report()
+
+
+def send_daily_crm_report():
+    """Daily report — cron 0 20 * * * (8:00 PM every day)."""
+    from erp_dacsinc_custom.custom_lead import send_scheduled_crm_report
+    return send_scheduled_crm_report("daily")
+
+
+def send_weekly_crm_report():
+    """
+    Weekly report — cron 45 19 * * 5 (7:45 PM Friday), covering Sunday to Friday.
+
+    The cron already pins it to Friday; the weekday guard is a safety net in case
+    the schedule is edited later, so the Sunday-to-Friday window can never be
+    computed from the wrong day.
+    """
+    import datetime
+    from erp_dacsinc_custom.custom_lead import send_scheduled_crm_report
+
+    if datetime.date.today().weekday() != 4:      # Mon=0 .. Fri=4
+        return {"status": "skipped", "message": "Weekly report only runs on Friday."}
+    return send_scheduled_crm_report("weekly")
+
+
+def send_monthly_crm_report():
+    """
+    Monthly report — cron 30 19 * * * (7:30 PM), but only on the LAST day of the
+    month, so the report covers a month that has actually finished. Cron cannot
+    express "last day", hence the check here.
+    """
+    import datetime
+    from erp_dacsinc_custom.custom_lead import send_scheduled_crm_report
+
+    today = datetime.date.today()
+    tomorrow = today + datetime.timedelta(days=1)
+    if tomorrow.month == today.month:
+        return {"status": "skipped", "message": "Monthly report only runs on the last day of the month."}
+    return send_scheduled_crm_report("monthly")
 
 import frappe
 import json

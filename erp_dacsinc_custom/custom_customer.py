@@ -238,11 +238,12 @@ def customer_after_insert(doc, method=None):
 
         # 4. Initial Sharing with Lead Owner
         if lead_data and lead_data.lead_owner:
-            frappe.share.add(
-                doctype="Customer",
-                name=doc.name,
+            from erp_dacsinc_custom.order_flow_api import add_docshare
+            add_docshare(
+                share_doctype="Customer",
+                share_name=doc.name,
                 user=lead_data.lead_owner,
-                read=1, write=1, share=1, notify=1
+                read=1, write=1, share=1, notify=0
             )
 
 
@@ -280,8 +281,9 @@ def update_customer_sharing(doc, method=None):
     users_to_add = current_users - previous_users
     users_to_remove = previous_users - current_users
 
+    from erp_dacsinc_custom.order_flow_api import add_docshare
     for user in users_to_add:
-        frappe.share.add("Customer", doc.name, user, read=1, write=1, share=1)
+        add_docshare("Customer", doc.name, user, read=1, write=1, share=1, notify=0)
 
     for user in users_to_remove:
         frappe.share.remove("Customer", doc.name, user)

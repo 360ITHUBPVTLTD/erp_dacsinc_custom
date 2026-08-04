@@ -14,15 +14,21 @@
   "crm_daily_report_section",
   "send_mail_for_daily",
   "to_mail_id",
-  "crm_report_emails_section",
-  "crm_daily_report_emails",
-  "crm_weekly_report_emails",
-  "crm_monthly_report_emails",
   "buying_settings_section",
   "allow_over_collecting_of_fg",
   "section_break_hbuh",
   "mobile_app_crm_card",
   "bulk_attendance_mobile_app_visibility",
+  "crm_reports_config_tab",
+  "send_daily_crm_report",
+  "crm_daily_report_emails",
+  "send_daily_crm_report_to_team",
+  "send_weekly_crm_report",
+  "crm_weekly_report_emails",
+  "send_weekly_crm_report_to_team",
+  "send_monthly_crm_report",
+  "crm_monthly_report_emails",
+  "send_monthly_crm_report_to_team",
   "what_apps_tab",
   "enable_whatsapp",
   "section_break_yrwa",
@@ -30,7 +36,9 @@
   "column_break_yysf",
   "send_on_task_completion",
   "column_break_cpco",
-  "send_daily_summary_wa"
+  "send_daily_summary_wa",
+  "sales_order_tab",
+  "sales_order_final_approval"
  ],
  "fields": [
   {
@@ -83,11 +91,6 @@
    "fieldname": "to_mail_id",
    "fieldtype": "Small Text",
    "label": "To Mail ID"
-  },
-  {
-   "fieldname": "crm_report_emails_section",
-   "fieldtype": "Section Break",
-   "label": "CRM Scheduled Report Email IDs"
   },
   {
    "description": "Comma-separated email IDs to receive the Daily CRM Report (used by scheduler)",
@@ -177,13 +180,68 @@
    "fieldtype": "Table MultiSelect",
    "label": "Bulk Attendance Mobile App Visibility",
    "options": "Has Role"
+  },
+  {
+   "fieldname": "crm_reports_config_tab",
+   "fieldtype": "Tab Break",
+   "label": "CRM Reports Config"
+  },
+  {
+   "default": "0",
+   "fieldname": "send_daily_crm_report",
+   "fieldtype": "Check",
+   "label": "Send Daily CRM Report"
+  },
+  {
+   "default": "0",
+   "fieldname": "send_weekly_crm_report",
+   "fieldtype": "Check",
+   "label": "Send Weekly CRM Report"
+  },
+  {
+   "default": "0",
+   "fieldname": "send_monthly_crm_report",
+   "fieldtype": "Check",
+   "label": "Send Monthly CRM Report"
+  },
+  {
+   "default": "1",
+   "description": "Send each CRM team member their own report for this period. Members with no activity are skipped automatically. Applies only when the period's report is enabled above.",
+   "fieldname": "send_daily_crm_report_to_team",
+   "fieldtype": "Check",
+   "label": "Also Send Daily Report to Team Members"
+  },
+  {
+   "default": "1",
+   "description": "Send each CRM team member their own report for this period. Members with no activity are skipped automatically. Applies only when the period's report is enabled above.",
+   "fieldname": "send_weekly_crm_report_to_team",
+   "fieldtype": "Check",
+   "label": "Also Send Weekly Report to Team Members"
+  },
+  {
+   "default": "1",
+   "description": "Send each CRM team member their own report for this period. Members with no activity are skipped automatically. Applies only when the period's report is enabled above.",
+   "fieldname": "send_monthly_crm_report_to_team",
+   "fieldtype": "Check",
+   "label": "Also Send Monthly Report to Team Members"
+  },
+  {
+   "fieldname": "sales_order_tab",
+   "fieldtype": "Tab Break",
+   "label": "Sales Order"
+  },
+  {
+   "fieldname": "sales_order_final_approval",
+   "fieldtype": "Table MultiSelect",
+   "label": "Sales order Final Approval",
+   "options": "Multiselect User"
   }
  ],
  "grid_page_length": 50,
  "index_web_pages_for_search": 1,
  "issingle": 1,
  "links": [],
- "modified": "2026-05-12 12:06:15.927334",
+ "modified": "2026-08-04 16:01:16.026293",
  "modified_by": "Administrator",
  "module": "Erp Dacsinc Custom",
  "name": "Admin Settings",
