@@ -1,0 +1,930 @@
+/* ================================================================
+   Order Flow dashboard
+   Same palette as the Sales Order stock widget, so the page and the
+   form read as one product. Surfaces use Frappe tokens -> dark mode
+   follows automatically.
+   ================================================================ */
+
+.of-page {
+    --of-blue: #3498DB;
+    --of-blue-d: #2980b9;
+    --of-info: #007bff;
+    --of-green: #28a745;
+    --of-teal: #17a2b8;
+    --of-orange: #fd7e14;
+    --of-amber: #ff9800;
+    --of-red: #dc3545;
+    --of-purple: #6f42c1;
+    --of-gold: #d97706;
+    --of-gray: #6c757d;
+
+    font-size: 13px;
+    color: var(--text-color);
+    padding-bottom: 12px;
+}
+
+[data-theme="dark"] .of-page {
+    --of-info: #5aa9f8;
+}
+
+/* ── Summary tiles (Interactive Stage Cards) ──────────────────── */
+.of-summary {
+    display: grid;
+    gap: 8px;
+    margin-bottom: 10px;
+    grid-template-columns: repeat(auto-fit, minmax(125px, 1fr));
+}
+
+.of-tile {
+    background: var(--card-bg);
+    border: 1px solid var(--border-color);
+    border-radius: 6px;
+    padding: 7px 10px;
+    border-left: 3px solid var(--of-blue);
+    cursor: pointer;
+    position: relative;
+    transition: all 0.15s ease;
+    user-select: none;
+}
+
+.of-tile:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.08);
+}
+
+.of-tile.is-active {
+    box-shadow: 0 0 0 2px var(--of-blue);
+    background: var(--fg-hover-color, var(--subtle-fg));
+}
+
+.of-tile__label {
+    display: block;
+    font-size: 11px;
+    font-weight: 600;
+    color: var(--text-muted);
+    margin-bottom: 2px;
+}
+
+.of-tile__value {
+    font-size: 19px;
+    font-weight: 700;
+    line-height: 1.15;
+    font-variant-numeric: tabular-nums;
+}
+
+.of-tile__hint {
+    display: block;
+    font-size: 9px;
+    color: var(--text-light);
+    opacity: 0;
+    transition: opacity 0.15s;
+    margin-top: 3px;
+}
+
+.of-tile:hover .of-tile__hint {
+    opacity: 1;
+}
+
+.of-tile--ok {
+    border-left-color: var(--of-green);
+}
+
+.of-tile--warn {
+    border-left-color: var(--of-orange);
+}
+
+.of-tile--bad {
+    border-left-color: var(--of-red);
+}
+
+.of-tile--info {
+    border-left-color: var(--of-info);
+}
+
+.of-tile--need-bill {
+    border-left-color: var(--of-gold);
+    background: rgba(217, 119, 6, 0.05);
+}
+
+.of-tile--draft {
+    border-left-color: var(--of-orange);
+}
+
+.of-tile--dn {
+    border-left-color: var(--of-info);
+}
+
+.of-tile--rcpt {
+    border-left-color: var(--of-green);
+}
+
+.of-tile--wait {
+    border-left-color: var(--of-amber);
+}
+
+.of-tile--new {
+    border-left-color: var(--of-purple);
+}
+
+.of-tile--jw {
+    border-left-color: var(--of-info);
+}
+
+.of-tile--emb {
+    border-left-color: var(--of-pink);
+}
+
+/* ── Financial Cards (Accounts Tab) ───────────────────────────── */
+.of-acc-subtabs, .of-subtabs {
+    display: flex;
+    gap: 6px;
+    margin-bottom: 10px;
+    flex-wrap: wrap;
+    background: var(--card-bg);
+    padding: 5px;
+    border-radius: 8px;
+    border: 1px solid var(--border-color);
+}
+
+.of-acc-subtab, .of-subtab {
+    border: none;
+    background: transparent;
+    cursor: pointer;
+    padding: 7px 14px;
+    border-radius: 6px;
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--text-muted);
+    transition: all 0.15s;
+    outline: none;
+}
+
+.of-acc-subtab:hover, .of-subtab:hover {
+    background: var(--subtle-fg);
+    color: var(--text-color);
+}
+
+.of-acc-subtab.is-active, .of-subtab.is-active {
+    background: var(--of-blue);
+    color: #fff;
+    box-shadow: 0 2px 6px rgba(0, 0, 0, 0.1);
+}
+
+.of-fin-summary {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+    gap: 12px;
+    margin-bottom: 16px;
+}
+
+.of-fin-tile {
+    background: var(--card-bg);
+    border: 1px solid var(--border-color);
+    border-radius: 8px;
+    padding: 12px 16px;
+    border-left: 5px solid var(--of-blue);
+}
+
+.of-fin-tile--receivable {
+    border-left-color: var(--of-green);
+}
+
+.of-fin-tile--payable {
+    border-left-color: var(--of-red);
+}
+
+.of-fin-tile--jobber {
+    border-left-color: var(--of-purple);
+}
+
+.of-fin-tile__label {
+    font-size: 11px;
+    font-weight: 600;
+    color: var(--text-muted);
+    display: block;
+    margin-bottom: 4px;
+}
+
+.of-fin-tile__num {
+    font-size: 22px;
+    font-weight: 700;
+    font-variant-numeric: tabular-nums;
+}
+
+.of-fin-tile__sub {
+    font-size: 11px;
+    color: var(--text-muted);
+    margin-top: 4px;
+}
+
+/* ── Settlement strip (Accounts sub-tabs) ─────────────────────
+   One compact line. Replaces three KPI cards per sub-tab that just
+   restated the tiles above them. */
+.of-settle {
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    flex-wrap: wrap;
+    background: var(--card-bg);
+    border: 1px solid var(--border-color);
+    border-left: 4px solid var(--of-blue);
+    border-radius: 6px;
+    padding: 8px 14px;
+    margin-bottom: 10px;
+    font-size: 12px;
+}
+
+.of-settle--receivable { border-left-color: var(--of-green); }
+.of-settle--payable    { border-left-color: var(--of-red); }
+.of-settle--jobber     { border-left-color: var(--of-purple); }
+
+.of-settle__title {
+    font-weight: 600;
+    color: var(--heading-color);
+    white-space: nowrap;
+}
+
+.of-settle__stat {
+    color: var(--text-muted);
+    white-space: nowrap;
+}
+
+.of-settle__stat b {
+    font-size: 15px;
+    font-variant-numeric: tabular-nums;
+    color: var(--text-color);
+}
+
+.of-settle--receivable .of-settle__stat b { color: var(--of-green); }
+.of-settle--payable    .of-settle__stat b { color: var(--of-info); }
+.of-settle--jobber     .of-settle__stat b { color: var(--of-purple); }
+
+/* The bar takes the slack, so the row never leaves a dead gap */
+.of-settle__bar {
+    flex: 1 1 90px;
+    min-width: 70px;
+}
+
+.of-settle__bar .of-bar {
+    display: block;
+    margin: 0;
+    height: 6px;
+}
+
+.of-settle__bar .of-bar__fill {
+    display: block;
+}
+
+.of-settle__pct {
+    font-weight: 700;
+    color: var(--text-muted);
+    font-variant-numeric: tabular-nums;
+    white-space: nowrap;
+}
+
+.of-settle__open {
+    font-weight: 600;
+    color: var(--of-green);
+    white-space: nowrap;
+}
+
+.of-settle__open.is-open {
+    color: var(--of-red);
+}
+
+.of-settle__docs {
+    font-size: 11px;
+    color: var(--text-light);
+    white-space: nowrap;
+    margin-left: auto;
+}
+
+/* ── Tabs ────────────────────────────────────────────────────── */
+.of-tabs {
+    display: flex;
+    gap: 4px;
+    border-bottom: 1px solid var(--border-color);
+    margin-bottom: 10px;
+    flex-wrap: wrap;
+}
+
+.of-tab {
+    border: none;
+    background: none;
+    cursor: pointer;
+    padding: 9px 14px;
+    font-size: 13px;
+    font-weight: 500;
+    color: var(--text-muted);
+    border-bottom: 2px solid transparent;
+    display: inline-flex;
+    align-items: center;
+    gap: 7px;
+}
+
+.of-tab:hover {
+    color: var(--text-color);
+}
+
+.of-tab.is-active {
+    color: var(--of-blue);
+    border-bottom-color: var(--of-blue);
+    font-weight: 600;
+}
+
+.of-tab__badge {
+    background: var(--of-red);
+    color: #fff;
+    border-radius: 10px;
+    font-size: 10px;
+    font-weight: 700;
+    padding: 1px 6px;
+    line-height: 1.5;
+}
+
+/* ── Toolbar ─────────────────────────────────────────────────── */
+.of-toolbar {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-wrap: wrap;
+    margin-bottom: 8px;
+}
+
+.of-search {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    height: 30px;
+    padding: 0 9px;
+    border: 1px solid var(--border-color);
+    border-radius: 4px;
+    background: var(--card-bg);
+}
+
+.of-search:focus-within {
+    border-color: var(--of-blue);
+    box-shadow: 0 0 0 2px rgba(52, 152, 219, .18);
+}
+
+.of-search input {
+    border: none;
+    outline: none;
+    background: none;
+    color: var(--text-color);
+    font-size: 12px;
+    width: 230px;
+}
+
+.of-select {
+    height: 30px;
+    border: 1px solid var(--border-color);
+    border-radius: 4px;
+    background: var(--card-bg);
+    color: var(--text-color);
+    font-size: 12px;
+    padding: 0 8px;
+}
+
+.of-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    height: 28px;
+    padding: 0 10px;
+    font-size: 11px;
+    font-weight: 600;
+    border-radius: 4px;
+    cursor: pointer;
+    white-space: nowrap;
+    border: 1px solid var(--border-color);
+    background: var(--control-bg);
+    color: var(--text-color);
+}
+
+.of-btn:hover {
+    background: var(--fg-hover-color, var(--subtle-fg));
+}
+
+.of-btn--sm {
+    height: 24px;
+    padding: 0 8px;
+    font-size: 11px;
+}
+
+.of-btn--primary {
+    background: var(--of-blue);
+    border-color: var(--of-blue-d);
+    color: #fff !important;
+}
+
+.of-btn--primary:hover {
+    background: var(--of-blue-d);
+    color: #fff !important;
+}
+
+.of-btn--success {
+    background: var(--of-green);
+    border-color: #1e7e34;
+    color: #fff !important;
+}
+
+.of-btn--success:hover {
+    background: #218838;
+    color: #fff !important;
+}
+
+.of-btn--warning {
+    background: var(--of-orange);
+    border-color: #d39e00;
+    color: #fff !important;
+}
+
+.of-btn--warning:hover {
+    background: #e0a800;
+    color: #fff !important;
+}
+
+.of-btn--info {
+    background: var(--of-info);
+    border-color: #117a8b;
+    color: #fff !important;
+}
+
+.of-btn--info:hover {
+    background: #138496;
+    color: #fff !important;
+}
+
+.of-btn-disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+}
+
+.of-spacer {
+    flex: 1 1 auto;
+}
+
+.of-count {
+    font-size: 11px;
+    color: var(--text-muted);
+}
+
+/* ── Stage Filter Bar ────────────────────────────────────────── */
+.of-stage-bar {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    flex-wrap: wrap;
+    margin-bottom: 10px;
+    background: var(--card-bg);
+    padding: 5px 10px;
+    border-radius: 6px;
+    border: 1px solid var(--border-color);
+}
+
+.of-stage-bar__label {
+    font-size: 11px;
+    font-weight: 600;
+    color: var(--text-muted);
+    margin-right: 4px;
+}
+
+.of-stage-btn {
+    border: 1px solid var(--border-color);
+    background: var(--card-bg);
+    color: var(--text-color);
+    font-size: 11px;
+    font-weight: 500;
+    padding: 3px 9px;
+    border-radius: 12px;
+    cursor: pointer;
+    transition: all 0.15s;
+}
+
+.of-stage-btn:hover {
+    background: var(--subtle-fg);
+}
+
+.of-stage-btn.is-active {
+    background: var(--of-blue);
+    color: #fff;
+    border-color: var(--of-blue-d);
+    font-weight: 600;
+}
+
+/* Live count on each stage button */
+.of-stage-count {
+    display: inline-block;
+    min-width: 17px;
+    margin-left: 5px;
+    padding: 0 5px;
+    border-radius: 9px;
+    background: var(--subtle-fg);
+    color: var(--text-muted);
+    font-size: 10px;
+    font-weight: 700;
+    font-variant-numeric: tabular-nums;
+    line-height: 16px;
+    text-align: center;
+}
+
+.of-stage-btn.is-active .of-stage-count {
+    background: rgba(255, 255, 255, .25);
+    color: #fff;
+}
+
+/* A stage with nothing in it stays clickable but stops competing for attention */
+.of-stage-btn.is-empty {
+    opacity: .5;
+}
+
+.of-stage-btn.is-empty:hover {
+    opacity: 1;
+}
+
+.of-stage-btn--bill.is-active {
+    background: var(--of-gold);
+    border-color: #b45309;
+}
+
+.of-stage-btn--draft.is-active {
+    background: var(--of-orange);
+    border-color: #c65102;
+}
+
+.of-stage-btn--dn.is-active {
+    background: var(--of-info);
+    border-color: #0056b3;
+}
+
+.of-stage-btn--rcpt.is-active {
+    background: var(--of-green);
+    border-color: #1e7e34;
+}
+
+.of-stage-btn--po.is-active {
+    background: var(--of-amber);
+    border-color: #d39e00;
+}
+
+.of-stage-btn--new.is-active {
+    background: var(--of-purple);
+    border-color: #52279b;
+}
+
+.of-stage-btn--due.is-active {
+    background: var(--of-red);
+    border-color: #bd2130;
+}
+
+.of-stage-btn--jw.is-active {
+    background: var(--of-info);
+    border-color: #0056b3;
+}
+
+.of-stage-btn--emb.is-active {
+    background: var(--of-pink);
+    border-color: #c91a7d;
+}
+
+/* ── Card + table ────────────────────────────────────────────── */
+.of-card {
+    background: var(--card-bg);
+    border: 1px solid var(--border-color);
+    border-radius: 8px;
+    overflow: hidden;
+    margin-bottom: 10px;
+}
+
+.of-card__head {
+    padding: 8px 14px;
+    border-bottom: 1px solid var(--border-color);
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--heading-color);
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.of-card__head--toggle:hover {
+    background: var(--fg-hover-color, var(--subtle-fg));
+}
+
+.of-card__head small {
+    font-weight: 400;
+    color: var(--text-muted);
+    font-size: 11px;
+}
+
+.of-scroll {
+    overflow-x: auto;
+}
+
+.of-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 13px;
+}
+
+.of-table th {
+    background: var(--of-blue);
+    color: #fff;
+    font-size: 12px;
+    font-weight: 600;
+    padding: 8px;
+    text-align: center;
+    border: 1px solid var(--of-blue-d);
+    white-space: nowrap;
+}
+
+.of-table td {
+    padding: 7px 8px;
+    text-align: center;
+    vertical-align: middle;
+    border: 1px solid var(--border-color);
+}
+
+.of-table th:first-child,
+.of-table td:first-child {
+    text-align: left;
+}
+
+.of-table tbody tr:hover td {
+    background: var(--subtle-fg);
+}
+
+.of-table tr.of-row-main {
+    cursor: pointer;
+}
+
+.of-table tr.of-row--overdue td {
+    background: rgba(220, 53, 69, 0.03);
+}
+
+.of-table tr.is-highlighted td {
+    background: rgba(52, 152, 219, 0.15) !important;
+    transition: background 0.3s ease;
+}
+
+.of-table a {
+    color: var(--of-info);
+    font-weight: 500;
+    text-decoration: none;
+}
+
+.of-table a:hover {
+    text-decoration: underline;
+}
+
+.of-val {
+    font-weight: 700;
+    font-variant-numeric: tabular-nums;
+}
+
+.of-val--zero {
+    font-weight: 400;
+    color: var(--text-light);
+}
+
+.of-val--pos {
+    color: var(--of-green);
+}
+
+.of-val--info {
+    color: var(--of-info);
+}
+
+.of-val--warn {
+    color: var(--of-orange);
+}
+
+.of-val--bad {
+    color: var(--of-red);
+}
+
+.of-meta {
+    font-size: 11px;
+    color: var(--text-muted);
+}
+
+.of-micro {
+    font-size: 11px;
+    color: var(--text-light);
+}
+
+/* ── Pills ───────────────────────────────────────────────────── */
+.of-pill {
+    display: inline-block;
+    font-size: 11px;
+    font-weight: 600;
+    line-height: 1.4;
+    padding: 3px 10px;
+    border-radius: 12px;
+    color: #fff;
+    white-space: nowrap;
+}
+
+.of-pill--ready {
+    background: var(--of-green);
+}
+
+.of-pill--dn {
+    background: var(--of-info);
+}
+
+.of-pill--done {
+    background: var(--of-teal);
+}
+
+.of-pill--warn {
+    background: var(--of-orange);
+}
+
+.of-pill--wait {
+    background: var(--of-amber);
+}
+
+.of-pill--draft {
+    background: var(--of-orange);
+}
+
+.of-pill--blocked {
+    background: var(--of-red);
+}
+
+.of-pill--planned {
+    background: var(--of-purple);
+}
+
+.of-pill--need-bill {
+    background: var(--of-gold);
+}
+
+.of-pill--new {
+    background: var(--of-purple);
+}
+
+.of-chip {
+    display: inline-block;
+    font-size: 10px;
+    font-weight: 600;
+    padding: 1px 6px;
+    border-radius: 3px;
+    background: var(--of-purple);
+    color: #fff;
+    white-space: nowrap;
+}
+
+.of-chip--bad {
+    background: var(--of-red);
+    color: #fff;
+}
+
+/* ── Progress bar ────────────────────────────────────────────── */
+.of-bar {
+    height: 5px;
+    border-radius: 3px;
+    background: var(--border-color);
+    overflow: hidden;
+    margin-top: 4px;
+    min-width: 60px;
+}
+
+.of-bar__fill {
+    height: 100%;
+    background: var(--of-green);
+}
+
+.of-bar__fill--part {
+    background: var(--of-orange);
+}
+
+.of-bar__fill--none {
+    background: transparent;
+}
+
+/* ── Activity feed ───────────────────────────────────────────── */
+.of-feed {
+    max-height: 240px;
+    overflow-y: auto;
+}
+
+.of-feed__item {
+    display: flex;
+    gap: 10px;
+    align-items: flex-start;
+    padding: 6px 14px;
+    border-bottom: 1px solid var(--border-color);
+    cursor: pointer;
+    transition: background 0.15s ease;
+}
+
+.of-feed__item:hover {
+    background: var(--fg-hover-color, var(--subtle-fg));
+}
+
+.of-feed__item.is-selected {
+    background: rgba(52, 152, 219, .12);
+    border-left: 3px solid var(--of-blue);
+}
+
+.of-feed__item:last-child {
+    border-bottom: none;
+}
+
+.of-feed__item.is-new {
+    background: rgba(52, 152, 219, .06);
+}
+
+.of-feed__icon {
+    width: 26px;
+    height: 26px;
+    border-radius: 50%;
+    flex: none;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 11px;
+    color: #fff;
+    background: var(--of-gray);
+}
+
+.of-feed__body {
+    min-width: 0;
+    flex: 1 1 auto;
+}
+
+.of-feed__title {
+    font-size: 12px;
+    color: var(--text-color);
+}
+
+.of-feed__sub {
+    font-size: 11px;
+    color: var(--text-muted);
+    margin-top: 2px;
+}
+
+.of-feed__time {
+    font-size: 11px;
+    color: var(--text-light);
+    white-space: nowrap;
+}
+
+.of-new-dot {
+    display: inline-block;
+    width: 7px;
+    height: 7px;
+    border-radius: 50%;
+    background: var(--of-red);
+    margin-left: 5px;
+    vertical-align: middle;
+}
+
+/* ── States ──────────────────────────────────────────────────── */
+.of-empty {
+    padding: 18px 16px;
+    text-align: center;
+    color: var(--text-muted);
+    font-size: 12px;
+}
+
+.of-empty .fa {
+    display: block;
+    font-size: 20px;
+    margin-bottom: 8px;
+    opacity: .45;
+}
+
+.of-hidden {
+    display: none !important;
+}
+
+@media (max-width: 768px) {
+    .of-search input {
+        width: 140px;
+    }
+
+    .of-tile__value {
+        font-size: 18px;
+    }
+
+    .of-fin-summary {
+        grid-template-columns: 1fr;
+    }
+}
+
+/* Hide header title area and save vertical space */
+[data-page-route="order-flow"] .page-head {
+    display: none !important;
+}
+
+[data-page-route="order-flow"] .page-body,
+[data-page-route="order-flow"] .layout-main,
+[data-page-route="order-flow"] .layout-main-section,
+[data-page-route="order-flow"] .page-container {
+    padding-top: 0 !important;
+    margin-top: 0 !important;
+}
