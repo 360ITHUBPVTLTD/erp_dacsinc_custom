@@ -530,6 +530,10 @@ frappe.ui.form.on('Lead', {
             frm.page.remove_inner_button('Quotation', 'Create');
         }, 500);
 
+        // The manual "Trigger CRM Report" action now lives on the Lead LIST view
+        // (public/js/lead_list.js), restricted to System Manager. It reports on the
+        // whole pipeline, so it never belonged on an individual lead.
+
         // If the User is editing an existing Lead and Country is set,
         // we need to reload the State options in the background so they are valid.
         if (!frm.location_data) {
