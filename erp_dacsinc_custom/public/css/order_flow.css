@@ -299,13 +299,18 @@
     margin-left: auto;
 }
 
-/* ── Tabs ────────────────────────────────────────────────────── */
 .of-tabs {
     display: flex;
-    gap: 4px;
+    gap: 12px;
     border-bottom: 1px solid var(--border-color);
     margin-bottom: 10px;
-    flex-wrap: wrap;
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    white-space: nowrap;
+    -webkit-overflow-scrolling: touch;
+}
+.of-tabs::-webkit-scrollbar {
+    display: none;
 }
 
 .of-tab {

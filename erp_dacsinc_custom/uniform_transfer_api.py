@@ -23,6 +23,7 @@ def create_embroidery_transfer(source_item, target_item, qty, from_warehouse, wi
     # Create the Stock Entry for Material Transfer
     se = frappe.new_doc("Stock Entry")
     se.purpose = "Material Transfer"
+    se.stock_entry_type = "Material Transfer"
     se.from_warehouse = from_warehouse
     se.to_warehouse = wip_warehouse
     
@@ -64,6 +65,7 @@ def receive_embroidery_transfer(transfer_id, to_warehouse):
     # Create Stock Entry for Repack
     se = frappe.new_doc("Stock Entry")
     se.purpose = "Repack"
+    se.stock_entry_type = "Repack"
     
     # 1. Source row (consume plain item from WIP)
     row_source = se.append("items", {})
@@ -92,17 +94,65 @@ def receive_embroidery_transfer(transfer_id, to_warehouse):
     return True
 
 @frappe.whitelist()
-def get_embroidery_transfers(status=None):
+def get_embroidery_transfers(status=None, search=None, scope=None, **kwargs):
     """
-    Returns the list of Uniform Embroidery Transfers, optionally filtered by status.
+    Returns the list of Uniform Embroidery Transfers, optionally filtered by status and search query.
+    Note: We show all transfers (Sent and Received) even under open scope so the user can track them.
     """
-    filters = {}
+    conditions = []
+    values = {}
+    
     if status:
-        filters["status"] = status
+        conditions.append("status = %(status)s")
+        values["status"] = status
         
-    return frappe.get_all(
-        "Uniform Embroidery Transfer",
-        filters=filters,
-        fields=["name", "source_item", "target_item", "qty", "from_warehouse", "wip_warehouse", "to_warehouse", "status", "date_sent", "date_received", "stock_entry_sent", "stock_entry_received"],
-        order_by="creation desc"
+    if search:
+        conditions.append("(name LIKE %(search)s OR source_item LIKE %(search)s OR target_item LIKE %(search)s)")
+        values["search"] = f"%{search}%"
+        
+    where_clause = f"WHERE {' AND '.join(conditions)}" if conditions else ""
+    
+    return frappe.db.sql(f"""
+        SELECT name, source_item, target_item, qty, from_warehouse, wip_warehouse, 
+               to_warehouse, status, date_sent, date_received, stock_entry_sent, stock_entry_received
+        FROM `tabUniform Embroidery Transfer`
+        {where_clause}
+        ORDER BY creation DESC
+        LIMIT 300
+    """, values, as_dict=1)
+
+@frappe.whitelist()
+def get_item_stock_details(item_code, warehouse):
+    """
+    Returns detailed stock quantities for an item in a specific warehouse,
+    subtracting reserved/allocated stock to compute net unreserved qty.
+    """
+    bin_data = frappe.db.get_value(
+        "Bin", 
+        {"item_code": item_code, "warehouse": warehouse}, 
+        [
+            "actual_qty", 
+            "reserved_qty", 
+            "reserved_qty_for_production", 
+            "reserved_qty_for_sub_contract"
+        ], 
+        as_dict=1
     )
+    if not bin_data:
+        return {
+            "actual_qty": 0.0,
+            "reserved_qty": 0.0,
+            "reserved_qty_for_production": 0.0,
+            "reserved_qty_for_sub_contract": 0.0,
+            "net_available": 0.0
+        }
+    
+    bin_data = {k: float(v) for k, v in bin_data.items()}
+    bin_data["net_available"] = max(
+        0.0, 
+        bin_data["actual_qty"] - 
+        bin_data["reserved_qty"] - 
+        bin_data["reserved_qty_for_production"] - 
+        bin_data["reserved_qty_for_sub_contract"]
+    )
+    return bin_data
