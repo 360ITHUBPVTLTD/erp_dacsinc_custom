@@ -149,13 +149,10 @@ def _from_date(days):
     return add_days(nowdate(), -abs(int(days or 120)))
 
 
-def _add_merchandiser_filter(conditions, params, merchandiser=None):
-    if merchandiser:
-        conditions.append("cust.custom_merchandiser_user = %(merchandiser_user)s")
-        params["merchandiser_user"] = merchandiser
-    elif "Merchandiser User" in frappe.get_roles() and "System Manager" not in frappe.get_roles() and frappe.session.user != "Administrator":
-        conditions.append("cust.custom_merchandiser_user = %(merchandiser_user)s")
-        params["merchandiser_user"] = frappe.session.user
+# NOTE: merchandiser scoping applies ONLY to the SO Approvals tab and is handled
+# inline in get_pending_approvals(). The dashboard tabs (Sales Tracker, Purchase
+# Flow, Job Work & Embroidery, Accounts) are intentionally unscoped, so a
+# Merchandiser User still sees the full downstream picture there.
 
 
 # --------------------------------------------------------------------------
@@ -197,7 +194,6 @@ def get_sales_tracker(days=120, search=None, scope="open", stage_filter=None, me
         conditions.append("(so.name LIKE %(q)s OR so.customer_name LIKE %(q)s OR so.customer LIKE %(q)s)")
         params["q"] = f"%{search}%"
 
-    _add_merchandiser_filter(conditions, params, merchandiser)
 
     orders = frappe.db.sql(f"""
         SELECT so.name, so.customer, so.customer_name, so.transaction_date, so.delivery_date,
@@ -465,12 +461,6 @@ def get_activity(days=21, limit=80, merchandiser=None):
     conditions = ["ev.ts >= %(from_date)s"]
     params = {"from_date": _from_date(days), "limit": int(limit)}
     
-    if merchandiser:
-        conditions.append("cust.custom_merchandiser_user = %(merchandiser_user)s")
-        params["merchandiser_user"] = merchandiser
-    elif "Merchandiser User" in frappe.get_roles() and "System Manager" not in frappe.get_roles() and frappe.session.user != "Administrator":
-        conditions.append("cust.custom_merchandiser_user = %(merchandiser_user)s")
-        params["merchandiser_user"] = frappe.session.user
         
     rows = frappe.db.sql(f"""
         SELECT ev.*, so.customer_name, so.status AS so_status
@@ -508,7 +498,6 @@ def get_purchase_flow(days=120, search=None, scope="open", merchandiser=None):
                               OR poi.item_code LIKE %(q)s)""")
         params["q"] = f"%{search}%"
 
-    _add_merchandiser_filter(conditions, params, merchandiser)
 
     purchase_orders = frappe.db.sql(f"""
         SELECT po.name, po.transaction_date, po.schedule_date, po.status, po.docstatus,
@@ -540,7 +529,6 @@ def get_purchase_flow(days=120, search=None, scope="open", merchandiser=None):
     if search:
         mr_conditions.append("(mr.name LIKE %(q)s OR mri.sales_order LIKE %(q)s OR mri.item_code LIKE %(q)s)")
 
-    _add_merchandiser_filter(mr_conditions, params, merchandiser)
 
     pr_conditions = ["pr.docstatus < 2", "pr.posting_date >= %(from_date)s", "IFNULL(pr.is_subcontracted, 0) = 0"]
     scr_conditions = ["scr.docstatus < 2", "scr.posting_date >= %(from_date)s"]
@@ -556,8 +544,6 @@ def get_purchase_flow(days=120, search=None, scope="open", merchandiser=None):
         pr_conditions.append("(pr.name LIKE %(q)s OR pr.supplier LIKE %(q)s OR sup.supplier_name LIKE %(q)s)")
         scr_conditions.append("(scr.name LIKE %(q)s OR scr.supplier LIKE %(q)s OR sup.supplier_name LIKE %(q)s)")
 
-    _add_merchandiser_filter(pr_conditions, params, merchandiser)
-    _add_merchandiser_filter(scr_conditions, params, merchandiser)
 
     receipts = frappe.db.sql(f"""
         (SELECT 'Purchase Receipt' AS doctype, pr.name, pr.posting_date, pr.status, pr.docstatus,
@@ -656,7 +642,6 @@ def get_jobwork_flow(days=180, search=None, scope="open", merchandiser=None):
                               OR poi.item_code LIKE %(q)s)""")
         params["q"] = f"%{search}%"
 
-    _add_merchandiser_filter(conditions, params, merchandiser)
 
     purchase_orders = frappe.db.sql(f"""
         SELECT po.name, po.transaction_date, po.schedule_date, po.status, po.docstatus,
@@ -702,9 +687,6 @@ def get_jobwork_flow(days=180, search=None, scope="open", merchandiser=None):
         ewo_conditions.append("""(ewo.name LIKE %(q)s OR ewo.purchase_order LIKE %(q)s
                                   OR fp.supplier_name LIKE %(q)s OR pn.supplier_name LIKE %(q)s)""")
 
-    _add_merchandiser_filter(pr_conditions, params, merchandiser)
-    _add_merchandiser_filter(scr_conditions, params, merchandiser)
-    _add_merchandiser_filter(ewo_conditions, params, merchandiser)
 
     receipts = frappe.db.sql(f"""
         (SELECT 'Purchase Receipt' AS doctype, pr.name, pr.posting_date, pr.status, pr.docstatus,
@@ -866,7 +848,6 @@ def get_accounts_flow(days=120, search=None, scope="open", merchandiser=None):
                                  OR cust.customer_name LIKE %(q)s OR sii.sales_order LIKE %(q)s)""")
         params["q"] = f"%{search}%"
 
-    _add_merchandiser_filter(si_conditions, params, merchandiser)
 
     sales_invoices = frappe.db.sql(f"""
         SELECT si.name, si.posting_date, si.due_date, si.status, si.docstatus,
@@ -896,7 +877,6 @@ def get_accounts_flow(days=120, search=None, scope="open", merchandiser=None):
                                  OR sup.supplier_name LIKE %(q)s OR poi.sales_order LIKE %(q)s)""")
         pi_params["q"] = f"%{search}%"
 
-    _add_merchandiser_filter(pi_conditions, pi_params, merchandiser)
 
     purchase_invoices = frappe.db.sql(f"""
         SELECT pi.name, pi.posting_date, pi.due_date, pi.status, pi.docstatus,

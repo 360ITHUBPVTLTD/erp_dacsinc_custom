@@ -76,13 +76,7 @@ class OrderFlow {
                 .then(r => { this.perms = r.message || {}; })
                 .catch(() => { this.perms = {}; })
                 .always(() => {
-                    const can_final = !!(this.perms && this.perms.is_final_approver);
-                    const is_admin = frappe.user_roles.includes("System Manager") || frappe.session.user === "Administrator";
-                    if (can_final || is_admin) {
-                        this.$body.find('#of-merchandiser').show();
-                    } else {
-                        this.$body.find('#of-merchandiser').hide();
-                    }
+                    this.update_merchandiser_visibility();
                     this.switch_tab('approval');
                 });
         });
@@ -108,23 +102,23 @@ class OrderFlow {
                         <span class="of-tab__badge of-hidden" id="of-new-badge-approval">0</span>
                     </button>
                     <button class="of-tab" data-tab="tracker">
-                        <i class="fa fa-list-ul"></i> Sales Tracker &amp; Action Plan
+                        <i class="fa fa-list-ul"></i> Sales Tracker
                         <span class="of-tab__badge of-hidden" id="of-new-badge-tracker">0</span>
                     </button>
                     <button class="of-tab" data-tab="purchase">
-                        <i class="fa fa-shopping-cart"></i> Purchase Flow (MR, PO &amp; Receipts)
+                        <i class="fa fa-shopping-cart"></i> Purchase Flow
                         <span class="of-tab__badge of-hidden" id="of-new-badge-purchase">0</span>
                     </button>
                     <button class="of-tab" data-tab="jobwork">
-                        <i class="fa fa-cogs"></i> Job Work &amp; Embroidery
+                        <i class="fa fa-cogs"></i> Job Work
                         <span class="of-tab__badge of-hidden" id="of-new-badge-jobwork">0</span>
                     </button>
                     <button class="of-tab" data-tab="accounts">
-                        <i class="fa fa-calculator"></i> Accounts (Payables &amp; Receivables)
+                        <i class="fa fa-calculator"></i> Accounts
                         <span class="of-tab__badge of-hidden" id="of-new-badge-accounts">0</span>
                     </button>
                     <button class="of-tab" data-tab="uniform">
-                        <i class="fa fa-random"></i> Uniform Embroidery
+                        <i class="fa fa-random"></i> Embroidery Transfers
                         <span class="of-tab__badge of-hidden" id="of-new-badge-uniform">0</span>
                     </button>
                 </div>
@@ -184,6 +178,7 @@ class OrderFlow {
                 <div id="of-panel-jobwork" class="of-hidden"></div>
                 <div id="of-panel-accounts" class="of-hidden"></div>
                 <div id="of-panel-approval" class="of-hidden"></div>
+                <div id="of-panel-uniform" class="of-hidden"></div>
             </div>
         `);
 
@@ -509,6 +504,46 @@ class OrderFlow {
                 });
             }, __('Enter Rejection Comment'));
         });
+
+        // Uniform Embroidery Receive Click Handler
+        this.$body.on('click', '.of-receive-btn', (e) => {
+            const transfer_id = $(e.currentTarget).data('id');
+            const dialog = new frappe.ui.Dialog({
+                title: __('Receive from Embroidery'),
+                fields: [
+                    {
+                        fieldtype: 'Link',
+                        fieldname: 'to_warehouse',
+                        options: 'Warehouse',
+                        label: __('Destination Warehouse'),
+                        reqd: 1
+                    }
+                ],
+                primary_action_label: __('Receive'),
+                primary_action: (values) => {
+                    dialog.get_primary_btn().attr('disabled', true);
+                    frappe.call({
+                        method: 'erp_dacsinc_custom.uniform_transfer_api.receive_embroidery_transfer',
+                        args: {
+                            transfer_id: transfer_id,
+                            to_warehouse: values.to_warehouse
+                        }
+                    }).then(r => {
+                        dialog.hide();
+                        frappe.show_alert({message: __('Embroidered items received successfully'), color: 'green'});
+                        this.refresh(true);
+                    }).always(() => {
+                        dialog.get_primary_btn().attr('disabled', false);
+                    });
+                }
+            });
+            dialog.show();
+        });
+
+        // Embroidery Transfer Create Click Handler
+        this.$body.on('click', '#of-create-transfer-btn', () => {
+            this.prompt_create_transfer();
+        });
     }
 
     set_stage_filter(stage) {
@@ -520,16 +555,26 @@ class OrderFlow {
         this.refresh(true);
     }
 
+    // The "All Merchandisers" filter belongs to the SO Approvals tab only — the other
+    // tabs deliberately show the full downstream picture, unscoped by merchandiser.
+    update_merchandiser_visibility() {
+        const can_final = !!(this.perms && this.perms.is_final_approver);
+        const is_admin = frappe.user_roles.includes("System Manager") || frappe.session.user === "Administrator";
+        const show = this.active === 'approval' && (can_final || is_admin);
+        this.$body.find('#of-merchandiser').toggle(show);
+    }
+
     switch_tab(tab) {
         if (!tab || tab === this.active) return;
         this.active = tab;
         this.$body.find('.of-tab').removeClass('is-active')
             .filter(`[data-tab="${tab}"]`).addClass('is-active');
-        ['tracker', 'purchase', 'jobwork', 'accounts', 'approval'].forEach(t => {
+        ['tracker', 'purchase', 'jobwork', 'accounts', 'approval', 'uniform'].forEach(t => {
             this.$body.find(`#of-panel-${t}`).toggleClass('of-hidden', t !== tab);
         });
         this.$body.find('#of-stage-bar').toggleClass('of-hidden', tab !== 'tracker');
         this.$body.find('#of-approval-stage').toggle(tab === 'approval');
+        this.update_merchandiser_visibility();
 
         // Dynamic context-aware search placeholder
         const placeholders = {
@@ -537,7 +582,8 @@ class OrderFlow {
             purchase: __('Search Purchase Order #, Supplier, Sales Order, Item…'),
             jobwork: __('Search Job Work #, Supplier, Purchase Order, Sales Order…'),
             accounts: __('Search Invoice #, Customer, Supplier, Sales Order…'),
-            approval: __('Search Sales Order #, Customer…')
+            approval: __('Search Sales Order #, Customer…'),
+            uniform: __('Search transfers…')
         };
         this.$body.find('#of-search').attr('placeholder', placeholders[tab] || __('Search…'));
 
@@ -568,10 +614,13 @@ class OrderFlow {
             purchase: 'erp_dacsinc_custom.order_flow_api.get_purchase_flow',
             jobwork:  'erp_dacsinc_custom.order_flow_api.get_jobwork_flow',
             accounts: 'erp_dacsinc_custom.order_flow_api.get_accounts_flow',
-            approval: 'erp_dacsinc_custom.order_flow_api.get_pending_approvals'
+            approval: 'erp_dacsinc_custom.order_flow_api.get_pending_approvals',
+            uniform:  'erp_dacsinc_custom.uniform_transfer_api.get_embroidery_transfers'
         }[this.active];
 
-        const args = { days: this.days, search: this.search || null, scope: this.scope, merchandiser: this.merchandiser_filter || null, approval_stage: this.approval_stage_filter || null };
+        // merchandiser is an approvals-only filter — never narrow the other tabs with it
+        const merch = this.active === 'approval' ? (this.merchandiser_filter || null) : null;
+        const args = { days: this.days, search: this.search || null, scope: this.scope, merchandiser: merch, approval_stage: this.approval_stage_filter || null };
         if (this.active === 'tracker') {
             args.stage_filter = this.stage_filter;
         }
@@ -589,7 +638,7 @@ class OrderFlow {
         if (this.active === 'tracker') {
             frappe.call({
                 method: 'erp_dacsinc_custom.order_flow_api.get_summary',
-                args: { days: this.days, scope: this.scope, search: this.search || null, merchandiser: this.merchandiser_filter || null, approval_stage: this.approval_stage_filter || null }
+                args: { days: this.days, scope: this.scope, search: this.search || null, approval_stage: this.approval_stage_filter || null }
             }).then(r => {
                 const s = r.message || {};
                 this.render_tracker_summary(s);
@@ -717,7 +766,7 @@ class OrderFlow {
 
         frappe.call({
             method: 'erp_dacsinc_custom.order_flow_api.get_activity',
-            args: { days: this.days, limit: 60, merchandiser: this.merchandiser_filter || null }
+            args: { days: this.days, limit: 60 }
         }).then(r => {
             const rows = r.message || [];
             this.activity_cache = rows;
@@ -855,6 +904,7 @@ class OrderFlow {
             if (this.active === 'jobwork')  html = this.jobwork_html(data);
             if (this.active === 'accounts') html = this.accounts_html(data);
             if (this.active === 'approval') html = this.approval_html(data);
+            if (this.active === 'uniform')  html = this.uniform_html(data);
             panel.html(html);
         } catch (e) {
             console.error("Error painting panel:", this.active, e);
@@ -1983,6 +2033,178 @@ class OrderFlow {
 
         dialog.show();
     }
+
+    uniform_html(transfers) {
+        transfers = transfers || [];
+        
+        const rows_html = transfers.map(t => {
+            const status_badge = t.status === 'Sent' ? 
+                '<span class="of-pill" style="background:#fff3cd; color:#856404; border:1px solid #ffeeba;">Sent (Pending Receipt)</span>' :
+                '<span class="of-pill" style="background:#d4edda; color:#155724; border:1px solid #c3e6cb;">Completed</span>';
+                
+            const action_html = t.status === 'Sent' ? `
+                <button class="of-btn of-btn--success of-receive-btn" data-id="${t.name}">
+                    <i class="fa fa-arrow-down"></i> Receive
+                </button>
+            ` : `<span class="text-muted" style="font-size: 11px;"><i class="fa fa-check"></i> Completed</span>`;
+
+            return `
+                <tr>
+                    <td><a href="/app/uniform-embroidery-transfer/${encodeURIComponent(t.name)}" target="_blank"><b>${of_esc(t.name)}</b></a></td>
+                    <td><a href="/app/item/${encodeURIComponent(t.source_item)}" target="_blank">${of_esc(t.source_item)}</a></td>
+                    <td><a href="/app/item/${encodeURIComponent(t.target_item)}" target="_blank">${of_esc(t.target_item)}</a></td>
+                    <td><b>${t.qty}</b></td>
+                    <td><div style="font-size:11px; color:#555;">${of_esc(t.from_warehouse)} <i class="fa fa-long-arrow-right"></i> ${of_esc(t.wip_warehouse)}</div></td>
+                    <td>${of_date(t.date_sent)}</td>
+                    <td>${t.date_received ? of_date(t.date_received) : '-'}</td>
+                    <td>${status_badge}</td>
+                    <td style="text-align: center;">${action_html}</td>
+                </tr>
+            `;
+        }).join('');
+
+        return `
+            <div class="of-card">
+                <div class="of-card__head" style="padding:12px 16px; border-bottom:1px solid var(--border-color); display:flex; justify-content:space-between; align-items:center;">
+                    <div style="font-size:14px; font-weight:600;"><i class="fa fa-random"></i> Embroidery Stock Transfers</div>
+                    <button class="of-btn of-btn--primary" id="of-create-transfer-btn">
+                        <i class="fa fa-plus"></i> Create Transfer
+                    </button>
+                </div>
+                <div class="of-scroll">
+                    <table class="of-table">
+                        <thead>
+                            <tr>
+                                <th>Transfer ID</th>
+                                <th>Source Item (Plain)</th>
+                                <th>Target Item (Embroidered)</th>
+                                <th>Qty</th>
+                                <th>Route</th>
+                                <th>Date Sent</th>
+                                <th>Date Received</th>
+                                <th>Status</th>
+                                <th style="text-align:center;">Action</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            ${rows_html || `<tr><td colspan="9" class="of-empty"><i class="fa fa-inbox"></i>No transfers found.</td></tr>`}
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        `;
+    }
+
+    prompt_create_transfer() {
+        const dialog = new frappe.ui.Dialog({
+            title: __('Create Embroidery Transfer'),
+            fields: [
+                {
+                    fieldtype: 'Link',
+                    fieldname: 'source_item',
+                    options: 'Item',
+                    label: __('Source Item (Plain)'),
+                    reqd: 1,
+                    onchange: function() {
+                        const source = this.get_value();
+                        const warehouse = dialog.get_value('from_warehouse');
+                        if (source && warehouse) {
+                            fetch_stock_details(source, warehouse);
+                        } else {
+                            dialog.fields_dict.stock_details_html.$wrapper.html('');
+                        }
+                    }
+                },
+                {
+                    fieldtype: 'Link',
+                    fieldname: 'from_warehouse',
+                    options: 'Warehouse',
+                    label: __('From Warehouse'),
+                    reqd: 1,
+                    onchange: function() {
+                        const warehouse = this.get_value();
+                        const source = dialog.get_value('source_item');
+                        if (source && warehouse) {
+                            fetch_stock_details(source, warehouse);
+                        } else {
+                            dialog.fields_dict.stock_details_html.$wrapper.html('');
+                        }
+                    }
+                },
+                {
+                    fieldtype: 'HTML',
+                    fieldname: 'stock_details_html'
+                },
+                {
+                    fieldtype: 'Link',
+                    fieldname: 'target_item',
+                    options: 'Item',
+                    label: __('Target Item (Embroidered)'),
+                    reqd: 1
+                },
+                {
+                    fieldtype: 'Link',
+                    fieldname: 'wip_warehouse',
+                    options: 'Warehouse',
+                    label: __('WIP Warehouse (Embroiderer)'),
+                    reqd: 1
+                },
+                {
+                    fieldtype: 'Float',
+                    fieldname: 'qty',
+                    label: __('Quantity'),
+                    reqd: 1
+                }
+            ],
+            primary_action_label: __('Send to Embroidery'),
+            primary_action: (values) => {
+                dialog.get_primary_btn().attr('disabled', true);
+                frappe.call({
+                    method: 'erp_dacsinc_custom.uniform_transfer_api.create_embroidery_transfer',
+                    args: {
+                        source_item: values.source_item,
+                        target_item: values.target_item,
+                        qty: values.qty,
+                        from_warehouse: values.from_warehouse,
+                        wip_warehouse: values.wip_warehouse
+                    }
+                }).then(r => {
+                    dialog.hide();
+                    frappe.show_alert({message: __('Plain items transferred to embroidery WIP successfully'), color: 'green'});
+                    this.refresh(true);
+                }).always(() => {
+                    dialog.get_primary_btn().attr('disabled', false);
+                });
+            }
+        });
+
+        const fetch_stock_details = (source, warehouse) => {
+            frappe.call({
+                method: 'erp_dacsinc_custom.uniform_transfer_api.get_item_stock_details',
+                args: {
+                    item_code: source,
+                    warehouse: warehouse
+                }
+            }).then(r => {
+                const d = r.message || {};
+                const html = `
+                    <div style="margin-top: 10px; padding: 12px; font-size: 12px; line-height: 1.6; border: 1px solid #d1ecf1; border-radius: 4px; background-color: #f8f9fa; color: #0c5460;">
+                        <strong style="font-size: 13px;">Stock Details for ${frappe.utils.escape_html(source)}:</strong><br>
+                        • Actual Physical Qty: <b>${d.actual_qty}</b><br>
+                        • Reserved for Sales: <b>${d.reserved_qty}</b><br>
+                        • Reserved for Production: <b>${d.reserved_qty_for_production}</b><br>
+                        • Reserved for Subcontract: <b>${d.reserved_qty_for_sub_contract}</b><br>
+                        <div style="border-top: 1px dashed #bee5eb; margin: 8px 0; padding-top: 8px;">
+                            <span style="color: #28a745; font-weight: 700; font-size: 13px;">✔ Fully Available (Unreserved): ${d.net_available}</span>
+                        </div>
+                    </div>
+                `;
+                dialog.fields_dict.stock_details_html.$wrapper.html(html);
+            });
+        };
+
+        dialog.show();
+    }
 }
 
 const OF_ICON = {
@@ -2122,6 +2344,8 @@ function of_settlement_bar(o) {
         <span class="of-settle__docs">${o.docs} ${of_esc(o.doc_label)}${o.docs === 1 ? '' : 's'}</span>
     </div>`;
 }
+
+
 
 function of_empty_row(cols) {
     return `<tr><td colspan="${cols}" class="of-empty"><i class="fa fa-inbox"></i>Nothing here for these filters.</td></tr>`;

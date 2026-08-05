@@ -1,8 +1,7 @@
 {
  "actions": [],
- "allow_rename": 1,
- "autoname": "format:UET-.YYYY.-.#####.",
- "creation": "2026-08-05 14:40:00.000000",
+ "autoname": "autoincrement",
+ "creation": "2026-08-05 14:40:00",
  "doctype": "DocType",
  "engine": "InnoDB",
  "field_order": [
@@ -97,10 +96,11 @@
  "grid_page_length": 50,
  "index_web_pages_for_search": 1,
  "links": [],
- "modified": "2026-08-05 14:40:00.000000",
+ "modified": "2026-08-05 17:10:14.242207",
  "modified_by": "Administrator",
  "module": "Erp Dacsinc Custom",
  "name": "Uniform Embroidery Transfer",
+ "naming_rule": "Autoincrement",
  "owner": "Administrator",
  "permissions": [
   {
