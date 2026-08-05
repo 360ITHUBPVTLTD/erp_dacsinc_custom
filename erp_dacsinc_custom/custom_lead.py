@@ -5804,7 +5804,7 @@ def get_all_time_stats(uid):
     c_to_l = round(contacts_converted * 100.0 / contacts_created, 1) if contacts_created else 0.0
     l_to_o = round(orders_total * 100.0 / leads_created, 1) if leads_created else 0.0
 
-    return {
+    res = {
         "leads_created": leads_created,
         "newly_created_leads": newly_created_leads,
         "converted_leads": converted_leads,
@@ -5823,6 +5823,202 @@ def get_all_time_stats(uid):
         "l_to_o": l_to_o,
         **q_status_counts
     }
+    return res
+
+
+def get_user_stats_by_date_range(uid, start_date=None, end_date=None):
+    # Leads
+    l_p_c = {"usr": uid}
+    l_p_wh = "WHERE docstatus < 2 AND lead_owner = %(usr)s"
+    if start_date and end_date:
+        l_p_wh += " AND DATE(creation) BETWEEN %(sd)s AND %(ed)s"
+        l_p_c["sd"] = start_date; l_p_c["ed"] = end_date
+    leads_created = frappe.db.sql(f"SELECT COUNT(*) FROM `tabLead` {l_p_wh}", l_p_c)[0][0] or 0
+    
+    # Contacts
+    c_p_c = {"usr": uid}
+    c_p_wh = "WHERE docstatus < 2 AND assign_to = %(usr)s"
+    if start_date and end_date:
+        c_p_wh += " AND DATE(creation) BETWEEN %(sd)s AND %(ed)s"
+        c_p_c["sd"] = start_date; c_p_c["ed"] = end_date
+    contacts_created = frappe.db.sql(f"SELECT COUNT(*) FROM `tabBusiness Contacts` {c_p_wh}", c_p_c)[0][0] or 0
+    
+    # Quotations
+    q_p_c = {"usr": uid}
+    q_p_wh = "WHERE docstatus < 2 AND COALESCE(NULLIF(custom_lead_owner, ''), owner) = %(usr)s"
+    if start_date and end_date:
+        q_p_wh += " AND DATE(creation) BETWEEN %(sd)s AND %(ed)s"
+        q_p_c["sd"] = start_date; q_p_c["ed"] = end_date
+    quotations_created = frappe.db.sql(f"SELECT COUNT(*) FROM `tabQuotation` {q_p_wh}", q_p_c)[0][0] or 0
+    
+    # Activities (Completed)
+    al_p = {"usr": uid}
+    al_wh = "WHERE docstatus < 2 AND assigned_to = %(usr)s AND status = 'Completed' AND reference_type = 'Lead'"
+    if start_date and end_date:
+        al_wh += " AND DATE(COALESCE(ends_on, starts_on)) BETWEEN %(sd)s AND %(ed)s"
+        al_p["sd"] = start_date; al_p["ed"] = end_date
+    act_lead = frappe.db.sql(f"SELECT COUNT(*) FROM `tabEvent Activity` {al_wh}", al_p)[0][0] or 0
+    
+    ac_p = {"usr": uid}
+    ac_wh = "WHERE docstatus < 2 AND assigned_to = %(usr)s AND status = 'Completed' AND reference_type = 'Business Contacts'"
+    if start_date and end_date:
+        ac_wh += " AND DATE(COALESCE(ends_on, starts_on)) BETWEEN %(sd)s AND %(ed)s"
+        ac_p["sd"] = start_date; ac_p["ed"] = end_date
+    act_contact = frappe.db.sql(f"SELECT COUNT(*) FROM `tabEvent Activity` {ac_wh}", ac_p)[0][0] or 0
+    
+    # Conversions
+    p_cvd = {"usr": uid}
+    wh_cvd = "WHERE docstatus < 2 AND assign_to = %(usr)s AND " + BC_CONVERTED_COND_SQL
+    if start_date and end_date:
+        wh_cvd += " AND ({d}) BETWEEN %(sd)s AND %(ed)s".format(d=BC_CONVERSION_DATE_SQL)
+        p_cvd["sd"] = start_date; p_cvd["ed"] = end_date
+    contacts_converted = frappe.db.sql(f"SELECT COUNT(*) FROM `tabBusiness Contacts` {wh_cvd}", p_cvd)[0][0] or 0
+    
+    p_ord = {"usr": uid}
+    wh_ord = "WHERE l.docstatus < 2 AND l.lead_owner = %(usr)s AND " + LEAD_ORDER_COND_SQL
+    if start_date and end_date:
+        wh_ord += " AND ({d}) BETWEEN %(sd)s AND %(ed)s".format(d=LEAD_ORDER_CONV_DATE_SQL)
+        p_ord["sd"] = start_date; p_ord["ed"] = end_date
+    orders_total = frappe.db.sql(f"SELECT COUNT(DISTINCT l.name) FROM `tabLead` l {wh_ord}", p_ord)[0][0] or 0
+    
+    c_to_l = round(contacts_converted * 100.0 / contacts_created, 1) if contacts_created else 0.0
+    l_to_o = round(orders_total * 100.0 / leads_created, 1) if leads_created else 0.0
+    
+    return {
+        "leads_created": leads_created,
+        "contacts_created": contacts_created,
+        "quotations_created": quotations_created,
+        "act_done": act_lead + act_contact,
+        "c_to_l": c_to_l,
+        "l_to_o": l_to_o,
+        "contacts_converted": contacts_converted,
+        "orders_converted": orders_total
+    }
+
+
+def get_comparison_matrix_html(uids):
+    if not isinstance(uids, list):
+        uids = [uids]
+        
+    import datetime as _dt
+    import calendar as _cal
+    _today = frappe.utils.getdate(frappe.utils.today())
+    
+    # 1. Fiscal Year (Overall) Dates
+    if _today.month >= 4:
+        fy_start_year = _today.year
+        fy_end_year = _today.year + 1
+    else:
+        fy_start_year = _today.year - 1
+        fy_end_year = _today.year
+    fy_start_str = f"{fy_start_year}-04-01"
+    fy_end_str = f"{fy_end_year}-03-31"
+    
+    # Format labels in dd-mmm-yyyy format
+    fy_start_label = f"01-Apr-{fy_start_year}"
+    fy_end_label = f"31-Mar-{fy_end_year}"
+    
+    # 2. Prev Month Dates
+    first_this_month = _today.replace(day=1)
+    last_prev_month = first_this_month - _dt.timedelta(days=1)
+    first_prev_month = last_prev_month.replace(day=1)
+    prev_month_start = first_prev_month.strftime("%Y-%m-%d")
+    prev_month_end = last_prev_month.strftime("%Y-%m-%d")
+    
+    # 3. This Month Dates
+    this_month_start = _today.replace(day=1).strftime("%Y-%m-%d")
+    this_month_end = _today.strftime("%Y-%m-%d")
+    
+    # 4. Week (Start-Fri) Dates
+    _wday = _today.weekday()
+    week_start = _today - _dt.timedelta(days=_wday)
+    week_friday = week_start + _dt.timedelta(days=4)
+    week_start_str = week_start.strftime("%Y-%m-%d")
+    week_friday_str = week_friday.strftime("%Y-%m-%d")
+    
+    # Helper to sum stats for all users in a period
+    def get_combined_stats(start, end):
+        combined = {
+            "leads_created": 0, "contacts_created": 0, "quotations_created": 0, "act_done": 0,
+            "contacts_converted": 0, "orders_converted": 0
+        }
+        for uid in uids:
+            s = get_user_stats_by_date_range(uid, start, end)
+            for k in combined:
+                combined[k] += s.get(k, 0)
+        # Calculate rates
+        combined["c_to_l"] = round(combined["contacts_converted"] * 100.0 / combined["contacts_created"], 1) if combined["contacts_created"] else 0.0
+        combined["l_to_o"] = round(combined["orders_converted"] * 100.0 / combined["leads_created"], 1) if combined["leads_created"] else 0.0
+        return combined
+
+    overall = get_combined_stats(fy_start_str, fy_end_str)
+    prev_month = get_combined_stats(prev_month_start, prev_month_end)
+    this_month = get_combined_stats(this_month_start, this_month_end)
+    week = get_combined_stats(week_start_str, week_friday_str)
+    
+    # Return HTML table
+    return """
+    <h3 style="margin-top: 25px; margin-bottom: 10px; color: #0f172a; border-bottom: 2px solid #3b82f6; padding-bottom: 5px; font-size: 15px;">
+        📊 CRM Performance Matrix
+    </h3>
+    <div style="overflow-x: auto; margin: 15px 0; border: 1px solid #e2e8f0; border-radius: 8px;">
+        <table style="width: 100%; border-collapse: collapse; font-size: 12px; font-family: sans-serif;">
+            <thead>
+                <tr style="background-color: #0f172a; color: #ffffff;">
+                    <th style="padding: 10px; border: 1px solid #e2e8f0; text-align: left; font-weight: 600;">Metric</th>
+                    <th style="padding: 10px; border: 1px solid #e2e8f0; text-align: center; font-weight: 600;">Overall<br><span style="font-size: 10px; font-weight: normal; color: #cbd5e1;">{fy_start} to {fy_end}</span></th>
+                    <th style="padding: 10px; border: 1px solid #e2e8f0; text-align: center; font-weight: 600;">Prev Month</th>
+                    <th style="padding: 10px; border: 1px solid #e2e8f0; text-align: center; font-weight: 600;">This Month</th>
+                    <th style="padding: 10px; border: 1px solid #e2e8f0; text-align: center; font-weight: 600;">Week (Start-Fri)</th>
+                </tr>
+            </thead>
+            <tbody>
+                <tr>
+                    <td style="padding: 8px 10px; border: 1px solid #e2e8f0; font-weight: 600; color: #334155;">Leads Created</td>
+                    <td style="padding: 8px 10px; border: 1px solid #e2e8f0; text-align: center; color: #334155;"><strong>{o[leads_created]}</strong></td>
+                    <td style="padding: 8px 10px; border: 1px solid #e2e8f0; text-align: center; color: #334155;">{pm[leads_created]}</td>
+                    <td style="padding: 8px 10px; border: 1px solid #e2e8f0; text-align: center; color: #334155;">{tm[leads_created]}</td>
+                    <td style="padding: 8px 10px; border: 1px solid #e2e8f0; text-align: center; color: #334155;">{wk[leads_created]}</td>
+                </tr>
+                <tr>
+                    <td style="padding: 8px 10px; border: 1px solid #e2e8f0; font-weight: 600; color: #334155;">Contacts Created</td>
+                    <td style="padding: 8px 10px; border: 1px solid #e2e8f0; text-align: center; color: #334155;"><strong>{o[contacts_created]}</strong></td>
+                    <td style="padding: 8px 10px; border: 1px solid #e2e8f0; text-align: center; color: #334155;">{pm[contacts_created]}</td>
+                    <td style="padding: 8px 10px; border: 1px solid #e2e8f0; text-align: center; color: #334155;">{tm[contacts_created]}</td>
+                    <td style="padding: 8px 10px; border: 1px solid #e2e8f0; text-align: center; color: #334155;">{wk[contacts_created]}</td>
+                </tr>
+                <tr>
+                    <td style="padding: 8px 10px; border: 1px solid #e2e8f0; font-weight: 600; color: #334155;">Quotations Created</td>
+                    <td style="padding: 8px 10px; border: 1px solid #e2e8f0; text-align: center; color: #334155;"><strong>{o[quotations_created]}</strong></td>
+                    <td style="padding: 8px 10px; border: 1px solid #e2e8f0; text-align: center; color: #334155;">{pm[quotations_created]}</td>
+                    <td style="padding: 8px 10px; border: 1px solid #e2e8f0; text-align: center; color: #334155;">{tm[quotations_created]}</td>
+                    <td style="padding: 8px 10px; border: 1px solid #e2e8f0; text-align: center; color: #334155;">{wk[quotations_created]}</td>
+                </tr>
+                <tr>
+                    <td style="padding: 8px 10px; border: 1px solid #e2e8f0; font-weight: 600; color: #334155;">Activities Completed</td>
+                    <td style="padding: 8px 10px; border: 1px solid #e2e8f0; text-align: center; color: #334155;"><strong>{o[act_done]}</strong></td>
+                    <td style="padding: 8px 10px; border: 1px solid #e2e8f0; text-align: center; color: #334155;">{pm[act_done]}</td>
+                    <td style="padding: 8px 10px; border: 1px solid #e2e8f0; text-align: center; color: #334155;">{tm[act_done]}</td>
+                    <td style="padding: 8px 10px; border: 1px solid #e2e8f0; text-align: center; color: #334155;">{wk[act_done]}</td>
+                </tr>
+                <tr>
+                    <td style="padding: 8px 10px; border: 1px solid #e2e8f0; font-weight: 600; color: #334155;">Contact to Lead</td>
+                    <td style="padding: 8px 10px; border: 1px solid #e2e8f0; text-align: center; color: #334155;"><strong>{o[contacts_converted]}</strong></td>
+                    <td style="padding: 8px 10px; border: 1px solid #e2e8f0; text-align: center; color: #334155;">{pm[contacts_converted]}</td>
+                    <td style="padding: 8px 10px; border: 1px solid #e2e8f0; text-align: center; color: #334155;">{tm[contacts_converted]}</td>
+                    <td style="padding: 8px 10px; border: 1px solid #e2e8f0; text-align: center; color: #334155;">{wk[contacts_converted]}</td>
+                </tr>
+                <tr>
+                    <td style="padding: 8px 10px; border: 1px solid #e2e8f0; font-weight: 600; color: #334155;">Lead to Order</td>
+                    <td style="padding: 8px 10px; border: 1px solid #e2e8f0; text-align: center; color: #334155;"><strong>{o[orders_converted]}</strong></td>
+                    <td style="padding: 8px 10px; border: 1px solid #e2e8f0; text-align: center; color: #334155;">{pm[orders_converted]}</td>
+                    <td style="padding: 8px 10px; border: 1px solid #e2e8f0; text-align: center; color: #334155;">{tm[orders_converted]}</td>
+                    <td style="padding: 8px 10px; border: 1px solid #e2e8f0; text-align: center; color: #334155;">{wk[orders_converted]}</td>
+                </tr>
+            </tbody>
+        </table>
+    </div>
+    """.format(fy_start=fy_start_label, fy_end=fy_end_label, o=overall, pm=prev_month, tm=this_month, wk=week)
 
 
 def get_crm_report_html_template(report_type, is_individual=False, user_name="", stats_data=None):
@@ -5840,7 +6036,7 @@ def get_crm_report_html_template(report_type, is_individual=False, user_name="",
         # Grid 1: Period
         grid_period = """
         <h3 style="margin-top: 25px; margin-bottom: 10px; color: #1e3a8a; border-bottom: 2px solid #3b82f6; padding-bottom: 5px; font-size: 15px;">
-            📅 Current Period Performance ({period_label})
+            📅 Performance ({period_range})
         </h3>
         <div style="margin: 15px 0; display: grid; grid-template-columns: repeat(2, 1fr); gap: 12px;">
             <div style="background-color: #f8fafc; border: 1px solid #e2e8f0; border-radius: 8px; padding: 12px; text-align: center;">
@@ -5865,12 +6061,12 @@ def get_crm_report_html_template(report_type, is_individual=False, user_name="",
             <div style="background-color: #fdf4ff; border: 1px solid #f5d0fe; border-radius: 8px; padding: 12px; text-align: center; grid-column: span 2;">
                 <div style="font-size: 11px; font-weight: 600; color: #86198f; text-transform: uppercase;">Conversion Metrics</div>
                 <div style="font-size: 13px; font-weight: 700; color: #701a75; margin-top: 6px;">
-                    Contact to Lead: {c_conv} ({c_to_l}%) &nbsp;|&nbsp; Lead to Order: {o_conv} ({l_to_o}%)
+                    Contact to Lead: {c_conv} &nbsp;|&nbsp; Lead to Order: {o_conv}
                 </div>
             </div>
         </div>
         """.format(
-            period_label=plabel,
+            period_range=period_range,
             leads=stats_data.get('leads_created', 0),
             new_leads=stats_data.get('newly_created_leads', 0),
             converted_leads=stats_data.get('converted_leads', 0),
@@ -5886,10 +6082,10 @@ def get_crm_report_html_template(report_type, is_individual=False, user_name="",
             o_conv=stats_data.get('orders_converted', 0)
         )
         
-        # Grid 2: Overall / All-Time
+        # Grid 2: Overall
         grid_overall = """
         <h3 style="margin-top: 25px; margin-bottom: 10px; color: #0f172a; border-bottom: 2px solid #94a3b8; padding-bottom: 5px; font-size: 15px;">
-            📊 Overall All-Time Performance
+            📊 Overall All Performance
         </h3>
         <div style="margin: 15px 0; display: grid; grid-template-columns: repeat(2, 1fr); gap: 12px;">
             <div style="background-color: #f1f5f9; border: 1px solid #cbd5e1; border-radius: 8px; padding: 12px; text-align: center;">
@@ -5912,13 +6108,13 @@ def get_crm_report_html_template(report_type, is_individual=False, user_name="",
                 <div style="font-size: 11px; color: #475569; margin-top: 3px;">Lead: {act_lead} | Contact: {act_contact}</div>
             </div>
             <div style="background-color: #fffbeb; border: 1px solid #fef3c7; border-radius: 8px; padding: 12px; text-align: center; grid-column: span 2;">
-                <div style="font-size: 11px; font-weight: 600; color: #b45309; text-transform: uppercase;">Conversion Metrics (All-Time)</div>
+                <div style="font-size: 11px; font-weight: 600; color: #b45309; text-transform: uppercase;">Conversion Metrics</div>
                 <div style="font-size: 13px; font-weight: 700; color: #78350f; margin-top: 6px;">
-                    Contact to Lead: {c_conv} ({c_to_l}%) &nbsp;|&nbsp; Lead to Order: {o_conv} ({l_to_o}%)
+                    Contact to Lead: {c_conv} &nbsp;|&nbsp; Lead to Order: {o_conv}
                 </div>
             </div>
             <div style="background-color: #fffbeb; border: 1px solid #fef3c7; border-radius: 8px; padding: 12px; text-align: center; grid-column: span 2;">
-                <div style="font-size: 11px; font-weight: 600; color: #b45309; text-transform: uppercase;">Quotations Status Tracking (All-Time)</div>
+                <div style="font-size: 11px; font-weight: 600; color: #b45309; text-transform: uppercase;">Quotations Status Tracking</div>
                 <div style="font-size: 15px; font-weight: 700; color: #78350f; margin-top: 6px; display: flex; justify-content: space-around;">
                     <span>Draft: <strong>{draft}</strong></span>
                     <span>Open / Submitted: <strong>{open}</strong></span>
@@ -5942,7 +6138,8 @@ def get_crm_report_html_template(report_type, is_individual=False, user_name="",
             c_conv=overall_stats.get('contacts_converted', 0),
             o_conv=overall_stats.get('orders_converted', 0)
         )
-        stats_html = grid_period + grid_overall
+        comparison_matrix_html = get_comparison_matrix_html(user_email)
+        stats_html = grid_period + comparison_matrix_html + grid_overall
         
     elif not is_individual and stats_data:
         # Admin Overall: render Period Table AND Overall Table separately!
@@ -5995,8 +6192,8 @@ def get_crm_report_html_template(report_type, is_individual=False, user_name="",
                     <span style="font-size: 10px; color: #64748b;">(Lead: {act_lead} | Contact: {act_contact})</span>
                 </td>
                 <td style="padding: 8px 10px; border: 1px solid #e2e8f0; text-align: center; color: #334155;">
-                    <span style="font-size: 11px;">BC&#8594;Lead: <strong>{c_conv} ({c_to_l}%)</strong></span><br>
-                    <span style="font-size: 11px;">Lead&#8594;Order: <strong>{o_conv} ({l_to_o}%)</strong></span>
+                    <span style="font-size: 11px;">BC&#8594;Lead: <strong>{c_conv}</strong></span><br>
+                    <span style="font-size: 11px;">Lead&#8594;Order: <strong>{o_conv}</strong></span>
                 </td>
             </tr>
             """.format(
@@ -6033,8 +6230,8 @@ def get_crm_report_html_template(report_type, is_individual=False, user_name="",
                 <span style="font-size: 10px; color: #0f172a;">(Lead: {act_lead} | Contact: {act_contact})</span>
             </td>
             <td style="padding: 10px; border: 1px solid #e2e8f0; text-align: center; color: #0f172a;">
-                <span style="font-size: 11px;">BC&#8594;Lead: <strong>{c_conv} ({c_to_l}%)</strong></span><br>
-                <span style="font-size: 11px;">Lead&#8594;Order: <strong>{o_conv} ({l_to_o}%)</strong></span>
+                <span style="font-size: 11px;">BC&#8594;Lead: <strong>{c_conv}</strong></span><br>
+                <span style="font-size: 11px;">Lead&#8594;Order: <strong>{o_conv}</strong></span>
             </td>
         </tr>
         """.format(
@@ -6055,7 +6252,7 @@ def get_crm_report_html_template(report_type, is_individual=False, user_name="",
         
         table_period = """
         <h3 style="margin-top: 25px; margin-bottom: 10px; color: #1e3a8a; border-bottom: 2px solid #3b82f6; padding-bottom: 5px; font-size: 15px;">
-            📅 Current Period Performance Summary ({period_label})
+            📅 Performance Summary ({period_range})
         </h3>
         <div style="overflow-x: auto; margin: 15px 0; border: 1px solid #e2e8f0; border-radius: 8px;">
             <table style="width: 100%; border-collapse: collapse; font-size: 12px;">
@@ -6074,7 +6271,7 @@ def get_crm_report_html_template(report_type, is_individual=False, user_name="",
                 </tbody>
             </table>
         </div>
-        """.format(period_label=plabel, rows=rows_period)
+        """.format(period_range=period_range, rows=rows_period)
         
         # 2. Overall Table
         crm_users = frappe.db.sql("""
@@ -6137,8 +6334,8 @@ def get_crm_report_html_template(report_type, is_individual=False, user_name="",
                     <span style="font-size: 10px; color: #64748b;">(Lead: {act_lead} | Contact: {act_contact})</span>
                 </td>
                 <td style="padding: 8px 10px; border: 1px solid #e2e8f0; text-align: center; color: #334155;">
-                    <span style="font-size: 11px;">BC&#8594;Lead: <strong>{c_conv} ({c_to_l}%)</strong></span><br>
-                    <span style="font-size: 11px;">Lead&#8594;Order: <strong>{o_conv} ({l_to_o}%)</strong></span>
+                    <span style="font-size: 11px;">BC&#8594;Lead: <strong>{c_conv}</strong></span><br>
+                    <span style="font-size: 11px;">Lead&#8594;Order: <strong>{o_conv}</strong></span>
                 </td>
                 <td style="padding: 8px 10px; border: 1px solid #e2e8f0; text-align: center; color: #b45309; font-weight: 600;">{draft}</td>
                 <td style="padding: 8px 10px; border: 1px solid #e2e8f0; text-align: center; color: #1e3a8a; font-weight: 600;">{open}</td>
@@ -6179,8 +6376,8 @@ def get_crm_report_html_template(report_type, is_individual=False, user_name="",
                 <span style="font-size: 10px; color: #0f172a;">(Lead: {act_lead} | Contact: {act_contact})</span>
             </td>
             <td style="padding: 10px; border: 1px solid #e2e8f0; text-align: center; color: #0f172a;">
-                <span style="font-size: 11px;">BC&#8594;Lead: <strong>{c_conv} ({c_to_l}%)</strong></span><br>
-                <span style="font-size: 11px;">Lead&#8594;Order: <strong>{o_conv} ({l_to_o}%)</strong></span>
+                <span style="font-size: 11px;">BC&#8594;Lead: <strong>{c_conv}</strong></span><br>
+                <span style="font-size: 11px;">Lead&#8594;Order: <strong>{o_conv}</strong></span>
             </td>
             <td style="padding: 10px; border: 1px solid #e2e8f0; text-align: center; color: #b45309;">{draft}</td>
             <td style="padding: 10px; border: 1px solid #e2e8f0; text-align: center; color: #1e3a8a;">{open}</td>
@@ -6205,7 +6402,7 @@ def get_crm_report_html_template(report_type, is_individual=False, user_name="",
         
         table_overall = """
         <h3 style="margin-top: 25px; margin-bottom: 10px; color: #0f172a; border-bottom: 2px solid #94a3b8; padding-bottom: 5px; font-size: 15px;">
-            📊 Overall All-Time Performance Summary
+            📊 Overall All Performance Summary
         </h3>
         <div style="overflow-x: auto; margin: 15px 0; border: 1px solid #e2e8f0; border-radius: 8px;">
             <table style="width: 100%; border-collapse: collapse; font-size: 12px;">
@@ -6227,7 +6424,9 @@ def get_crm_report_html_template(report_type, is_individual=False, user_name="",
             </table>
         </div>
         """.format(rows=rows_overall)
-        stats_html = table_period + table_overall
+        user_emails = [u["user_id"] for u in crm_users]
+        comparison_matrix_html = get_comparison_matrix_html(user_emails)
+        stats_html = table_period + comparison_matrix_html + table_overall
 
     base_url = frappe.utils.get_url()
     html_template = """<!DOCTYPE html>
