@@ -176,8 +176,8 @@ class WorkflowOverride extends frappe.ui.form.States {
                                         me.frm.reload_doc();
                                     });
                                 }, __('Enter Rejection Comment'));
-                            } else if (d.action === "Approve") {
-                                if (me.frm.doc.workflow_state === "Pending Merchandiser Approval") {
+                            } else if (d.action === "Approve" || (d.action === "Submit for Merchandiser Approval" && frappe.user_roles.includes("Merchandiser User"))) {
+                                if (me.frm.doc.workflow_state === "Draft" || me.frm.doc.workflow_state === "Rejected" || me.frm.doc.workflow_state === "Pending Merchandiser Approval" || me.frm.doc.workflow_state === "Pending Final Approval") {
                                     frappe.call({
                                         method: 'erp_dacsinc_custom.order_flow_api.verify_customer_details',
                                         args: { sales_order: me.frm.doc.name }
@@ -188,188 +188,236 @@ class WorkflowOverride extends frappe.ui.form.States {
                                             return;
                                         }
                                         
-                                        const missing = res.missing || {};
-                                        const is_missing = Object.values(missing).some(v => v === true);
+                                        const address_details = res.address_details || {};
+                                        const contact_details = res.contact_details || {};
                                         
-                                        if (!is_missing) {
-                                            me.apply_workflow_action(d);
-                                        } else {
-                                            const fields = [
-                                                {
-                                                    fieldtype: 'HTML',
-                                                    fieldname: 'notice',
-                                                    options: `
-                                                        <div class="alert alert-warning" style="margin-bottom: 15px;">
-                                                            <i class="fa fa-warning"></i> ${__('Customer {0} is missing required profile details. Fill them below to save to master, or enter a comment to bypass.', [`<b>${res.customer}</b>`])}
-                                                        </div>
-                                                    `
-                                                }
-                                            ];
-                                            
-                                            if (missing.gstin) {
-                                                fields.push({
-                                                    fieldtype: 'Data',
-                                                    fieldname: 'gstin',
-                                                    label: __('GSTIN / UIN')
-                                                });
-                                            }
-                                            if (missing.tax_category) {
-                                                fields.push({
-                                                    fieldtype: 'Link',
-                                                    options: 'Tax Category',
-                                                    fieldname: 'tax_category',
-                                                    label: __('Tax Category')
-                                                });
-                                            }
-                                            if (missing.customer_primary_address) {
-                                                fields.push({
-                                                    fieldtype: 'Section Break',
-                                                    label: __('Create Primary Address')
-                                                });
-                                                fields.push({
-                                                    fieldtype: 'Data',
-                                                    fieldname: 'address_line1',
-                                                    label: __('Address Line 1')
-                                                });
-                                                fields.push({
-                                                    fieldtype: 'Data',
-                                                    fieldname: 'address_line2',
-                                                    label: __('Address Line 2')
-                                                });
-                                                fields.push({
-                                                    fieldtype: 'Data',
-                                                    fieldname: 'city',
-                                                    label: __('City')
-                                                });
-                                                fields.push({
-                                                    fieldtype: 'Data',
-                                                    fieldname: 'state',
-                                                    label: __('State')
-                                                });
-                                                fields.push({
-                                                    fieldtype: 'Link',
-                                                    options: 'Country',
-                                                    fieldname: 'country',
-                                                    label: __('Country'),
-                                                    default: 'India'
-                                                });
-                                                fields.push({
-                                                    fieldtype: 'Data',
-                                                    fieldname: 'pincode',
-                                                    label: __('Pincode')
-                                                });
-                                            }
-                                            if (missing.customer_primary_contact) {
-                                                fields.push({
-                                                    fieldtype: 'Section Break',
-                                                    label: __('Create Primary Contact')
-                                                });
-                                                fields.push({
-                                                    fieldtype: 'Data',
-                                                    fieldname: 'contact_first_name',
-                                                    label: __('First Name')
-                                                });
-                                                fields.push({
-                                                    fieldtype: 'Data',
-                                                    fieldname: 'contact_mobile_no',
-                                                    label: __('Mobile Number')
-                                                });
-                                                fields.push({
-                                                    fieldtype: 'Data',
-                                                    fieldname: 'contact_email',
-                                                    label: __('Email ID')
-                                                });
-                                            }
-                                            
-                                            fields.push({
+                                         const fields = [
+                                            {
+                                                fieldtype: 'HTML',
+                                                fieldname: 'notice',
+                                                options: `
+                                                    <div class="alert alert-warning" style="margin-bottom: 15px;">
+                                                        <i class="fa fa-warning"></i> ${__('Customer {0} details. Fill or correct them below to save to master, or enter a comment to bypass.', [`<b>${res.customer}</b>`])}
+                                                    </div>
+                                                `
+                                            },
+                                            {
+                                                fieldtype: 'Section Break',
+                                                label: __('Customer Profile')
+                                            },
+                                            {
+                                                fieldtype: 'Data',
+                                                fieldname: 'gstin',
+                                                label: __('GSTIN / UIN'),
+                                                default: res.gstin || ''
+                                            },
+                                            {
+                                                fieldtype: 'Column Break'
+                                            },
+                                            {
+                                                fieldtype: 'Link',
+                                                options: 'Tax Category',
+                                                fieldname: 'tax_category',
+                                                label: __('Tax Category'),
+                                                default: res.tax_category || ''
+                                            },
+                                            {
+                                                fieldtype: 'Section Break',
+                                                label: __('Primary Address Details')
+                                            },
+                                            {
+                                                fieldtype: 'Data',
+                                                fieldname: 'address_line1',
+                                                label: __('Address Line 1'),
+                                                default: address_details.address_line1 || ''
+                                            },
+                                            {
+                                                fieldtype: 'Data',
+                                                fieldname: 'address_line2',
+                                                label: __('Address Line 2'),
+                                                default: address_details.address_line2 || ''
+                                            },
+                                            {
+                                                fieldtype: 'Data',
+                                                fieldname: 'city',
+                                                label: __('City'),
+                                                default: address_details.city || ''
+                                            },
+                                            {
+                                                fieldtype: 'Column Break'
+                                            },
+                                            {
+                                                fieldtype: 'Data',
+                                                fieldname: 'state',
+                                                label: __('State'),
+                                                default: address_details.state || ''
+                                            },
+                                            {
+                                                fieldtype: 'Link',
+                                                options: 'Country',
+                                                fieldname: 'country',
+                                                label: __('Country'),
+                                                default: address_details.country || 'India'
+                                            },
+                                            {
+                                                fieldtype: 'Data',
+                                                fieldname: 'pincode',
+                                                label: __('Pincode'),
+                                                default: address_details.pincode || ''
+                                            },
+                                            {
+                                                fieldtype: 'Section Break',
+                                                label: __('Primary Contact Details')
+                                            },
+                                            {
+                                                fieldtype: 'Data',
+                                                fieldname: 'contact_first_name',
+                                                label: __('First Name'),
+                                                default: contact_details.first_name || ''
+                                            },
+                                            {
+                                                fieldtype: 'Column Break'
+                                            },
+                                            {
+                                                fieldtype: 'Data',
+                                                fieldname: 'contact_mobile_no',
+                                                label: __('Mobile Number'),
+                                                default: contact_details.mobile_no || ''
+                                            },
+                                            {
+                                                fieldtype: 'Data',
+                                                fieldname: 'contact_email',
+                                                label: __('Email ID'),
+                                                default: contact_details.email || ''
+                                            },
+                                            {
                                                 fieldtype: 'Section Break',
                                                 label: __('Bypass Option')
-                                            });
-                                            fields.push({
+                                            },
+                                            {
                                                 fieldtype: 'Small Text',
                                                 fieldname: 'bypass_comment',
                                                 label: __('Or Approve with Comment (Will notify in dashboard)'),
                                                 placeholder: __('Enter comment if you wish to bypass validations...')
+                                            }
+                                        ];
+
+                                        if (me.frm.doc.workflow_state === "Pending Final Approval") {
+                                            fields.push({
+                                                fieldtype: 'Section Break',
+                                                label: __('Approval Settings')
                                             });
- 
-                                            const dialog = new frappe.ui.Dialog({
-                                                title: __('Verify Customer Details'),
-                                                fields: fields,
-                                                primary_action_label: __('Save & Approve'),
-                                                primary_action: (values) => {
-                                                    if (values.bypass_comment && values.bypass_comment.trim()) {
-                                                        frappe.call({
-                                                            method: 'erp_dacsinc_custom.order_flow_api.approve_sales_order_with_comment',
-                                                            args: {
-                                                                sales_order: me.frm.doc.name,
-                                                                comment: values.bypass_comment
-                                                            }
-                                                        }).then(() => {
-                                                            dialog.hide();
-                                                            frappe.show_alert({message: __('Sales Order approved with comment successfully'), color: 'green'});
-                                                            me.frm.reload_doc();
-                                                        });
-                                                        return;
-                                                    }
-                                                    
-                                                    let address_data = null;
-                                                    if (missing.customer_primary_address && values.address_line1) {
-                                                        address_data = JSON.stringify({
-                                                            address_line1: values.address_line1,
-                                                            address_line2: values.address_line2,
-                                                            city: values.city,
-                                                            state: values.state,
-                                                            country: values.country,
-                                                            pincode: values.pincode
-                                                        });
-                                                    }
-                                                    let contact_data = null;
-                                                    if (missing.customer_primary_contact && values.contact_first_name) {
-                                                        contact_data = JSON.stringify({
-                                                            first_name: values.contact_first_name,
-                                                            mobile_no: values.contact_mobile_no,
-                                                            email: values.contact_email
-                                                        });
-                                                    }
-                                                    
-                                                    frappe.call({
-                                                        method: 'erp_dacsinc_custom.order_flow_api.save_and_approve_sales_order',
-                                                        args: {
-                                                            sales_order: me.frm.doc.name,
-                                                            gstin: values.gstin || null,
-                                                            tax_category: values.tax_category || null,
-                                                            address_data: address_data,
-                                                            contact_data: contact_data
-                                                        }
-                                                    }).then(() => {
-                                                        dialog.hide();
-                                                        frappe.show_alert({message: __('Customer details updated and Sales Order approved'), color: 'green'});
-                                                        me.frm.reload_doc();
-                                                    });
-                                                },
-                                                secondary_action_label: __('Approve with Comment'),
-                                                secondary_action: () => {
-                                                    const values = dialog.get_values();
-                                                    if (!values || !values.bypass_comment || !values.bypass_comment.trim()) {
-                                                        frappe.msgprint(__('Please enter a bypass comment in the field below first.'));
-                                                        return;
-                                                    }
-                                                    frappe.call({
-                                                        method: 'erp_dacsinc_custom.order_flow_api.approve_sales_order_with_comment',
-                                                        args: {
-                                                            sales_order: me.frm.doc.name,
-                                                            comment: values.bypass_comment
-                                                        }
-                                                    }).then(() => {
-                                                        dialog.hide();
-                                                        frappe.show_alert({message: __('Sales Order approved with comment successfully'), color: 'green'});
-                                                        me.frm.reload_doc();
-                                                    });
-                                                }
+                                            fields.push({
+                                                fieldtype: 'Check',
+                                                fieldname: 'skip_delivery_note',
+                                                label: __('Skip Delivery Note (Direct Billing)'),
+                                                default: me.frm.doc.skip_delivery_note || 0
                                             });
-                                            
-                                            dialog.show();
                                         }
+                                        
+                                         const dialog = new frappe.ui.Dialog({
+                                             title: __('Verify Customer Details'),
+                                             fields: fields,
+                                             primary_action_label: __('Save Details & Approve'),
+                                             primary_action: (values) => {
+                                                 const btn_primary = dialog.get_primary_btn();
+                                                 const btn_secondary = dialog.get_secondary_btn();
+                                                 if (btn_primary) btn_primary.attr("disabled", true).addClass("disabled");
+                                                 if (btn_secondary) btn_secondary.attr("disabled", true).addClass("disabled");
+
+                                                 const enable_buttons = () => {
+                                                     if (btn_primary) btn_primary.attr("disabled", false).removeClass("disabled");
+                                                     if (btn_secondary) btn_secondary.attr("disabled", false).removeClass("disabled");
+                                                 };
+
+                                                 if (values.bypass_comment && values.bypass_comment.trim()) {
+                                                     frappe.call({
+                                                         method: 'erp_dacsinc_custom.order_flow_api.approve_sales_order_with_comment',
+                                                         args: {
+                                                             sales_order: me.frm.doc.name,
+                                                             comment: values.bypass_comment,
+                                                             skip_delivery_note: values.skip_delivery_note
+                                                         },
+                                                         error: enable_buttons
+                                                     }).then(() => {
+                                                         dialog.hide();
+                                                         frappe.show_alert({message: __('Sales Order approved with comment successfully'), color: 'green'});
+                                                         me.frm.reload_doc();
+                                                     });
+                                                     return;
+                                                 }
+                                                 
+                                                 let address_data = null;
+                                                 if (values.address_line1) {
+                                                     address_data = JSON.stringify({
+                                                         address_line1: values.address_line1,
+                                                         address_line2: values.address_line2,
+                                                         city: values.city,
+                                                         state: values.state,
+                                                         country: values.country,
+                                                         pincode: values.pincode
+                                                     });
+                                                 }
+                                                 let contact_data = null;
+                                                 if (values.contact_first_name) {
+                                                     contact_data = JSON.stringify({
+                                                         first_name: values.contact_first_name,
+                                                         mobile_no: values.contact_mobile_no,
+                                                         email: values.contact_email
+                                                     });
+                                                 }
+                                                 
+                                                 frappe.call({
+                                                     method: 'erp_dacsinc_custom.order_flow_api.save_and_approve_sales_order',
+                                                     args: {
+                                                         sales_order: me.frm.doc.name,
+                                                         gstin: values.gstin || null,
+                                                         tax_category: values.tax_category || null,
+                                                         address_data: address_data,
+                                                         contact_data: contact_data,
+                                                         skip_delivery_note: values.skip_delivery_note
+                                                     },
+                                                     error: enable_buttons
+                                                 }).then(() => {
+                                                     dialog.hide();
+                                                     frappe.show_alert({message: __('Customer details updated and Sales Order approved'), color: 'green'});
+                                                     me.frm.reload_doc();
+                                                 });
+                                             },
+                                             secondary_action_label: __('Bypass & Approve'),
+                                             secondary_action: () => {
+                                                 const values = dialog.get_values();
+                                                 if (!values || !values.bypass_comment || !values.bypass_comment.trim()) {
+                                                     frappe.msgprint(__('Please enter a bypass comment in the field below first.'));
+                                                     return;
+                                                 }
+                                                 const btn_primary = dialog.get_primary_btn();
+                                                 const btn_secondary = dialog.get_secondary_btn();
+                                                 if (btn_primary) btn_primary.attr("disabled", true).addClass("disabled");
+                                                 if (btn_secondary) btn_secondary.attr("disabled", true).addClass("disabled");
+
+                                                 const enable_buttons = () => {
+                                                     if (btn_primary) btn_primary.attr("disabled", false).removeClass("disabled");
+                                                     if (btn_secondary) btn_secondary.attr("disabled", false).removeClass("disabled");
+                                                 };
+
+                                                 frappe.call({
+                                                     method: 'erp_dacsinc_custom.order_flow_api.approve_sales_order_with_comment',
+                                                     args: {
+                                                         sales_order: me.frm.doc.name,
+                                                         comment: values.bypass_comment,
+                                                         skip_delivery_note: values.skip_delivery_note
+                                                     },
+                                                     error: enable_buttons
+                                                 }).then(() => {
+                                                     dialog.hide();
+                                                     frappe.show_alert({message: __('Sales Order approved with comment successfully'), color: 'green'});
+                                                     me.frm.reload_doc();
+                                                 });
+                                             }
+                                         });
+                                        
+                                        dialog.show();
                                     });
                                 } else {
                                     me.apply_workflow_action(d);

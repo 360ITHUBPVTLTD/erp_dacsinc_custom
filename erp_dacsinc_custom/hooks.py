@@ -53,7 +53,8 @@ app_include_css = [
 # include js in doctype views
 doctype_js = {
 	"Lead": "public/js/lead.js",
-	"Sales Order": "public/js/sales_order.js"
+	"Sales Order": "public/js/sales_order.js",
+	"Item": "public/js/item.js"
 }
 doctype_list_js = {
 	"Lead": "public/js/lead_list.js"
@@ -131,10 +132,12 @@ doctype_list_js = {
 
 permission_query_conditions = {
     "Sales Order": "erp_dacsinc_custom.custom_script.get_sales_order_permission_query_conditions",
+    "Customer": "erp_dacsinc_custom.custom_script.get_customer_permission_query_conditions",
 }
 
 has_permission = {
     "Sales Order": "erp_dacsinc_custom.custom_script.has_sales_order_permission",
+    "Customer": "erp_dacsinc_custom.custom_script.has_customer_permission",
 }
 
 
@@ -179,7 +182,10 @@ doc_events = {
         # "on_cancel": "erp_dacsinc_custom.custom_script.quotation_on_cancel"
     },
     "Sales Invoice": {
-        "validate": "erp_dacsinc_custom.custom_script.validate_non_zero_rate"
+        "validate": [
+            "erp_dacsinc_custom.custom_script.validate_non_zero_rate",
+            "erp_dacsinc_custom.custom_script.sales_invoice_validate"
+        ]
     },
     "Sales Order": {
         "on_submit": "erp_dacsinc_custom.custom_script.sales_order_on_submit",

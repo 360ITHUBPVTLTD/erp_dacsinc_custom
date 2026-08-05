@@ -9,6 +9,49 @@
 
 frappe.ui.form.on('Sales Order', {
     refresh: function (frm) {
+        // --- Show Who Needs to Approve (Workflow Approver Indicator) ---
+        if (!frm.is_new()) {
+            frappe.call({
+                method: 'erp_dacsinc_custom.order_flow_api.get_so_approvers',
+                args: { sales_order: frm.doc.name }
+            }).then(r => {
+                const info = r.message;
+                if (info) {
+                    let html = '';
+                    if (info.state === 'Pending Merchandiser Approval') {
+                        if (info.merchandiser) {
+                            html = `<div style="font-size: 13px; font-weight: 500; color: #721c24; background-color: #f8d7da; border-color: #f5c6cb; padding: 10px 14px; border-radius: 6px; border: 1px solid; margin-bottom: 15px;">
+                                <i class="fa fa-info-circle"></i> ${__('Pending Merchandiser Approval. (Waiting for Merchandiser Approval: {0})', [info.merchandiser_fullname])}
+                            </div>`;
+                        } else {
+                            html = `<div style="font-size: 13px; font-weight: 500; color: #856404; background-color: #fff3cd; border-color: #ffeeba; padding: 10px 14px; border-radius: 6px; border: 1px solid; margin-bottom: 15px;">
+                                <i class="fa fa-exclamation-triangle"></i> ${__('Pending Merchandiser Approval. (Waiting for Merchandiser Approval - Unassigned)')}
+                            </div>`;
+                        }
+                    } else if (info.state === 'Pending Final Approval') {
+                        const list = info.final_approvers && info.final_approvers.length ? info.final_approvers.join(', ') : __('System Manager');
+                        html = `<div style="font-size: 13px; font-weight: 500; color: #0c5460; background-color: #d1ecf1; border-color: #bee5eb; padding: 10px 14px; border-radius: 6px; border: 1px solid; margin-bottom: 15px;">
+                            <i class="fa fa-info-circle"></i> ${__('Pending Final Approval. Allowed Approvers: {0}', [list])}
+                        </div>`;
+                        
+                        const is_final = info.final_users && info.final_users.includes(frappe.session.user);
+                        const is_admin = frappe.user_roles.includes("System Manager") || frappe.session.user === "Administrator";
+                        if (!is_final && !is_admin) {
+                            if (frm.page.actions_btn_group) {
+                                frm.page.actions_btn_group.hide();
+                            }
+                            frm.page.clear_actions_menu();
+                        }
+                    }
+                    
+                    if (html) {
+                        frm.dashboard.set_headline(html);
+                    } else {
+                        frm.dashboard.clear_headline();
+                    }
+                }
+            });
+        }
 
         // --- Remove unwanted standard "Create" buttons ---
         setTimeout(() => {
@@ -1211,7 +1254,8 @@ function generate_delivery_note_table(frm) {
             const $body = container.find('#dn-table-body');
             const rows  = r.message || [];
             if (!rows.length) {
-                $body.attr('class', 'so-empty so-empty--sm').html('No Delivery Notes yet.');
+                const msg = frm.doc.skip_delivery_note ? 'Delivery Note Skipped (Direct Billing).' : 'No Delivery Notes yet.';
+                $body.attr('class', 'so-empty so-empty--sm').html(msg);
                 return;
             }
             const total_value = rows.reduce((s, dn) => s + flt(dn.grand_total), 0);
