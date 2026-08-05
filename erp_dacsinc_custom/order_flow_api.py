@@ -66,14 +66,18 @@ _EVENT_SQL = """
 
     UNION ALL
 
-    SELECT 'Subcontracting Order', sco.name, poi.sales_order,
+    -- Subcontracting Orders are tracked through their Purchase Order: the event
+    -- carries the PO id, never the SCO id, so nothing in the dashboard links to
+    -- a Subcontracting Order. The doctype label keeps the "job work" signal.
+    SELECT 'Job Work (Subcontract)', sco.purchase_order, poi.sales_order,
            sco.modified, sco.creation, sco.status, sco.docstatus, sco.owner,
            sco.supplier, sup.supplier_name
     FROM `tabSubcontracting Order` sco
     JOIN `tabPurchase Order Item` poi ON poi.parent = sco.purchase_order
     LEFT JOIN `tabSupplier` sup ON sup.name = sco.supplier
     WHERE poi.sales_order IS NOT NULL AND poi.sales_order != '' AND sco.docstatus < 2
-    GROUP BY sco.name, poi.sales_order, sco.modified, sco.creation, sco.status, sco.docstatus, sco.owner, sco.supplier, sup.supplier_name
+      AND sco.purchase_order IS NOT NULL AND sco.purchase_order != ''
+    GROUP BY sco.purchase_order, poi.sales_order, sco.modified, sco.creation, sco.status, sco.docstatus, sco.owner, sco.supplier, sup.supplier_name
 
     UNION ALL
 
@@ -133,14 +137,6 @@ _EVENT_SQL = """
     LEFT JOIN `tabSupplier` sup ON sup.name = pi.supplier
     WHERE poi.sales_order IS NOT NULL AND poi.sales_order != '' AND pi.docstatus < 2
     GROUP BY pi.name, poi.sales_order, pi.modified, pi.creation, pi.status, pi.docstatus, pi.owner, pi.supplier, sup.supplier_name
-
-    UNION ALL
-
-    SELECT 'Comment', c.name, c.reference_name,
-           c.modified, c.creation, 'Commented', 0, c.owner,
-           NULL, NULL
-    FROM `tabComment` c
-    WHERE c.reference_doctype = 'Sales Order' AND c.comment_type = 'Comment'
 """
 
 
@@ -153,9 +149,12 @@ def _from_date(days):
     return add_days(nowdate(), -abs(int(days or 120)))
 
 
-def _add_merchandiser_filter(conditions, params):
-    if "Merchandiser User" in frappe.get_roles() and "System Manager" not in frappe.get_roles() and frappe.session.user != "Administrator":
-        conditions.append("(cust.custom_merchandiser_user IS NULL OR cust.custom_merchandiser_user = '' OR cust.custom_merchandiser_user = %(merchandiser_user)s)")
+def _add_merchandiser_filter(conditions, params, merchandiser=None):
+    if merchandiser:
+        conditions.append("cust.custom_merchandiser_user = %(merchandiser_user)s")
+        params["merchandiser_user"] = merchandiser
+    elif "Merchandiser User" in frappe.get_roles() and "System Manager" not in frappe.get_roles() and frappe.session.user != "Administrator":
+        conditions.append("cust.custom_merchandiser_user = %(merchandiser_user)s")
         params["merchandiser_user"] = frappe.session.user
 
 
@@ -164,15 +163,25 @@ def _add_merchandiser_filter(conditions, params):
 # --------------------------------------------------------------------------
 
 @frappe.whitelist()
-def get_sales_tracker(days=120, search=None, scope="open", stage_filter=None):
+def get_sales_tracker(days=120, search=None, scope="open", stage_filter=None, merchandiser=None, approval_stage=None):
     """
     Sales Orders ordered by most recent downstream activity, with exact stage & next action.
     """
     _guard()
     from_date = _from_date(days)
 
-    conditions = ["so.docstatus = 1", "so.transaction_date >= %(from_date)s"]
+    if approval_stage in ("Draft", "Pending Merchandiser Approval", "Pending Final Approval", "Rejected"):
+        conditions = ["so.docstatus = 0", "so.transaction_date >= %(from_date)s"]
+    else:
+        conditions = ["so.docstatus = 1", "so.transaction_date >= %(from_date)s"]
     params = {"from_date": from_date}
+
+    if approval_stage:
+        if approval_stage == "Draft":
+            conditions.append("(so.workflow_state = 'Draft' OR so.workflow_state IS NULL OR so.workflow_state = '')")
+        else:
+            conditions.append("so.workflow_state = %(approval_stage)s")
+            params["approval_stage"] = approval_stage
 
     if stage_filter == "completed":
         # Force completed orders to show even under 'open' scope
@@ -188,7 +197,7 @@ def get_sales_tracker(days=120, search=None, scope="open", stage_filter=None):
         conditions.append("(so.name LIKE %(q)s OR so.customer_name LIKE %(q)s OR so.customer LIKE %(q)s)")
         params["q"] = f"%{search}%"
 
-    _add_merchandiser_filter(conditions, params)
+    _add_merchandiser_filter(conditions, params, merchandiser)
 
     orders = frappe.db.sql(f"""
         SELECT so.name, so.customer, so.customer_name, so.transaction_date, so.delivery_date,
@@ -252,7 +261,8 @@ def get_sales_tracker(days=120, search=None, scope="open", stage_filter=None):
         elif dt == "Material Request":
             if ds == 1 and ev.name not in row["mrs"]:
                 row["mrs"].append(ev.name)
-        elif dt == "Subcontracting Order":
+        elif dt == "Job Work (Subcontract)":
+            # ev.name is the Purchase Order, not the Subcontracting Order.
             if ds == 1 and ev.name not in row["jobworks"]:
                 row["jobworks"].append(ev.name)
         elif dt == "Embroidery Work Order":
@@ -449,17 +459,28 @@ def _compute_stage_info(order):
 
 
 @frappe.whitelist()
-def get_activity(days=21, limit=80):
+def get_activity(days=21, limit=80, merchandiser=None):
     """The notification stream: newest downstream events across all Sales Orders."""
     _guard()
+    conditions = ["ev.ts >= %(from_date)s"]
+    params = {"from_date": _from_date(days), "limit": int(limit)}
+    
+    if merchandiser:
+        conditions.append("cust.custom_merchandiser_user = %(merchandiser_user)s")
+        params["merchandiser_user"] = merchandiser
+    elif "Merchandiser User" in frappe.get_roles() and "System Manager" not in frappe.get_roles() and frappe.session.user != "Administrator":
+        conditions.append("cust.custom_merchandiser_user = %(merchandiser_user)s")
+        params["merchandiser_user"] = frappe.session.user
+        
     rows = frappe.db.sql(f"""
         SELECT ev.*, so.customer_name, so.status AS so_status
         FROM ({_EVENT_SQL}) ev
         LEFT JOIN `tabSales Order` so ON so.name = ev.sales_order
-        WHERE ev.ts >= %(from_date)s
+        LEFT JOIN `tabCustomer` cust ON cust.name = so.customer
+        WHERE {' AND '.join(conditions)}
         ORDER BY ev.ts DESC
         LIMIT %(limit)s
-    """, {"from_date": _from_date(days), "limit": int(limit)}, as_dict=1)
+    """, params, as_dict=1)
     return rows
 
 
@@ -468,7 +489,7 @@ def get_activity(days=21, limit=80):
 # --------------------------------------------------------------------------
 
 @frappe.whitelist()
-def get_purchase_flow(days=120, search=None, scope="open"):
+def get_purchase_flow(days=120, search=None, scope="open", merchandiser=None):
     """Purchase Orders with their receipt progress, tied back to the Sales Order."""
     _guard()
     conditions = ["po.docstatus < 2", "po.transaction_date >= %(from_date)s", "IFNULL(po.is_subcontracted, 0) = 0"]
@@ -487,7 +508,7 @@ def get_purchase_flow(days=120, search=None, scope="open"):
                               OR poi.item_code LIKE %(q)s)""")
         params["q"] = f"%{search}%"
 
-    _add_merchandiser_filter(conditions, params)
+    _add_merchandiser_filter(conditions, params, merchandiser)
 
     purchase_orders = frappe.db.sql(f"""
         SELECT po.name, po.transaction_date, po.schedule_date, po.status, po.docstatus,
@@ -519,7 +540,7 @@ def get_purchase_flow(days=120, search=None, scope="open"):
     if search:
         mr_conditions.append("(mr.name LIKE %(q)s OR mri.sales_order LIKE %(q)s OR mri.item_code LIKE %(q)s)")
 
-    _add_merchandiser_filter(mr_conditions, params)
+    _add_merchandiser_filter(mr_conditions, params, merchandiser)
 
     pr_conditions = ["pr.docstatus < 2", "pr.posting_date >= %(from_date)s", "IFNULL(pr.is_subcontracted, 0) = 0"]
     scr_conditions = ["scr.docstatus < 2", "scr.posting_date >= %(from_date)s"]
@@ -535,8 +556,8 @@ def get_purchase_flow(days=120, search=None, scope="open"):
         pr_conditions.append("(pr.name LIKE %(q)s OR pr.supplier LIKE %(q)s OR sup.supplier_name LIKE %(q)s)")
         scr_conditions.append("(scr.name LIKE %(q)s OR scr.supplier LIKE %(q)s OR sup.supplier_name LIKE %(q)s)")
 
-    _add_merchandiser_filter(pr_conditions, params)
-    _add_merchandiser_filter(scr_conditions, params)
+    _add_merchandiser_filter(pr_conditions, params, merchandiser)
+    _add_merchandiser_filter(scr_conditions, params, merchandiser)
 
     receipts = frappe.db.sql(f"""
         (SELECT 'Purchase Receipt' AS doctype, pr.name, pr.posting_date, pr.status, pr.docstatus,
@@ -616,7 +637,7 @@ def get_purchase_flow(days=120, search=None, scope="open"):
 # --------------------------------------------------------------------------
 
 @frappe.whitelist()
-def get_jobwork_flow(days=180, search=None, scope="open"):
+def get_jobwork_flow(days=180, search=None, scope="open", merchandiser=None):
     """Subcontracting/Job Work POs with their receipt progress, tied back to the Sales Order."""
     _guard()
     conditions = ["po.docstatus < 2", "po.transaction_date >= %(from_date)s", "po.is_subcontracted = 1"]
@@ -635,7 +656,7 @@ def get_jobwork_flow(days=180, search=None, scope="open"):
                               OR poi.item_code LIKE %(q)s)""")
         params["q"] = f"%{search}%"
 
-    _add_merchandiser_filter(conditions, params)
+    _add_merchandiser_filter(conditions, params, merchandiser)
 
     purchase_orders = frappe.db.sql(f"""
         SELECT po.name, po.transaction_date, po.schedule_date, po.status, po.docstatus,
@@ -681,9 +702,9 @@ def get_jobwork_flow(days=180, search=None, scope="open"):
         ewo_conditions.append("""(ewo.name LIKE %(q)s OR ewo.purchase_order LIKE %(q)s
                                   OR fp.supplier_name LIKE %(q)s OR pn.supplier_name LIKE %(q)s)""")
 
-    _add_merchandiser_filter(pr_conditions, params)
-    _add_merchandiser_filter(scr_conditions, params)
-    _add_merchandiser_filter(ewo_conditions, params)
+    _add_merchandiser_filter(pr_conditions, params, merchandiser)
+    _add_merchandiser_filter(scr_conditions, params, merchandiser)
+    _add_merchandiser_filter(ewo_conditions, params, merchandiser)
 
     receipts = frappe.db.sql(f"""
         (SELECT 'Purchase Receipt' AS doctype, pr.name, pr.posting_date, pr.status, pr.docstatus,
@@ -757,7 +778,7 @@ def get_jobwork_flow(days=180, search=None, scope="open"):
 # --------------------------------------------------------------------------
 
 @frappe.whitelist()
-def get_summary(days=120, scope="open", search=None):
+def get_summary(days=120, scope="open", search=None, merchandiser=None, approval_stage=None):
     """
     Headline stage counters for Number Cards on the Order Flow page.
     """
@@ -765,7 +786,7 @@ def get_summary(days=120, scope="open", search=None):
     # To compute accurate summary counts for all stages (including completed ones),
     # we override "open" scope to "all". "mine" scope is preserved to only count the user's orders.
     summary_scope = "all" if scope == "open" else scope
-    orders_all = get_sales_tracker(days=days, scope=summary_scope, search=search)
+    orders_all = get_sales_tracker(days=days, scope=summary_scope, search=search, merchandiser=merchandiser, approval_stage=approval_stage)
 
     open_orders = 0
     completed = 0
@@ -826,7 +847,7 @@ def get_summary(days=120, scope="open", search=None):
 # --------------------------------------------------------------------------
 
 @frappe.whitelist()
-def get_accounts_flow(days=120, search=None, scope="open"):
+def get_accounts_flow(days=120, search=None, scope="open", merchandiser=None):
     """
     Financial summary & invoices split into Receivables, Supplier Payables, and Jobber Payables (custom_is_jobber = 1).
     """
@@ -845,7 +866,7 @@ def get_accounts_flow(days=120, search=None, scope="open"):
                                  OR cust.customer_name LIKE %(q)s OR sii.sales_order LIKE %(q)s)""")
         params["q"] = f"%{search}%"
 
-    _add_merchandiser_filter(si_conditions, params)
+    _add_merchandiser_filter(si_conditions, params, merchandiser)
 
     sales_invoices = frappe.db.sql(f"""
         SELECT si.name, si.posting_date, si.due_date, si.status, si.docstatus,
@@ -875,7 +896,7 @@ def get_accounts_flow(days=120, search=None, scope="open"):
                                  OR sup.supplier_name LIKE %(q)s OR poi.sales_order LIKE %(q)s)""")
         pi_params["q"] = f"%{search}%"
 
-    _add_merchandiser_filter(pi_conditions, pi_params)
+    _add_merchandiser_filter(pi_conditions, pi_params, merchandiser)
 
     purchase_invoices = frappe.db.sql(f"""
         SELECT pi.name, pi.posting_date, pi.due_date, pi.status, pi.docstatus,
@@ -931,37 +952,106 @@ def get_accounts_flow(days=120, search=None, scope="open"):
 
 
 @frappe.whitelist()
-def get_pending_approvals(search=None):
+def get_approval_permissions():
+    """
+    What the current user is allowed to see on the SO Approval tab.
+
+    The "Pending Final Approval" sub-tab is only for the users listed in
+    Admin Settings > sales_order_final_approval (plus System Manager /
+    Administrator). Everyone else should not even see the tab, let alone the
+    bulk-approve controls inside it.
+    """
+    _guard()
+
+    roles = frappe.get_roles()
+    is_admin = "System Manager" in roles or frappe.session.user == "Administrator"
+
+    final_users = []
+    try:
+        settings = frappe.get_doc("Admin Settings")
+        final_users = [d.user for d in (settings.get("sales_order_final_approval") or []) if d.user]
+    except Exception:
+        frappe.log_error(title="Order Flow: could not read final approvers",
+                         message=frappe.get_traceback())
+
+    return {
+        "user": frappe.session.user,
+        "is_admin": is_admin,
+        "is_merchandiser": "Merchandiser User" in roles,
+        # Admins keep access so the workflow is never unadministrable.
+        "is_final_approver": bool(is_admin or frappe.session.user in final_users),
+        "final_approvers": final_users,
+    }
+
+
+@frappe.whitelist()
+def get_pending_approvals(search=None, merchandiser=None, approval_stage=None):
     _guard()
     setup_sales_order_workflow()
     
     conditions = ["so.docstatus = 0"]
     params = {}
     
-    conditions.append("(so.workflow_state in ('Draft', 'Pending Merchandiser Approval', 'Pending Final Approval') or so.workflow_state is null or so.workflow_state = '')")
+    conditions.append("(so.workflow_state in ('Draft', 'Pending Merchandiser Approval', 'Pending Final Approval', 'Rejected') or so.workflow_state is null or so.workflow_state = '')")
     
-    is_merchandiser = "Merchandiser User" in frappe.get_roles() and "System Manager" not in frappe.get_roles() and frappe.session.user != "Administrator"
-    if is_merchandiser:
-        conditions.append("""(cust.custom_merchandiser_user IS NULL 
-                            OR cust.custom_merchandiser_user = '' 
-                            OR cust.custom_merchandiser_user = %(me)s)""")
-        params["me"] = frappe.session.user
+    if approval_stage:
+        if approval_stage == "Draft":
+            conditions.append("(so.workflow_state = 'Draft' OR so.workflow_state IS NULL OR so.workflow_state = '')")
+        else:
+            conditions.append("so.workflow_state = %(approval_stage)s")
+            params["approval_stage"] = approval_stage
+
+    settings = frappe.get_single("Admin Settings")
+    final_users = [d.user for d in settings.sales_order_final_approval or []]
+    is_final_approver = frappe.session.user in final_users or "System Manager" in frappe.get_roles() or frappe.session.user == "Administrator"
+
+    if merchandiser:
+        conditions.append("cust.custom_merchandiser_user = %(me)s")
+        params["me"] = merchandiser
+    else:
+        is_merchandiser = "Merchandiser User" in frappe.get_roles() and "System Manager" not in frappe.get_roles() and frappe.session.user != "Administrator"
+        if is_merchandiser and not is_final_approver:
+            conditions.append("(cust.custom_merchandiser_user = %(me)s OR cust.custom_merchandiser_user IS NULL OR cust.custom_merchandiser_user = '')")
+            params["me"] = frappe.session.user
         
     if search:
-        conditions.append("(so.name LIKE %(q)s OR so.customer_name LIKE %(q)s OR so.customer LIKE %(q)s)")
+        conditions.append("""(
+            so.name LIKE %(q)s 
+            OR so.customer_name LIKE %(q)s 
+            OR so.customer LIKE %(q)s 
+            OR EXISTS(SELECT 1 FROM `tabSales Order Item` WHERE parent = so.name AND (item_code LIKE %(q)s OR item_name LIKE %(q)s))
+        )""")
         params["q"] = f"%{search}%"
         
     orders = frappe.db.sql(f"""
         SELECT so.name, so.customer, so.customer_name, so.transaction_date, so.delivery_date,
                so.workflow_state, so.grand_total, so.currency, so.owner, so.modified,
-               cust.custom_merchandiser_user
+               cust.custom_merchandiser_user,
+               u.full_name AS custom_merchandiser_name,
+               (SELECT content FROM `tabComment` 
+                WHERE reference_doctype = 'Sales Order' AND reference_name = so.name 
+                  AND (content LIKE '%%Rejected%%' OR content LIKE '%%Rejection%%')
+                ORDER BY creation DESC LIMIT 1) as rejection_comment
         FROM `tabSales Order` so
         LEFT JOIN `tabCustomer` cust ON cust.name = so.customer
+        LEFT JOIN `tabUser` u ON u.name = cust.custom_merchandiser_user
         WHERE {' AND '.join(conditions)}
         ORDER BY so.modified DESC
         LIMIT 300
     """, params, as_dict=1)
     
+    for o in orders:
+        items = frappe.get_all("Sales Order Item", filters={"parent": o.name}, fields=["item_name", "qty"])
+        items_formatted = []
+        for it in items:
+            qty_val = it.qty
+            if qty_val == int(qty_val):
+                qty_str = str(int(qty_val))
+            else:
+                qty_str = str(qty_val)
+            items_formatted.append(f"{it.item_name} ({qty_str})")
+        o["items_list"] = ", ".join(items_formatted)
+        
     return orders
 
 
@@ -980,12 +1070,44 @@ def verify_customer_details(sales_order):
     if not contact:
         contact = frappe.db.get_value("Dynamic Link", {"parenttype": "Contact", "link_doctype": "Customer", "link_name": customer_name}, "parent")
     
+    address_details = {}
+    if address:
+        addr_doc = frappe.get_cached_doc("Address", address)
+        address_details = {
+            "address_line1": addr_doc.address_line1 or "",
+            "address_line2": addr_doc.address_line2 or "",
+            "city": addr_doc.city or "",
+            "state": addr_doc.state or "",
+            "country": addr_doc.country or "India",
+            "pincode": addr_doc.pincode or ""
+        }
+        
+    contact_details = {}
+    if contact:
+        cont_doc = frappe.get_cached_doc("Contact", contact)
+        mobile_no = cont_doc.mobile_no or ""
+        if not mobile_no and cont_doc.phone_nos:
+            mobile_no = cont_doc.phone_nos[0].phone or ""
+        email = cont_doc.email_id or ""
+        if not email and cont_doc.email_ids:
+            email = cont_doc.email_ids[0].email_id or ""
+            
+        contact_details = {
+            "first_name": cont_doc.first_name or "",
+            "mobile_no": mobile_no,
+            "email": email
+        }
+    
     return {
         "customer": customer_name,
         "gstin": customer.gstin or "",
         "tax_category": customer.tax_category or "",
         "customer_primary_address": address or "",
         "customer_primary_contact": contact or "",
+        "address_details": address_details,
+        "contact_details": contact_details,
+        "workflow_state": so.workflow_state,
+        "skip_delivery_note": so.skip_delivery_note or 0,
         "missing": {
             "gstin": not customer.gstin,
             "tax_category": not customer.tax_category,
@@ -1044,6 +1166,11 @@ def approve_sales_orders(sales_orders):
             if frappe.session.user not in allowed_final_users and not is_admin_or_system_mgr:
                 frappe.throw(_("You are not authorized to perform Final Approval for Sales Order {0}.").format(so_name))
         
+        if state_before in ("Draft", "", "Rejected"):
+            # Transition from Draft/Rejected to Pending Merchandiser Approval first
+            frappe.model.workflow.apply_workflow(doc, "Submit for Merchandiser Approval")
+            doc = frappe.get_doc("Sales Order", so_name)
+
         transitions = frappe.model.workflow.get_transitions(doc)
         action = None
         for t in transitions:
@@ -1062,7 +1189,7 @@ def approve_sales_orders(sales_orders):
             
         frappe.model.workflow.apply_workflow(doc, action)
         
-        if state_before in ("Draft", "Pending Merchandiser Approval", ""):
+        if state_before in ("Draft", "Pending Merchandiser Approval", "Rejected", ""):
             add_custom_workflow_comment(doc.doctype, doc.name, "Merchandiser Approved")
         elif state_before == "Pending Final Approval":
             add_custom_workflow_comment(doc.doctype, doc.name, "Final Approved")
@@ -1105,70 +1232,122 @@ def reject_sales_orders(sales_orders, comment):
 
 
 @frappe.whitelist()
-def save_and_approve_sales_order(sales_order, gstin=None, tax_category=None, address_data=None, contact_data=None):
+def save_and_approve_sales_order(sales_order, gstin=None, tax_category=None, address_data=None, contact_data=None, skip_delivery_note=None):
     _guard()
     so = frappe.get_doc("Sales Order", sales_order)
     customer_name = so.customer
     
     customer = frappe.get_doc("Customer", customer_name)
-    if gstin:
+    if gstin is not None:
         customer.gstin = gstin
-    if tax_category:
+    if tax_category is not None:
         customer.tax_category = tax_category
         
     customer.save(ignore_permissions=True)
     
+    addr_name = None
     if address_data:
         address_dict = frappe.parse_json(address_data)
         if address_dict.get("address_line1"):
-            addr = frappe.new_doc("Address")
-            addr.address_title = customer.customer_name
-            addr.address_type = "Billing"
+            primary_address = customer.customer_primary_address
+            if not primary_address:
+                primary_address = frappe.db.get_value("Dynamic Link", {"parenttype": "Address", "link_doctype": "Customer", "link_name": customer_name}, "parent")
+            
+            if primary_address:
+                addr = frappe.get_doc("Address", primary_address)
+            else:
+                addr = frappe.new_doc("Address")
+                addr.address_title = customer.customer_name
+                addr.address_type = "Billing"
+                addr.is_primary_address = 1
+                addr.append("links", {
+                    "link_doctype": "Customer",
+                    "link_name": customer_name
+                })
+            
             addr.address_line1 = address_dict.get("address_line1")
             addr.address_line2 = address_dict.get("address_line2")
             addr.city = address_dict.get("city")
             addr.state = address_dict.get("state")
             addr.country = address_dict.get("country") or "India"
             addr.pincode = address_dict.get("pincode")
-            addr.is_primary_address = 1
-            addr.append("links", {
-                "link_doctype": "Customer",
-                "link_name": customer_name
-            })
-            addr.insert(ignore_permissions=True)
-            customer.db_set("customer_primary_address", addr.name)
+            if gstin is not None:
+                addr.gstin = gstin
+            addr.save(ignore_permissions=True)
+            addr_name = addr.name
             
+            if not customer.customer_primary_address:
+                customer.db_set("customer_primary_address", addr_name)
+                
+    cont_name = None
     if contact_data:
         contact_dict = frappe.parse_json(contact_data)
         if contact_dict.get("first_name"):
-            cont = frappe.new_doc("Contact")
+            primary_contact = customer.customer_primary_contact
+            if not primary_contact:
+                primary_contact = frappe.db.get_value("Dynamic Link", {"parenttype": "Contact", "link_doctype": "Customer", "link_name": customer_name}, "parent")
+                
+            if primary_contact:
+                cont = frappe.get_doc("Contact", primary_contact)
+            else:
+                cont = frappe.new_doc("Contact")
+                cont.is_primary_contact = 1
+                cont.append("links", {
+                    "link_doctype": "Customer",
+                    "link_name": customer_name
+                })
+                
             cont.first_name = contact_dict.get("first_name")
-            cont.is_primary_contact = 1
-            cont.append("links", {
-                "link_doctype": "Customer",
-                "link_name": customer_name
-            })
+            
             if contact_dict.get("mobile_no"):
-                cont.append("phone_nos", {
-                    "phone": contact_dict.get("mobile_no"),
-                    "is_primary_phone": 1
-                })
+                if not cont.phone_nos:
+                    cont.append("phone_nos", {
+                        "phone": contact_dict.get("mobile_no"),
+                        "is_primary_phone": 1
+                    })
+                else:
+                    cont.phone_nos[0].phone = contact_dict.get("mobile_no")
             if contact_dict.get("email"):
-                cont.append("email_ids", {
-                    "email_id": contact_dict.get("email"),
-                    "is_primary": 1
-                })
-            cont.insert(ignore_permissions=True)
-            customer.db_set("customer_primary_contact", cont.name)
+                if not cont.email_ids:
+                    cont.append("email_ids", {
+                        "email_id": contact_dict.get("email"),
+                        "is_primary": 1
+                    })
+                else:
+                    cont.email_ids[0].email_id = contact_dict.get("email")
+                    
+            cont.save(ignore_permissions=True)
+            cont_name = cont.name
+            
+            if not customer.customer_primary_contact:
+                customer.db_set("customer_primary_contact", cont_name)
+                
+    if addr_name:
+        so.customer_address = addr_name
+    if cont_name:
+        so.contact_person = cont_name
+    if gstin is not None:
+        so.billing_address_gstin = gstin
+    if skip_delivery_note is not None:
+        so.skip_delivery_note = int(skip_delivery_note)
+    so.save(ignore_permissions=True)
             
     approve_sales_orders([sales_order])
 
 
 @frappe.whitelist()
-def approve_sales_order_with_comment(sales_order, comment):
+def approve_sales_order_with_comment(sales_order, comment, skip_delivery_note=None):
     _guard()
     so = frappe.get_doc("Sales Order", sales_order)
+    if skip_delivery_note is not None:
+        so.skip_delivery_note = int(skip_delivery_note)
+        so.save(ignore_permissions=True)
     
+    state_before = so.workflow_state or "Draft"
+    if state_before in ("Draft", "", "Rejected"):
+        frappe.model.workflow.apply_workflow(so, "Submit for Merchandiser Approval")
+        so = frappe.get_doc("Sales Order", sales_order)
+
     add_custom_workflow_comment(so.doctype, so.name, "Merchandiser Approved (with missing details)", comment)
     
     transitions = frappe.model.workflow.get_transitions(so)
@@ -1309,5 +1488,46 @@ def add_docshare(share_doctype, share_name, user, read=1, write=0, share=0, ever
             VALUES (%s, NOW(), NOW(), %s, %s, 0, 0, %s, %s, %s, %s, %s, %s, %s, %s)
         """, (name, frappe.session.user or "Administrator", frappe.session.user or "Administrator",
               share_doctype, share_name, user, read, write, share, notify, everyone))
+
+
+@frappe.whitelist()
+def get_so_approvers(sales_order):
+    _guard()
+    so = frappe.get_doc("Sales Order", sales_order)
+    state = so.workflow_state or "Draft"
+    
+    # Merchandiser info
+    merchandiser = frappe.db.get_value("Customer", so.customer, "custom_merchandiser_user")
+    merchandiser_fullname = None
+    if merchandiser:
+        merchandiser_fullname = frappe.db.get_value("User", merchandiser, "full_name") or merchandiser
+        
+    # Final approval info
+    settings = frappe.get_doc("Admin Settings")
+    final_users = [d.user for d in settings.sales_order_final_approval or []]
+    final_fullnames = []
+    for u in final_users:
+        fn = frappe.db.get_value("User", u, "full_name") or u
+        final_fullnames.append(fn)
+        
+    return {
+        "state": state,
+        "merchandiser": merchandiser,
+        "merchandiser_fullname": merchandiser_fullname,
+        "final_approvers": final_fullnames,
+        "final_users": final_users
+    }
+
+
+@frappe.whitelist()
+def get_merchandisers():
+    _guard()
+    return frappe.db.sql("""
+        SELECT DISTINCT u.name, u.full_name
+        FROM `tabUser` u
+        JOIN `tabHas Role` hr ON hr.parent = u.name
+        WHERE hr.role = 'Merchandiser User' AND u.enabled = 1
+        ORDER BY u.full_name ASC
+    """, as_dict=1)
 
 

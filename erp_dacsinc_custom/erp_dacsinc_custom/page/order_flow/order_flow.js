@@ -53,11 +53,14 @@ class OrderFlow {
         this.pur_subtab = 'mr'; // 'mr' | 'po' | 'receipt' | 'bill'
         this.job_subtab = 'po'; // 'po' | 'receipt'
         this.acc_subtab = 'receivables'; // 'receivables' | 'supplier' | 'jobber'
-        this.approval_subtab = 'merchandiser'; // 'merchandiser' | 'final'
+        this.approval_subtab = 'merchandiser'; // 'merchandiser' | 'unassigned' | 'final'
+        this.perms = null;   // filled from the server; gates the final-approval tab
         this.days = 120;
         this.scope = 'open';
         this.stage_filter = 'all';
         this.search = '';
+        this.merchandiser_filter = '';
+        this.approval_stage_filter = '';
         this.cache = {};
         this.activity_cache = null;
         this.last_seen = localStorage.getItem(OF_SEEN_KEY) || '';
@@ -69,7 +72,19 @@ class OrderFlow {
         frappe.require('/assets/erp_dacsinc_custom/js/sales_order.js', () => {
             this.render_shell();
             this.bind();
-            this.switch_tab('approval');
+            frappe.call({ method: 'erp_dacsinc_custom.order_flow_api.get_approval_permissions' })
+                .then(r => { this.perms = r.message || {}; })
+                .catch(() => { this.perms = {}; })
+                .always(() => {
+                    const can_final = !!(this.perms && this.perms.is_final_approver);
+                    const is_admin = frappe.user_roles.includes("System Manager") || frappe.session.user === "Administrator";
+                    if (can_final || is_admin) {
+                        this.$body.find('#of-merchandiser').show();
+                    } else {
+                        this.$body.find('#of-merchandiser').hide();
+                    }
+                    this.switch_tab('approval');
+                });
         });
 
         // Real-time update: automatically refresh the dashboard when the browser tab gains focus
@@ -108,6 +123,10 @@ class OrderFlow {
                         <i class="fa fa-calculator"></i> Accounts (Payables &amp; Receivables)
                         <span class="of-tab__badge of-hidden" id="of-new-badge-accounts">0</span>
                     </button>
+                    <button class="of-tab" data-tab="uniform">
+                        <i class="fa fa-random"></i> Uniform Embroidery
+                        <span class="of-tab__badge of-hidden" id="of-new-badge-uniform">0</span>
+                    </button>
                 </div>
 
                 <!-- Toolbar -->
@@ -117,6 +136,17 @@ class OrderFlow {
                         <input type="search" id="of-search" autocomplete="off"
                                placeholder="Search order #, customer, supplier, item…">
                     </span>
+                    <select class="of-select" id="of-merchandiser" style="display: none;">
+                        <option value="">All Merchandisers</option>
+                    </select>
+                    <select class="of-select" id="of-approval-stage" style="display: none;">
+                        <option value="">All Approval Stages</option>
+                        <option value="Draft">Draft</option>
+                        <option value="Pending Merchandiser Approval">Pending Merchandiser Approval</option>
+                        <option value="Pending Final Approval">Pending Final Approval</option>
+                        <option value="Approved">Approved</option>
+                        <option value="Rejected">Rejected</option>
+                    </select>
                     <select class="of-select" id="of-scope">
                         <option value="open">Open orders</option>
                         <option value="all">All orders</option>
@@ -156,6 +186,16 @@ class OrderFlow {
                 <div id="of-panel-approval" class="of-hidden"></div>
             </div>
         `);
+
+        frappe.call({
+            method: 'erp_dacsinc_custom.order_flow_api.get_merchandisers'
+        }).then(r => {
+            const list = r.message || [];
+            const select = this.$body.find('#of-merchandiser');
+            list.forEach(m => {
+                select.append(`<option value="${m.name}">${m.full_name}</option>`);
+            });
+        });
     }
 
     bind() {
@@ -185,6 +225,10 @@ class OrderFlow {
                     this.$body.find(`#of-job-sec-${s}`).toggleClass('of-hidden', s !== sub);
                 });
             } else if (parent_tab === 'approval') {
+                if (sub === 'final' && !(this.perms && this.perms.is_final_approver)) {
+                    frappe.msgprint(__('Final approval is limited to the users configured in Admin Settings.'));
+                    return;
+                }
                 this.approval_subtab = sub;
                 this.$body.find('#of-panel-approval .of-subtab').removeClass('is-active')
                     .filter(`[data-subtab="${sub}"]`).addClass('is-active');
@@ -226,6 +270,8 @@ class OrderFlow {
             timer = setTimeout(() => this.refresh(true), 300);
         });
 
+        this.$body.on('change', '#of-merchandiser', (e) => { this.merchandiser_filter = e.target.value; this.refresh(true); });
+        this.$body.on('change', '#of-approval-stage', (e) => { this.approval_stage_filter = e.target.value; this.refresh(true); });
         this.$body.on('change', '#of-scope', (e) => { this.scope = e.target.value; this.refresh(true); });
         this.$body.on('change', '#of-days',  (e) => { this.days  = e.target.value; this.refresh(true); });
 
@@ -483,6 +529,7 @@ class OrderFlow {
             this.$body.find(`#of-panel-${t}`).toggleClass('of-hidden', t !== tab);
         });
         this.$body.find('#of-stage-bar').toggleClass('of-hidden', tab !== 'tracker');
+        this.$body.find('#of-approval-stage').toggle(tab === 'approval');
 
         // Dynamic context-aware search placeholder
         const placeholders = {
@@ -502,7 +549,7 @@ class OrderFlow {
         this.load_summary();
         if (force) this.cache = {};
 
-        const key = `${this.active}:${this.days}:${this.scope}:${this.stage_filter}:${this.search}`;
+        const key = `${this.active}:${this.days}:${this.scope}:${this.stage_filter}:${this.search}:${this.merchandiser_filter}:${this.approval_stage_filter}`;
         if (this.cache[key]) {
             this.paint(this.cache[key]);
             this.load_activity();
@@ -524,7 +571,7 @@ class OrderFlow {
             approval: 'erp_dacsinc_custom.order_flow_api.get_pending_approvals'
         }[this.active];
 
-        const args = { days: this.days, search: this.search || null, scope: this.scope };
+        const args = { days: this.days, search: this.search || null, scope: this.scope, merchandiser: this.merchandiser_filter || null, approval_stage: this.approval_stage_filter || null };
         if (this.active === 'tracker') {
             args.stage_filter = this.stage_filter;
         }
@@ -542,7 +589,7 @@ class OrderFlow {
         if (this.active === 'tracker') {
             frappe.call({
                 method: 'erp_dacsinc_custom.order_flow_api.get_summary',
-                args: { days: this.days, scope: this.scope, search: this.search || null }
+                args: { days: this.days, scope: this.scope, search: this.search || null, merchandiser: this.merchandiser_filter || null, approval_stage: this.approval_stage_filter || null }
             }).then(r => {
                 const s = r.message || {};
                 this.render_tracker_summary(s);
@@ -670,7 +717,7 @@ class OrderFlow {
 
         frappe.call({
             method: 'erp_dacsinc_custom.order_flow_api.get_activity',
-            args: { days: this.days, limit: 60 }
+            args: { days: this.days, limit: 60, merchandiser: this.merchandiser_filter || null }
         }).then(r => {
             const rows = r.message || [];
             this.activity_cache = rows;
@@ -684,7 +731,7 @@ class OrderFlow {
         const tab_doctypes = {
             tracker: null,
             purchase: ['Material Request', 'Purchase Order', 'Purchase Receipt'],
-            jobwork: ['Subcontracting Order', 'Embroidery Work Order', 'Subcontracting Receipt'],
+            jobwork: ['Job Work (Subcontract)', 'Embroidery Work Order', 'Subcontracting Receipt'],
             accounts: ['Sales Invoice', 'Purchase Invoice'],
             approval: ['Sales Order', 'Comment']
         };
@@ -839,7 +886,7 @@ class OrderFlow {
                 ['MR', c['Material Request']],
                 ['PO', c['Purchase Order']],
                 ['Recv', (c['Purchase Receipt'] || 0) + (c['Subcontracting Receipt'] || 0)],
-                ['Job', (c['Subcontracting Order'] || 0) + (c['Embroidery Work Order'] || 0)],
+                ['Job', (c['Job Work (Subcontract)'] || 0) + (c['Embroidery Work Order'] || 0)],
                 ['Pick', c['Pick List']],
                 ['DN', c['Delivery Note']],
                 ['Inv', c['Sales Invoice']]
@@ -877,7 +924,7 @@ class OrderFlow {
                 </td>
                 <td class="of-meta">
                     ${of_date(o.transaction_date)}
-                    <div class="of-micro" style="${o.is_overdue ? 'color:var(--of-red);font-weight:700;' : ''}">due ${of_date(o.delivery_date)}</div>
+                    <div class="of-micro" style="${o.is_overdue ? 'color:var(--of-red);font-weight:700;' : ''}">Due ${of_date(o.delivery_date)}</div>
                 </td>
                 <td>
                     <span class="of-pill ${st.badge_class || 'of-pill--draft'}">
@@ -1234,7 +1281,7 @@ class OrderFlow {
                     ` : of_esc(e.jobber_name || '')}
                 </td>
                 <td>${of_po_links(e.purchase_order)}
-                    ${e.subcontracting_order ? `<div class="of-micro">${of_esc(e.subcontracting_order)}</div>` : ''}</td>
+                    ${e.subcontracting_order ? `<div class="of-micro"><span class="of-chip">Subcontract</span></div>` : ''}</td>
                 <td>${of_so_links(e.sales_orders)}</td>
                 <td class="of-meta">${of_date(e.date)}</td>
                 <td>${of_qty(e.ordered_qty)}</td>
@@ -1343,7 +1390,7 @@ class OrderFlow {
                 </td>
                 <td>${of_so_links(s.sales_orders)}</td>
                 <td class="of-meta">${of_date(s.posting_date)}
-                    <div class="of-micro">due ${of_date(s.due_date)}</div></td>
+                    <div class="of-micro">Due ${of_date(s.due_date)}</div></td>
                 <td style="font-weight:700;">${of_money(s.grand_total, s.currency)}</td>
                 <td style="color:var(--of-green);">${of_money(s.paid_amount, s.currency)}</td>
                 <td style="color:${out > 0 ? 'var(--of-red)' : 'var(--text-muted)'};font-weight:700;">${of_money(out, s.currency)}</td>
@@ -1371,7 +1418,7 @@ class OrderFlow {
                 </td>
                 <td>${of_so_links(p.sales_orders)}</td>
                 <td class="of-meta">${of_date(p.posting_date)}
-                    <div class="of-micro">due ${of_date(p.due_date)}</div></td>
+                    <div class="of-micro">Due ${of_date(p.due_date)}</div></td>
                 <td style="font-weight:700;">${of_money(p.grand_total, p.currency)}</td>
                 <td style="color:var(--of-info);">${of_money(p.paid_amount, p.currency)}</td>
                 <td style="color:${out > 0 ? 'var(--of-red)' : 'var(--text-muted)'};font-weight:700;">${of_money(out, p.currency)}</td>
@@ -1399,7 +1446,7 @@ class OrderFlow {
                 </td>
                 <td>${of_so_links(p.sales_orders)}</td>
                 <td class="of-meta">${of_date(p.posting_date)}
-                    <div class="of-micro">due ${of_date(p.due_date)}</div></td>
+                    <div class="of-micro">Due ${of_date(p.due_date)}</div></td>
                 <td style="font-weight:700;">${of_money(p.grand_total, p.currency)}</td>
                 <td style="color:var(--of-purple);">${of_money(p.paid_amount, p.currency)}</td>
                 <td style="color:${out > 0 ? 'var(--of-red)' : 'var(--text-muted)'};font-weight:700;">${of_money(out, p.currency)}</td>
@@ -1502,25 +1549,44 @@ class OrderFlow {
         const final_approvals = [];
 
         const is_merchandiser = frappe.user_roles.includes("Merchandiser User") && !frappe.user_roles.includes("System Manager") && current_user !== "Administrator";
+        const can_final = !!(this.perms && this.perms.is_final_approver);
 
+        // An order sits in exactly one bucket, by the step it is actually waiting on.
+        //   Pending My Approval — waiting on ME as the customer's merchandiser
+        //   Unassigned          — no merchandiser on the customer yet
+        //   Pending Final       — merchandiser is done; waiting on a final approver
+        // An order already at "Pending Final Approval" is NOT waiting on the
+        // merchandiser, so it must not appear under "Pending My Approval".
         orders.forEach(o => {
             if (o.workflow_state === 'Pending Final Approval') {
                 final_approvals.push(o);
-            } else if (!o.custom_merchandiser_user) {
-                unassigned_approvals.push(o);
-            } else if (o.custom_merchandiser_user === current_user || !is_merchandiser) {
+            }
+            
+            if (!o.custom_merchandiser_user) {
+                if (o.workflow_state !== 'Pending Final Approval') {
+                    unassigned_approvals.push(o);
+                }
+            } else if (can_final || o.custom_merchandiser_user === current_user) {
                 my_approvals.push(o);
             }
         });
 
-        const sub = this.approval_subtab || 'merchandiser';
+        // Only the users named in Admin Settings (plus admins) may work the
+        // final-approval queue. Permissions come from the server; until they
+        // arrive the tab stays hidden rather than flashing into view.
+        let sub = this.approval_subtab || 'merchandiser';
+        if (sub === 'final' && !can_final) {
+            sub = 'merchandiser';
+            this.approval_subtab = 'merchandiser';
+        }
+
         let active_orders = [];
         if (sub === 'merchandiser') {
             active_orders = my_approvals;
         } else if (sub === 'unassigned') {
             active_orders = unassigned_approvals;
         } else {
-            active_orders = final_approvals;
+            active_orders = can_final ? final_approvals : [];
         }
 
         this.$body.find('#of-count').text(
@@ -1528,6 +1594,20 @@ class OrderFlow {
         );
 
         const rows = active_orders.map(o => {
+            let pill_class = 'of-pill--wait';
+            if (o.workflow_state === 'Pending Final Approval') {
+                pill_class = 'of-pill--planned'; // Purple badge
+            } else if (o.workflow_state === 'Rejected') {
+                pill_class = 'of-pill--blocked'; // Red badge
+            } else if (o.workflow_state === 'Draft') {
+                pill_class = 'of-pill--draft'; // Orange / Gray badge
+            }
+
+            const is_admin = frappe.user_roles.includes("System Manager") || current_user === "Administrator";
+            const is_owner = current_user === o.owner;
+            const is_assigned_merchandiser = current_user === o.custom_merchandiser_user;
+            const show_rejection_reason = is_admin || is_owner || is_assigned_merchandiser;
+
             return `
             <tr data-so="${o.name}">
                 ${sub === 'final' ? `
@@ -1540,20 +1620,41 @@ class OrderFlow {
                     <div class="of-meta" style="font-weight:500;">
                         <a href="/app/customer/${encodeURIComponent(o.customer)}" target="_blank" style="color:inherit;">${of_esc(o.customer_name || o.customer || '')}</a>
                     </div>
+                    ${o.custom_merchandiser_user ? `
+                    <div class="of-micro text-muted" style="margin-top: 3px; font-weight: 500;">
+                        <i class="fa fa-user" style="color:#007bff;"></i> Merchandiser: <b>${of_esc(o.custom_merchandiser_name || o.custom_merchandiser_user)}</b>
+                    </div>
+                    ` : ''}
+                    ${o.items_list ? `
+                    <div style="margin-top: 6px; display: inline-flex; align-items: center; background-color: #f4f6f8; border: 1px solid #d1d8dd; border-radius: 4px; padding: 2px 8px; font-size: 11px; color: #555; max-width: 100%; box-sizing: border-box;">
+                        <i class="fa fa-cube" style="margin-right: 5px; color: #888;"></i>
+                        <span style="overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 280px;" title="${of_esc(o.items_list)}">${of_esc(o.items_list)}</span>
+                    </div>
+                    ` : ''}
                 </td>
                 <td class="of-meta">
                     ${of_date(o.transaction_date)}
-                    <div class="of-micro">due ${of_date(o.delivery_date)}</div>
+                    <div class="of-micro">Due ${of_date(o.delivery_date)}</div>
                 </td>
                 <td>
-                    <span class="of-pill of-pill--wait">
+                    <span class="of-pill ${pill_class}">
                         ${of_esc(o.workflow_state || 'Draft')}
                     </span>
+                    ${o.workflow_state === 'Rejected' && o.rejection_comment && show_rejection_reason ? `
+                    <div style="font-size: 11px; color: #dc3545; margin-top: 5px; font-weight: 500; line-height: 1.3;">
+                        <i class="fa fa-info-circle"></i> Reason: ${of_esc(o.rejection_comment.replace(/<[^>]*>/g, ''))}
+                    </div>
+                    ` : ''}
                 </td>
                 <td>
                     <span class="of-val" style="font-weight: 700;">${of_money(o.grand_total, o.currency)}</span>
                 </td>
                 <td style="text-align: center;">
+                    ${o.workflow_state === 'Pending Final Approval' && sub === 'merchandiser' ? `
+                    <span class="text-muted" style="font-size:12px; font-weight:500;">
+                        <i class="fa fa-clock-o"></i> ${__('Waiting for Final Approval')}
+                    </span>
+                    ` : `
                     <div style="display: inline-flex; gap: 8px;">
                         <button class="of-btn of-btn--success of-approve-btn" data-so="${o.name}" data-state="${o.workflow_state}">
                             <i class="fa fa-check"></i> ${__('Approve')}
@@ -1562,6 +1663,7 @@ class OrderFlow {
                             <i class="fa fa-times"></i> ${__('Reject')}
                         </button>
                     </div>
+                    `}
                 </td>
             </tr>`;
         }).join('');
@@ -1570,14 +1672,15 @@ class OrderFlow {
             <!-- Sub-Tab Navigation Bar -->
             <div class="of-subtabs">
                 <button class="of-subtab ${sub === 'merchandiser' ? 'is-active' : ''}" data-subtab="merchandiser">
-                    <i class="fa fa-user" style="color:var(--of-blue);"></i> 1. Pending My Approval (${my_approvals.length})
+                    <i class="fa fa-user" style="color:var(--of-blue);"></i> ${can_final ? '1. Merchandiser Queue (Track)' : '1. Pending My Approval'} (${my_approvals.length})
                 </button>
                 <button class="of-subtab ${sub === 'unassigned' ? 'is-active' : ''}" data-subtab="unassigned">
                     <i class="fa fa-users" style="color:var(--of-yellow);"></i> 2. Unassigned Orders (${unassigned_approvals.length})
                 </button>
+                ${can_final ? `
                 <button class="of-subtab ${sub === 'final' ? 'is-active' : ''}" data-subtab="final">
                     <i class="fa fa-check-circle" style="color:var(--of-green);"></i> 3. Pending Final Approval (${final_approvals.length})
-                </button>
+                </button>` : ''}
             </div>
 
             <!-- Approval-specific live activity stream -->
@@ -1588,7 +1691,7 @@ class OrderFlow {
                 <div class="of-card__head" style="display: flex; justify-content: space-between; align-items: center; padding: 12px 16px;">
                     <div>
                         <i class="fa fa-check-square-o"></i> ${
-                            sub === 'merchandiser' ? __('Pending My Approval') :
+                            sub === 'merchandiser' ? (can_final ? __('Merchandiser Queue (Track)') : __('Pending My Approval')) :
                             sub === 'unassigned' ? __('Unassigned Orders (Approve & Claim)') :
                             __('Pending Final Approval')
                         }
@@ -1643,152 +1746,162 @@ class OrderFlow {
         }).then(r => {
             const res = r.message;
             if (!res) return;
-            
-            const missing = res.missing || {};
-            const is_missing = Object.values(missing).some(v => v === true);
-            
-            if (!is_missing) {
-                frappe.confirm(confirm_msg, () => {
-                    frappe.call({
-                        method: 'erp_dacsinc_custom.order_flow_api.approve_sales_orders',
-                        args: { sales_orders: [so] }
-                    }).then(() => {
-                        frappe.show_alert({message: __('Sales Order approved successfully'), color: 'green'});
-                        this.refresh(true);
-                    });
-                });
-            } else {
-                this.show_verification_dialog(so, res);
-            }
+            this.show_verification_dialog(so, res);
         });
     }
 
     show_verification_dialog(so, res) {
-        const missing = res.missing || {};
-        const fields = [];
+        const address_details = res.address_details || {};
+        const contact_details = res.contact_details || {};
         
-        fields.push({
-            fieldtype: 'HTML',
-            fieldname: 'notice',
-            options: `
-                <div class="alert alert-warning" style="margin-bottom: 15px;">
-                    <i class="fa fa-warning"></i> ${__('Customer {0} is missing required profile details. Fill them below to save to master, or enter a comment to bypass.', [`<b>${res.customer}</b>`])}
-                </div>
-            `
-        });
-        
-        if (missing.gstin) {
-            fields.push({
+        const fields = [
+            {
+                fieldtype: 'HTML',
+                fieldname: 'notice',
+                options: `
+                    <div class="alert alert-warning" style="margin-bottom: 15px;">
+                        <i class="fa fa-warning"></i> ${__('Customer {0} details. Fill or correct them below to save to master, or enter a comment to bypass.', [`<b>${res.customer}</b>`])}
+                    </div>
+                `
+            },
+            {
+                fieldtype: 'Section Break',
+                label: __('Customer Profile')
+            },
+            {
                 fieldtype: 'Data',
                 fieldname: 'gstin',
                 label: __('GSTIN / UIN'),
-                reqd: 0
-            });
-        }
-        
-        if (missing.tax_category) {
-            fields.push({
+                default: res.gstin || ''
+            },
+            {
+                fieldtype: 'Column Break'
+            },
+            {
                 fieldtype: 'Link',
                 options: 'Tax Category',
                 fieldname: 'tax_category',
                 label: __('Tax Category'),
-                reqd: 0
-            });
-        }
-        
-        if (missing.customer_primary_address) {
-            fields.push({
+                default: res.tax_category || ''
+            },
+            {
                 fieldtype: 'Section Break',
-                label: __('Create Primary Address')
-            });
-            fields.push({
+                label: __('Primary Address Details')
+            },
+            {
                 fieldtype: 'Data',
                 fieldname: 'address_line1',
                 label: __('Address Line 1'),
-                reqd: 0
-            });
-            fields.push({
+                default: address_details.address_line1 || ''
+            },
+            {
                 fieldtype: 'Data',
                 fieldname: 'address_line2',
                 label: __('Address Line 2'),
-                reqd: 0
-            });
-            fields.push({
+                default: address_details.address_line2 || ''
+            },
+            {
                 fieldtype: 'Data',
                 fieldname: 'city',
                 label: __('City'),
-                reqd: 0
-            });
-            fields.push({
+                default: address_details.city || ''
+            },
+            {
+                fieldtype: 'Column Break'
+            },
+            {
                 fieldtype: 'Data',
                 fieldname: 'state',
                 label: __('State'),
-                reqd: 0
-            });
-            fields.push({
+                default: address_details.state || ''
+            },
+            {
                 fieldtype: 'Link',
                 options: 'Country',
                 fieldname: 'country',
                 label: __('Country'),
-                default: 'India',
-                reqd: 0
-            });
-            fields.push({
+                default: address_details.country || 'India'
+            },
+            {
                 fieldtype: 'Data',
                 fieldname: 'pincode',
                 label: __('Pincode'),
-                reqd: 0
-            });
-        }
-        
-        if (missing.customer_primary_contact) {
-            fields.push({
+                default: address_details.pincode || ''
+            },
+            {
                 fieldtype: 'Section Break',
-                label: __('Create Primary Contact')
-            });
-            fields.push({
+                label: __('Primary Contact Details')
+            },
+            {
                 fieldtype: 'Data',
                 fieldname: 'contact_first_name',
                 label: __('First Name'),
-                reqd: 0
-            });
-            fields.push({
+                default: contact_details.first_name || ''
+            },
+            {
+                fieldtype: 'Column Break'
+            },
+            {
                 fieldtype: 'Data',
                 fieldname: 'contact_mobile_no',
                 label: __('Mobile Number'),
-                reqd: 0
-            });
-            fields.push({
+                default: contact_details.mobile_no || ''
+            },
+            {
                 fieldtype: 'Data',
                 fieldname: 'contact_email',
                 label: __('Email ID'),
-                reqd: 0
+                default: contact_details.email || ''
+            },
+            {
+                fieldtype: 'Section Break',
+                label: __('Bypass Option')
+            },
+            {
+                fieldtype: 'Small Text',
+                fieldname: 'bypass_comment',
+                label: __('Or Approve with Comment (Will notify in dashboard)'),
+                placeholder: __('Enter comment if you wish to bypass validations...')
+            }
+        ];
+
+        if (res.workflow_state === "Pending Final Approval") {
+            fields.push({
+                fieldtype: 'Section Break',
+                label: __('Approval Settings')
+            });
+            fields.push({
+                fieldtype: 'Check',
+                fieldname: 'skip_delivery_note',
+                label: __('Skip Delivery Note (Direct Billing)'),
+                default: res.skip_delivery_note || 0
             });
         }
-        
-        fields.push({
-            fieldtype: 'Section Break',
-            label: __('Bypass Option')
-        });
-        fields.push({
-            fieldtype: 'Small Text',
-            fieldname: 'bypass_comment',
-            label: __('Or Approve with Comment (Will notify in dashboard)'),
-            placeholder: __('Enter comment if you wish to bypass validations...')
-        });
 
         const dialog = new frappe.ui.Dialog({
             title: __('Verify Customer Details - {0}', [so]),
             fields: fields,
-            primary_action_label: __('Save & Approve'),
+            primary_action_label: __('Save Details & Approve'),
             primary_action: (values) => {
+                const btn_primary = dialog.get_primary_btn();
+                const btn_secondary = dialog.get_secondary_btn();
+                if (btn_primary) btn_primary.attr("disabled", true).addClass("disabled");
+                if (btn_secondary) btn_secondary.attr("disabled", true).addClass("disabled");
+
+                const enable_buttons = () => {
+                    if (btn_primary) btn_primary.attr("disabled", false).removeClass("disabled");
+                    if (btn_secondary) btn_secondary.attr("disabled", false).removeClass("disabled");
+                };
+
                 if (values.bypass_comment && values.bypass_comment.trim()) {
                     frappe.call({
                         method: 'erp_dacsinc_custom.order_flow_api.approve_sales_order_with_comment',
                         args: {
                             sales_order: so,
-                            comment: values.bypass_comment
-                        }
+                            comment: values.bypass_comment,
+                            skip_delivery_note: values.skip_delivery_note
+                        },
+                        error: enable_buttons
                     }).then(() => {
                         dialog.hide();
                         frappe.show_alert({message: __('Sales Order approved with comment successfully'), color: 'green'});
@@ -1798,7 +1911,7 @@ class OrderFlow {
                 }
                 
                 let address_data = null;
-                if (missing.customer_primary_address && values.address_line1) {
+                if (values.address_line1) {
                     address_data = JSON.stringify({
                         address_line1: values.address_line1,
                         address_line2: values.address_line2,
@@ -1810,7 +1923,7 @@ class OrderFlow {
                 }
                 
                 let contact_data = null;
-                if (missing.customer_primary_contact && values.contact_first_name) {
+                if (values.contact_first_name) {
                     contact_data = JSON.stringify({
                         first_name: values.contact_first_name,
                         mobile_no: values.contact_mobile_no,
@@ -1825,27 +1938,41 @@ class OrderFlow {
                         gstin: values.gstin || null,
                         tax_category: values.tax_category || null,
                         address_data: address_data,
-                        contact_data: contact_data
-                    }
+                        contact_data: contact_data,
+                        skip_delivery_note: values.skip_delivery_note
+                    },
+                    error: enable_buttons
                 }).then(() => {
                     dialog.hide();
                     frappe.show_alert({message: __('Customer details updated and Sales Order approved'), color: 'green'});
                     this.refresh(true);
                 });
             },
-            secondary_action_label: __('Approve with Comment'),
+            secondary_action_label: __('Bypass & Approve'),
             secondary_action: () => {
                 const values = dialog.get_values();
                 if (!values || !values.bypass_comment || !values.bypass_comment.trim()) {
                     frappe.msgprint(__('Please enter a bypass comment in the field below first.'));
                     return;
                 }
+                const btn_primary = dialog.get_primary_btn();
+                const btn_secondary = dialog.get_secondary_btn();
+                if (btn_primary) btn_primary.attr("disabled", true).addClass("disabled");
+                if (btn_secondary) btn_secondary.attr("disabled", true).addClass("disabled");
+
+                const enable_buttons = () => {
+                    if (btn_primary) btn_primary.attr("disabled", false).removeClass("disabled");
+                    if (btn_secondary) btn_secondary.attr("disabled", false).removeClass("disabled");
+                };
+
                 frappe.call({
                     method: 'erp_dacsinc_custom.order_flow_api.approve_sales_order_with_comment',
                     args: {
                         sales_order: so,
-                        comment: values.bypass_comment
-                    }
+                        comment: values.bypass_comment,
+                        skip_delivery_note: values.skip_delivery_note
+                    },
+                    error: enable_buttons
                 }).then(() => {
                     dialog.hide();
                     frappe.show_alert({message: __('Sales Order approved with comment successfully'), color: 'green'});
@@ -1862,7 +1989,7 @@ const OF_ICON = {
     'Material Request':       { i: 'file-text-o', c: '#6f42c1' },
     'Purchase Order':         { i: 'shopping-cart', c: '#007bff' },
     'Purchase Receipt':       { i: 'inbox', c: '#28a745' },
-    'Subcontracting Order':   { i: 'cogs', c: '#6f42c1' },
+    'Job Work (Subcontract)': { i: 'cogs', c: '#6f42c1' },
     'Subcontracting Receipt': { i: 'inbox', c: '#17a2b8' },
     'Embroidery Work Order':  { i: 'magic', c: '#e83e8c' },
     'Pick List':              { i: 'hand-paper-o', c: '#fd7e14' },
@@ -1895,7 +2022,16 @@ function of_route(doctype) {
 
 function of_date(v) {
     if (!v) return '<span class="of-val--zero">—</span>';
-    try { return frappe.datetime.str_to_user(String(v).split(' ')[0]) || '—'; }
+    try {
+        let date_str = String(v).split(' ')[0];
+        if (typeof moment !== 'undefined') {
+            let d = moment(date_str);
+            if (d.isValid()) {
+                return d.format("DD-MMM-YYYY (dddd)");
+            }
+        }
+        return frappe.datetime.str_to_user(date_str) || '—';
+    }
     catch (e) { return of_esc(v); }
 }
 

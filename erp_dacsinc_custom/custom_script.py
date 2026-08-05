@@ -7669,13 +7669,11 @@ def get_sales_order_permission_query_conditions(user):
     # Check if user has "Merchandiser User" role and lacks administrator roles
     roles = frappe.get_roles(user)
     if "Merchandiser User" in roles and "System Manager" not in roles and "Administrator" not in roles:
-        # Filter to only show orders belonging to customers assigned to this merchandiser, or unassigned customers
+        # Filter to only show orders belonging to customers assigned to this merchandiser
         return """exists (
             select name from tabCustomer cust 
             where cust.name = `tabSales Order`.customer 
-            and (cust.custom_merchandiser_user is null 
-                 or cust.custom_merchandiser_user = '' 
-                 or cust.custom_merchandiser_user = {0})
+            and cust.custom_merchandiser_user = {0}
         )""".format(frappe.db.escape(user))
     
     return ""
@@ -7692,3 +7690,55 @@ def has_sales_order_permission(doc, ptype=None, user=None):
             return False
             
     return True
+
+
+def get_customer_permission_query_conditions(user=None):
+    if not user:
+        user = frappe.session.user
+    
+    roles = frappe.get_roles(user)
+    if "Merchandiser User" in roles and "System Manager" not in roles and "Administrator" not in roles:
+        return "`tabCustomer`.custom_merchandiser_user = {0}".format(frappe.db.escape(user))
+    return ""
+
+
+def has_customer_permission(doc, ptype=None, user=None):
+    if not user:
+        user = frappe.session.user
+        
+    roles = frappe.get_roles(user)
+    if "Merchandiser User" in roles and "System Manager" not in roles and "Administrator" not in roles:
+        if doc.custom_merchandiser_user and doc.custom_merchandiser_user != user:
+            return False
+            
+    return True
+
+
+def sales_invoice_validate(doc, method):
+    """
+    If any item in the Sales Invoice is linked to a Sales Order that has skip_delivery_note = 1,
+    then automatically check the 'update_stock' checkbox in the Sales Invoice.
+    """
+    has_skip = False
+    so_names = list(set([item.sales_order for item in doc.items if item.sales_order]))
+    if so_names:
+        for so_name in so_names:
+            skip_dn = frappe.db.get_value("Sales Order", so_name, "skip_delivery_note")
+            if skip_dn:
+                has_skip = True
+                break
+    if has_skip:
+        doc.update_stock = 1
+
+
+@frappe.whitelist()
+def get_bom_data_for_item(item_code):
+    boms = frappe.get_all("BOM", filters={"item": item_code, "docstatus": 1}, fields=["name", "is_active", "is_default"])
+    for bom in boms:
+        bom["items"] = frappe.db.sql("""
+            SELECT bi.item_code, bi.item_name, bi.qty, bi.uom, bi.rate, bi.amount
+            FROM `tabBOM Item` bi
+            WHERE bi.parent = %s
+            ORDER BY bi.idx ASC
+        """, (bom.name,), as_dict=True)
+    return boms
