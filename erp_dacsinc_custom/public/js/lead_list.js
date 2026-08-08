@@ -116,6 +116,19 @@ frappe.listview_settings['Lead'] = frappe.listview_settings['Lead'] || {};
                     }
                 });
             }, __('Actions'));
+
+            listview.page.add_inner_button(__('Correct Contact History'), function () {
+                frappe.call({
+                    method: 'erp_dacsinc_custom.custom_lead.correct_business_contacts_history',
+                    freeze: true,
+                    freeze_message: __('Correcting History...'),
+                    callback: function (r) {
+                        if (r.message && r.message.status === 'success') {
+                            frappe.msgprint(__("Successfully corrected history for {0} Business Contacts.", [r.message.corrected_count]));
+                        }
+                    }
+                });
+            }, __('Actions'));
         }
     };
 })();

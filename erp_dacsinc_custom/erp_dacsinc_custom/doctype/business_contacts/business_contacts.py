@@ -19,11 +19,18 @@ class BusinessContacts(Document):
 					else:
 						reason = f"Status changed to {self.status}"
 				
+				updated_at = None
+				if self.status == "Converted to Lead" and self.lead_id:
+					updated_at = frappe.db.get_value("Lead", self.lead_id, "creation")
+				
+				if not updated_at:
+					updated_at = frappe.utils.now_datetime()
+
 				self.append("contact_status_change_history", {
 					"old_status": old_status,
 					"new_status": self.status,
 					"changed_by": frappe.session.user or "Administrator",
-					"updated_at": frappe.utils.now_datetime(),
+					"updated_at": updated_at,
 					"reason": reason
 				})
 
@@ -31,10 +38,17 @@ class BusinessContacts(Document):
 		# Record the initial status (always "Open" at creation) as the first history entry.
 		# This is done via a direct DB insert so it works even when the document was
 		# created programmatically (e.g., convert_lead_to_business_contact).
+		lead_creation_date = None
+		if self.lead_id:
+			lead_creation_date = frappe.db.get_value("Lead", self.lead_id, "creation")
+		
+		history_date = lead_creation_date or frappe.utils.now_datetime()
+
 		self._insert_history_row(
 			old_status="—",
 			new_status="Open",
-			reason="Business Contact created"
+			reason="Business Contact created",
+			updated_at=history_date
 		)
 		# If the document was inserted with a status other than "Open" (e.g.,
 		# "Converted to Lead" when converting a Lead that already has a Quotation),
@@ -47,11 +61,14 @@ class BusinessContacts(Document):
 			self._insert_history_row(
 				old_status="Open",
 				new_status=self.status,
-				reason=reason_map.get(self.status, f"Status set to {self.status} at creation")
+				reason=reason_map.get(self.status, f"Status set to {self.status} at creation"),
+				updated_at=history_date
 			)
 
-	def _insert_history_row(self, old_status, new_status, reason):
+	def _insert_history_row(self, old_status, new_status, reason, updated_at=None):
 		"""Directly insert one row into the Lead Status Change History child table."""
+		if not updated_at:
+			updated_at = frappe.utils.now_datetime()
 		try:
 			frappe.db.sql("""
 				INSERT INTO `tabLead Status Change History`
@@ -66,7 +83,7 @@ class BusinessContacts(Document):
 					%s, %s, %s, %s, %s
 			""", (self.name, self.name, old_status, new_status,
 					 frappe.session.user or "Administrator",
-					 frappe.utils.now_datetime(), reason))
+					 updated_at, reason))
 			frappe.db.commit()
 		except Exception:
 			pass  # Never block the main save
