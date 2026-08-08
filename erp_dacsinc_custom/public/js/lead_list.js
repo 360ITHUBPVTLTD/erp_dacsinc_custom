@@ -12,11 +12,89 @@ frappe.listview_settings['Lead'] = frappe.listview_settings['Lead'] || {};
 
 (function () {
     const existing_onload = frappe.listview_settings['Lead'].onload;
-
     frappe.listview_settings['Lead'].onload = function (listview) {
         if (existing_onload) {
             try { existing_onload(listview); } catch (e) { /* keep ours working */ }
         }
+
+        listview.page.add_action_item(__("Convert to Business Contact"), function () {
+            const checked_items = listview.get_checked_items();
+            if (!checked_items || checked_items.length === 0) return;
+
+            const lead_names = checked_items.map(item => item.name);
+
+            frappe.call({
+                method: 'erp_dacsinc_custom.custom_lead.check_leads_for_conversion',
+                args: {
+                    lead_names: lead_names
+                },
+                freeze: true,
+                freeze_message: __('Checking Leads...'),
+                callback: function (r) {
+                    if (r.message) {
+                        const { already_converted, has_quotations, no_quotations } = r.message;
+                        
+                        let msg = `<h4>${__('Convert Leads to Business Contacts')}</h4>`;
+                        msg += `<p>${__('You have selected {0} Lead(s) for conversion:', [lead_names.length])}</p>`;
+                        
+                        if (already_converted.length > 0) {
+                            msg += `<p style="color: var(--orange-500, #ff8c00);">⚠️ <strong>${already_converted.length}</strong> ${__('Lead(s) are already converted/linked and will be skipped.')}</p>`;
+                        }
+                        if (has_quotations.length > 0) {
+                            msg += `<p style="color: var(--blue-500, #007bff);">ℹ️ <strong>${has_quotations.length}</strong> ${__('Lead(s) have quotation(s). They will be linked to new Business Contacts, keeping the Leads alive.')}</p>`;
+                        }
+                        if (no_quotations.length > 0) {
+                            msg += `<p style="color: var(--red-500, #d9534f);">⚠️ <strong>${no_quotations.length}</strong> ${__('Lead(s) have no quotation(s). They will be migrated and their Lead documents will be DELETED.')}</p>`;
+                        }
+                        
+                        if (has_quotations.length === 0 && no_quotations.length === 0) {
+                            frappe.msgprint(__('All selected Leads are already converted.'));
+                            return;
+                        }
+
+                        msg += `<br><p><strong>${__('Do you want to proceed?')}</strong></p>`;
+
+                        frappe.confirm(msg, function () {
+                            frappe.call({
+                                method: 'erp_dacsinc_custom.custom_lead.bulk_convert_leads',
+                                args: {
+                                    lead_names: lead_names
+                                },
+                                freeze: true,
+                                freeze_message: __('Converting Leads...'),
+                                callback: function (res) {
+                                    if (res.message) {
+                                        const { converted_linked, converted_deleted, skipped_already_converted, errors } = res.message;
+                                        let summary = `<p>${__('Conversion Summary:')}</p><ul>`;
+                                        if (converted_linked.length > 0) {
+                                            summary += `<li>${__('Linked & Converted (kept alive): {0}', [converted_linked.length])}</li>`;
+                                        }
+                                        if (converted_deleted.length > 0) {
+                                            summary += `<li>${__('Migrated & Deleted: {0}', [converted_deleted.length])}</li>`;
+                                        }
+                                        if (skipped_already_converted.length > 0) {
+                                            summary += `<li>${__('Skipped (already converted): {0}', [skipped_already_converted.length])}</li>`;
+                                        }
+                                        if (errors.length > 0) {
+                                            summary += `<li style="color: red;">${__('Errors: {0}', [errors.length])}</li>`;
+                                        }
+                                        summary += `</ul>`;
+
+                                        frappe.msgprint({
+                                            title: __('Bulk Conversion Completed'),
+                                            message: summary,
+                                            indicator: errors.length > 0 ? 'orange' : 'green'
+                                        });
+
+                                        listview.refresh();
+                                    }
+                                }
+                            });
+                        });
+                    }
+                }
+            });
+        });
 
         // System Manager only.
         if (!frappe.user_roles.includes('System Manager')) return;
