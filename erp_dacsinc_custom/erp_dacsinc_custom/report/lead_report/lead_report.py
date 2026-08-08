@@ -16,29 +16,29 @@ def get_columns(filters=None):
     if filters.get("inverse_report"):
         # Columns for Inverse Report (Activities)
         return [
-            {"label": "Lead Name", "fieldname": "lead_name", "fieldtype": "Data", "width": 150},
-            {"label": "Lead Organization Name", "fieldname": "company_name", "fieldtype": "Data", "width": 150},
+            {"label": "Name", "fieldname": "lead_name", "fieldtype": "Data", "width": 150},
+            {"label": "Organization", "fieldname": "company_name", "fieldtype": "Data", "width": 150},
             {"label": "Status", "fieldname": "status", "fieldtype": "Data", "width": 100},
             {"label": "Category", "fieldname": "category", "fieldtype": "Data", "width": 120},
             {"label": "Subject", "fieldname": "subject", "fieldtype": "Data", "width": 150},
             {"label": "View Location", "fieldname": "location_map", "fieldtype": "Data", "width": 100},
             {"label": "Reference Type", "fieldname": "reference_type", "fieldtype": "Data", "width": 120},
             {"label": "Reference Name", "fieldname": "reference_name", "fieldtype": "Dynamic Link", "options": "reference_type", "width": 150},
-            {"label": "Lead Mobile", "fieldname": "mobile_no", "fieldtype": "Data", "width": 150},
-
+            {"label": "Mobile No", "fieldname": "mobile_no", "fieldtype": "Data", "width": 150},
+ 
             # {"label": "Lead ID", "fieldname": "lead_id", "fieldtype": "Link", "options": "Lead", "width": 100},
-            {"label": "Lead Category", "fieldname": "custom_lead_category", "fieldtype": "Data", "width": 120},
-            {"label": "Lead Type", "fieldname": "custom_lead_type", "fieldtype": "Data", "width": 100},
+            {"label": "Category Type", "fieldname": "custom_lead_category", "fieldtype": "Data", "width": 120},
+            {"label": "Type", "fieldname": "custom_lead_type", "fieldtype": "Data", "width": 100},
             {"label": "Starts On", "fieldname": "starts_on", "fieldtype": "Datetime", "width": 150},
             {"label": "Ends On", "fieldname": "ends_on", "fieldtype": "Datetime", "width": 150},
             {"label": "Assigned To", "fieldname": "assigned_to", "fieldtype": "Link", "options": "User", "width": 120},
             {"label": "Notes", "fieldname": "notes", "fieldtype": "Data", "width": 200},
             {"label": "Actual Visit At", "fieldname": "actual_visit_at", "fieldtype": "Datetime", "width": 150},
             {"label": "Actual Checked Out At", "fieldname": "actual_checked_out_at", "fieldtype": "Datetime", "width": 150},
-
+ 
             # {"label": "Lead Name", "fieldname": "lead_name", "fieldtype": "Data", "width": 150},
-            {"label": "Lead Owner", "fieldname": "lead_owner", "fieldtype": "Link", "options": "User", "width": 120},
-            {"label": "Lead Email", "fieldname": "email_id", "fieldtype": "Data", "width": 150},
+            {"label": "Assign To", "fieldname": "lead_owner", "fieldtype": "Link", "options": "User", "width": 120},
+            {"label": "Email", "fieldname": "email_id", "fieldtype": "Data", "width": 150},
             {"label": "Created At", "fieldname": "custom_created_at", "fieldtype": "Datetime", "width": 150},
             {"label": "Activity ID", "fieldname": "activity_id", "fieldtype": "Link", "options": "Event Activity", "width": 120},
         ]
@@ -134,6 +134,10 @@ def get_business_contacts(filters=None):
     if filters.get("source"):
         conditions.append("source = %(source)s")
         values["source"] = filters["source"]
+
+    if filters.get("lead_type"):
+        conditions.append("LOWER(contact_type) = LOWER(%(contact_type)s)")
+        values["contact_type"] = filters["lead_type"]
 
     where_clause = " AND ".join(conditions) if conditions else "1=1"
 
@@ -428,6 +432,7 @@ def get_event_activity_with_reference(filters=None):
     """, values, as_dict=True)
     # print("ddddddddddddddddddddddddddd",activities)
     # Add reference info dynamically
+    filtered_activities = []
     for row in activities:
         coords = row.get("location")
         # Better Styled Map Button
@@ -471,11 +476,28 @@ def get_event_activity_with_reference(filters=None):
                     row["custom_lead_category"] = getattr(ref_doc, "custom_lead_category", "")
                     row["custom_lead_type"] = getattr(ref_doc, "custom_lead_type", "")
                     row["custom_created_at"] = getattr(ref_doc, "custom_created_at", "")
+                elif reference_type == "Business Contacts":
+                    row["lead_id"] = ref_doc.name
+                    row["lead_name"] = getattr(ref_doc, "contact_name", "")
+                    row["company_name"] = getattr(ref_doc, "organization_name", "")
+                    row["lead_owner"] = getattr(ref_doc, "assign_to", "")
+                    row["email_id"] = getattr(ref_doc, "email_id", "") # Business Contacts doesn't have email_id? We can fallback safely
+                    row["mobile_no"] = getattr(ref_doc, "mobile_number", "")
+                    row["custom_lead_category"] = ""
+                    row["custom_lead_type"] = getattr(ref_doc, "contact_type", "")
+                    row["custom_created_at"] = getattr(ref_doc, "creation", "")
                 else:
                     row[f"{reference_type.lower()}_id"] = ref_doc.name
                     row[f"{reference_type.lower()}_title"] = getattr(ref_doc, "title", getattr(ref_doc, "name", ""))
             except frappe.DoesNotExistError:
                 pass
+
+        # Apply lead_type filter in-memory if set
+        if filters and filters.get("lead_type"):
+            lead_type_filter = filters.get("lead_type").lower()
+            row_lead_type = (row.get("custom_lead_type") or "").lower()
+            if row_lead_type != lead_type_filter:
+                continue
 
         # Format datetime fields to DD-MM-YYYY HH:MM:SS
         for field in ["starts_on", "ends_on", "custom_created_at"]:
@@ -502,8 +524,9 @@ def get_event_activity_with_reference(filters=None):
             else:
                 row[field] = ""
 
+        filtered_activities.append(row)
 
-    return activities
+    return filtered_activities
 
 
 
@@ -656,6 +679,10 @@ def get_custom_custom_status_counts(filters=None):
             start_date, end_date = filters["custom_created_at"]
             conditions.append("DATE(custom_created_at) BETWEEN %(start_date)s AND %(end_date)s")
             values["start_date"], values["end_date"] = start_date, end_date
+
+        if filters.get("lead_type"):
+            conditions.append("custom_lead_type = %(custom_lead_type)s")
+            values["custom_lead_type"] = filters["lead_type"]
 
     where_clause = " AND ".join(conditions) if conditions else "1=1"
 
