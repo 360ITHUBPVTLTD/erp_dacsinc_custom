@@ -17,6 +17,9 @@ frappe.listview_settings['Lead'] = frappe.listview_settings['Lead'] || {};
             try { existing_onload(listview); } catch (e) { /* keep ours working */ }
         }
 
+        // System Manager only.
+        if (!frappe.user_roles.includes('System Manager')) return;
+
         listview.page.add_action_item(__("Convert to Business Contact"), function () {
             const checked_items = listview.get_checked_items();
             if (!checked_items || checked_items.length === 0) return;
@@ -95,9 +98,6 @@ frappe.listview_settings['Lead'] = frappe.listview_settings['Lead'] || {};
                 }
             });
         });
-
-        // System Manager only.
-        if (!frappe.user_roles.includes('System Manager')) return;
 
         listview.page.add_inner_button(__('Trigger CRM Report'), function () {
             show_crm_report_dialog();
