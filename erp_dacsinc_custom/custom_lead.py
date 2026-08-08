@@ -6702,6 +6702,74 @@ def convert_lead_to_business_contact(lead_name):
         return {"action": "linked", "business_contact_name": bc.name}
 
 @frappe.whitelist()
+def check_leads_for_conversion(lead_names):
+    import json
+    if isinstance(lead_names, str):
+        lead_names = json.loads(lead_names)
+
+    already_converted = []
+    has_quotations = []
+    no_quotations = []
+
+    for name in lead_names:
+        custom_bc = frappe.db.get_value("Lead", name, "custom_business_contacts")
+        if custom_bc:
+            already_converted.append(name)
+            continue
+
+        has_q = frappe.db.exists(
+            "Quotation", 
+            {
+                "quotation_to": "Lead", 
+                "party_name": name, 
+                "docstatus": ["<", 2] 
+            }
+        )
+        if has_q:
+            has_quotations.append(name)
+        else:
+            no_quotations.append(name)
+
+    return {
+        "already_converted": already_converted,
+        "has_quotations": has_quotations,
+        "no_quotations": no_quotations
+    }
+
+@frappe.whitelist()
+def bulk_convert_leads(lead_names):
+    import json
+    if isinstance(lead_names, str):
+        lead_names = json.loads(lead_names)
+
+    converted_linked = []
+    converted_deleted = []
+    skipped_already_converted = []
+    errors = []
+
+    for name in lead_names:
+        try:
+            custom_bc = frappe.db.get_value("Lead", name, "custom_business_contacts")
+            if custom_bc:
+                skipped_already_converted.append(name)
+                continue
+
+            res = convert_lead_to_business_contact(name)
+            if res.get("action") == "deleted":
+                converted_deleted.append(name)
+            else:
+                converted_linked.append(name)
+        except Exception as e:
+            errors.append(f"Lead {name}: {str(e)}")
+
+    return {
+        "converted_linked": converted_linked,
+        "converted_deleted": converted_deleted,
+        "skipped_already_converted": skipped_already_converted,
+        "errors": errors
+    }
+
+@frappe.whitelist()
 def mark_lead_lost_backend(lead_name, category, lost_reason, lost_reason_description, current_activity_id=None, completion_note=None):
     # 1. Complete the current activity if passed
     if current_activity_id:
