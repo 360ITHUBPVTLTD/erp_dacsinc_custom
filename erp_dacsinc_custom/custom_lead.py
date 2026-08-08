@@ -6928,3 +6928,50 @@ def sync_business_contacts_history():
 		frappe.db.commit()
 
 	return {"status": "success", "updated_count": updated_count}
+
+
+@frappe.whitelist()
+def correct_business_contacts_history():
+	if "System Manager" not in frappe.get_roles():
+		frappe.throw(frappe._("Not authorized"), frappe.PermissionError)
+
+	contacts = frappe.db.get_all(
+		"Business Contacts",
+		filters={"status": "Converted to Lead"},
+		fields=["name", "lead_id", "creation"]
+	)
+
+	corrected_count = 0
+
+	for c in contacts:
+		# Get Lead creation date
+		lead_creation_date = frappe.db.get_value("Lead", c.lead_id, "creation")
+		if not lead_creation_date:
+			continue
+		
+		# Find history entries for this contact
+		history_entries = frappe.db.get_all(
+			"Lead Status Change History",
+			filters={
+				"parent": c.name,
+				"parenttype": "Business Contacts",
+				"parentfield": "contact_status_change_history"
+			},
+			fields=["name", "new_status", "updated_at", "reason"]
+		)
+		
+		for h in history_entries:
+			# Check if it is an initial conversion entry that needs correcting
+			is_initial_entry = (
+				h.new_status == "Converted to Lead" or
+				h.reason in ["Business Contact created", "Converted to Lead at creation", "Converted to Lead"]
+			)
+			if is_initial_entry:
+				if str(h.updated_at) != str(lead_creation_date):
+					frappe.db.set_value("Lead Status Change History", h.name, "updated_at", lead_creation_date, update_modified=False)
+					corrected_count += 1
+
+	if corrected_count > 0:
+		frappe.db.commit()
+
+	return {"status": "success", "corrected_count": corrected_count}
