@@ -102,6 +102,21 @@ frappe.listview_settings['Lead'] = frappe.listview_settings['Lead'] || {};
         listview.page.add_inner_button(__('Trigger CRM Report'), function () {
             show_crm_report_dialog();
         }, __('Actions'));
+
+        if (frappe.user_roles.includes('System Manager')) {
+            listview.page.add_inner_button(__('Sync Contact History'), function () {
+                frappe.call({
+                    method: 'erp_dacsinc_custom.custom_lead.sync_business_contacts_history',
+                    freeze: true,
+                    freeze_message: __('Syncing History...'),
+                    callback: function (r) {
+                        if (r.message && r.message.status === 'success') {
+                            frappe.msgprint(__("Successfully synced history for {0} Business Contacts.", [r.message.updated_count]));
+                        }
+                    }
+                });
+            }, __('Actions'));
+        }
     };
 })();
 

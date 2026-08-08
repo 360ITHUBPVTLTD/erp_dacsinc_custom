@@ -27,6 +27,50 @@ class BusinessContacts(Document):
 					"reason": reason
 				})
 
+	def after_insert(self):
+		# Record the initial status (always "Open" at creation) as the first history entry.
+		# This is done via a direct DB insert so it works even when the document was
+		# created programmatically (e.g., convert_lead_to_business_contact).
+		self._insert_history_row(
+			old_status="—",
+			new_status="Open",
+			reason="Business Contact created"
+		)
+		# If the document was inserted with a status other than "Open" (e.g.,
+		# "Converted to Lead" when converting a Lead that already has a Quotation),
+		# also record that immediate transition.
+		if self.status and self.status != "Open":
+			reason_map = {
+				"Converted to Lead": "Converted to Lead at creation",
+				"Existing Customer": "Converted to Customer at creation",
+			}
+			self._insert_history_row(
+				old_status="Open",
+				new_status=self.status,
+				reason=reason_map.get(self.status, f"Status set to {self.status} at creation")
+			)
+
+	def _insert_history_row(self, old_status, new_status, reason):
+		"""Directly insert one row into the Lead Status Change History child table."""
+		try:
+			frappe.db.sql("""
+				INSERT INTO `tabLead Status Change History`
+					(name, parent, parenttype, parentfield, idx,
+					 old_status, new_status, changed_by, updated_at, reason)
+				SELECT
+					CONCAT('auto-', UUID()),
+					%s, 'Business Contacts', 'contact_status_change_history',
+					COALESCE((SELECT MAX(idx) FROM `tabLead Status Change History`
+						WHERE parent=%s AND parenttype='Business Contacts'
+						  AND parentfield='contact_status_change_history'), 0) + 1,
+					%s, %s, %s, %s, %s
+			""", (self.name, self.name, old_status, new_status,
+					 frappe.session.user or "Administrator",
+					 frappe.utils.now_datetime(), reason))
+			frappe.db.commit()
+		except Exception:
+			pass  # Never block the main save
+
 	def on_update(self):
 		# 1. Management of Read/Write permissions
 		if self.assign_to:

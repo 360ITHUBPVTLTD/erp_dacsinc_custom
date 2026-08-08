@@ -6880,3 +6880,51 @@ def sync_crm_dashboard_html_block(source_file=None, blocks=None):
     if missing:
         msg += f" | skipped (no such block): {', '.join(missing)}"
     return msg
+
+
+@frappe.whitelist()
+def sync_business_contacts_history():
+	if "System Manager" not in frappe.get_roles():
+		frappe.throw(frappe._("Not authorized"), frappe.PermissionError)
+
+	import uuid
+
+	contacts = frappe.db.get_all(
+		"Business Contacts",
+		filters={"status": "Converted to Lead"},
+		fields=["name", "lead_id", "creation"]
+	)
+
+	updated_count = 0
+
+	for c in contacts:
+		# Check if there is any history for this Business Contact
+		has_history = frappe.db.exists(
+			"Lead Status Change History",
+			{
+				"parent": c.name,
+				"parenttype": "Business Contacts",
+				"parentfield": "contact_status_change_history"
+			}
+		)
+		
+		if not has_history:
+			# Get Lead creation date, fallback to Business Contact creation date
+			lead_creation_date = frappe.db.get_value("Lead", c.lead_id, "creation") or c.creation
+			
+			# Direct DB Insert to avoid overhead/timeout and bypass validation/hooks
+			frappe.db.sql("""
+				INSERT INTO `tabLead Status Change History`
+					(name, parent, parenttype, parentfield, idx,
+					 old_status, new_status, changed_by, updated_at, reason)
+				VALUES
+					(%s, %s, 'Business Contacts', 'contact_status_change_history', 1,
+					 'Open', 'Converted to Lead', 'Administrator', %s, 'Converted to Lead')
+			""", (f"auto-{uuid.uuid4()}", c.name, lead_creation_date))
+			
+			updated_count += 1
+
+	if updated_count > 0:
+		frappe.db.commit()
+
+	return {"status": "success", "updated_count": updated_count}
