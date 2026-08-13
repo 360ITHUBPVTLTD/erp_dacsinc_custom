@@ -6,11 +6,93 @@ from frappe.model.document import Document
 
 
 class BusinessContacts(Document):
+	def before_save(self):
+		if not self.is_new():
+			old_status = frappe.db.get_value("Business Contacts", self.name, "status")
+			if old_status and old_status != self.status:
+				reason = self.get("status_change_reason") or self.flags.status_change_reason
+				if not reason:
+					if self.status == "Converted to Lead":
+						reason = "Converted to Lead"
+					elif self.status == "Existing Customer":
+						reason = "Converted to Customer"
+					else:
+						reason = f"Status changed to {self.status}"
+				
+				updated_at = None
+				if self.status == "Converted to Lead" and self.lead_id:
+					updated_at = frappe.db.get_value("Lead", self.lead_id, "creation")
+				
+				if not updated_at:
+					updated_at = frappe.utils.now_datetime()
+
+				self.append("contact_status_change_history", {
+					"old_status": old_status,
+					"new_status": self.status,
+					"changed_by": frappe.session.user or "Administrator",
+					"updated_at": updated_at,
+					"reason": reason
+				})
+
+	def after_insert(self):
+		# Record the initial status (always "Open" at creation) as the first history entry.
+		# This is done via a direct DB insert so it works even when the document was
+		# created programmatically (e.g., convert_lead_to_business_contact).
+		lead_creation_date = None
+		if self.lead_id:
+			lead_creation_date = frappe.db.get_value("Lead", self.lead_id, "creation")
+		
+		history_date = lead_creation_date or frappe.utils.now_datetime()
+
+		self._insert_history_row(
+			old_status="—",
+			new_status="Open",
+			reason="Business Contact created",
+			updated_at=history_date
+		)
+		# If the document was inserted with a status other than "Open" (e.g.,
+		# "Converted to Lead" when converting a Lead that already has a Quotation),
+		# also record that immediate transition.
+		if self.status and self.status != "Open":
+			reason_map = {
+				"Converted to Lead": "Converted to Lead at creation",
+				"Existing Customer": "Converted to Customer at creation",
+			}
+			self._insert_history_row(
+				old_status="Open",
+				new_status=self.status,
+				reason=reason_map.get(self.status, f"Status set to {self.status} at creation"),
+				updated_at=history_date
+			)
+
+	def _insert_history_row(self, old_status, new_status, reason, updated_at=None):
+		"""Directly insert one row into the Lead Status Change History child table."""
+		if not updated_at:
+			updated_at = frappe.utils.now_datetime()
+		try:
+			frappe.db.sql("""
+				INSERT INTO `tabLead Status Change History`
+					(name, parent, parenttype, parentfield, idx,
+					 old_status, new_status, changed_by, updated_at, reason)
+				SELECT
+					CONCAT('auto-', UUID()),
+					%s, 'Business Contacts', 'contact_status_change_history',
+					COALESCE((SELECT MAX(idx) FROM `tabLead Status Change History`
+						WHERE parent=%s AND parenttype='Business Contacts'
+						  AND parentfield='contact_status_change_history'), 0) + 1,
+					%s, %s, %s, %s, %s
+			""", (self.name, self.name, old_status, new_status,
+					 frappe.session.user or "Administrator",
+					 updated_at, reason))
+			frappe.db.commit()
+		except Exception:
+			pass  # Never block the main save
+
 	def on_update(self):
 		# 1. Management of Read/Write permissions
 		if self.assign_to:
-			# Grant Write access to the currently assigned user
-			frappe.share.add("Business Contacts", self.name, self.assign_to, write=1, read=1, notify=1)
+			from erp_dacsinc_custom.order_flow_api import add_docshare
+			add_docshare("Business Contacts", self.name, self.assign_to, read=1, write=1, share=1, notify=0)
 			
 			# Ensure the Owner (creator) or anyone else only has READ access, not write
 			# We fetch all current shares for this document

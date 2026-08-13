@@ -188,6 +188,8 @@ def customer_before_insert(doc, method=None):
                 "allocated_percentage": allocation
             })
 
+        
+
 # def customer_after_insert(doc, method=None):
 #     """
 #     Logic for external updates and sharing AFTER the document is created.
@@ -223,19 +225,25 @@ def customer_after_insert(doc, method=None):
         # 3. Handle Business Contact Status Update
         if lead_data and lead_data.custom_business_contacts:
             # Update the status of the linked Business Contact
-            frappe.db.set_value("Business Contacts", lead_data.custom_business_contacts, {
-                "status": "Existing Customer"
-            })
+            try:
+                bc_doc = frappe.get_doc("Business Contacts", lead_data.custom_business_contacts)
+                if bc_doc.status != "Existing Customer":
+                    bc_doc.status = "Existing Customer"
+                    bc_doc.flags.ignore_permissions = True
+                    bc_doc.save()
+            except Exception as e:
+                frappe.log_error(title="Failed to update Business Contact status during Customer creation", message=frappe.get_traceback())
             # Optional: Add a message for visibility
             # frappe.msgprint(f"Business Contact {lead_data.custom_business_contacts} updated to 'Existing Customer'")
 
         # 4. Initial Sharing with Lead Owner
         if lead_data and lead_data.lead_owner:
-            frappe.share.add(
-                doctype="Customer",
-                name=doc.name,
+            from erp_dacsinc_custom.order_flow_api import add_docshare
+            add_docshare(
+                share_doctype="Customer",
+                share_name=doc.name,
                 user=lead_data.lead_owner,
-                read=1, write=1, share=1, notify=1
+                read=1, write=1, share=1, notify=0
             )
 
 
@@ -273,8 +281,9 @@ def update_customer_sharing(doc, method=None):
     users_to_add = current_users - previous_users
     users_to_remove = previous_users - current_users
 
+    from erp_dacsinc_custom.order_flow_api import add_docshare
     for user in users_to_add:
-        frappe.share.add("Customer", doc.name, user, read=1, write=1, share=1)
+        add_docshare("Customer", doc.name, user, read=1, write=1, share=1, notify=0)
 
     for user in users_to_remove:
         frappe.share.remove("Customer", doc.name, user)

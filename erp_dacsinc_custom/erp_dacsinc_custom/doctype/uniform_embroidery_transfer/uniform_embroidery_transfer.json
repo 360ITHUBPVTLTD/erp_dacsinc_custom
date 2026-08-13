@@ -1,0 +1,135 @@
+{
+ "actions": [],
+ "autoname": "autoincrement",
+ "creation": "2026-08-05 14:40:00",
+ "doctype": "DocType",
+ "engine": "InnoDB",
+ "field_order": [
+  "source_item",
+  "target_item",
+  "qty",
+  "from_warehouse",
+  "wip_warehouse",
+  "to_warehouse",
+  "status",
+  "date_sent",
+  "date_received",
+  "stock_entry_sent",
+  "stock_entry_received"
+ ],
+ "fields": [
+  {
+   "fieldname": "source_item",
+   "fieldtype": "Link",
+   "in_list_view": 1,
+   "label": "Source Item (Plain)",
+   "options": "Item",
+   "reqd": 1
+  },
+  {
+   "fieldname": "target_item",
+   "fieldtype": "Link",
+   "in_list_view": 1,
+   "label": "Target Item (Embroidered)",
+   "options": "Item",
+   "reqd": 1
+  },
+  {
+   "fieldname": "qty",
+   "fieldtype": "Float",
+   "in_list_view": 1,
+   "label": "Quantity",
+   "reqd": 1
+  },
+  {
+   "fieldname": "from_warehouse",
+   "fieldtype": "Link",
+   "label": "From Warehouse",
+   "options": "Warehouse",
+   "reqd": 1
+  },
+  {
+   "fieldname": "wip_warehouse",
+   "fieldtype": "Link",
+   "label": "WIP Warehouse",
+   "options": "Warehouse",
+   "reqd": 1
+  },
+  {
+   "fieldname": "to_warehouse",
+   "fieldtype": "Link",
+   "label": "To Warehouse (Destination)",
+   "options": "Warehouse"
+  },
+  {
+   "default": "Sent",
+   "fieldname": "status",
+   "fieldtype": "Select",
+   "in_list_view": 1,
+   "label": "Status",
+   "options": "Sent\nReceived\nCancelled"
+  },
+  {
+   "fieldname": "date_sent",
+   "fieldtype": "Date",
+   "label": "Date Sent",
+   "reqd": 1
+  },
+  {
+   "fieldname": "date_received",
+   "fieldtype": "Date",
+   "label": "Date Received"
+  },
+  {
+   "fieldname": "stock_entry_sent",
+   "fieldtype": "Link",
+   "label": "Stock Entry (Sent)",
+   "options": "Stock Entry"
+  },
+  {
+   "fieldname": "stock_entry_received",
+   "fieldtype": "Link",
+   "label": "Stock Entry (Received)",
+   "options": "Stock Entry"
+  }
+ ],
+ "grid_page_length": 50,
+ "index_web_pages_for_search": 1,
+ "links": [],
+ "modified": "2026-08-05 17:10:14.242207",
+ "modified_by": "Administrator",
+ "module": "Erp Dacsinc Custom",
+ "name": "Uniform Embroidery Transfer",
+ "naming_rule": "Autoincrement",
+ "owner": "Administrator",
+ "permissions": [
+  {
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "System Manager",
+   "share": 1,
+   "write": 1
+  },
+  {
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "Merchandiser User",
+   "share": 1,
+   "write": 1
+  }
+ ],
+ "row_format": "Dynamic",
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "states": []
+}

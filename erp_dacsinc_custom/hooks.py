@@ -27,11 +27,14 @@ app_license = "mit"
 # include js, css files in header of desk.html
 # app_include_css = "/assets/erp_dacsinc_custom/css/erp_dacsinc_custom.css"
 app_include_js = [
-    "/assets/erp_dacsinc_custom/js/workflow.js?v=1.0.3",
-    "/assets/erp_dacsinc_custom/js/toogle.js?v=1.0.3"
+    "/assets/erp_dacsinc_custom/js/workflow.js?v=1.0.4",
+    "/assets/erp_dacsinc_custom/js/toogle.js?v=1.0.4"
 ]
 
-app_include_css = "/assets/erp_dacsinc_custom/style.css?v=1.0.3"
+app_include_css = [
+    "/assets/erp_dacsinc_custom/style.css?v=1.0.4",
+    "/assets/erp_dacsinc_custom/css/order_flow.css?v=1.0.4"
+]
 
 # include js, css files in header of web template
 # web_include_css = "/assets/erp_dacsinc_custom/css/erp_dacsinc_custom.css"
@@ -48,11 +51,15 @@ app_include_css = "/assets/erp_dacsinc_custom/style.css?v=1.0.3"
 # page_js = {"page" : "public/js/file.js"}
 
 # include js in doctype views
-# doctype_js = {"Purchase Order" : "public/js/purchase_order.js"}
-# doctype_list_js = {"doctype" : "public/js/doctype_list.js"}
-doctype_list_js = {"Employee": "public/js/employee_list.js"}
-# doctype_tree_js = {"doctype" : "public/js/doctype_tree.js"}
-# doctype_calendar_js = {"doctype" : "public/js/doctype_calendar.js"}
+doctype_js = {
+	"Lead": "public/js/lead.js",
+	"Sales Order": "public/js/sales_order.js",
+	"Item": "public/js/item.js"
+}
+doctype_list_js = {
+	"Lead": "public/js/lead_list.js",
+  "Employee": "public/js/employee_list.js"
+}
 
 # Svg Icons
 # ------------------
@@ -124,13 +131,16 @@ doctype_list_js = {"Employee": "public/js/employee_list.js"}
 # -----------
 # Permissions evaluated in scripted ways
 
-# permission_query_conditions = {
-# 	"Event": "frappe.desk.doctype.event.event.get_permission_query_conditions",
-# }
-#
-# has_permission = {
-# 	"Event": "frappe.desk.doctype.event.event.has_permission",
-# }
+permission_query_conditions = {
+    "Sales Order": "erp_dacsinc_custom.custom_script.get_sales_order_permission_query_conditions",
+    "Customer": "erp_dacsinc_custom.custom_script.get_customer_permission_query_conditions",
+}
+
+has_permission = {
+    "Sales Order": "erp_dacsinc_custom.custom_script.has_sales_order_permission",
+    "Customer": "erp_dacsinc_custom.custom_script.has_customer_permission",
+}
+
 
 # DocType Class
 # ---------------
@@ -165,12 +175,18 @@ doc_events = {
     },
     "Quotation": {
         "before_insert": "erp_dacsinc_custom.custom_script.before_insert",
+        "after_insert": "erp_dacsinc_custom.custom_script.after_insert_quotation",
+        "on_update": "erp_dacsinc_custom.custom_script.on_update_quotation",
         "on_submit": "erp_dacsinc_custom.custom_script.quotation_on_submit",
-        "validate": "erp_dacsinc_custom.custom_script.validate_non_zero_rate"
+        "validate": ["erp_dacsinc_custom.custom_script.validate_non_zero_rate",
+                        "erp_dacsinc_custom.custom_script.validate_quotation"]
         # "on_cancel": "erp_dacsinc_custom.custom_script.quotation_on_cancel"
     },
     "Sales Invoice": {
-        "validate": "erp_dacsinc_custom.custom_script.validate_non_zero_rate"
+        "validate": [
+            "erp_dacsinc_custom.custom_script.validate_non_zero_rate",
+            "erp_dacsinc_custom.custom_script.sales_invoice_validate"
+        ]
     },
     "Sales Order": {
         "on_submit": "erp_dacsinc_custom.custom_script.sales_order_on_submit",
@@ -229,8 +245,20 @@ doc_events = {
 
 scheduler_events = {
     "cron": {
-        "30 20 * * *": [
-            "erp_dacsinc_custom.notifications.execute_scheduled_reports"
+        # CRM reports. Each period runs on its own slot so the send time is
+        # explicit rather than derived inside one job.
+        #   daily   — 8:00 PM every day
+        #   weekly  — 7:45 PM Friday, covering Sunday to Friday
+        #   monthly — 7:30 PM, and the job itself exits unless it is the last
+        #             day of the month (cron cannot express "last day")
+        "0 20 * * *": [
+            "erp_dacsinc_custom.notifications.send_daily_crm_report"
+        ],
+        "45 19 * * 5": [
+            "erp_dacsinc_custom.notifications.send_weekly_crm_report"
+        ],
+        "30 19 * * *": [
+            "erp_dacsinc_custom.notifications.send_monthly_crm_report"
         ],
         # Runs at 00:45, shortly after HRMS' process_expired_allocation (~00:02),
         # to keep the window where balances read negative as short as practical.
