@@ -50,6 +50,7 @@ app_include_css = "/assets/erp_dacsinc_custom/style.css?v=1.0.3"
 # include js in doctype views
 # doctype_js = {"Purchase Order" : "public/js/purchase_order.js"}
 # doctype_list_js = {"doctype" : "public/js/doctype_list.js"}
+doctype_list_js = {"Employee": "public/js/employee_list.js"}
 # doctype_tree_js = {"doctype" : "public/js/doctype_tree.js"}
 # doctype_calendar_js = {"doctype" : "public/js/doctype_calendar.js"}
 
@@ -231,8 +232,12 @@ scheduler_events = {
         "30 20 * * *": [
             "erp_dacsinc_custom.notifications.execute_scheduled_reports"
         ],
-        "0 2 * * *": [
-            "erp_dacsinc_custom.custom_leave.cancel_expired_leave_ledger_entries"
+        # Runs at 00:45, shortly after HRMS' process_expired_allocation (~00:02),
+        # to keep the window where balances read negative as short as practical.
+        # Only touches the leave types listed under Mobile App Admin Settings >
+        # Leave Types Exempt From Expiry.
+        "45 0 * * *": [
+            "erp_dacsinc_custom.custom_leave.clear_expiry_for_exempt_leave_types"
         ]
     },
 	# "all": [
@@ -244,9 +249,14 @@ scheduler_events = {
 	# "hourly": [
 	# 	"erp_dacsinc_custom.tasks.hourly"
 	# ],
-	# "weekly": [
-	# 	"erp_dacsinc_custom.tasks.weekly"
-	# ],
+	# Nothing accumulates now that expiry entries are deleted rather than
+	# cancelled; this only clears the backlog the old job left behind.
+	"weekly": [
+		"erp_dacsinc_custom.custom_leave.purge_cancelled_expiry_entries"
+	],
+	# Allocates 1 CL + 1 SL for the current month to employees in the branches
+	# listed under Mobile App Admin Settings > Leave Policy Branches.
+	# Current month only -- past months are never touched automatically.
 	"monthly": [
 		"erp_dacsinc_custom.custom_leave.allocate_monthly_leaves"
 	],
