@@ -6,3 +6,4 @@
 # Patches added in this section will be executed after doctypes are migrated
 erp_dacsinc_custom.patches.enable_crm_team_reports
 erp_dacsinc_custom.patches.create_order_flow_roles
+erp_dacsinc_custom.patches.backfill_embroidery_transfer_received_qty

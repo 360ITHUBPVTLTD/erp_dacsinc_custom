@@ -181,6 +181,16 @@ def _guard():
         frappe.throw(_("You are not permitted to view Sales Orders."), frappe.PermissionError)
 
 
+# A Sales Order flagged "Old Record Item Is Disabled" is a superseded/legacy
+# record that must never surface anywhere on this dashboard — not the
+# tracker, not approvals, not any PO/MR/receipt/invoice row derived from it.
+# Every query below joins Sales Order as `so` (or the activity subquery as
+# `so2`); this fragment is NULL-tolerant so it never drops a row that simply
+# has no Sales Order behind it (e.g. a standalone embroidery transfer).
+_NOT_DISABLED_SO = "(so.name IS NULL OR IFNULL(so.custom_old_record_item_is_disabled, 0) = 0)"
+_NOT_DISABLED_SO2 = "(so2.name IS NULL OR IFNULL(so2.custom_old_record_item_is_disabled, 0) = 0)"
+
+
 def _from_date(days):
     return add_days(nowdate(), -abs(int(days or 120)))
 
@@ -543,6 +553,7 @@ def get_sales_tracker(days=120, search=None, scope="open", stage_filter=None, me
         # Sales Tracker shows only approved/submitted Sales Orders — drafts and
         # pending-approval orders belong in the SO Approvals tab.
         conditions = ["so.docstatus = 1", "so.transaction_date >= %(from_date)s"]
+    conditions.append(_NOT_DISABLED_SO)
     params = {"from_date": from_date}
 
     if approval_stage:
@@ -966,7 +977,7 @@ def get_activity(days=21, limit=80, merchandiser=None, scope="open", search=None
     # Hold the feed to the orders the tables are showing. Events with no Sales
     # Order of their own (embroidery stock transfers) are exempt — they are
     # matched by their tab's doctype list instead.
-    so_conditions = ["so2.transaction_date >= %(from_date)s"]
+    so_conditions = ["so2.transaction_date >= %(from_date)s", _NOT_DISABLED_SO2]
     if scope == "open":
         so_conditions.append("so2.status NOT IN ('Closed', 'Completed', 'Cancelled')")
     if search:
@@ -1075,7 +1086,7 @@ def get_purchase_flow(days=120, search=None, scope="open", merchandiser=None):
     """Purchase Orders with their receipt progress, tied back to the Sales Order."""
     _guard()
     _guard_tab("purchase")
-    conditions = ["po.docstatus < 2", "po.transaction_date >= %(from_date)s", "IFNULL(po.is_subcontracted, 0) = 0"]
+    conditions = ["po.docstatus < 2", "po.transaction_date >= %(from_date)s", "IFNULL(po.is_subcontracted, 0) = 0", _NOT_DISABLED_SO]
     params = {"from_date": _from_date(days)}
 
     if scope == "open":
@@ -1113,7 +1124,7 @@ def get_purchase_flow(days=120, search=None, scope="open", merchandiser=None):
         LIMIT 300
     """, params, as_dict=1)
 
-    mr_conditions = ["mr.docstatus < 2", "mr.transaction_date >= %(from_date)s"]
+    mr_conditions = ["mr.docstatus < 2", "mr.transaction_date >= %(from_date)s", _NOT_DISABLED_SO]
     if scope == "open":
         mr_conditions.append("mr.status NOT IN ('Received', 'Stopped', 'Cancelled')")
         mr_conditions.append("(mri.sales_order IS NULL OR mri.sales_order = '' OR so.status NOT IN ('Closed', 'Completed', 'Cancelled'))")
@@ -1123,8 +1134,8 @@ def get_purchase_flow(days=120, search=None, scope="open", merchandiser=None):
         mr_conditions.append("(mr.name LIKE %(q)s OR mri.sales_order LIKE %(q)s OR mri.item_code LIKE %(q)s)")
 
 
-    pr_conditions = ["pr.docstatus < 2", "pr.posting_date >= %(from_date)s", "IFNULL(pr.is_subcontracted, 0) = 0"]
-    scr_conditions = ["scr.docstatus < 2", "scr.posting_date >= %(from_date)s"]
+    pr_conditions = ["pr.docstatus < 2", "pr.posting_date >= %(from_date)s", "IFNULL(pr.is_subcontracted, 0) = 0", _NOT_DISABLED_SO]
+    scr_conditions = ["scr.docstatus < 2", "scr.posting_date >= %(from_date)s", _NOT_DISABLED_SO]
     if scope == "open":
         pr_conditions.append("pr.status NOT IN ('Completed', 'Cancelled')")
         pr_conditions.append("(pri.sales_order IS NULL OR pri.sales_order = '' OR so.status NOT IN ('Closed', 'Completed', 'Cancelled'))")
@@ -1220,7 +1231,7 @@ def get_jobwork_flow(days=180, search=None, scope="open", merchandiser=None):
     """Subcontracting/Job Work POs with their receipt progress, tied back to the Sales Order."""
     _guard()
     _guard_tab("jobwork")
-    conditions = ["po.docstatus < 2", "po.transaction_date >= %(from_date)s", "po.is_subcontracted = 1"]
+    conditions = ["po.docstatus < 2", "po.transaction_date >= %(from_date)s", "po.is_subcontracted = 1", _NOT_DISABLED_SO]
     params = {"from_date": _from_date(days)}
 
     if scope == "open":
@@ -1258,9 +1269,9 @@ def get_jobwork_flow(days=180, search=None, scope="open", merchandiser=None):
         LIMIT 300
     """, params, as_dict=1)
 
-    pr_conditions = ["pr.docstatus < 2", "pr.posting_date >= %(from_date)s", "pr.is_subcontracted = 1"]
-    scr_conditions = ["scr.docstatus < 2", "scr.posting_date >= %(from_date)s"]
-    ewo_conditions = ["ewo.docstatus < 2", "ewo.date >= %(from_date)s"]
+    pr_conditions = ["pr.docstatus < 2", "pr.posting_date >= %(from_date)s", "pr.is_subcontracted = 1", _NOT_DISABLED_SO]
+    scr_conditions = ["scr.docstatus < 2", "scr.posting_date >= %(from_date)s", _NOT_DISABLED_SO]
+    ewo_conditions = ["ewo.docstatus < 2", "ewo.date >= %(from_date)s", _NOT_DISABLED_SO]
     
     if scope == "open":
         pr_conditions.append("pr.status NOT IN ('Completed', 'Cancelled')")
@@ -1433,7 +1444,7 @@ def get_accounts_flow(days=120, search=None, scope="open", merchandiser=None):
     from_date = _from_date(days)
     params = {"from_date": from_date}
 
-    si_conditions = ["si.docstatus = 1", "si.posting_date >= %(from_date)s"]
+    si_conditions = ["si.docstatus = 1", "si.posting_date >= %(from_date)s", _NOT_DISABLED_SO]
     if scope == "open":
         si_conditions.append("si.status != 'Paid'")
     elif scope == "mine":
@@ -1454,6 +1465,7 @@ def get_accounts_flow(days=120, search=None, scope="open", merchandiser=None):
         FROM `tabSales Invoice Item` sii
         JOIN `tabSales Invoice` si ON si.name = sii.parent
         LEFT JOIN `tabCustomer` cust ON cust.name = si.customer
+        LEFT JOIN `tabSales Order` so ON so.name = sii.sales_order
         WHERE {' AND '.join(si_conditions)}
         GROUP BY si.name, si.posting_date, si.due_date, si.status, si.docstatus,
                  si.customer, cust.customer_name, si.currency, si.grand_total, si.outstanding_amount
@@ -1462,7 +1474,7 @@ def get_accounts_flow(days=120, search=None, scope="open", merchandiser=None):
     """, params, as_dict=1)
 
     pi_params = {"from_date": from_date}
-    pi_conditions = ["pi.docstatus = 1", "pi.posting_date >= %(from_date)s"]
+    pi_conditions = ["pi.docstatus = 1", "pi.posting_date >= %(from_date)s", _NOT_DISABLED_SO]
     if scope == "open":
         pi_conditions.append("pi.status != 'Paid'")
     elif scope == "mine":
@@ -1545,9 +1557,9 @@ def get_pending_approvals(search=None, merchandiser=None, approval_stage=None):
     _guard_tab("approval")
     setup_sales_order_workflow()
     
-    conditions = ["so.docstatus = 0"]
+    conditions = ["so.docstatus = 0", _NOT_DISABLED_SO]
     params = {}
-    
+
     conditions.append("(so.workflow_state in ('Draft', 'Pending Merchandiser Approval', 'Pending Final Approval', 'Rejected') or so.workflow_state is null or so.workflow_state = '')")
     
     if approval_stage:

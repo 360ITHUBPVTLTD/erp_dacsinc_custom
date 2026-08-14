@@ -124,21 +124,38 @@ def receive_embroidery_transfer(transfer_id, to_warehouse, qty=None):
 @frappe.whitelist()
 def get_embroidery_transfers(status=None, search=None, scope=None, **kwargs):
     """
-    Returns the list of Uniform Embroidery Transfers, optionally filtered by status and search query.
-    Note: We show all transfers (Sent and Received) even under open scope so the user can track them.
+    Returns the list of Uniform Embroidery Transfers, filtered by status,
+    scope, and/or search query — every other tab's "Open orders" / "Created
+    by me" dropdown actually narrows that tab's list; this one used to accept
+    `scope` and silently ignore it, so switching the dropdown here had no
+    effect at all and a fully Received transfer still showed under "Open".
+
+    `status` (the tab's own Status dropdown) and `scope` are independent axes
+    and can combine: `scope="mine"` narrows to transfers this user created,
+    on top of whatever status is chosen. But an explicit `status` always wins
+    over scope's own open/closed bucketing — picking "Received" from the
+    Status dropdown must show Received transfers even while "Open orders" is
+    still selected in the other dropdown, not silently intersect with it.
     """
     guard_tab("uniform")
     conditions = []
     values = {}
-    
+
     if status:
         conditions.append("status = %(status)s")
         values["status"] = status
-        
+    elif scope == "open":
+        # "Open" here means still in progress — not yet fully received.
+        conditions.append("status IN ('Sent', 'Partially Received')")
+
+    if scope == "mine":
+        conditions.append("owner = %(me)s")
+        values["me"] = frappe.session.user
+
     if search:
         conditions.append("(name LIKE %(search)s OR source_item LIKE %(search)s OR target_item LIKE %(search)s)")
         values["search"] = f"%{search}%"
-        
+
     where_clause = f"WHERE {' AND '.join(conditions)}" if conditions else ""
     
     return frappe.db.sql(f"""
