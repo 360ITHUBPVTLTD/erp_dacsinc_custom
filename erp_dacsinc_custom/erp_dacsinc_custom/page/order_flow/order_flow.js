@@ -2990,7 +2990,7 @@ class OrderFlow {
                     // This dialog only ever moves physical stock (a Stock Entry
                     // under the hood), so non-stock items — 55 of them on this
                     // site — have no business in either Item dropdown here.
-                    get_query: () => ({ filters: { is_stock_item: 1 } }),
+                    get_query: () => ({ filters: { is_stock_item: 1, disabled: 0 } }),
                     onchange: function() {
                         const source = this.get_value();
                         const warehouse = dialog.get_value('from_warehouse');
@@ -3031,7 +3031,7 @@ class OrderFlow {
                     options: 'Item',
                     label: __('Target Item (Embroidered)'),
                     reqd: 1,
-                    get_query: () => ({ filters: { is_stock_item: 1 } }),
+                    get_query: () => ({ filters: { is_stock_item: 1, disabled: 0 } }),
                 },
                 { fieldtype: 'Column Break' },
                 {
