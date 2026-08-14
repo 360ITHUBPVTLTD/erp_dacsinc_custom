@@ -2893,6 +2893,21 @@ def get_item_stock_details_bulk(item_bom_pairs, sales_order_name):
                         "rm_name": bi.item_name or frappe.db.get_value("Item", rm_code, "item_name") or rm_code,
                         "rm_uom": bi.uom or bi.stock_uom,
                         "rm_qty_per_fg": qty_per_fg,
+                        # Two different questions, two different fields — do not let one
+                        # answer both:
+                        #   rm_required_total drives the UI's "Needed" column: the RM this
+                        #   order consumes in total, for reference/counting. Always the full
+                        #   BOM-scaled quantity, regardless of whether the FG is covered.
+                        #
+                        #   rm_needed_for_shortfall drives rm_shortfall_total / Status below:
+                        #   whether RAW MATERIAL ACTION is actually needed right now. It is
+                        #   scaled to fg_shortfall on purpose — if the finished good already
+                        #   has enough stock (or is already picked, ready for DN — anything
+                        #   that makes fg_shortfall 0), nothing new is being produced, so no
+                        #   raw material is needed either, no matter how little of it is in
+                        #   stock. Using rm_required_total here instead would flag a
+                        #   "Shortage" on an order that is already fulfilled and about to
+                        #   ship — exactly the wrong signal.
                         "rm_needed_for_shortfall": fg_shortfall * qty_per_fg,
                         "rm_required_total": required_qty * qty_per_fg, "rm_available_stock": 0,
                         "rm_pending_so_linked_total": 0, "rm_pending_mr_total": 0,
@@ -2952,45 +2967,56 @@ def get_item_stock_details_bulk(item_bom_pairs, sales_order_name):
                             rm_map[d.item_code]["mr_documents"] = d.mr_list.split(",") if d.mr_list else []
 
                     # 3. Purchase Orders (PO) linked to this SO (Subcontracting + Direct)
-                    # We also fetch the Material Request reference from the PO Item
+                    # Two independent sourcing paths for the same raw material can both
+                    # have pending quantity at once — bought directly (poi.sales_order)
+                    # AND allocated as subcontract raw material (Purchase Order Raw
+                    # Material Source) — so this must be UNION ALL and the two branches'
+                    # quantities must be ADDED per item, never one replacing the other.
+                    # A plain UNION would have silently collapsed two distinct POs into
+                    # one row whenever their aggregates happened to coincide, and the old
+                    # `=` assignment below discarded whichever branch's row wasn't last
+                    # in the result set — both would quietly undercount "Pending PO".
                     so_procurement_data = frappe.db.sql("""
-                        SELECT 
-                            poi.item_code, 
-                            SUM(poi.qty - poi.received_qty) as pending_ordered, 
-                            GROUP_CONCAT(DISTINCT poi.parent) as po_list,
-                            GROUP_CONCAT(DISTINCT poi.material_request) as linked_mrs
-                        FROM `tabPurchase Order Item` poi 
+                        SELECT
+                            poi.item_code,
+                            SUM(poi.qty - poi.received_qty) as pending_ordered,
+                            GROUP_CONCAT(DISTINCT poi.parent) as po_list
+                        FROM `tabPurchase Order Item` poi
                         JOIN `tabPurchase Order` po ON poi.parent = po.name
-                        WHERE poi.sales_order = %(so)s 
-                          AND poi.item_code IN %(items)s 
+                        WHERE poi.sales_order = %(so)s
+                          AND poi.item_code IN %(items)s
                           AND po.docstatus = 1
                         GROUP BY poi.item_code
-                        
-                        UNION
-                        
-                        SELECT 
-                            source.raw_material_item as item_code, 
-                            SUM(poi.qty - poi.received_qty) as pending_ordered, 
-                            GROUP_CONCAT(DISTINCT source.parent) as po_list,
-                            GROUP_CONCAT(DISTINCT poi.material_request) as linked_mrs
-                        FROM `tabPurchase Order Raw Material Source` source 
-                        JOIN `tabPurchase Order Item` poi ON poi.parent = source.parent 
-                        WHERE source.source_sales_order = %(so)s 
-                          AND source.raw_material_item IN %(items)s 
-                          AND poi.docstatus = 1 
+
+                        UNION ALL
+
+                        SELECT
+                            source.raw_material_item as item_code,
+                            SUM(poi.qty - poi.received_qty) as pending_ordered,
+                            GROUP_CONCAT(DISTINCT source.parent) as po_list
+                        FROM `tabPurchase Order Raw Material Source` source
+                        JOIN `tabPurchase Order Item` poi ON poi.parent = source.parent
+                        WHERE source.source_sales_order = %(so)s
+                          AND source.raw_material_item IN %(items)s
+                          AND poi.docstatus = 1
                         GROUP BY source.raw_material_item
                     """, {"so": sales_order_name, "items": tuple(rm_codes)}, as_dict=1)
-                    
+
                     for d in so_procurement_data:
                         rm = rm_map.get(d.item_code)
                         if rm:
-                            rm["rm_pending_so_linked_total"] = max(0, flt(d.pending_ordered))
+                            rm["rm_pending_so_linked_total"] = rm.get("rm_pending_so_linked_total", 0) + max(0, flt(d.pending_ordered))
                             rm["po_documents"] = list(set(rm.get("po_documents", []) + (d.po_list.split(",") if d.po_list else [])))
-                            # Store which MRs are now covered by POs
-                            rm["mrs_in_pos"] = d.linked_mrs.split(",") if d.linked_mrs else []
 
                 for rm in rm_map.values():
-                    # Coverage = Physical + PO + MR (MR is usually what's left to order)
+                    # Coverage = Physical + PO + MR (MR is usually what's left to order).
+                    # Measured against rm_needed_for_shortfall — NOT rm_required_total (the
+                    # "Needed" column) — because Status/Shortfall answer "is raw material
+                    # action needed right now", and that is 0 whenever the finished good
+                    # itself needs no new production (already in stock, already picked and
+                    # ready for DN, etc.). Comparing against rm_required_total instead would
+                    # flag "Shortage" on an order that is already fulfilled and about to
+                    # ship — the exact wrong signal a real case surfaced.
                     coverage = rm["rm_available_stock"] + rm["rm_pending_so_linked_total"] + rm.get("rm_pending_mr_total", 0)
                     shortfall = max(0, rm["rm_needed_for_shortfall"] - coverage)
                     rm["rm_shortfall_total"] = shortfall
@@ -4452,12 +4478,12 @@ def sales_order_on_update(doc, method):
         
         sync_lead_data(lead_name)
     
-    # Merchandiser user assignment logic
+    # Merchandiser user assignment: a merchandiser who moves an order to final
+    # approval takes ownership of the customer. An admin doing the same must not
+    # — see claim_customer_merchandiser for why that would be harmful.
     if doc.workflow_state == "Pending Final Approval":
-        if "Merchandiser User" in frappe.get_roles():
-            customer_merchandiser = frappe.db.get_value("Customer", doc.customer, "custom_merchandiser_user")
-            if not customer_merchandiser:
-                frappe.db.set_value("Customer", doc.customer, "custom_merchandiser_user", frappe.session.user)
+        from erp_dacsinc_custom.order_flow_api import claim_customer_merchandiser
+        claim_customer_merchandiser(doc.customer)
 
 
 def sales_order_on_submit(doc, method):
@@ -7680,37 +7706,40 @@ def get_sales_order_permission_query_conditions(user):
 
 
 def has_sales_order_permission(doc, ptype=None, user=None):
+    from erp_dacsinc_custom.order_flow_api import is_merchandiser_user
+
     if not user:
         user = frappe.session.user
-        
-    roles = frappe.get_roles(user)
-    if "Merchandiser User" in roles and "System Manager" not in roles and "Administrator" not in roles:
+
+    if is_merchandiser_user(user):
         customer_merchandiser = frappe.db.get_value("Customer", doc.customer, "custom_merchandiser_user")
         if customer_merchandiser and customer_merchandiser != user:
             return False
-            
+
     return True
 
 
 def get_customer_permission_query_conditions(user=None):
+    from erp_dacsinc_custom.order_flow_api import is_merchandiser_user
+
     if not user:
         user = frappe.session.user
-    
-    roles = frappe.get_roles(user)
-    if "Merchandiser User" in roles and "System Manager" not in roles and "Administrator" not in roles:
+
+    if is_merchandiser_user(user):
         return "`tabCustomer`.custom_merchandiser_user = {0}".format(frappe.db.escape(user))
     return ""
 
 
 def has_customer_permission(doc, ptype=None, user=None):
+    from erp_dacsinc_custom.order_flow_api import is_merchandiser_user
+
     if not user:
         user = frappe.session.user
-        
-    roles = frappe.get_roles(user)
-    if "Merchandiser User" in roles and "System Manager" not in roles and "Administrator" not in roles:
+
+    if is_merchandiser_user(user):
         if doc.custom_merchandiser_user and doc.custom_merchandiser_user != user:
             return False
-            
+
     return True
 
 

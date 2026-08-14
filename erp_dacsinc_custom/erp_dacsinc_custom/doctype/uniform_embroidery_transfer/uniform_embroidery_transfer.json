@@ -8,14 +8,19 @@
   "source_item",
   "target_item",
   "qty",
+  "received_qty",
+  "column_break_frxw",
+  "date_sent",
   "from_warehouse",
   "wip_warehouse",
   "to_warehouse",
+  "column_break_jcyt",
   "status",
-  "date_sent",
   "date_received",
   "stock_entry_sent",
-  "stock_entry_received"
+  "stock_entry_received",
+  "section_break_oawn",
+  "receipts"
  ],
  "fields": [
   {
@@ -42,6 +47,15 @@
    "reqd": 1
   },
   {
+   "default": "0",
+   "description": "Cumulative quantity received back so far, across one or more partial receipts.",
+   "fieldname": "received_qty",
+   "fieldtype": "Float",
+   "in_list_view": 1,
+   "label": "Received Qty",
+   "read_only": 1
+  },
+  {
    "fieldname": "from_warehouse",
    "fieldtype": "Link",
    "label": "From Warehouse",
@@ -56,9 +70,10 @@
    "reqd": 1
   },
   {
+   "description": "Most recent receipt's destination. See the Receipts table below if different warehouses were used across partial receipts.",
    "fieldname": "to_warehouse",
    "fieldtype": "Link",
-   "label": "To Warehouse (Destination)",
+   "label": "To Warehouse (Destination, Last)",
    "options": "Warehouse"
   },
   {
@@ -67,7 +82,7 @@
    "fieldtype": "Select",
    "in_list_view": 1,
    "label": "Status",
-   "options": "Sent\nReceived\nCancelled"
+   "options": "Sent\nPartially Received\nReceived\nCancelled"
   },
   {
    "fieldname": "date_sent",
@@ -76,9 +91,10 @@
    "reqd": 1
   },
   {
+   "description": "Date of the most recent receipt. See the Receipts table below for the full history of partial receipts.",
    "fieldname": "date_received",
    "fieldtype": "Date",
-   "label": "Date Received"
+   "label": "Date Received (Last)"
   },
   {
    "fieldname": "stock_entry_sent",
@@ -87,16 +103,35 @@
    "options": "Stock Entry"
   },
   {
+   "description": "Most recent receipt's Stock Entry. See the Receipts table below for the full history.",
    "fieldname": "stock_entry_received",
    "fieldtype": "Link",
-   "label": "Stock Entry (Received)",
+   "label": "Stock Entry (Received, Last)",
    "options": "Stock Entry"
+  },
+  {
+   "fieldname": "receipts",
+   "fieldtype": "Table",
+   "label": "Receipts",
+   "options": "Uniform Embroidery Transfer Receipt"
+  },
+  {
+   "fieldname": "column_break_frxw",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "column_break_jcyt",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "section_break_oawn",
+   "fieldtype": "Section Break"
   }
  ],
  "grid_page_length": 50,
  "index_web_pages_for_search": 1,
  "links": [],
- "modified": "2026-08-05 17:10:14.242207",
+ "modified": "2026-08-14 16:15:03.406967",
  "modified_by": "Administrator",
  "module": "Erp Dacsinc Custom",
  "name": "Uniform Embroidery Transfer",

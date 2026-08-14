@@ -63,6 +63,8 @@ frappe.ui.form.on('Sales Order', {
             frm.remove_custom_button('Request for Raw Materials', 'Create');
             frm.remove_custom_button('Pick List', 'Create');
             frm.remove_custom_button('Material Request', 'Create');
+            frm.remove_custom_button('Delivery Note', 'Create');
+            frm.remove_custom_button('Sales Invoice', 'Create');
         }, 500);
 
         // --- Custom "Create Purchase Order" button (submitted docs only) ---
@@ -210,20 +212,23 @@ function inject_so_styles() {
         .so-btn--view:hover:not(:disabled) { background: var(--so-blue); border-color: var(--so-blue-d); color: #fff; }
 
         /* ── Table: full grid, centred columns; only the first column is left-aligned ── */
-        .so-table { width: 100%; border-collapse: collapse; font-size: 13px; color: var(--text-color); }
+        .so-table { width: 100%; border-collapse: collapse; font-size: 12px; color: var(--text-color); margin-top: 5px; }
         .so-table th {
             background: var(--so-blue); color: #fff;
-            font-size: 12px; font-weight: 600;
-            padding: 10px 8px; text-align: center;
-            border: 1px solid var(--so-blue-d);
+            font-size: 11px; font-weight: 600;
+            padding: 8px 10px; text-align: center;
+            border: 1px solid #2980b9;
         }
         .so-table td {
-            padding: 10px 8px; text-align: center; vertical-align: middle;
-            border: 1px solid var(--border-color);
+            padding: 6px 8px; text-align: center; vertical-align: middle;
+            border: 1px solid #d1d8dd;
+        }
+        [data-theme="dark"] .so-table td {
+            border: 1px solid #434c56;
         }
         .so-table th:first-child, .so-table td:first-child { text-align: left; }
         .so-table tbody tr:hover td { background: var(--subtle-fg); }
-        .so-table tfoot td { background: var(--subtle-fg); font-weight: 600; font-size: 12px; }
+        .so-table tfoot td { background: var(--subtle-fg); font-weight: 600; font-size: 11px; }
         .so-table .so-num { text-align: right; }   /* totals rows only */
         /* An open RM detail row belongs to the row above — drop the divider between
            them. A collapsed row keeps its border so the grid stays intact. */
@@ -292,6 +297,9 @@ function inject_so_styles() {
             display: inline-block; font-size: 11px; font-weight: 600; line-height: 1.4;
             padding: 3px 10px; border-radius: 12px; color: #fff; white-space: nowrap;
         }
+        /* A pill sitting directly against a following note/chip on the same
+           line (no whitespace in the source) must not read as glued together. */
+        .so-pill + .so-chip, .so-pill + .so-micro { margin-left: 6px; }
         .so-pill--done    { background: var(--so-teal); }
         .so-pill--ready   { background: var(--so-green); }
         .so-pill--dn      { background: var(--so-info); }
@@ -512,13 +520,6 @@ function generate_stock_overview_table(frm) {
                 const needed_stock_qty          = remaining_to_plan;
                 const can_fulfill_qty           = Math.min(needed_stock_qty, truly_available_stock);
                 const shortage_qty              = Math.max(0, needed_stock_qty - truly_available_stock);
-
-                // ── Fulfillment badge ─────────────────────────────────
-                const total_reachable = flt(truly_available_stock) + flt(d.total_incoming_qty || 0);
-                const fulfill_pct     = required > 0 ? (total_reachable / required) * 100 : 0;
-                const pct_tone        = fulfill_pct >= 100 ? 'ok' : (fulfill_pct > 0 ? 'warn' : 'bad');
-                const fulfill_badge   = `<span class="so-chip so-chip--${pct_tone}"
-                    title="Reachable stock (available + incoming) as a share of the required quantity">${flt(fulfill_pct).toFixed(0)}% reach</span>`;
 
                 // ── Bulk pick eligibility ─────────────────────────────
                 if (frm.doc.docstatus === 1 && can_fulfill_qty > 0) {
@@ -795,7 +796,7 @@ function generate_stock_overview_table(frm) {
                                        title="Item: ${esc(item.item_code)}">${esc(item.item_code)}</a>
                                 </div>
                                 ${show_name ? `<div class="so-meta so-truncate" title="${esc(item_name)}">${esc(item_name)}</div>` : ''}
-                                <div>${bom_chip}${fulfill_badge}</div>
+                                <div>${bom_chip}</div>
                             </div>
                         </td>
                         <td>
@@ -1017,7 +1018,7 @@ function get_rm_breakdown_html(data, so_name, docstatus) {
     if (!data.is_bom_item) return '';
     const submitted = (docstatus === 1);
 
-    const rm = data.rm_procurement_status || { fg_shortfall: 0, rm_items_status: [] };
+    const rm = data.rm_procurement_status || { fg_shortfall: 0, rm_shortfall_exists: false, rm_items_status: [] };
 
     const rows = (rm.rm_items_status || []).map(item => {
         const uom = item.rm_uom || '';
@@ -1048,7 +1049,7 @@ function get_rm_breakdown_html(data, so_name, docstatus) {
                     ${rm_name ? `<div class="so-micro so-truncate" title="${esc(rm_name)}">${esc(rm_name)}</div>` : ''}
                 </td>
                 <td>
-                    <span class="so-val">${flt(item.rm_needed_for_shortfall || 0).toFixed(2)}</span>
+                    <span class="so-val">${flt(item.rm_required_total || 0).toFixed(2)}</span>
                     <div class="so-micro">${esc(uom)}</div>
                 </td>
                 <td>${so_qty(flt(item.rm_available_stock || 0).toFixed(2))}</td>
@@ -1071,7 +1072,15 @@ function get_rm_breakdown_html(data, so_name, docstatus) {
             </tr>`;
     }).join('');
 
-    const has_shortfall = flt(rm.fg_shortfall) > 0;
+    // This pill must agree with the rows it sits above: it now reflects the
+    // SAME per-row math (Needed vs stock + pending MR + pending PO) as the
+    // table, via rm_shortfall_exists — not fg_shortfall, a different, FG-level
+    // question ("does the finished good itself need more units produced?").
+    // Basing this pill on fg_shortfall used to make it say "Covered" while
+    // every row below plainly showed 0 stock against a non-zero Needed.
+    const items_with_shortage = (rm.rm_items_status || []).filter(i => flt(i.rm_shortfall_total || 0) > 0).length;
+    const has_shortfall = !!rm.rm_shortfall_exists;
+    const fg_already_stocked = !(flt(rm.fg_shortfall) > 0);
 
     return `
         <tr class="so-rm-row">
@@ -1083,11 +1092,17 @@ function get_rm_breakdown_html(data, so_name, docstatus) {
                             ? `<a class="so-chip so-chip--bom" href="/app/bom/${encodeURIComponent(data.bom_no)}" target="_blank"
                                   title="Open BOM ${esc(data.bom_no)}">${esc(data.bom_no)}</a>`
                             : ''}
-                        <span class="so-pill ${has_shortfall ? 'so-pill--blocked' : 'so-pill--ready'}">
+                        <span class="so-pill ${has_shortfall ? 'so-pill--blocked' : 'so-pill--ready'}"
+                              title="${has_shortfall ? 'Stock + pending MR + pending PO does not yet cover what this order needs' : 'Every raw material below is fully covered by stock and/or pending MR/PO'}">
                             ${has_shortfall
-                                ? `Shortfall ${flt(rm.fg_shortfall)} ${esc(data.stock_uom || '')}`
-                                : 'Covered'}
+                                ? `Shortage on ${items_with_shortage} material${items_with_shortage === 1 ? '' : 's'}`
+                                : 'Materials covered'}
                         </span>
+                        ${fg_already_stocked
+                            ? `<span class="so-chip" style="background:var(--so-info);color:#fff;" title="The finished good already has enough stock for this line, so nothing new needs to be produced right now — the material check above is for reference only.">
+                                   <i class="fa fa-info-circle"></i> FG already in stock — no production needed now
+                               </span>`
+                            : ''}
                         <span class="so-rm__spacer"></span>
                         <span class="so-rm__note">Coverage = stock + pending MR + pending PO</span>
                     </div>
@@ -1448,12 +1463,16 @@ function so_open_pick_list_draft(so_name, line_items) {
 
 /**
  * Next Action commands.
- * Each one opens an *unsaved* mapped draft so the user reviews before
- * committing — nothing is written to the database by clicking.
+ * The functions below this one open an *unsaved* mapped draft so the user
+ * reviews before committing — nothing is written to the database by clicking.
+ * so_open_doc is the exception: it opens an ALREADY-EXISTING document by
+ * name (a draft/submitted Pick List, an open Material Request), so — like
+ * every other document reference in this widget (link_id_name, link_name_id)
+ * — it opens in a new tab rather than navigating away from the Sales Order.
  */
 function so_open_doc(doctype, name) {
     if (!name) return;
-    frappe.set_route('Form', doctype, name);
+    window.open(frappe.utils.get_form_link(doctype, name), '_blank');
 }
 
 // Delivery Note is mapped from the Pick List, not the Sales Order.
@@ -1696,10 +1715,10 @@ function show_details_modal(pair_key, type) {
                 ? link_name_id('Supplier', doc.jobber_id, doc.jobber_name || doc.info)
                 : link_name_id('Supplier', doc.supplier, doc.supplier_name || doc.info);
             const note   = flt(doc.is_subcontracted) === 1
-                ? `<span class="so-chip so-chip--sc">Subcontract</span>`
+                ? `<div style="margin-top:4px;"><span class="so-chip so-chip--sc">Subcontract</span></div>`
                 : (is_ewo
-                    ? `<div class="so-micro">${esc(doc.stage || 'In process')}</div>`
-                    : `<span class="so-micro">Standard</span>`);
+                    ? `<div class="so-micro" style="margin-top:4px;">${esc(doc.stage || 'In process')}</div>`
+                    : `<div class="so-micro" style="margin-top:4px;">Standard</div>`);
             return `
             <tr>
                 <td><span class="so-micro">${esc(doc.doc_type || '—')}</span></td>
