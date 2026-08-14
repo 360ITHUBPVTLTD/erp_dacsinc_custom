@@ -38,8 +38,7 @@
    "fieldtype": "Link",
    "in_list_view": 1,
    "label": "Stock Entry",
-   "options": "Stock Entry",
-   "reqd": 1
+   "options": "Stock Entry"
   }
  ],
  "grid_page_length": 50,
