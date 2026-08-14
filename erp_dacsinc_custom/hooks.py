@@ -54,7 +54,10 @@ app_include_css = [
 doctype_js = {
 	"Lead": "public/js/lead.js",
 	"Sales Order": "public/js/sales_order.js",
-	"Item": "public/js/item.js"
+	"Item": "public/js/item.js",
+	"Purchase Order": "public/js/purchase_order.js",
+	"Purchase Invoice": "public/js/purchase_invoice.js",
+	"Material Request": "public/js/material_request.js"
 }
 doctype_list_js = {
 	"Lead": "public/js/lead_list.js",
@@ -227,11 +230,25 @@ doc_events = {
     },
     "Notification Settings": {
         "on_update": "erp_dacsinc_custom.custom_script.share_notification_settings"
-    }
+    },
     # "Material Request": {
     #     "validate": "erp_dacsinc_custom.custom_script.validate_non_zero_rate",
     # }
+    "Admin Settings": {
+        # The Order Flow page's role gate is derived from the six tab-role
+        # fields on this Single — regenerate it whenever they change. See
+        # order_flow_permissions.sync_order_flow_page_roles.
+        "on_update": "erp_dacsinc_custom.order_flow_permissions.sync_order_flow_page_roles"
+    }
 }
+
+# Regenerates the Order Flow page's derived Custom Role on every deploy, so a
+# fresh site (or one where nobody has touched Admin Settings yet) still ends
+# up with the correct page-level access instead of relying on a one-shot
+# patch that could drift from the real config over time.
+after_migrate = [
+    "erp_dacsinc_custom.order_flow_permissions.sync_order_flow_page_roles"
+]
 
 
 

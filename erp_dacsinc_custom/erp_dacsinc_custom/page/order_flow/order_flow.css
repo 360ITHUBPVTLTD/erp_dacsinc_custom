@@ -26,14 +26,27 @@
 
 /* ── Summary tiles (Interactive Stage Cards) ──────────────────── */
 .of-summary {
-    display: grid; gap: 10px; margin-bottom: 16px;
-    grid-template-columns: repeat(auto-fit, minmax(135px, 1fr));
+    display: flex;
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    gap: 8px;
+    margin-bottom: 12px;
+    padding: 4px 2px 8px 2px;
+    -webkit-overflow-scrolling: touch;
 }
 .of-tile {
-    background: var(--card-bg); border: 1px solid var(--border-color);
-    border-radius: 8px; padding: 10px 12px; border-left: 4px solid var(--of-blue);
-    cursor: pointer; position: relative; transition: all 0.15s ease;
+    flex: 0 0 auto;
+    width: 105px;
+    background: var(--card-bg);
+    border: 1px solid var(--border-color);
+    border-radius: 6px;
+    padding: 6px 8px;
+    border-left: 3px solid var(--of-blue);
+    cursor: pointer;
+    position: relative;
+    transition: all 0.15s ease;
     user-select: none;
+    text-align: center;
 }
 .of-tile:hover {
     transform: translateY(-2px);
@@ -44,14 +57,21 @@
     background: var(--fg-hover-color, var(--subtle-fg));
 }
 .of-tile__label {
-    display: block; font-size: 11px; font-weight: 600; color: var(--text-muted); margin-bottom: 2px;
+    display: block;
+    font-size: 10px;
+    font-weight: 600;
+    color: var(--text-muted);
+    margin-bottom: 1px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
 }
-.of-tile__value { font-size: 22px; font-weight: 700; line-height: 1.1; font-variant-numeric: tabular-nums; }
-.of-tile__hint {
-    display: block; font-size: 9px; color: var(--text-light); opacity: 0;
-    transition: opacity 0.15s; margin-top: 3px;
+.of-tile__value {
+    font-size: 15px;
+    font-weight: 700;
+    line-height: 1.1;
+    font-variant-numeric: tabular-nums;
 }
-.of-tile:hover .of-tile__hint { opacity: 1; }
 
 .of-tile--ok        { border-left-color: var(--of-green); }
 .of-tile--warn      { border-left-color: var(--of-orange); }
@@ -132,6 +152,7 @@
     display: inline-flex; align-items: center; gap: 6px; height: 28px; padding: 0 10px;
     font-size: 11px; font-weight: 600; border-radius: 4px; cursor: pointer; white-space: nowrap;
     border: 1px solid var(--border-color); background: var(--control-bg); color: var(--text-color);
+    box-sizing: border-box;
 }
 .of-btn:hover { background: var(--fg-hover-color, var(--subtle-fg)); }
 .of-btn--sm { height: 24px; padding: 0 8px; font-size: 11px; }
@@ -200,6 +221,69 @@
 .of-table a { color: var(--of-info); font-weight: 500; text-decoration: none; }
 .of-table a:hover { text-decoration: underline; }
 
+/* Sales Tracker & SO Approvals — both list long, uneven-height rows (multi-line
+   customer/merchandiser info next to a single pill or button). table-layout:
+   fixed stops the browser stretching short columns into wide empty gaps around
+   their pill/button, and top-alignment keeps every cell starting at the same
+   line instead of floating a short cell's content in the middle of a tall row. */
+.of-table.of-table--tracker, .of-table.of-table--approval {
+    table-layout: fixed;
+    font-size: 12px;
+}
+.of-table.of-table--tracker th, .of-table.of-table--approval th {
+    font-size: 10.5px;
+    padding: 7px 6px;
+}
+.of-table.of-table--tracker td, .of-table.of-table--approval td {
+    padding: 7px 6px;
+    vertical-align: top;
+    word-break: break-word;
+    overflow-wrap: anywhere;
+}
+/* Action buttons inside fixed-layout tracker/approval tables must wrap/size correctly, not overflow */
+.of-table.of-table--tracker td .of-btn {
+    white-space: normal;
+    height: auto;
+    min-height: 26px;
+    padding: 4px 8px;
+    line-height: 1.3;
+    word-break: break-word;
+    max-width: 100%;
+    width: 100%;
+    justify-content: center;
+}
+.of-table.of-table--approval td .of-btn {
+    white-space: nowrap;
+    height: auto;
+    min-height: 26px;
+    padding: 4px 8px;
+    line-height: 1.3;
+    max-width: 100%;
+    width: auto;
+    justify-content: center;
+}
+.of-link-flow {
+    cursor: pointer;
+}
+.of-link-flow:hover {
+    text-decoration: underline !important;
+    opacity: 0.85;
+}
+/* Document flow chip-chain: wrap inside fixed column */
+.of-table.of-table--tracker td .of-docflow,
+.of-table.of-table--approval td .of-docflow {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 2px;
+    align-items: center;
+}
+/* Delivery / Billing / Last-Activity cells — must never push content outside */
+.of-table.of-table--tracker td,
+.of-table.of-table--approval td {
+    overflow: hidden;
+    max-width: 0;   /* forces table-layout:fixed to honour column widths strictly */
+}
+
 .of-val { font-weight: 700; font-variant-numeric: tabular-nums; }
 .of-val--zero { font-weight: 400; color: var(--text-light); }
 .of-val--pos { color: var(--of-green); }
@@ -212,7 +296,8 @@
 /* ── Pills ───────────────────────────────────────────────────── */
 .of-pill {
     display: inline-block; font-size: 11px; font-weight: 600; line-height: 1.4;
-    padding: 3px 10px; border-radius: 12px; color: #fff; white-space: nowrap;
+    padding: 3px 10px; border-radius: 12px; color: #fff; white-space: normal;
+    word-break: break-word; vertical-align: middle; box-sizing: border-box;
 }
 .of-pill--ready     { background: var(--of-green); }
 .of-pill--dn        { background: var(--of-info); }
@@ -230,6 +315,19 @@
     border-radius: 3px; background: var(--of-purple); color: #fff; white-space: nowrap;
 }
 .of-chip--bad { background: var(--of-red); color: #fff; }
+.of-chip--action { background: var(--of-red); color: #fff; margin-right: 4px; }
+.of-chip--mine {
+    background: transparent; color: var(--text-muted);
+    border: 1px solid var(--border-color); font-weight: 500; margin-right: 4px;
+}
+
+/* Last Activity — milestone label, clamped to two lines for long comments */
+.of-last-activity {
+    font-size: 11px; font-weight: 600; color: var(--text-color); line-height: 1.35;
+    display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical;
+    overflow: hidden;
+}
+.of-last-activity.is-minor { font-weight: 500; color: var(--text-muted); }
 
 /* ── Progress bar ────────────────────────────────────────────── */
 .of-bar {
@@ -241,16 +339,37 @@
 .of-bar__fill--none { background: transparent; }
 
 /* ── Activity feed ───────────────────────────────────────────── */
-.of-feed { max-height: 280px; overflow-y: auto; }
+.of-feed { max-height: 200px; overflow-y: auto; }
 .of-feed__item {
     display: flex; gap: 10px; align-items: flex-start;
-    padding: 8px 14px; border-bottom: 1px solid var(--border-color);
+    padding: 6px 12px; border-bottom: 1px solid var(--border-color);
     cursor: pointer; transition: background 0.15s ease;
+    border-left: 3px solid transparent;
 }
 .of-feed__item:hover { background: var(--fg-hover-color, var(--subtle-fg)); }
-.of-feed__item.is-selected { background: rgba(52,152,219,.12); border-left: 3px solid var(--of-blue); }
+.of-feed__item.is-selected { background: rgba(52,152,219,.12); border-left-color: var(--of-blue) !important; }
 .of-feed__item:last-child { border-bottom: none; }
-.of-feed__item.is-new { background: rgba(52,152,219,.06); }
+.of-feed__item.is-new { background: rgba(52,152,219,.06); border-left-color: var(--of-orange); }
+.of-feed__item.is-seen {
+    opacity: 0.65;
+    background-color: var(--subtle-fg) !important;
+}
+.of-feed__item.is-seen:hover {
+    opacity: 0.95;
+    background-color: var(--fg-hover-color, var(--subtle-fg)) !important;
+}
+.of-feed__item.is-unseen {
+    opacity: 1;
+    font-weight: 500;
+}
+
+.of-feed__item--ready { border-left-color: var(--of-green); }
+.of-feed__item--dn { border-left-color: var(--of-info); }
+.of-feed__item--wait { border-left-color: var(--of-amber); }
+.of-feed__item--draft { border-left-color: var(--of-orange); }
+.of-feed__item--blocked { border-left-color: var(--of-red); }
+.of-feed__item--planned { border-left-color: var(--of-purple); }
+.of-feed__item--new { border-left-color: var(--of-purple); }
 .of-feed__icon {
     width: 26px; height: 26px; border-radius: 50%; flex: none;
     display: flex; align-items: center; justify-content: center;
@@ -270,8 +389,52 @@
 .of-empty .fa { display: block; font-size: 20px; margin-bottom: 8px; opacity: .45; }
 .of-hidden { display: none !important; }
 
+/* Row-wise seen / unseen checkbox on every notification */
+.of-feed-seen-toggle {
+    display: inline-flex !important;
+    align-items: center;
+    justify-content: center;
+    gap: 4px;
+    margin: 0 0 0 5px !important;
+    padding: 2px 7px;
+    border: 1px solid var(--border-color);
+    border-radius: 4px;
+    font-size: 10px;
+    font-weight: 600;
+    color: var(--text-muted);
+    white-space: nowrap;
+    cursor: pointer;
+    transition: all 0.15s ease;
+}
+.of-feed-seen-toggle:hover {
+    color: var(--of-green);
+    border-color: var(--of-green);
+    background-color: rgba(46, 204, 113, 0.1);
+}
+.of-feed-seen-toggle input[type="checkbox"] {
+    margin: 0;
+    cursor: pointer;
+}
+
+/* An event still parked on the logged-in user */
+.of-feed__item.needs-action {
+    background: rgba(231, 76, 60, .06);
+    border-left-color: var(--of-red) !important;
+}
+.of-feed__reason { font-style: italic; opacity: .8; }
+
+.of-btn-mark-stream-seen:hover {
+    color: var(--of-blue) !important;
+    border-color: var(--of-blue) !important;
+    background-color: var(--subtle-fg) !important;
+}
+
 @media (max-width: 768px) {
     .of-search input { width: 140px; }
     .of-tile__value { font-size: 18px; }
     .of-fin-summary { grid-template-columns: 1fr; }
+    /* Percentage columns only pay off on a wide desktop card; on a narrow
+       screen they cram every column, so fall back to natural auto-sizing
+       inside the existing horizontal scroll. */
+    .of-table.of-table--tracker, .of-table.of-table--approval { table-layout: auto; }
 }

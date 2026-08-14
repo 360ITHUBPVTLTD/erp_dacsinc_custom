@@ -12,9 +12,18 @@ answer "what happened to my order?" without opening ten list views.
 All queries are read-only and scoped by the standard Sales Order read permission.
 """
 
+import re
+
 import frappe
 from frappe import _
-from frappe.utils import flt, add_days, nowdate
+from frappe.utils import cint, flt, add_days, nowdate
+
+from erp_dacsinc_custom.order_flow_permissions import (
+    OF_TABS,
+    guard_tab as _guard_tab,
+    get_order_flow_permissions,
+    is_scoped_to_own_customers,
+)
 
 
 # --------------------------------------------------------------------------
@@ -27,7 +36,7 @@ _EVENT_SQL = """
            NULL AS party, NULL AS party_name
     FROM `tabMaterial Request Item` mri
     JOIN `tabMaterial Request` mr ON mr.name = mri.parent
-    WHERE mri.sales_order IS NOT NULL AND mri.sales_order != '' AND mr.docstatus < 2
+    WHERE mri.sales_order IS NOT NULL AND mri.sales_order != '' AND mr.docstatus <= 2
     GROUP BY mr.name, mri.sales_order, mr.modified, mr.creation, mr.status, mr.docstatus, mr.owner
 
     UNION ALL
@@ -38,7 +47,7 @@ _EVENT_SQL = """
     FROM `tabPurchase Order Item` poi
     JOIN `tabPurchase Order` po ON po.name = poi.parent
     LEFT JOIN `tabSupplier` sup ON sup.name = po.supplier
-    WHERE poi.sales_order IS NOT NULL AND poi.sales_order != '' AND po.docstatus < 2
+    WHERE poi.sales_order IS NOT NULL AND poi.sales_order != '' AND po.docstatus <= 2
     GROUP BY po.name, poi.sales_order, po.modified, po.creation, po.status, po.docstatus, po.owner, po.supplier, sup.supplier_name
 
     UNION ALL
@@ -49,7 +58,7 @@ _EVENT_SQL = """
     FROM `tabPurchase Receipt Item` pri
     JOIN `tabPurchase Receipt` pr ON pr.name = pri.parent
     LEFT JOIN `tabSupplier` sup ON sup.name = pr.supplier
-    WHERE pri.sales_order IS NOT NULL AND pri.sales_order != '' AND pr.docstatus < 2
+    WHERE pri.sales_order IS NOT NULL AND pri.sales_order != '' AND pr.docstatus <= 2
     GROUP BY pr.name, pri.sales_order, pr.modified, pr.creation, pr.status, pr.docstatus, pr.owner, pr.supplier, sup.supplier_name
 
     UNION ALL
@@ -61,7 +70,7 @@ _EVENT_SQL = """
     JOIN `tabSubcontracting Receipt` scr ON scr.name = scri.parent
     JOIN `tabPurchase Order Item` poi ON poi.name = scri.purchase_order_item
     LEFT JOIN `tabSupplier` sup ON sup.name = scr.supplier
-    WHERE poi.sales_order IS NOT NULL AND poi.sales_order != '' AND scr.docstatus < 2
+    WHERE poi.sales_order IS NOT NULL AND poi.sales_order != '' AND scr.docstatus <= 2
     GROUP BY scr.name, poi.sales_order, scr.modified, scr.creation, scr.status, scr.docstatus, scr.owner, scr.supplier, sup.supplier_name
 
     UNION ALL
@@ -75,7 +84,7 @@ _EVENT_SQL = """
     FROM `tabSubcontracting Order` sco
     JOIN `tabPurchase Order Item` poi ON poi.parent = sco.purchase_order
     LEFT JOIN `tabSupplier` sup ON sup.name = sco.supplier
-    WHERE poi.sales_order IS NOT NULL AND poi.sales_order != '' AND sco.docstatus < 2
+    WHERE poi.sales_order IS NOT NULL AND poi.sales_order != '' AND sco.docstatus <= 2
       AND sco.purchase_order IS NOT NULL AND sco.purchase_order != ''
     GROUP BY sco.purchase_order, poi.sales_order, sco.modified, sco.creation, sco.status, sco.docstatus, sco.owner, sco.supplier, sup.supplier_name
 
@@ -89,7 +98,7 @@ _EVENT_SQL = """
     JOIN `tabPurchase Order Item` poi ON poi.parent = ewo.purchase_order
     LEFT JOIN `tabSupplier` fp ON fp.name = ewo.full_piece_jobber
     LEFT JOIN `tabSupplier` pn ON pn.name = ewo.panel_jobber
-    WHERE poi.sales_order IS NOT NULL AND poi.sales_order != '' AND ewo.docstatus < 2
+    WHERE poi.sales_order IS NOT NULL AND poi.sales_order != '' AND ewo.docstatus <= 2
     GROUP BY ewo.purchase_order, poi.sales_order, ewo.modified, ewo.creation, ewo.status, ewo.docstatus, ewo.owner,
              ewo.full_piece_jobber, ewo.panel_jobber, fp.supplier_name, pn.supplier_name
 
@@ -101,7 +110,7 @@ _EVENT_SQL = """
     FROM `tabPick List Item` pli
     JOIN `tabPick List` pl ON pl.name = pli.parent
     LEFT JOIN `tabCustomer` cust ON cust.name = pl.customer
-    WHERE pli.sales_order IS NOT NULL AND pli.sales_order != '' AND pl.docstatus < 2
+    WHERE pli.sales_order IS NOT NULL AND pli.sales_order != '' AND pl.docstatus <= 2
     GROUP BY pl.name, pli.sales_order, pl.modified, pl.creation, pl.status, pl.docstatus, pl.owner, pl.customer, cust.customer_name
 
     UNION ALL
@@ -112,7 +121,7 @@ _EVENT_SQL = """
     FROM `tabDelivery Note Item` dni
     JOIN `tabDelivery Note` dn ON dn.name = dni.parent
     LEFT JOIN `tabCustomer` cust ON cust.name = dn.customer
-    WHERE dni.against_sales_order IS NOT NULL AND dni.against_sales_order != '' AND dn.docstatus < 2
+    WHERE dni.against_sales_order IS NOT NULL AND dni.against_sales_order != '' AND dn.docstatus <= 2
     GROUP BY dn.name, dni.against_sales_order, dn.modified, dn.creation, dn.status, dn.docstatus, dn.owner, dn.customer, cust.customer_name
 
     UNION ALL
@@ -123,7 +132,7 @@ _EVENT_SQL = """
     FROM `tabSales Invoice Item` sii
     JOIN `tabSales Invoice` si ON si.name = sii.parent
     LEFT JOIN `tabCustomer` cust ON cust.name = si.customer
-    WHERE sii.sales_order IS NOT NULL AND sii.sales_order != '' AND si.docstatus < 2
+    WHERE sii.sales_order IS NOT NULL AND sii.sales_order != '' AND si.docstatus <= 2
     GROUP BY si.name, sii.sales_order, si.modified, si.creation, si.status, si.docstatus, si.owner, si.customer, cust.customer_name
 
     UNION ALL
@@ -135,8 +144,35 @@ _EVENT_SQL = """
     JOIN `tabPurchase Invoice` pi ON pi.name = pii.parent
     JOIN `tabPurchase Order Item` poi ON poi.parent = pii.purchase_order
     LEFT JOIN `tabSupplier` sup ON sup.name = pi.supplier
-    WHERE poi.sales_order IS NOT NULL AND poi.sales_order != '' AND pi.docstatus < 2
+    WHERE poi.sales_order IS NOT NULL AND poi.sales_order != '' AND pi.docstatus <= 2
     GROUP BY pi.name, poi.sales_order, pi.modified, pi.creation, pi.status, pi.docstatus, pi.owner, pi.supplier, sup.supplier_name
+
+    UNION ALL
+
+    SELECT 'Sales Order' AS doctype, so.name, so.name AS sales_order,
+           so.modified AS ts, so.creation AS created, COALESCE(so.workflow_state, so.status) AS status, so.docstatus, so.owner,
+           so.customer AS party, so.customer_name AS party_name
+    FROM `tabSales Order` so
+    WHERE so.docstatus <= 2
+
+    UNION ALL
+
+    SELECT 'Comment' AS doctype, c.name, c.reference_name AS sales_order,
+           c.modified AS ts, c.creation AS created, c.content AS status, 0 AS docstatus, c.owner,
+           NULL AS party, NULL AS party_name
+    FROM `tabComment` c
+    WHERE c.reference_doctype = 'Sales Order' AND c.comment_type = 'Comment'
+
+    UNION ALL
+
+    -- Embroidery stock transfers are warehouse-to-warehouse moves with no Sales
+    -- Order behind them, so sales_order is NULL here. They exist in this feed so
+    -- the Embroidery Transfers tab can notify on its own records; every consumer
+    -- has to tolerate a NULL sales_order.
+    SELECT 'Uniform Embroidery Transfer' AS doctype, uet.name, NULL AS sales_order,
+           uet.modified AS ts, uet.creation AS created, uet.status, uet.docstatus, uet.owner,
+           NULL AS party, NULL AS party_name
+    FROM `tabUniform Embroidery Transfer` uet
 """
 
 
@@ -149,10 +185,341 @@ def _from_date(days):
     return add_days(nowdate(), -abs(int(days or 120)))
 
 
-# NOTE: merchandiser scoping applies ONLY to the SO Approvals tab and is handled
-# inline in get_pending_approvals(). The dashboard tabs (Sales Tracker, Purchase
-# Flow, Job Work & Embroidery, Accounts) are intentionally unscoped, so a
-# Merchandiser User still sees the full downstream picture there.
+# --------------------------------------------------------------------------
+# Event importance & per-user relevance
+#
+# _EVENT_SQL fires a row for every touch on every linked document — including
+# the `modified` bump each save makes — which is far more than an operator can
+# read. The helpers below decide which rows are real milestones ("important")
+# and which of them the logged-in user actually has to act on.
+# --------------------------------------------------------------------------
+
+# Milestone wording per doctype, used once the document is submitted.
+_SUBMITTED_LABELS = {
+    "Material Request": "Material Request submitted",
+    "Purchase Order": "Purchase Order placed",
+    "Job Work (Subcontract)": "Job Work sent to vendor",
+    "Embroidery Work Order": "Embroidery work started",
+    "Purchase Receipt": "Stock received",
+    "Subcontracting Receipt": "Subcontract goods received",
+    "Pick List": "Pick List submitted",
+    "Delivery Note": "Delivered to customer",
+    "Sales Invoice": "Sales Invoice raised",
+    "Purchase Invoice": "Supplier bill booked",
+}
+
+def _plain_text(html):
+    if not html:
+        return ""
+    return re.sub(r"\s+", " ", re.sub(r"<[^>]*>", " ", str(html))).strip()
+
+
+# The dashboard's notification tabs. Only the names live here — which doctypes
+# each tab shows is the page's business (see OF_TAB_FILTERS in order_flow.js).
+# The dashboard's tab set now lives in order_flow_permissions.OF_TABS, which
+# also drives the per-tab role gating — kept as one list so the two can never
+# drift apart.
+_ACTIVITY_TABS = OF_TABS
+
+
+def _seen_key(tab, doctype, name, docstatus=None, status=None):
+    """
+    Identity of one *notification*, not of the document behind it.
+
+    Two things are folded into the key on purpose:
+
+    `tab`, because one event surfaces on several tabs — a Purchase Order shows
+    up under both Purchase and the Tracker — and clearing it where you work
+    should not silently clear it for the colleague working the other tab.
+
+    the document's state, because keying purely on doctype:name makes "seen"
+    stick to the document for the rest of its life: mark the draft Purchase
+    Order seen (or hit "Mark all seen" once) and its submission, and later its
+    cancellation, are born already-seen and never notify again.
+
+    Seen marks are stored per session user (a DefaultValue row parented to that
+    user), so one user clearing a notification never affects another's.
+    """
+    return f"{tab}|{doctype}:{name}:{cint(docstatus)}:{_plain_text(status)[:80]}"
+
+
+_SEEN_DEFKEY = "dac_seen_notifications"
+
+# One event can hold a key per tab, so this sits well above the number of
+# notifications a user actually works through.
+_SEEN_MAX = 6000
+
+
+def _load_seen_dict():
+    """This user's seen marks. Keys predating the tab|... format are dropped."""
+    import json
+    val_str = frappe.db.get_value(
+        "DefaultValue", {"parent": frappe.session.user, "defkey": _SEEN_DEFKEY}, "defvalue")
+    if not val_str:
+        return {}
+    try:
+        stored = json.loads(val_str)
+    except Exception:
+        return {}
+    # Legacy "doctype:name" keys can never match a tab-scoped lookup again, so
+    # they are dead weight — drop them the next time this user is written.
+    return {k: v for k, v in stored.items() if "|" in k}
+
+
+def _save_seen_dict(seen_dict):
+    import json
+    if len(seen_dict) > _SEEN_MAX:
+        for k in list(seen_dict.keys())[:-_SEEN_MAX]:
+            seen_dict.pop(k, None)
+
+    val_json = json.dumps(seen_dict)
+    name = frappe.db.get_value(
+        "DefaultValue", {"parent": frappe.session.user, "defkey": _SEEN_DEFKEY}, "name")
+    if name:
+        frappe.db.set_value("DefaultValue", name, "defvalue", val_json)
+    else:
+        frappe.get_doc({
+            "doctype": "DefaultValue",
+            "parent": frappe.session.user,
+            "parenttype": "User",
+            "parentfield": "defaults",
+            "defkey": _SEEN_DEFKEY,
+            "defvalue": val_json,
+        }).insert(ignore_permissions=True)
+    frappe.db.commit()
+
+
+def _comment_importance(content):
+    """(is_important, plain text) for a Sales Order comment.
+
+    Every comment on a Sales Order is a real, human-authored action and must
+    notify — it is never a routine re-save the way a plain draft "save" is.
+    """
+    text = _plain_text(content)
+    return True, text
+
+
+def _event_importance(ev):
+    """
+    (is_important, short label) for one event row.
+
+    Important means a document was created, submitted or cancelled, an
+    approval decision was taken, or a comment was left. The one exception is a
+    plain Sales Order draft with no live approval state — that is a routine
+    re-save, not activity worth a notification.
+    """
+    dt = ev.get("doctype")
+    ds = cint(ev.get("docstatus"))
+    status = str(ev.get("status") or "")
+    st = status.lower()
+
+    if dt == "Comment":
+        important, text = _comment_importance(status)
+        return important, (text[:160] or "Comment")
+
+    if dt == "Uniform Embroidery Transfer":
+        # Not a submittable doctype — docstatus is always 0 and the whole
+        # lifecycle lives in `status`, so the draft/submitted wording below
+        # would be meaningless here.
+        if "receiv" in st:
+            return True, "Embroidery transfer received back"
+        return True, "Plain stock sent to embroidery"
+
+    if dt == "Sales Order":
+        if ds == 2:
+            return True, "Sales Order cancelled"
+        if ds == 1:
+            # `status` here is the workflow state, which sits at "Approved" for
+            # the rest of a submitted order's life. so_status is the fulfilment
+            # status that actually keeps moving.
+            fulfilment = str(ev.get("so_status") or "").lower()
+            if fulfilment == "completed":
+                return True, "Order completed"
+            if fulfilment == "closed":
+                return True, "Order closed"
+            if fulfilment == "on hold":
+                return True, "Order on hold"
+            if fulfilment == "to bill":
+                return True, "Delivered — to be invoiced"
+            if fulfilment == "to deliver":
+                return True, "Invoiced — to be delivered"
+            return True, "Sales Order approved"
+        # Creating the order is itself the milestone the Approval tab exists
+        # to show — it must notify the moment it happens, not only once it
+        # reaches a specific approval state. This mirrors the generic
+        # doctype fallback below ("{dt} created (Draft)"): the row is keyed
+        # by document name, so this same event is superseded in place once
+        # the order is actually submitted for approval, not duplicated.
+        return True, status or "Draft"
+
+    if ds == 2:
+        return True, f"{dt} cancelled"
+
+    if ds == 1:
+        label = _SUBMITTED_LABELS.get(dt, f"{dt} submitted")
+        # Compare the whole status, never a substring: "Unpaid" contains "paid"
+        # and "Partially Ordered" contains "ordered", so `in` silently inverts
+        # the meaning of the milestone.
+        if dt in ("Sales Invoice", "Purchase Invoice"):
+            if st == "paid":
+                label = f"{dt} paid"
+            elif st in ("partly paid", "partly paid and discounted"):
+                label = f"{dt} part-paid"
+            elif st in ("overdue", "overdue and discounted"):
+                label = f"{dt} overdue"
+        elif dt == "Purchase Order":
+            if st == "completed":
+                label = "Purchase Order completed"
+            elif st == "closed":
+                label = "Purchase Order closed"
+            elif st == "to bill":
+                label = "Purchase Order fully received"
+            elif st == "on hold":
+                label = "Purchase Order on hold"
+        elif dt == "Material Request":
+            if st == "stopped":
+                label = "Material Request stopped"
+            elif st == "partially ordered":
+                label = "Material Request partly ordered"
+            elif st == "ordered":
+                label = "Material Request fully ordered"
+            elif st == "received":
+                label = "Material Request received"
+        return True, label
+
+    # Draft — created but not yet submitted. Still a real, human-initiated
+    # action (raising an MR, opening a PO) that the relevant tab should
+    # surface; it simply gets superseded by this same document's own
+    # "submitted"/"cancelled" milestone once that happens.
+    return True, f"{dt} created (Draft)"
+
+
+def is_merchandiser_user(user=None):
+    """
+    True only for someone who actually owns customer relationships.
+
+    A bare `"Merchandiser User" in frappe.get_roles()` is NOT this test.
+    Administrator implicitly holds every role in the system, so that check
+    passes for admins too, and a System Manager is an operator rather than a
+    merchandiser. Both must answer False here.
+
+    This gates who may become a Customer's `custom_merchandiser_user`. Getting
+    it wrong is not cosmetic: that field drives the Customer and Sales Order
+    permission rules, so writing an admin into it silently narrows the customer
+    to that admin. Anything that assigns merchandiser ownership must use this.
+    """
+    roles = frappe.get_roles(user or frappe.session.user)
+    return (
+        "Merchandiser User" in roles
+        and "System Manager" not in roles
+        and "Administrator" not in roles
+    )
+
+
+def claim_customer_merchandiser(customer, user=None):
+    """
+    Give an unowned Customer to `user` as its merchandiser, if that is allowed.
+
+    Two guards, both deliberate:
+      * only a real merchandiser may claim (see is_merchandiser_user) — an admin
+        approving an order must never become the customer's merchandiser;
+      * an existing merchandiser is never overwritten, so approving someone
+        else's customer does not steal it from them.
+
+    Returns True only when the field was actually written.
+    """
+    user = user or frappe.session.user
+    if not customer or not is_merchandiser_user(user):
+        return False
+    if frappe.db.get_value("Customer", customer, "custom_merchandiser_user"):
+        return False
+    frappe.db.set_value("Customer", customer, "custom_merchandiser_user", user)
+    return True
+
+
+def _user_context():
+    """Everything the relevance rules need about the session user, read once."""
+    roles = frappe.get_roles()
+    user = frappe.session.user
+    is_admin = "System Manager" in roles or user == "Administrator"
+
+    final_users = []
+    try:
+        settings = frappe.get_doc("Admin Settings")
+        final_users = [d.user for d in (settings.get("sales_order_final_approval") or []) if d.user]
+    except Exception:
+        frappe.log_error(title="Order Flow: could not read final approvers",
+                         message=frappe.get_traceback())
+
+    return {
+        "user": user,
+        "is_admin": is_admin,
+        "is_merchandiser": "Merchandiser User" in roles,
+        "is_final_approver": bool(is_admin or user in final_users),
+    }
+
+
+def _event_relevance(ev, ctx):
+    """
+    Whether — and why — this event belongs to the session user.
+
+    for_me         the user is responsible for this order
+    is_own_action  the user performed it themselves, so it is not news to them
+    action_needed  the order is parked waiting on this user
+    """
+    user = ctx["user"]
+    own = 1 if ev.get("owner") == user else 0
+    merch = ev.get("so_merchandiser")
+    ws = ev.get("so_workflow_state") or ""
+    dt = ev.get("doctype")
+
+    reasons = []
+    action = 0
+
+    if merch and merch == user:
+        reasons.append(_("You are the merchandiser for this customer"))
+    if ev.get("so_owner") == user:
+        reasons.append(_("You created this Sales Order"))
+    if dt == "Comment" and f'data-id="{user}"' in str(ev.get("status") or ""):
+        reasons.insert(0, _("You were mentioned in this comment"))
+        action = 1
+
+    if dt == "Sales Order" and cint(ev.get("docstatus")) == 0:
+        if ws == "Pending Final Approval" and ctx["is_final_approver"]:
+            reasons.insert(0, _("Waiting for your final approval"))
+            action = 1
+        elif ws in ("Pending Merchandiser Approval", "Draft", "") and ctx["is_merchandiser"] \
+                and (not merch or merch == user):
+            reasons.insert(0, _("Waiting for your merchandiser approval"))
+            action = 1
+        elif ws == "Rejected" and (ev.get("so_owner") == user or (merch and merch == user)):
+            reasons.insert(0, _("Rejected — needs your correction"))
+            action = 1
+
+    # "for_me" is about ownership of the order (I'm the merchandiser / creator /
+    # approver), not about who happened to click submit. A merchandiser running
+    # a customer end-to-end still needs their own past actions to count as their
+    # own orders — is_own_action only mutes the styling, it never drops the row
+    # from "for me", or a single-operator account would see an empty stream.
+    for_me = 1 if reasons else 0
+
+    return {
+        "for_me": for_me,
+        "is_own_action": own,
+        "action_needed": action,
+        "relevance_reason": reasons[0] if reasons else "",
+    }
+
+
+# NOTE: merchandiser scoping applies to the SO Approvals tab (handled inline in
+# get_pending_approvals()) and to the Sales Tracker tab (handled inline in
+# get_sales_tracker(), via order_flow_permissions.is_scoped_to_own_customers)
+# — a user whose ONLY reason for tracker access is Merchandiser User sees only
+# their own customers' orders there, since that role's job is per-customer,
+# not company-wide. Someone who ALSO holds a broader tracker-granting role
+# (Production Manager, Accounts Executive, ...) keeps the full picture.
+# Purchase Flow, Job Work & Embroidery, and Accounts remain intentionally
+# unscoped regardless of role combination.
 
 
 # --------------------------------------------------------------------------
@@ -165,11 +532,16 @@ def get_sales_tracker(days=120, search=None, scope="open", stage_filter=None, me
     Sales Orders ordered by most recent downstream activity, with exact stage & next action.
     """
     _guard()
+    _guard_tab("tracker")
     from_date = _from_date(days)
 
     if approval_stage in ("Draft", "Pending Merchandiser Approval", "Pending Final Approval", "Rejected"):
         conditions = ["so.docstatus = 0", "so.transaction_date >= %(from_date)s"]
+    elif approval_stage:
+        conditions = ["so.docstatus = 1", "so.transaction_date >= %(from_date)s"]
     else:
+        # Sales Tracker shows only approved/submitted Sales Orders — drafts and
+        # pending-approval orders belong in the SO Approvals tab.
         conditions = ["so.docstatus = 1", "so.transaction_date >= %(from_date)s"]
     params = {"from_date": from_date}
 
@@ -194,11 +566,24 @@ def get_sales_tracker(days=120, search=None, scope="open", stage_filter=None, me
         conditions.append("(so.name LIKE %(q)s OR so.customer_name LIKE %(q)s OR so.customer LIKE %(q)s)")
         params["q"] = f"%{search}%"
 
+    # A user whose ONLY reason for seeing this tab is Merchandiser User (no
+    # other tracker-granting role held) uses it to answer "where is MY order",
+    # not to browse the whole company's order book — scope to the customers
+    # assigned to them. Someone who ALSO holds a broader role (Production
+    # Manager, Accounts Executive, ...) keeps the full, unscoped picture, since
+    # that role's own reason for tracker access is company-wide visibility.
+    # See is_scoped_to_own_customers's docstring — this is the same function
+    # get_order_flow_permissions() uses for tracker_scoped_to_own_customers,
+    # so the client's button-hiding can never disagree with what rows the
+    # server actually returns.
+    if is_scoped_to_own_customers("tracker"):
+        conditions.append("cust.custom_merchandiser_user = %(merch_scope)s")
+        params["merch_scope"] = frappe.session.user
 
     orders = frappe.db.sql(f"""
         SELECT so.name, so.customer, so.customer_name, so.transaction_date, so.delivery_date,
                so.status, so.grand_total, so.currency, so.per_delivered, so.per_billed,
-               so.owner, so.modified
+               so.owner, so.modified, so.skip_delivery_note, so.docstatus
         FROM `tabSales Order` so
         LEFT JOIN `tabCustomer` cust ON cust.name = so.customer
         WHERE {' AND '.join(conditions)}
@@ -213,17 +598,44 @@ def get_sales_tracker(days=120, search=None, scope="open", stage_filter=None, me
     by_name = {o.name: o for o in orders}
     for o in orders:
         o["counts"] = {}
+        o["pick_lists"] = []
         o["draft_pick_lists"] = []
         o["submitted_pick_lists"] = []
+        o["pos"] = []
         o["open_pos"] = []
         o["receipts"] = []
         o["mrs"] = []
         o["jobworks"] = []
         o["embroidery_orders"] = []
+        o["invoices"] = []
         o["draft_invoices"] = []
+        o["delivery_notes"] = []
+        # Submitted Sales Invoices carrying "Update Stock". On a Direct Bill
+        # order the goods leave on the invoice, so these — not Delivery Notes —
+        # are the documents that delivered the order.
+        o["stock_invoices"] = []
         o["last_event"] = None
         o["last_event_on"] = None
         o["last_event_doc"] = None
+        o["last_event_label"] = None
+        o["last_event_important"] = 0
+        o["_minor_event"] = None
+
+    # Which invoices actually moved stock. ERPNext posts the delivery straight
+    # from a Sales Invoice when "Update Stock" is ticked (it maintains
+    # delivered_qty / per_delivered exactly as a Delivery Note would), so on a
+    # Direct Bill order these are the delivering documents and there is no DN to
+    # point at.
+    for r in frappe.db.sql("""
+        SELECT DISTINCT sii.sales_order, si.name
+        FROM `tabSales Invoice Item` sii
+        JOIN `tabSales Invoice` si ON si.name = sii.parent
+        WHERE si.docstatus = 1 AND IFNULL(si.update_stock, 0) = 1
+          AND sii.sales_order IN %(names)s
+    """, {"names": tuple(names)}, as_dict=1):
+        row = by_name.get(r.sales_order)
+        if row and r.name not in row["stock_invoices"]:
+            row["stock_invoices"].append(r.name)
 
     # Roll every linked document up to its Sales Order in one pass.
     events = frappe.db.sql(f"""
@@ -239,39 +651,82 @@ def get_sales_tracker(days=120, search=None, scope="open", stage_filter=None, me
             continue
         dt = ev.doctype
         ds = ev.docstatus
-        row["counts"][dt] = row["counts"].get(dt, 0) + 1
 
-        if dt == "Pick List":
-            if ds == 0:
-                if ev.name not in row["draft_pick_lists"]:
-                    row["draft_pick_lists"].append(ev.name)
-            elif ds == 1:
-                if ev.name not in row["submitted_pick_lists"]:
-                    row["submitted_pick_lists"].append(ev.name)
-        elif dt == "Purchase Order":
-            if ds == 1 and ev.name not in row["open_pos"]:
-                row["open_pos"].append(ev.name)
-        elif dt in ("Purchase Receipt", "Subcontracting Receipt"):
-            if ds == 1 and ev.name not in row["receipts"]:
-                row["receipts"].append(ev.name)
-        elif dt == "Material Request":
-            if ds == 1 and ev.name not in row["mrs"]:
-                row["mrs"].append(ev.name)
-        elif dt == "Job Work (Subcontract)":
-            # ev.name is the Purchase Order, not the Subcontracting Order.
-            if ds == 1 and ev.name not in row["jobworks"]:
-                row["jobworks"].append(ev.name)
-        elif dt == "Embroidery Work Order":
-            if ds == 1 and ev.name not in row["embroidery_orders"]:
-                row["embroidery_orders"].append(ev.name)
-        elif dt == "Sales Invoice":
-            if ds == 0 and ev.name not in row["draft_invoices"]:
-                row["draft_invoices"].append(ev.name)
+        # A cancelled document is not live progress — it must still surface as
+        # the order's last activity (below) but must never count toward doc-flow
+        # tallies or stage computation, or a cancelled PO/MR/Receipt would make
+        # an order look further along than it actually is.
+        if ds != 2:
+            row["counts"][dt] = row["counts"].get(dt, 0) + 1
 
-        if not row["last_event_on"]:
-            row["last_event_on"] = ev.ts
-            row["last_event"] = dt
-            row["last_event_doc"] = ev.name
+            if dt == "Pick List":
+                if ev.name not in row["pick_lists"]:
+                    row["pick_lists"].append(ev.name)
+                if ds == 0:
+                    if ev.name not in row["draft_pick_lists"]:
+                        row["draft_pick_lists"].append(ev.name)
+                elif ds == 1:
+                    if ev.name not in row["submitted_pick_lists"]:
+                        row["submitted_pick_lists"].append(ev.name)
+            elif dt == "Purchase Order":
+                if ev.name not in row["pos"]:
+                    row["pos"].append(ev.name)
+                if ds == 1 and ev.name not in row["open_pos"]:
+                    row["open_pos"].append(ev.name)
+            elif dt in ("Purchase Receipt", "Subcontracting Receipt"):
+                receipt_obj = {"name": ev.name, "doctype": ev.doctype}
+                if receipt_obj not in row["receipts"]:
+                    row["receipts"].append(receipt_obj)
+            elif dt == "Material Request":
+                if ev.name not in row["mrs"]:
+                    row["mrs"].append(ev.name)
+            elif dt == "Job Work (Subcontract)":
+                # ev.name is the Purchase Order, not the Subcontracting Order.
+                job_obj = {"name": ev.name, "doctype": "Purchase Order"}
+                if job_obj not in row["jobworks"]:
+                    row["jobworks"].append(job_obj)
+            elif dt == "Embroidery Work Order":
+                # ev.name is the Purchase Order, not the Embroidery Work Order.
+                job_obj = {"name": ev.name, "doctype": "Purchase Order"}
+                if job_obj not in row["embroidery_orders"]:
+                    row["embroidery_orders"].append(job_obj)
+                if job_obj not in row["jobworks"]:
+                    row["jobworks"].append(job_obj)
+            elif dt == "Sales Invoice":
+                if ev.name not in row["invoices"]:
+                    row["invoices"].append(ev.name)
+                if ds == 0 and ev.name not in row["draft_invoices"]:
+                    row["draft_invoices"].append(ev.name)
+            elif dt == "Delivery Note":
+                if ev.name not in row["delivery_notes"]:
+                    row["delivery_notes"].append(ev.name)
+
+        # "Last Activity" is a milestone column, not a change log: events arrive
+        # newest first, so the first important one is the one worth showing. A
+        # minor event is kept only as a fallback for orders that have none yet.
+        # The event's own status is the workflow state; _event_importance needs
+        # the order's fulfilment status to label a submitted order correctly.
+        if dt == "Sales Order":
+            ev["so_status"] = row.get("status")
+        important, label = _event_importance(ev)
+        if important:
+            if not row["last_event_on"]:
+                row["last_event_on"] = ev.ts
+                row["last_event"] = dt
+                row["last_event_doc"] = ev.name
+                row["last_event_label"] = label
+                row["last_event_important"] = 1
+        elif not row["_minor_event"]:
+            row["_minor_event"] = {"ts": ev.ts, "doctype": dt, "name": ev.name, "label": label}
+
+    for o in orders:
+        minor = o.pop("_minor_event", None)
+        if not o["last_event_on"] and minor:
+            o["last_event_on"] = minor["ts"]
+            o["last_event"] = minor["doctype"]
+            o["last_event_doc"] = minor["name"]
+            o["last_event_label"] = minor["label"]
+            o["last_event_important"] = 0
 
     # Orders with fresh activity first; then by order date.
     orders.sort(key=lambda r: (r.get("last_event_on") or r.get("modified") or ""), reverse=True)
@@ -294,6 +749,19 @@ def _compute_stage_info(order):
     """
     Computes exact workflow stage & required action for a Sales Order.
     """
+    if order.get("docstatus") == 0:
+        return {
+            "stage_key": "draft",
+            "stage_label": "Draft SO (Awaiting Approval)",
+            "badge_class": "of-pill--draft",
+            "icon": "clock-o",
+            "action_type": "open_doc",
+            "target_doc": order["name"],
+            "target_doctype": "Sales Order",
+            "action_label": "Approve Sales Order",
+            "action_btn_class": "of-btn--warning"
+        }
+
     delivered = flt(order.get("per_delivered"))
     billed = flt(order.get("per_billed"))
     draft_pls = order.get("draft_pick_lists") or []
@@ -305,14 +773,17 @@ def _compute_stage_info(order):
     embroidery_orders = order.get("embroidery_orders") or []
     draft_invoices = order.get("draft_invoices") or []
 
+    skip_dn = bool(order.get("skip_delivery_note"))
+    is_completed = billed >= 100 if skip_dn else (delivered >= 100 and billed >= 100)
+
     is_overdue = False
     today = nowdate()
-    if order.get("delivery_date") and delivered < 100:
+    if order.get("delivery_date") and not is_completed:
         if str(order["delivery_date"]) < today:
             is_overdue = True
     order["is_overdue"] = is_overdue
 
-    if delivered >= 100 and billed >= 100:
+    if is_completed:
         return {
             "stage_key": "completed",
             "stage_label": "Completed",
@@ -323,7 +794,16 @@ def _compute_stage_info(order):
             "action_btn_class": "of-btn-disabled"
         }
 
-    if delivered >= 100 and billed < 100:
+    # If skip_dn, Pick List submitted triggers need_to_bill directly
+    is_ready_to_bill = False
+    if skip_dn:
+        if subm_pls or delivered >= 100:
+            is_ready_to_bill = True
+    else:
+        if delivered >= 100:
+            is_ready_to_bill = True
+
+    if is_ready_to_bill and billed < 100:
         if draft_invoices:
             inv_name = draft_invoices[0]
             return {
@@ -362,7 +842,8 @@ def _compute_stage_info(order):
             "action_btn_class": "of-btn--warning"
         }
 
-    if subm_pls:
+    # For standard flow, if Pick List is submitted, we create Delivery Note
+    if subm_pls and not skip_dn:
         pl_name = subm_pls[0]
         return {
             "stage_key": "ready_to_deliver",
@@ -448,30 +929,141 @@ def _compute_stage_info(order):
         "stage_label": "Newly Created",
         "badge_class": "of-pill--new",
         "icon": "star",
-        "action_type": "make_picklist_or_po",
-        "action_label": "Create Pick List / PO",
+        "action_type": "make_mr",
+        "action_label": "Raise MR from SO",
         "action_btn_class": "of-btn--primary"
     }
 
 
 @frappe.whitelist()
-def get_activity(days=21, limit=80, merchandiser=None):
-    """The notification stream: newest downstream events across all Sales Orders."""
+def get_activity(days=21, limit=80, merchandiser=None, scope="open", search=None):
+    """
+    The notification stream: what happened to the records the page is showing.
+
+    Scope matters as much as content here. The stream is deliberately held to the
+    same Sales Orders the tab tables are filtered to — same `days`, same `scope`,
+    same `search` — so a tab never reports activity on orders the operator cannot
+    see in front of them. Without that the feed drifts into a firehose of every
+    event in the system and stops being readable. The page then narrows it once
+    more per tab, to the doctypes that tab actually lists.
+
+    Only milestones are returned (see _event_importance) — a document's creation,
+    submission and cancellation each count once, but a plain re-save of an
+    already-known draft does not spawn a new row (the underlying query reflects
+    each document's current state, not its full revision history).
+
+    `limit` is a per-doctype allowance rather than a global cut, because the page
+    fans this single feed out across six tabs and a global cut lets a chatty
+    doctype starve a quiet one. The SQL window is wider again so that trimming
+    still leaves each doctype its full slice.
+    """
     _guard()
+    limit = int(limit)
+    fetch_limit = min(max(limit * 20, 400), 3000)
     conditions = ["ev.ts >= %(from_date)s"]
-    params = {"from_date": _from_date(days), "limit": int(limit)}
+    params = {"from_date": _from_date(days), "limit": fetch_limit}
+
+    # Hold the feed to the orders the tables are showing. Events with no Sales
+    # Order of their own (embroidery stock transfers) are exempt — they are
+    # matched by their tab's doctype list instead.
+    so_conditions = ["so2.transaction_date >= %(from_date)s"]
+    if scope == "open":
+        so_conditions.append("so2.status NOT IN ('Closed', 'Completed', 'Cancelled')")
+    if search:
+        so_conditions.append(
+            "(so2.name LIKE %(q)s OR so2.customer_name LIKE %(q)s OR so2.customer LIKE %(q)s)")
+        params["q"] = f"%{search}%"
+
+    conditions.append(f"""(
+        ev.sales_order IS NULL
+        OR ev.sales_order IN (
+            SELECT so2.name FROM `tabSales Order` so2
+            WHERE {' AND '.join(so_conditions)}
+        )
+    )""")
+
+    # The dashboard's notification stream is intentionally unscoped for every
+    # role — see the note above _event_relevance: merchandiser scoping belongs
+    # only to get_pending_approvals() / the SO Approvals tab. Auto-restricting
+    # this feed to the session user's own role (as used to happen here) meant a
+    # Merchandiser User never saw a PO/MR/Receipt/etc. notification for any
+    # customer not explicitly assigned to them — nearly every customer in this
+    # system has no merchandiser assigned, so the stream was effectively empty.
+    # Only an explicit `merchandiser` argument (an admin viewing "as" a specific
+    # merchandiser) narrows it now; the viewer's own role never does.
+    if merchandiser:
+        conditions.append("""(
+            cust.custom_merchandiser_user = %(merchandiser)s
+            OR (
+                (cust.custom_merchandiser_user IS NULL OR cust.custom_merchandiser_user = '')
+                AND ev.doctype = 'Sales Order'
+                AND ev.docstatus = 0
+            )
+        )""")
+        params["merchandiser"] = merchandiser
     
-        
     rows = frappe.db.sql(f"""
-        SELECT ev.*, so.customer_name, so.status AS so_status
+        SELECT ev.*, so.customer_name, so.status AS so_status, u.full_name AS owner_fullname,
+               so.owner AS so_owner, so.workflow_state AS so_workflow_state,
+               so.docstatus AS so_docstatus,
+               IFNULL(po_sc.is_subcontracted, 0) AS is_subcontracted,
+               po_sc.per_received AS po_per_received,
+               po_sc.per_billed AS po_per_billed,
+               cust.custom_merchandiser_user AS so_merchandiser
         FROM ({_EVENT_SQL}) ev
         LEFT JOIN `tabSales Order` so ON so.name = ev.sales_order
         LEFT JOIN `tabCustomer` cust ON cust.name = so.customer
+        LEFT JOIN `tabUser` u ON u.name = ev.owner
+        -- A subcontracting Purchase Order is Job Work, not buying: the Purchase
+        -- Flow table excludes it, so the Purchase notifications must too.
+        LEFT JOIN `tabPurchase Order` po_sc
+               ON po_sc.name = ev.name AND ev.doctype = 'Purchase Order'
         WHERE {' AND '.join(conditions)}
         ORDER BY ev.ts DESC
         LIMIT %(limit)s
     """, params, as_dict=1)
-    return rows
+
+    # This user's own seen marks, keyed per tab and per milestone — see _seen_key.
+    seen_dict = _load_seen_dict()
+
+    # Keep only real milestones, annotate seen status and what this means for
+    # the session user.
+    ctx = _user_context()
+    important_rows = []
+    for row in rows:
+        important, label = _event_importance(row)
+        if not important:
+            continue
+
+        # Seen is per tab, so the row carries the set of tabs it has been
+        # cleared on rather than one flat flag.
+        row["seen_tabs"] = {
+            t: 1 for t in _ACTIVITY_TABS
+            if _seen_key(t, row.get("doctype"), row.get("name"),
+                         row.get("docstatus"), row.get("status")) in seen_dict
+        }
+        row["is_important"] = 1
+        row["event_label"] = label
+        row.update(_event_relevance(row, ctx))
+        important_rows.append(row)
+
+    # The page splits this one feed across six tabs, so a single global cut
+    # would let a chatty doctype bury a quiet one: 26 comments and 9 draft
+    # orders are enough to push every Job Work and Invoice event past a
+    # limit of 60, leaving those tabs looking idle while work is happening.
+    # Give each doctype its own newest slice instead, then cap the whole
+    # payload so the response stays small.
+    per_doctype = {}
+    balanced = []
+    for row in important_rows:                      # already newest-first
+        dt = row.get("doctype")
+        taken = per_doctype.get(dt, 0)
+        if taken >= limit:
+            continue
+        per_doctype[dt] = taken + 1
+        balanced.append(row)
+
+    return balanced[: limit * 6]
 
 
 # --------------------------------------------------------------------------
@@ -482,6 +1074,7 @@ def get_activity(days=21, limit=80, merchandiser=None):
 def get_purchase_flow(days=120, search=None, scope="open", merchandiser=None):
     """Purchase Orders with their receipt progress, tied back to the Sales Order."""
     _guard()
+    _guard_tab("purchase")
     conditions = ["po.docstatus < 2", "po.transaction_date >= %(from_date)s", "IFNULL(po.is_subcontracted, 0) = 0"]
     params = {"from_date": _from_date(days)}
 
@@ -626,6 +1219,7 @@ def get_purchase_flow(days=120, search=None, scope="open", merchandiser=None):
 def get_jobwork_flow(days=180, search=None, scope="open", merchandiser=None):
     """Subcontracting/Job Work POs with their receipt progress, tied back to the Sales Order."""
     _guard()
+    _guard_tab("jobwork")
     conditions = ["po.docstatus < 2", "po.transaction_date >= %(from_date)s", "po.is_subcontracted = 1"]
     params = {"from_date": _from_date(days)}
 
@@ -765,6 +1359,7 @@ def get_summary(days=120, scope="open", search=None, merchandiser=None, approval
     Headline stage counters for Number Cards on the Order Flow page.
     """
     _guard()
+    _guard_tab("tracker")  # only called from the Sales Tracker tab
     # To compute accurate summary counts for all stages (including completed ones),
     # we override "open" scope to "all". "mine" scope is preserved to only count the user's orders.
     summary_scope = "all" if scope == "open" else scope
@@ -834,6 +1429,7 @@ def get_accounts_flow(days=120, search=None, scope="open", merchandiser=None):
     Financial summary & invoices split into Receivables, Supplier Payables, and Jobber Payables (custom_is_jobber = 1).
     """
     _guard()
+    _guard_tab("accounts")
     from_date = _from_date(days)
     params = {"from_date": from_date}
 
@@ -934,39 +1530,19 @@ def get_accounts_flow(days=120, search=None, scope="open", merchandiser=None):
 @frappe.whitelist()
 def get_approval_permissions():
     """
-    What the current user is allowed to see on the SO Approval tab.
+    Deprecated: kept as a thin wrapper because it is a whitelisted, public
+    method and something outside this app may still call it by name.
 
-    The "Pending Final Approval" sub-tab is only for the users listed in
-    Admin Settings > sales_order_final_approval (plus System Manager /
-    Administrator). Everyone else should not even see the tab, let alone the
-    bulk-approve controls inside it.
+    Superseded by get_order_flow_permissions(), which returns everything this
+    used to plus the per-tab visibility map (`tabs` / `allowed_tabs`).
     """
-    _guard()
-
-    roles = frappe.get_roles()
-    is_admin = "System Manager" in roles or frappe.session.user == "Administrator"
-
-    final_users = []
-    try:
-        settings = frappe.get_doc("Admin Settings")
-        final_users = [d.user for d in (settings.get("sales_order_final_approval") or []) if d.user]
-    except Exception:
-        frappe.log_error(title="Order Flow: could not read final approvers",
-                         message=frappe.get_traceback())
-
-    return {
-        "user": frappe.session.user,
-        "is_admin": is_admin,
-        "is_merchandiser": "Merchandiser User" in roles,
-        # Admins keep access so the workflow is never unadministrable.
-        "is_final_approver": bool(is_admin or frappe.session.user in final_users),
-        "final_approvers": final_users,
-    }
+    return get_order_flow_permissions()
 
 
 @frappe.whitelist()
 def get_pending_approvals(search=None, merchandiser=None, approval_stage=None):
     _guard()
+    _guard_tab("approval")
     setup_sales_order_workflow()
     
     conditions = ["so.docstatus = 0"]
@@ -989,8 +1565,7 @@ def get_pending_approvals(search=None, merchandiser=None, approval_stage=None):
         conditions.append("cust.custom_merchandiser_user = %(me)s")
         params["me"] = merchandiser
     else:
-        is_merchandiser = "Merchandiser User" in frappe.get_roles() and "System Manager" not in frappe.get_roles() and frappe.session.user != "Administrator"
-        if is_merchandiser and not is_final_approver:
+        if is_merchandiser_user() and not is_final_approver:
             conditions.append("(cust.custom_merchandiser_user = %(me)s OR cust.custom_merchandiser_user IS NULL OR cust.custom_merchandiser_user = '')")
             params["me"] = frappe.session.user
         
@@ -1174,11 +1749,10 @@ def approve_sales_orders(sales_orders):
         elif state_before == "Pending Final Approval":
             add_custom_workflow_comment(doc.doctype, doc.name, "Final Approved")
         
+        # A merchandiser who pushes an order through to final approval takes
+        # ownership of that customer; an admin doing the same does not.
         if doc.workflow_state == "Pending Final Approval":
-            if "Merchandiser User" in frappe.get_roles():
-                customer_merchandiser = frappe.db.get_value("Customer", doc.customer, "custom_merchandiser_user")
-                if not customer_merchandiser:
-                    frappe.db.set_value("Customer", doc.customer, "custom_merchandiser_user", frappe.session.user)
+            claim_customer_merchandiser(doc.customer)
 
 
 @frappe.whitelist()
@@ -1347,11 +1921,9 @@ def approve_sales_order_with_comment(sales_order, comment, skip_delivery_note=No
         frappe.throw(_("No valid transition found to approve Sales Order {0}.").format(sales_order))
         
     frappe.model.workflow.apply_workflow(so, action)
-    
-    if "Merchandiser User" in frappe.get_roles():
-        customer_merchandiser = frappe.db.get_value("Customer", so.customer, "custom_merchandiser_user")
-        if not customer_merchandiser:
-            frappe.db.set_value("Customer", so.customer, "custom_merchandiser_user", frappe.session.user)
+
+    # Same ownership rule as the bulk approval path — merchandisers claim, admins don't.
+    claim_customer_merchandiser(so.customer)
 
 
 def setup_sales_order_workflow(force=False):
@@ -1509,5 +2081,70 @@ def get_merchandisers():
         WHERE hr.role = 'Merchandiser User' AND u.enabled = 1
         ORDER BY u.full_name ASC
     """, as_dict=1)
+
+
+@frappe.whitelist()
+def get_last_seen():
+    val = frappe.db.get_value("DefaultValue", {"parent": frappe.session.user, "defkey": "dac_order_flow_last_seen"}, "defvalue")
+    return val or ""
+
+
+@frappe.whitelist()
+def set_last_seen(ts):
+    # Check if value already exists for this user
+    name = frappe.db.get_value("DefaultValue", {"parent": frappe.session.user, "defkey": "dac_order_flow_last_seen"}, "name")
+    if name:
+        frappe.db.set_value("DefaultValue", name, "defvalue", ts)
+    else:
+        # Create a new DefaultValue record
+        doc = frappe.get_doc({
+            "doctype": "DefaultValue",
+            "parent": frappe.session.user,
+            "parenttype": "User",
+            "parentfield": "defaults",
+            "defkey": "dac_order_flow_last_seen",
+            "defvalue": ts
+        })
+        doc.insert(ignore_permissions=True)
+    frappe.db.commit()
+
+
+@frappe.whitelist()
+def mark_notification_as_seen(event_doctype, event_name, event_docstatus=None, event_status=None, tab="tracker"):
+    """Clear one notification on ONE tab, for the session user only."""
+    seen_dict = _load_seen_dict()
+    seen_dict[_seen_key(tab, event_doctype, event_name, event_docstatus, event_status)] = 1
+    _save_seen_dict(seen_dict)
+    return True
+
+
+@frappe.whitelist()
+def mark_all_notifications_as_seen(events, tab="tracker"):
+    """
+    Clear a batch of notifications on ONE tab only, for the session user only.
+
+    "Mark all seen" is per tab by design: the same event surfaces on several
+    tabs, and clearing the Purchase queue must not silently clear the Tracker
+    for whoever works that one — see _seen_key.
+    """
+    import json
+    if isinstance(events, str):
+        events = json.loads(events)
+
+    seen_dict = _load_seen_dict()
+    for ev in events:
+        seen_dict[_seen_key(tab, ev.get("doctype"), ev.get("name"),
+                            ev.get("docstatus"), ev.get("status"))] = 1
+    _save_seen_dict(seen_dict)
+    return True
+
+
+@frappe.whitelist()
+def mark_notification_as_unseen(event_doctype, event_name, event_docstatus=None, event_status=None, tab="tracker"):
+    """Bring one notification back as pending on ONE tab, for this user only."""
+    seen_dict = _load_seen_dict()
+    seen_dict.pop(_seen_key(tab, event_doctype, event_name, event_docstatus, event_status), None)
+    _save_seen_dict(seen_dict)
+    return True
 
 

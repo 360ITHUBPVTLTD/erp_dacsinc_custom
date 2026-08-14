@@ -4,34 +4,14 @@
  "docstatus": 0,
  "doctype": "Page",
  "idx": 0,
- "modified": "2026-08-05 14:50:28.556645",
+ "modified": "2026-08-14 12:00:00.000000",
  "modified_by": "Administrator",
  "module": "Erp Dacsinc Custom",
  "name": "order-flow",
  "owner": "Administrator",
  "page_name": "order-flow",
  "roles": [
-  {
-   "role": "Sales User"
-  },
-  {
-   "role": "Sales Manager"
-  },
-  {
-   "role": "Purchase User"
-  },
-  {
-   "role": "Purchase Manager"
-  },
-  {
-   "role": "Stock User"
-  },
-  {
-   "role": "Stock Manager"
-  },
-  {
-   "role": "System Manager"
-  }
+  {"role": "System Manager"}
  ],
  "script": null,
  "standard": "Yes",
