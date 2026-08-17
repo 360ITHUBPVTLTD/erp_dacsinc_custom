@@ -1196,7 +1196,7 @@ def get_purchase_flow(days=120, search=None, scope="open", merchandiser=None):
                 pr.supplier, sup.supplier_name, pr.is_subcontracted, pr.currency, pr.grand_total,
                 GROUP_CONCAT(DISTINCT pri.sales_order ORDER BY pri.sales_order SEPARATOR ', ') AS sales_orders,
                 GROUP_CONCAT(DISTINCT pri.purchase_order ORDER BY pri.purchase_order SEPARATOR ', ') AS purchase_orders,
-                SUM(pri.received_qty) AS qty
+                SUM(pri.received_qty) AS qty, NULL AS linked_pr
          FROM `tabPurchase Receipt Item` pri
          JOIN `tabPurchase Receipt` pr ON pr.name = pri.parent
          LEFT JOIN `tabSupplier` sup ON sup.name = pr.supplier
@@ -1212,7 +1212,9 @@ def get_purchase_flow(days=120, search=None, scope="open", merchandiser=None):
                 scr.supplier, sup.supplier_name, 1, NULL, NULL,
                 GROUP_CONCAT(DISTINCT poi.sales_order ORDER BY poi.sales_order SEPARATOR ', '),
                 GROUP_CONCAT(DISTINCT scri.purchase_order ORDER BY scri.purchase_order SEPARATOR ', '),
-                SUM(scri.qty)
+                SUM(scri.qty),
+                (SELECT pr2.name FROM `tabPurchase Receipt` pr2
+                 WHERE pr2.subcontracting_receipt = scr.name LIMIT 1)
          FROM `tabSubcontracting Receipt Item` scri
          JOIN `tabSubcontracting Receipt` scr ON scr.name = scri.parent
          LEFT JOIN `tabPurchase Order Item` poi ON poi.name = scri.purchase_order_item
@@ -1340,7 +1342,7 @@ def get_jobwork_flow(days=180, search=None, scope="open", merchandiser=None):
                 pr.supplier, sup.supplier_name, pr.is_subcontracted, pr.currency, pr.grand_total,
                 GROUP_CONCAT(DISTINCT pri.sales_order ORDER BY pri.sales_order SEPARATOR ', ') AS sales_orders,
                 GROUP_CONCAT(DISTINCT pri.purchase_order ORDER BY pri.purchase_order SEPARATOR ', ') AS purchase_orders,
-                SUM(pri.received_qty) AS qty
+                SUM(pri.received_qty) AS qty, NULL AS linked_pr
          FROM `tabPurchase Receipt Item` pri
          JOIN `tabPurchase Receipt` pr ON pr.name = pri.parent
          LEFT JOIN `tabSupplier` sup ON sup.name = pr.supplier
@@ -1356,7 +1358,13 @@ def get_jobwork_flow(days=180, search=None, scope="open", merchandiser=None):
                  JOIN `tabSubcontracting Receipt Item` scri2 ON scri2.purchase_order = poi.parent
                  WHERE scri2.parent = scr.name) AS sales_orders,
                 GROUP_CONCAT(DISTINCT scri.purchase_order ORDER BY scri.purchase_order SEPARATOR ', ') AS purchase_orders,
-                SUM(scri.qty) AS qty
+                SUM(scri.qty) AS qty,
+                -- Every Subcontracting Receipt this app creates immediately gets a
+                -- mapped Purchase Receipt (create_receipt_documents in
+                -- purchase_order.py) — that PR, not the SCR, is the document this
+                -- business actually works from day to day.
+                (SELECT pr2.name FROM `tabPurchase Receipt` pr2
+                 WHERE pr2.subcontracting_receipt = scr.name LIMIT 1) AS linked_pr
          FROM `tabSubcontracting Receipt Item` scri
          JOIN `tabSubcontracting Receipt` scr ON scr.name = scri.parent
          LEFT JOIN `tabPurchase Order Item` poi ON poi.name = scri.purchase_order_item

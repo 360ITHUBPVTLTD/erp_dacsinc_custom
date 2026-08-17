@@ -2481,6 +2481,7 @@ def get_item_stock_details_bulk(item_bom_pairs, sales_order_name):
         bom_no = bom_key if bom_key != 'no_bom' else None
         
         total_other_po_qty = 0
+        total_other_po_qty_draft = 0
         total_other_po_count = 0
         other_po_list = []
         incoming_stock = []
@@ -2860,7 +2861,9 @@ def get_item_stock_details_bulk(item_bom_pairs, sales_order_name):
         for row in other_po_data:
             qty = flt(row.pending_qty)
             is_draft = row.po_docstatus == 0
-            if not is_draft:
+            if is_draft:
+                total_other_po_qty_draft += qty
+            else:
                 total_other_po_qty += qty
             info_text = row.supplier_name or row.supplier # Use name, fallback to ID
             other_po_list.append({
@@ -3128,7 +3131,20 @@ def get_item_stock_details_bulk(item_bom_pairs, sales_order_name):
                     coverage = rm["rm_available_stock"] + rm["rm_pending_so_linked_total"] + rm.get("rm_pending_mr_total", 0)
                     shortfall = max(0, rm["rm_needed_for_shortfall"] - coverage)
                     rm["rm_shortfall_total"] = shortfall
-                    rm["status"] = "Shortage" if shortfall > 0 else "Covered"
+                    # "Covered" must mean stock actually in hand, not "a PO/MR
+                    # was raised for it". A pending MR/PO still legitimately
+                    # closes the shortfall (nothing new needs to be raised),
+                    # but calling that "Covered" reads as "the stock is here"
+                    # when it isn't yet — confirmed confusing in practice: an
+                    # MR just raised for the full need immediately flipped
+                    # this to "Covered" with zero stock on hand. "Requested"
+                    # is the honest middle state.
+                    if shortfall > 0:
+                        rm["status"] = "Shortage"
+                    elif rm["rm_available_stock"] >= rm["rm_needed_for_shortfall"]:
+                        rm["status"] = "Covered"
+                    else:
+                        rm["status"] = "Requested"
                     if shortfall > 0: rm_procurement_status["rm_shortfall_exists"] = True
                     rm_procurement_status["rm_items_status"].append(rm)
 
@@ -3153,7 +3169,8 @@ def get_item_stock_details_bulk(item_bom_pairs, sales_order_name):
             "picked_for_others_qty": picked_for_others_qty, "draft_qty_for_others": draft_qty_for_others, "conflict_details": conflict_details,
             "incoming_stock": incoming_stock, "total_incoming_qty": total_incoming_qty, "total_incoming_po_count": total_incoming_po_count, "total_incoming_ewo_count": total_incoming_ewo_count,
             "draft_purchase_orders": draft_purchase_orders, "draft_material_requests": draft_material_requests,
-            "total_other_po_qty": total_other_po_qty, "total_other_po_count": total_other_po_count, "other_po_list": other_po_list,
+            "total_other_po_qty": total_other_po_qty, "total_other_po_qty_draft": total_other_po_qty_draft,
+            "total_other_po_count": total_other_po_count, "other_po_list": other_po_list,
             "is_bom_item": bool(bom_no), "bom_no": bom_no,
             "is_sub_contracted_item": bool(item_meta.get("is_sub_contracted_item")),
             "subcontract_service_item": sc_defaults.get("service_item"),
@@ -6878,6 +6895,48 @@ def validate_non_zero_rate(doc, method):
                 msg=_(f"Row #{row.idx}: Rate cannot be zero for Item <b>{row.item_code}</b>."),
                 title=_("Validation Error")
             )
+
+
+def validate_material_request_no_bom_items(doc, method):
+    """
+    A Material Request procures raw material / bought-out stock — an item
+    that is being produced (or subcontracted) under a BOM has no business on
+    an MR. Without this, an MR raised for a BOM item silently shows up as
+    "pending" on that item's own Item Stock & Action Plan row, which reads
+    as the raw material pipeline being satisfied when nothing was actually
+    ordered for production.
+
+    Deliberately checks the SOURCE Sales Order Item's bom_no — not the MR
+    row's own bom_no, and not the Item master's default_bom — because a
+    Sales Order line's bom_no can be cleared per-order to treat that item as
+    bought-out for THAT order alone, even though the Item generally has a
+    default BOM for other orders. The MR row's own bom_no can't be trusted
+    for this: ERPNext's get_item_details() (erpnext/stock/get_item_details.py)
+    re-populates bom_no from the Item's default_bom as a matter of course
+    while building the row, which would silently overwrite a "cleared for
+    this order" decision back to "has a BOM" before this validation ever
+    runs. Only a standalone MR with no Sales Order behind it falls back to
+    the Item master, for lack of any more specific answer.
+    """
+    for row in doc.items:
+        if row.sales_order_item:
+            so_bom_no = frappe.db.get_value("Sales Order Item", row.sales_order_item, "bom_no")
+        elif row.sales_order:
+            so_bom_no = frappe.db.get_value(
+                "Sales Order Item", {"parent": row.sales_order, "item_code": row.item_code}, "bom_no"
+            )
+        else:
+            so_bom_no = frappe.db.get_value("Item", row.item_code, "default_bom")
+
+        if so_bom_no:
+            frappe.throw(
+                _("Row #{0}: {1} has a BOM ({2}) and is produced or subcontracted, not requested via Material Request.").format(
+                    row.idx, row.item_code, so_bom_no
+                ),
+                title=_("Validation Error"),
+            )
+
+
 import frappe
 
 @frappe.whitelist()

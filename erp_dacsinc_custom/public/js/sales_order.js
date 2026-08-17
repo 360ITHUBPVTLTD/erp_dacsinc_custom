@@ -62,9 +62,9 @@ frappe.ui.form.on('Sales Order', {
             frm.remove_custom_button('Payment Request', 'Create');
             frm.remove_custom_button('Request for Raw Materials', 'Create');
             frm.remove_custom_button('Pick List', 'Create');
-            frm.remove_custom_button('Material Request', 'Create');
-            frm.remove_custom_button('Delivery Note', 'Create');
-            frm.remove_custom_button('Sales Invoice', 'Create');
+            // frm.remove_custom_button('Material Request', 'Create');
+            // frm.remove_custom_button('Delivery Note', 'Create');
+            // frm.remove_custom_button('Sales Invoice', 'Create');
         }, 500);
 
         // --- Custom "Create Purchase Order" button (submitted docs only) ---
@@ -1033,12 +1033,29 @@ function _build_incoming_html(item, d, pair_key) {
             +${flt(d.total_other_po_qty)} On Other POs
         </div>`;
     }
+    // A draft "other PO" (not yet submitted, so excluded from the count
+    // above) still has its own View button showing via has_docs below —
+    // without this line there was no visible sign of WHY, just an
+    // otherwise-unexplained View button next to a flat 0.
+    if (flt(d.total_other_po_qty_draft) > 0) {
+        html += `<div class="so-micro" style="color:var(--so-orange);" title="Not yet submitted — not counted above">
+            <i class="fa fa-file-o"></i> +${flt(d.total_other_po_qty_draft)} On Other POs In Draft
+        </div>`;
+    }
 
     // One entry point into the full document list, whatever produced the numbers above.
+    // Draft POs/MRs/Receipts count too — the incoming_docs modal lists all
+    // three in full (see show_details_modal), each linking straight to the
+    // real document to review and submit. Missing this meant an item whose
+    // ONLY incoming activity was a draft had no way to reach that detail at
+    // all — no View button appeared.
     const has_docs = (d.incoming_stock || []).length > 0
         || (d.other_po_list || []).length > 0
         || mrs.length > 0
-        || completed_rcvd.length > 0;
+        || completed_rcvd.length > 0
+        || draft_pos.length > 0
+        || draft_mrs.length > 0
+        || draft_receipts.length > 0;
     if (has_docs) {
         html += `<button class="so-btn so-btn--view" onclick="show_details_modal('${js_str(pair_key)}','incoming_docs')"><i class="fa fa-eye"></i> View</button>`;
     }
@@ -1076,7 +1093,14 @@ function get_rm_breakdown_html(data, so_name, docstatus) {
         }
 
         const shortfall_qty = flt(item.rm_shortfall_total || 0);
-        const is_covered    = shortfall_qty <= 0;
+        // Three distinct states, not a covered/shortfall binary: "Covered"
+        // means stock is actually in hand; "Requested" means a pending
+        // MR/PO closes the gap but nothing has arrived yet — collapsing
+        // those two read as "Covered" the instant an MR was raised, with
+        // zero stock on hand, which is exactly backwards.
+        const rm_status     = item.status || (shortfall_qty > 0 ? 'Shortage' : 'Covered');
+        const status_pill_class = shortfall_qty > 0 ? 'so-pill--blocked'
+            : rm_status === 'Requested' ? 'so-pill--wait' : 'so-pill--ready';
         const rm_name       = item.rm_name && item.rm_name !== item.rm_code ? item.rm_name : '';
 
         return `
@@ -1097,8 +1121,8 @@ function get_rm_breakdown_html(data, so_name, docstatus) {
                     ${refs.join('<br>') || '<span class="so-micro">—</span>'}
                 </td>
                 <td>
-                    <span class="so-pill ${is_covered ? 'so-pill--ready' : 'so-pill--blocked'}">
-                        ${esc(item.status || (is_covered ? 'Covered' : 'Shortfall'))}
+                    <span class="so-pill ${status_pill_class}" title="${rm_status === 'Requested' ? 'A Material Request covers the shortfall, but nothing has arrived yet' : ''}">
+                        ${esc(rm_status)}
                     </span>
                 </td>
                 <td>

@@ -233,9 +233,9 @@ doc_events = {
     "Notification Settings": {
         "on_update": "erp_dacsinc_custom.custom_script.share_notification_settings"
     },
-    # "Material Request": {
-    #     "validate": "erp_dacsinc_custom.custom_script.validate_non_zero_rate",
-    # }
+    "Material Request": {
+        "validate": "erp_dacsinc_custom.custom_script.validate_material_request_no_bom_items",
+    },
     "Admin Settings": {
         # The Order Flow page's role gate is derived from the six tab-role
         # fields on this Single — regenerate it whenever they change. See
