@@ -170,6 +170,7 @@ function build_bom_html_table(data, item_code) {
             .col-amount { text-align: right; }
             .status-active { color: #28a745; font-weight: bold; }
             .status-inactive { color: #dc3545; font-weight: bold; }
+            .status-draft { color: #e67e22; font-weight: bold; }
         </style>
         <div class="bom-wrapper">
             <div class="bom-header">
@@ -197,8 +198,17 @@ function build_bom_html_table(data, item_code) {
     data.forEach(bom => {
         const bom_url = `/app/bom/${encodeURIComponent(bom.name)}`;
         const is_default_class = bom.is_default ? 'default-bom' : '';
-        const status_text = bom.is_active ? 'Active' : 'Inactive';
-        const status_class = bom.is_active ? 'status-active' : 'status-inactive';
+        let status_text, status_class;
+        if (cint(bom.docstatus) === 0) {
+            status_text = 'Draft';
+            status_class = 'status-draft';
+        } else if (bom.is_active) {
+            status_text = 'Active';
+            status_class = 'status-active';
+        } else {
+            status_text = 'Inactive';
+            status_class = 'status-inactive';
+        }
         const is_default_text = bom.is_default ? 'Yes' : 'No';
 
         html += `

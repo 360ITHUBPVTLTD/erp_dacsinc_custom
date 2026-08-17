@@ -27,6 +27,7 @@ const OF_STAGES = [
     { key: 'draft_pick_list',  label: 'Draft Pick List',    mod: 'draft',     tile: 'draft',     hint: 'Pick List in draft — needs submit' },
     { key: 'ready_to_deliver', label: 'Ready for Delivery', mod: 'dn',        tile: 'dn',        hint: 'Pick List submitted — needs Delivery Note' },
     { key: 'stock_received',   label: 'Stock Arrived',      mod: 'rcpt',      tile: 'rcpt',      hint: 'Receipt done — needs Pick List' },
+    { key: 'receipt_draft',    label: 'Receiving (Draft PR)', mod: 'draft',   tile: 'draft',     hint: 'Draft Receipt exists — not posted to stock yet, needs submit' },
     { key: 'in_jobwork',       label: 'In Job Work',        mod: 'jw',        tile: 'jw',        hint: 'Active subcontracting POs' },
     { key: 'in_embroidery',    label: 'Embroidery',         mod: 'emb',       tile: 'emb',       hint: 'Active embroidery work' },
     { key: 'awaiting_stock',   label: 'Awaiting Stock (PO)', mod: 'po',       tile: 'wait',      hint: 'PO active — waiting for supplier receipt' },
@@ -39,6 +40,7 @@ const OF_STAGES = [
 const OF_STAGE_COUNT_KEY = {
     all: 'open_orders', need_to_bill: 'need_to_bill', draft_pick_list: 'draft_pick_list',
     ready_to_deliver: 'ready_to_deliver', stock_received: 'stock_received',
+    receipt_draft: 'receipt_draft',
     in_jobwork: 'in_jobwork', in_embroidery: 'in_embroidery',
     awaiting_stock: 'awaiting_stock', newly_created: 'newly_created', overdue: 'overdue',
     completed: 'completed'

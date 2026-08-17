@@ -229,6 +229,9 @@ function inject_so_styles() {
         .so-table th:first-child, .so-table td:first-child { text-align: left; }
         .so-table tbody tr:hover td { background: var(--subtle-fg); }
         .so-table tfoot td { background: var(--subtle-fg); font-weight: 600; font-size: 11px; }
+        /* The item a details modal was opened for, singled out in a list of
+           its Pick List siblings so it never reads as just another row. */
+        .so-table tr.is-highlighted td { background: rgba(52, 152, 219, 0.12); }
         .so-table .so-num { text-align: right; }   /* totals rows only */
         /* An open RM detail row belongs to the row above — drop the divider between
            them. A collapsed row keeps its border so the grid stays intact. */
@@ -295,7 +298,12 @@ function inject_so_styles() {
         /* ── Status pill: solid fill, white text (as before) ─────── */
         .so-pill {
             display: inline-block; font-size: 11px; font-weight: 600; line-height: 1.4;
-            padding: 3px 10px; border-radius: 12px; color: #fff; white-space: nowrap;
+            padding: 3px 10px; border-radius: 12px; color: #fff;
+            /* Wrap on word boundaries only — never nowrap (cuts off long
+               labels) and never word-break:break-word (splits a single word
+               like "Received" into "Rece"/"ived"). */
+            white-space: normal;
+            max-width: 100%;
         }
         /* A pill sitting directly against a following note/chip on the same
            line (no whitespace in the source) must not read as glued together. */
@@ -981,6 +989,36 @@ function _build_incoming_html(item, d, pair_key) {
             </div>`;
         }
 
+    }
+
+    // Draft POs/MRs commit nothing (not yet submitted), so they stay out of
+    // total_pending_qty above — shown here only for reference so a draft
+    // someone already raised isn't invisible while it waits to be submitted.
+    const draft_pos = d.draft_purchase_orders || [];
+    const draft_mrs = d.draft_material_requests || [];
+    if (draft_pos.length > 0) {
+        const draft_po_qty = draft_pos.reduce((a, p) => a + flt(p.qty), 0);
+        html += `<div class="so-micro" style="color:var(--so-orange);" title="Not yet submitted — not counted above">
+            <i class="fa fa-file-o"></i> ${draft_pos.length} PO in draft · ${flt(draft_po_qty)}
+        </div>`;
+    }
+    if (draft_mrs.length > 0) {
+        const draft_mr_qty = draft_mrs.reduce((a, m) => a + flt(m.qty), 0);
+        html += `<div class="so-micro" style="color:var(--so-orange);" title="Not yet submitted — not counted above">
+            <i class="fa fa-file-o"></i> ${draft_mrs.length} MR in draft · ${flt(draft_mr_qty)}
+        </div>`;
+    }
+
+    // A draft Receipt has posted nothing to the stock ledger yet — goods may
+    // physically be on the dock, but Available Stock (and total_rcvd_qty
+    // below) only reflect what's actually submitted. Shown in a distinct
+    // (blue) tone: further along than a draft PO/MR, but not yet real stock.
+    const draft_receipts = d.draft_receipt_docs || [];
+    if (draft_receipts.length > 0) {
+        const draft_recv_qty = draft_receipts.reduce((s, r) => s + flt(r.qty), 0);
+        html += `<div class="so-micro" style="color:var(--so-info);" title="Receipt drafted but not submitted — not yet posted to stock">
+            <i class="fa fa-inbox"></i> ${draft_receipts.length} Receipt in draft · ${flt(draft_recv_qty)}
+        </div>`;
     }
 
     // Footnotes. "Received" is history — it is already counted in Available Stock,
@@ -1688,6 +1726,23 @@ function show_details_modal(pair_key, type) {
             </tr>`;
         }).join('');
 
+        // Not yet posted to stock — explains a lower-than-expected Available
+        // Stock when goods have physically shown up but the Receipt itself
+        // is still a draft.
+        const draft_rcpt_rows = (d.draft_receipt_docs || []).map(r => {
+            const rcpt_id = r.pr_name || r.sr_name;
+            const rcpt_dt = r.pr_name ? 'Purchase Receipt' : 'Subcontracting Receipt';
+            return `
+            <tr>
+                <td>${link_id_name(rcpt_dt, rcpt_id)}</td>
+                <td class="so-meta">${fmt_date(r.posting_date)}</td>
+                <td class="so-meta">${r.supplier ? esc(r.supplier) : em_dash()}</td>
+                <td>${link_id_name('Purchase Order', r.po_name)}</td>
+                <td>${so_qty(r.qty)}</td>
+                <td>${so_doc_status('Draft')}</td>
+            </tr>`;
+        }).join('');
+
         body_html = so_stats([
             { label: 'Total available', value: flt(d.total_available_stock), unit: d.stock_uom },
             { label: 'For this SO',     value: flt(d.received_for_so_qty || 0), tone: 'pos' },
@@ -1703,7 +1758,12 @@ function show_details_modal(pair_key, type) {
             <table class="so-table">
                 <thead><tr><th>Receipt</th><th>Date</th><th>Supplier</th><th>Against PO</th><th>Warehouse</th><th>Qty</th><th>Type</th></tr></thead>
                 <tbody>${rcpt_rows}</tbody>
-            </table>`, rcpt_rows);
+            </table>`, rcpt_rows)
+        + so_section('Draft receipts — not yet posted', `
+            <table class="so-table">
+                <thead><tr><th>Receipt</th><th>Date</th><th>Supplier</th><th>Against PO</th><th>Qty</th><th>Status</th></tr></thead>
+                <tbody>${draft_rcpt_rows}</tbody>
+            </table>`, draft_rcpt_rows, 'Goods may physically be on the dock — not counted in the stock above');
 
     } else if (type === 'incoming_docs') {
         title = `Incoming Documents — ${heading}`;
@@ -1732,7 +1792,21 @@ function show_details_modal(pair_key, type) {
                 <td class="so-meta">${doc.warehouse ? esc(doc.warehouse) : em_dash()}</td>
                 <td>${so_doc_status(doc.status)}${note}</td>
             </tr>`;
-        }).join('');
+        }).join('')
+        // Draft POs for this SO commit nothing (not yet submitted, excluded
+        // from total_incoming_qty), but belong in this same list so they are
+        // never the only thing invisible here — the Draft pill is the
+        // indication, same as every other row's real status.
+        + (d.draft_purchase_orders || []).map(po => `
+            <tr>
+                <td><span class="so-micro">Purchase Order</span></td>
+                <td>${link_id_name('Purchase Order', po.name)}</td>
+                <td>${link_name_id('Supplier', po.supplier, po.supplier_name || po.info)}</td>
+                <td>${so_qty(po.qty || 0)}</td>
+                <td class="so-meta">${fmt_date(po.expected_delivery_date || po.date)}</td>
+                <td class="so-meta">${po.warehouse ? esc(po.warehouse) : em_dash()}</td>
+                <td>${so_doc_status('Draft')}</td>
+            </tr>`).join('');
 
         // POs feeding general stock / other orders — same item, different demand.
         const other_rows = (d.other_po_list || []).map(po => `
@@ -1775,7 +1849,20 @@ function show_details_modal(pair_key, type) {
                         : ''}
                 </td>
             </tr>`;
-        }).join('');
+        }).join('')
+        // Draft MRs commit nothing (not yet submitted, excluded from
+        // total_mr_pending_qty) — listed here too so the Draft pill is the
+        // indication, not a separate hidden-away place.
+        + (d.draft_material_requests || []).map(m => `
+            <tr>
+                <td>${link_id_name('Material Request', m.name)}</td>
+                <td><span class="so-micro">${esc(m.material_request_type || '')}</span></td>
+                <td>${so_qty(m.qty || 0)}</td>
+                <td>${em_dash()}</td>
+                <td>${so_qty(m.qty || 0, 'warn')}</td>
+                <td class="so-meta">${fmt_date(m.schedule_date || m.date)}</td>
+                <td>${so_doc_status('Draft')}</td>
+            </tr>`).join('');
 
         body_html = so_stats([
             { label: 'Pending for this SO', value: flt(d.total_incoming_qty || 0), unit: d.stock_uom, tone: 'warn' },
@@ -1802,7 +1889,20 @@ function show_details_modal(pair_key, type) {
             <table class="so-table">
                 <thead><tr><th>Receipt</th><th>Supplier</th><th>Against PO</th><th>Qty</th><th>Date</th></tr></thead>
                 <tbody>${rcpt_rows}</tbody>
-            </table>`, rcpt_rows);
+            </table>`, rcpt_rows)
+        + so_section('Draft receipts — not yet posted', `
+            <table class="so-table">
+                <thead><tr><th>Receipt</th><th>Supplier</th><th>Against PO</th><th>Qty</th><th>Date</th><th>Status</th></tr></thead>
+                <tbody>${(d.draft_receipt_docs || []).map(r => `
+                    <tr>
+                        <td>${link_id_name(r.pr_name ? 'Purchase Receipt' : 'Subcontracting Receipt', r.pr_name || r.sr_name)}</td>
+                        <td class="so-meta">${r.supplier ? esc(r.supplier) : em_dash()}</td>
+                        <td>${link_id_name('Purchase Order', r.po_name)}</td>
+                        <td>${so_qty(r.qty)}</td>
+                        <td class="so-meta">${fmt_date(r.posting_date)}</td>
+                        <td>${so_doc_status('Draft')}</td>
+                    </tr>`).join('')}</tbody>
+            </table>`, (d.draft_receipt_docs || []).length, 'Goods may physically be on the dock — not counted as incoming or received');
 
     } else if (type === 'picked') {
         title = `Pick Lists (This SO) — ${heading}`;
@@ -1829,6 +1929,54 @@ function show_details_modal(pair_key, type) {
                 : so_cmd_btn(`so_submit_pick_list('${js_str(doc.pick_list_name)}','${js_str(pair_key)}')`,
                              'check', 'Submit', true);
 
+            const other_items = doc.other_items || [];
+            // Submit acts on the whole Pick List document, not just this row —
+            // whoever clicks Submit here must see every other item riding
+            // along with it. The item this modal was opened for is tagged so
+            // it's never ambiguous which row is "the one you're viewing" once
+            // it's sitting in a list next to items that look just like it.
+            const other_items_row = other_items.length > 0 ? `
+            <tr>
+                <td colspan="7" style="padding-top:0;">
+                    <div class="so-hint" style="color:var(--so-orange); margin-top:0;">
+                        <i class="fa fa-exclamation-triangle"></i>
+                        This Pick List has ${other_items.length + 1} items — Submit acts on the whole document.
+                        ${submitted ? '' : 'Adjust any quantity below before submitting:'}
+                    </div>
+                    <table class="so-table" style="margin-top:4px;">
+                        <thead><tr><th>Item</th><th>Warehouse</th><th>Qty</th>${submitted ? '<th>Picked</th>' : ''}</tr></thead>
+                        <tbody>
+                            <tr class="is-highlighted">
+                                <td>${link_id_name('Item', item_code, d.item_name)} <span class="so-chip so-chip--ok">Viewing this item</span></td>
+                                <td class="so-meta">${doc.warehouse ? esc(doc.warehouse) : em_dash()}</td>
+                                <td>${so_qty(doc.qty || 0)}</td>
+                                ${submitted ? `<td>${so_qty(doc.picked_qty || 0, flt(doc.picked_qty) > 0 ? 'info' : null)}</td>` : ''}
+                            </tr>
+                            ${other_items.map(oi => {
+                                // Same edit-in-place pattern as this item's own Qty column
+                                // above — one Submit reads every .so-qty-in on the page for
+                                // this Pick List, so editing another item's qty here is
+                                // picked up by that same click, not a separate action.
+                                const oi_qty_cell = submitted
+                                    ? so_qty(oi.qty || 0)
+                                    : `<input type="number" class="so-qty-in" min="0" step="any"
+                                              value="${flt(oi.qty || 0)}"
+                                              data-pick="${esc(doc.pick_list_name)}"
+                                              data-row="${esc(oi.pick_list_item || '')}"
+                                              title="Edit the quantity to pick, then Submit">`;
+                                return `
+                                <tr>
+                                    <td>${link_id_name('Item', oi.item_code, oi.item_name)}</td>
+                                    <td class="so-meta">${oi.warehouse ? esc(oi.warehouse) : em_dash()}</td>
+                                    <td>${oi_qty_cell}</td>
+                                    ${submitted ? `<td>${so_qty(oi.picked_qty || 0, flt(oi.picked_qty) > 0 ? 'info' : null)}</td>` : ''}
+                                </tr>`;
+                            }).join('')}
+                        </tbody>
+                    </table>
+                </td>
+            </tr>` : '';
+
             return `
             <tr>
                 <td>${link_id_name('Pick List', doc.pick_list_name, doc.customer_name || doc.customer)}</td>
@@ -1846,7 +1994,7 @@ function show_details_modal(pair_key, type) {
                     <div class="so-micro">${flt(doc.per_delivered || 0).toFixed(0)}% delivered</div>
                 </td>
                 <td>${action_cell}</td>
-            </tr>`;
+            </tr>${other_items_row}`;
         }).join('');
 
         body_html = so_stats([
@@ -2013,10 +2161,17 @@ function link_name_id(doctype, id, name) {
 }
 
 // Dates arriving from the server are raw (YYYY-MM-DD) — never print them unformatted.
+// dd-mmm-yyyy everywhere in this dashboard (matches of_date in order_flow.js),
+// regardless of the site's own date_format setting.
 function fmt_date(val) {
     if (!val) return '--';
     try {
-        return frappe.datetime.str_to_user(String(val).split(' ')[0]) || '--';
+        const date_str = String(val).split(' ')[0];
+        if (typeof moment !== 'undefined') {
+            const d = moment(date_str);
+            if (d.isValid()) return d.format('DD-MMM-YYYY');
+        }
+        return frappe.datetime.str_to_user(date_str) || '--';
     } catch (e) {
         return esc(val);
     }
