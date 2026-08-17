@@ -225,8 +225,9 @@ def get_bom_data_for_item(item_code):
     """
     boms = frappe.get_all(
         "BOM",
-        filters={"item": item_code,"docstatus": 1},
-        fields=["name", "is_active", "is_default"]
+        filters={"item": item_code, "docstatus": ["in", [0, 1]]},
+        fields=["name", "docstatus", "is_active", "is_default"],
+        order_by="docstatus desc, modified desc"
     )
 
     if not boms:
@@ -2554,6 +2555,37 @@ def get_item_stock_details_bulk(item_bom_pairs, sales_order_name):
         """, {"so_name": sales_order_name, "item": item_code}, as_dict=1)
         # ------------- MODIFICATION ENDS HERE (Receipt History) --------------------
 
+        # Draft receipts — goods physically noted but the Receipt itself is not
+        # submitted, so nothing has posted to the stock ledger yet. Kept out of
+        # completed_receipt_docs/total_available_stock (that would overstate
+        # real stock) and shown separately, for reference, in the Incoming cell.
+        draft_receipt_docs = frappe.db.sql("""
+            (SELECT
+                pr.name AS pr_name, '' AS sr_name,
+                pri.purchase_order AS po_name, pr.posting_date, pri.qty,
+                (SELECT sup.supplier_name FROM `tabPurchase Order` po
+                 LEFT JOIN `tabSupplier` sup ON po.supplier = sup.name
+                 WHERE po.name = pri.purchase_order) AS supplier
+            FROM `tabPurchase Receipt Item` pri
+            JOIN `tabPurchase Receipt` pr ON pri.parent = pr.name
+            WHERE pri.item_code = %(item)s AND pri.sales_order = %(so_name)s
+              AND pr.docstatus = 0 AND pr.is_subcontracted = 0)
+
+            UNION ALL
+
+            (SELECT
+                '' AS pr_name, scr.name AS sr_name,
+                scri.purchase_order AS po_name, scr.posting_date, scri.qty,
+                (SELECT sup.supplier_name FROM `tabSupplier` sup WHERE sup.name = scr.supplier) AS supplier
+            FROM `tabSubcontracting Receipt Item` scri
+            JOIN `tabSubcontracting Receipt` scr ON scri.parent = scr.name
+            JOIN `tabPurchase Order Item` poi ON scri.purchase_order_item = poi.name
+            WHERE scri.item_code = %(item)s AND scr.docstatus = 0
+              AND poi.sales_order = %(so_name)s)
+
+            ORDER BY posting_date DESC
+        """, {"so_name": sales_order_name, "item": item_code}, as_dict=1)
+
         total_hist_recv = sum(flt(r.received_qty) for r in completed_receipt_docs)
         recv_for_so_qty = min(max(0, total_hist_recv - delivered_qty), total_available_stock)
         general_stock_qty = max(0, total_available_stock - recv_for_so_qty)
@@ -2596,6 +2628,30 @@ def get_item_stock_details_bulk(item_bom_pairs, sales_order_name):
             ]
         else:
             current_picks = list(raw_picks)
+
+        # A Pick List is one document across possibly several items — Submit
+        # acts on the whole thing, not just this item's row. Attach every
+        # OTHER item on the same Pick List so the per-item modal never lets
+        # someone submit without seeing what else goes with it.
+        pick_list_names = list({p.pick_list_name for p in current_picks})
+        other_items_by_pl = {}
+        if pick_list_names:
+            other_item_rows = frappe.db.sql("""
+                SELECT parent AS pick_list_name, name AS pick_list_item,
+                       item_code, item_name, qty, picked_qty, warehouse
+                FROM `tabPick List Item`
+                WHERE parent IN %(pls)s AND item_code != %(item)s
+                ORDER BY idx
+            """, {"pls": tuple(pick_list_names), "item": item_code}, as_dict=1)
+            for row in other_item_rows:
+                other_items_by_pl.setdefault(row.pick_list_name, []).append({
+                    "item_code": row.item_code, "item_name": row.item_name,
+                    "pick_list_item": row.pick_list_item,
+                    "qty": flt(row.qty), "picked_qty": flt(row.picked_qty),
+                    "warehouse": row.warehouse,
+                })
+        for p in current_picks:
+            p["other_items"] = other_items_by_pl.get(p.pick_list_name, [])
 
         picked_draft_qty_raw = sum(flt(p.qty) for p in current_picks if p.docstatus == 0)
         picked_sub_qty_so_actual = sum(flt(p.picked_qty) for p in current_picks if p.docstatus == 1)
@@ -2703,6 +2759,33 @@ def get_item_stock_details_bulk(item_bom_pairs, sales_order_name):
             total_incoming_po_count += 1
         # ------------- MODIFICATION ENDS HERE (Current SO POs) ------------------
 
+        # 7a. Draft Purchase Orders for this item/SO — not yet submitted, so they
+        # commit nothing and are excluded from incoming_stock/total_incoming_qty.
+        # Shown separately, for reference only, so a Draft PO someone already
+        # raised isn't invisible while it waits to be submitted.
+        draft_po_data = frappe.db.sql("""
+            SELECT
+                po.name, po.supplier, sup.supplier_name, po.is_subcontracted,
+                po.transaction_date AS po_date,
+                MIN(COALESCE(poi.expected_delivery_date, poi.schedule_date, po.schedule_date)) AS expected_delivery_date,
+                MAX(poi.warehouse) AS warehouse,
+                SUM(CASE WHEN po.is_subcontracted = 1 THEN poi.fg_item_qty ELSE poi.qty END) AS qty
+            FROM `tabPurchase Order Item` poi
+            JOIN `tabPurchase Order` po ON poi.parent = po.name
+            LEFT JOIN `tabSupplier` sup ON po.supplier = sup.name
+            WHERE poi.sales_order = %(so)s AND po.docstatus = 0
+            AND ((po.is_subcontracted=0 AND poi.item_code=%(item)s) OR (po.is_subcontracted=1 AND poi.fg_item=%(item)s))
+            GROUP BY po.name, po.supplier, sup.supplier_name, po.is_subcontracted, po.transaction_date
+        """, {"so": sales_order_name, "item": item_code}, as_dict=1)
+
+        draft_purchase_orders = [{
+            "name": row.name, "info": row.supplier_name or row.supplier,
+            "supplier": row.supplier, "supplier_name": row.supplier_name,
+            "date": row.po_date, "expected_delivery_date": row.expected_delivery_date,
+            "warehouse": row.warehouse,
+            "qty": flt(row.qty), "is_subcontracted": row.is_subcontracted,
+        } for row in draft_po_data]
+
         ewo_data = frappe.db.sql("""
              SELECT
                 parent.name, parent.date, parent.purchase_order, parent.work_type,
@@ -2750,11 +2833,16 @@ def get_item_stock_details_bulk(item_bom_pairs, sales_order_name):
 
         # 8. Incoming Pipeline (Other SO POs)
         # ------------- MODIFICATION STARTS HERE (Other SO POs) ------------------
+        # Drafts included (docstatus IN (0,1)) so a Draft PO for other demand is
+        # visible here too, not just invisible until submitted — po.status is
+        # already literally "Draft" for those rows, so so_doc_status() on the
+        # client shows the same indication it uses everywhere else. Totals
+        # below stay submitted-only: a draft commits nothing.
         other_po_data = frappe.db.sql("""
             SELECT
                 po.name, po.supplier, sup.supplier_name, poi.sales_order,
                 so.customer_name AS so_customer_name,
-                po.status AS po_status,
+                po.status AS po_status, po.docstatus AS po_docstatus,
                 MIN(COALESCE(poi.expected_delivery_date, poi.schedule_date, po.schedule_date)) AS expected_delivery_date,
                 MAX(poi.warehouse) AS warehouse,
                 SUM(poi.qty - poi.received_qty) AS pending_qty
@@ -2763,15 +2851,17 @@ def get_item_stock_details_bulk(item_bom_pairs, sales_order_name):
             LEFT JOIN `tabSupplier` sup ON po.supplier = sup.name
             LEFT JOIN `tabSales Order` so ON so.name = poi.sales_order
             WHERE
-                poi.item_code = %(item)s AND po.docstatus = 1
+                poi.item_code = %(item)s AND po.docstatus IN (0, 1)
                 AND (poi.sales_order != %(so)s OR poi.sales_order IS NULL OR poi.sales_order = '')
                 AND (poi.qty - poi.received_qty) > 0
-            GROUP BY po.name, po.supplier, sup.supplier_name, poi.sales_order, so.customer_name, po.status
+            GROUP BY po.name, po.supplier, sup.supplier_name, poi.sales_order, so.customer_name, po.status, po.docstatus
         """, {"so": sales_order_name, "item": item_code}, as_dict=1)
 
         for row in other_po_data:
             qty = flt(row.pending_qty)
-            total_other_po_qty += qty
+            is_draft = row.po_docstatus == 0
+            if not is_draft:
+                total_other_po_qty += qty
             info_text = row.supplier_name or row.supplier # Use name, fallback to ID
             other_po_list.append({
                 "name": row.name, "info": info_text,
@@ -2780,9 +2870,9 @@ def get_item_stock_details_bulk(item_bom_pairs, sales_order_name):
                 "so_customer_name": row.so_customer_name,
                 "status": row.po_status, "warehouse": row.warehouse,
                 "expected_delivery_date": row.expected_delivery_date,
-                "pending_qty": qty
+                "pending_qty": qty, "is_draft": is_draft,
             })
-        total_other_po_count = len(other_po_data)
+        total_other_po_count = sum(1 for row in other_po_data if row.po_docstatus == 1)
         # ------------- MODIFICATION ENDS HERE (Other SO POs) ------------------
 
         # 8a. Material Requests raised for THIS item against THIS Sales Order.
@@ -2825,6 +2915,24 @@ def get_item_stock_details_bulk(item_bom_pairs, sales_order_name):
                 "uom": row.uom or row.stock_uom, "warehouse": row.warehouse,
                 "per_ordered": flt(row.per_ordered),
             })
+
+        # 8a-draft. Draft Material Requests for this item/SO — not yet submitted,
+        # so they are not a real commitment and are excluded from
+        # total_mr_pending_qty. Shown separately, for reference only.
+        draft_mr_data = frappe.db.sql("""
+            SELECT mr.name, mr.material_request_type, mr.transaction_date,
+                   mri.qty, mri.uom, mri.stock_uom, mri.schedule_date
+            FROM `tabMaterial Request Item` mri
+            JOIN `tabMaterial Request` mr ON mr.name = mri.parent
+            WHERE mri.item_code = %(item)s AND mri.sales_order = %(so)s AND mr.docstatus = 0
+            ORDER BY mr.transaction_date DESC
+        """, {"item": item_code, "so": sales_order_name}, as_dict=1)
+
+        draft_material_requests = [{
+            "name": row.name, "material_request_type": row.material_request_type,
+            "date": row.transaction_date, "schedule_date": row.schedule_date,
+            "qty": flt(row.qty), "uom": row.uom or row.stock_uom,
+        } for row in draft_mr_data]
 
         # 8b. Subcontracting defaults — this shop buys finished goods as job work:
         # a Purchase Order with is_subcontracted = 1, a service item on the row, and
@@ -3031,6 +3139,7 @@ def get_item_stock_details_bulk(item_bom_pairs, sales_order_name):
             "item_code": item_code, "required_qty": required_qty, "delivered_qty": delivered_qty,
             "total_available_stock": total_available_stock, "received_for_so_qty": recv_for_so_qty, "general_stock_qty": general_stock_qty,
             "warehouse_stock": warehouse_stock, "completed_receipt_docs": completed_receipt_docs,
+            "draft_receipt_docs": draft_receipt_docs,
             "picked_for_this_so_details": current_picks,
             "picked_draft_qty_so": picked_draft_qty_so,
             "picked_draft_qty_raw": picked_draft_qty_raw,
@@ -3043,6 +3152,7 @@ def get_item_stock_details_bulk(item_bom_pairs, sales_order_name):
             "total_mr_pending_qty": total_mr_pending_qty, "total_mr_count": len(material_requests),
             "picked_for_others_qty": picked_for_others_qty, "draft_qty_for_others": draft_qty_for_others, "conflict_details": conflict_details,
             "incoming_stock": incoming_stock, "total_incoming_qty": total_incoming_qty, "total_incoming_po_count": total_incoming_po_count, "total_incoming_ewo_count": total_incoming_ewo_count,
+            "draft_purchase_orders": draft_purchase_orders, "draft_material_requests": draft_material_requests,
             "total_other_po_qty": total_other_po_qty, "total_other_po_count": total_other_po_count, "other_po_list": other_po_list,
             "is_bom_item": bool(bom_no), "bom_no": bom_no,
             "is_sub_contracted_item": bool(item_meta.get("is_sub_contracted_item")),
@@ -7759,15 +7869,3 @@ def sales_invoice_validate(doc, method):
     if has_skip:
         doc.update_stock = 1
 
-
-@frappe.whitelist()
-def get_bom_data_for_item(item_code):
-    boms = frappe.get_all("BOM", filters={"item": item_code, "docstatus": 1}, fields=["name", "is_active", "is_default"])
-    for bom in boms:
-        bom["items"] = frappe.db.sql("""
-            SELECT bi.item_code, bi.item_name, bi.qty, bi.uom, bi.rate, bi.amount
-            FROM `tabBOM Item` bi
-            WHERE bi.parent = %s
-            ORDER BY bi.idx ASC
-        """, (bom.name,), as_dict=True)
-    return boms

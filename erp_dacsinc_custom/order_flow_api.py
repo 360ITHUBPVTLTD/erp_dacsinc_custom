@@ -615,6 +615,8 @@ def get_sales_tracker(days=120, search=None, scope="open", stage_filter=None, me
         o["pos"] = []
         o["open_pos"] = []
         o["receipts"] = []
+        o["draft_receipts"] = []
+        o["submitted_receipts"] = []
         o["mrs"] = []
         o["jobworks"] = []
         o["embroidery_orders"] = []
@@ -688,6 +690,16 @@ def get_sales_tracker(days=120, search=None, scope="open", stage_filter=None, me
                 receipt_obj = {"name": ev.name, "doctype": ev.doctype}
                 if receipt_obj not in row["receipts"]:
                     row["receipts"].append(receipt_obj)
+                # A draft Receipt has posted nothing to the stock ledger yet —
+                # only a submitted one actually brings stock in. Tracked
+                # separately so _compute_stage_info never calls stock
+                # "Arrived" off a document that hasn't moved anything.
+                if ds == 1:
+                    if receipt_obj not in row["submitted_receipts"]:
+                        row["submitted_receipts"].append(receipt_obj)
+                elif ds == 0:
+                    if receipt_obj not in row["draft_receipts"]:
+                        row["draft_receipts"].append(receipt_obj)
             elif dt == "Material Request":
                 if ev.name not in row["mrs"]:
                     row["mrs"].append(ev.name)
@@ -778,7 +790,8 @@ def _compute_stage_info(order):
     draft_pls = order.get("draft_pick_lists") or []
     subm_pls = order.get("submitted_pick_lists") or []
     open_pos = order.get("open_pos") or []
-    receipts = order.get("receipts") or []
+    submitted_receipts = order.get("submitted_receipts") or []
+    draft_receipts = order.get("draft_receipts") or []
     mrs = order.get("mrs") or []
     jobworks = order.get("jobworks") or []
     embroidery_orders = order.get("embroidery_orders") or []
@@ -868,8 +881,11 @@ def _compute_stage_info(order):
             "action_btn_class": "of-btn--success"
         }
 
-    if receipts:
-        rcpt_name = receipts[0]
+    # A Purchase/Subcontracting Receipt only posts to the stock ledger on
+    # submit — a draft one has moved nothing yet, so it must never read as
+    # "Stock Arrived". Checked first so a submitted receipt still wins even
+    # if an unrelated draft receipt also exists on the same order.
+    if submitted_receipts:
         return {
             "stage_key": "stock_received",
             "stage_label": "Stock Arrived (PL Needed)",
@@ -878,6 +894,20 @@ def _compute_stage_info(order):
             "action_type": "make_picklist",
             "action_label": "Create Pick List",
             "action_btn_class": "of-btn--primary"
+        }
+
+    if draft_receipts:
+        rcpt = draft_receipts[0]
+        return {
+            "stage_key": "receipt_draft",
+            "stage_label": "Receiving Stock (Draft PR)",
+            "badge_class": "of-pill--draft",
+            "icon": "inbox",
+            "target_doc": rcpt["name"],
+            "target_doctype": rcpt["doctype"],
+            "action_type": "open_doc",
+            "action_label": f"Submit Receipt ({rcpt['name']})",
+            "action_btn_class": "of-btn--warning"
         }
 
     if embroidery_orders:
@@ -1382,6 +1412,7 @@ def get_summary(days=120, scope="open", search=None, merchandiser=None, approval
     draft_pick_list = 0
     ready_to_deliver = 0
     stock_received = 0
+    receipt_draft = 0
     in_jobwork = 0
     in_embroidery = 0
     awaiting_stock = 0
@@ -1406,6 +1437,8 @@ def get_summary(days=120, scope="open", search=None, merchandiser=None, approval
             ready_to_deliver += 1
         elif st == "stock_received":
             stock_received += 1
+        elif st == "receipt_draft":
+            receipt_draft += 1
         elif st == "in_jobwork":
             in_jobwork += 1
         elif st == "in_embroidery":
@@ -1421,6 +1454,7 @@ def get_summary(days=120, scope="open", search=None, merchandiser=None, approval
         "draft_pick_list": draft_pick_list,
         "ready_to_deliver": ready_to_deliver,
         "stock_received": stock_received,
+        "receipt_draft": receipt_draft,
         "in_jobwork": in_jobwork,
         "in_embroidery": in_embroidery,
         "awaiting_stock": awaiting_stock,
