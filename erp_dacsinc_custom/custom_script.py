@@ -7107,15 +7107,16 @@ from frappe.utils import flt
 def fetch_multi_order_requirements():
     # 1. Fetch pending Sales Order items
     so_items_raw = frappe.db.sql("""
-        SELECT 
-            so.name as so_id, so.customer, so.customer_name, 
-            so_item.item_code, so_item.warehouse, so_item.qty, 
+        SELECT
+            so.name as so_id, so.customer, so.customer_name,
+            so_item.item_code, so_item.warehouse, so_item.qty,
             so_item.bom_no, so_item.uom, so.delivery_date
         FROM `tabSales Order` so
         INNER JOIN `tabSales Order Item` so_item ON so_item.parent = so.name
-        WHERE so.docstatus = 1 
+        WHERE so.docstatus = 1
           AND so.status NOT IN ('Completed', 'Closed', 'Cancelled')
           AND so_item.qty > so_item.delivered_qty
+          AND IFNULL(so.custom_old_record_item_is_disabled, 0) = 0
     """, as_dict=True)
 
     # 2. FETCH OPEN MR SUPPLY (with Links)

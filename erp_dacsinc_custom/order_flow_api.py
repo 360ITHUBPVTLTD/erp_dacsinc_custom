@@ -911,27 +911,39 @@ def _compute_stage_info(order):
         }
 
     if embroidery_orders:
-        ewo_name = embroidery_orders[0]
+        # These are {"name": <Purchase Order>, "doctype": "Purchase Order"}
+        # dicts, not plain names — see get_sales_tracker's event loop, where
+        # ev.name is the Purchase Order that raised the Embroidery Work
+        # Order, never the EWO itself. Interpolating the dict directly used
+        # to print its Python repr straight into the action label.
+        ewo = embroidery_orders[0]
+        ewo_name = ewo.get("name") if isinstance(ewo, dict) else ewo
+        ewo_doctype = ewo.get("doctype") if isinstance(ewo, dict) else "Purchase Order"
         return {
             "stage_key": "in_embroidery",
             "stage_label": "Embroidery",
             "badge_class": "of-pill--planned",
             "icon": "magic",
             "target_doc": ewo_name,
-            "target_doctype": "Embroidery Work Order",
+            "target_doctype": ewo_doctype,
             "action_type": "open_doc",
             "action_label": f"Track Embroidery ({ewo_name})",
             "action_btn_class": "of-btn--info"
         }
 
     if jobworks:
-        jw_name = jobworks[0]
+        # Same shape as embroidery_orders above — {"name": <Purchase Order>,
+        # "doctype": "Purchase Order"}.
+        jw = jobworks[0]
+        jw_name = jw.get("name") if isinstance(jw, dict) else jw
+        jw_doctype = jw.get("doctype") if isinstance(jw, dict) else "Purchase Order"
         return {
             "stage_key": "in_jobwork",
             "stage_label": "In Job Work",
             "badge_class": "of-pill--planned",
             "icon": "cogs",
             "target_doc": jw_name,
+            "target_doctype": jw_doctype,
             "action_type": "open_doc",
             "action_label": f"Track Job Work ({jw_name})",
             "action_btn_class": "of-btn--info"
@@ -1988,7 +2000,16 @@ def setup_sales_order_workflow(force=False):
         role_doc = frappe.new_doc("Role")
         role_doc.role_name = "Merchandiser User"
         role_doc.insert(ignore_permissions=True)
-        
+
+    # Ensure the Sales Order Final Approver role exists — see
+    # order_flow_permissions.sync_sales_order_final_approver_role for why it
+    # exists and how it stays assigned to the right users.
+    if not frappe.db.exists("Role", "Sales Order Final Approver"):
+        role_doc = frappe.new_doc("Role")
+        role_doc.role_name = "Sales Order Final Approver"
+        role_doc.desk_access = 1
+        role_doc.insert(ignore_permissions=True)
+
     # Ensure Workflow Actions exist in Workflow Action Master
     for a in ["Submit for Merchandiser Approval", "Approve", "Reject"]:
         if not frappe.db.exists("Workflow Action Master", a):
@@ -2038,6 +2059,21 @@ def setup_sales_order_workflow(force=False):
         "next_state": "Rejected",
         "allowed": "Merchandiser User"
     })
+    # Sales Order Final Approver also covers the merchandiser step, not just
+    # final approval — a final approver can push an order through both
+    # stages without needing the separate Merchandiser User role too.
+    workflow.append("transitions", {
+        "state": "Pending Merchandiser Approval",
+        "action": "Approve",
+        "next_state": "Pending Final Approval",
+        "allowed": "Sales Order Final Approver"
+    })
+    workflow.append("transitions", {
+        "state": "Pending Merchandiser Approval",
+        "action": "Reject",
+        "next_state": "Rejected",
+        "allowed": "Sales Order Final Approver"
+    })
     workflow.append("transitions", {
         "state": "Pending Final Approval",
         "action": "Approve",
@@ -2050,6 +2086,28 @@ def setup_sales_order_workflow(force=False):
         "next_state": "Rejected",
         "allowed": "System Manager"
     })
+    # Extra rows for the SAME transition, each gated on a different role, are
+    # the standard Frappe way to allow any one of several roles to trigger
+    # it: System Manager and Super Admin for the admin override (matching
+    # ADMIN_ROLES in order_flow_permissions.py — Super Admin exists
+    # specifically to bypass Order Flow checks the same way System Manager
+    # does, so it must clear this workflow gate too), and Sales Order Final
+    # Approver for whoever is actually listed in Admin Settings > Sales
+    # Order Final Approval (see
+    # order_flow_permissions.sync_sales_order_final_approver_role).
+    for extra_role in ("Super Admin", "Sales Order Final Approver"):
+        workflow.append("transitions", {
+            "state": "Pending Final Approval",
+            "action": "Approve",
+            "next_state": "Approved",
+            "allowed": extra_role
+        })
+        workflow.append("transitions", {
+            "state": "Pending Final Approval",
+            "action": "Reject",
+            "next_state": "Rejected",
+            "allowed": extra_role
+        })
     workflow.append("transitions", {
         "state": "Rejected",
         "action": "Submit for Merchandiser Approval",
