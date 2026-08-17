@@ -2034,10 +2034,18 @@ class OrderFlow {
                 </td>
             </tr>`).join('');
 
-        const rc_rows = rcs.map(r => `
+        const rc_rows = rcs.map(r => {
+            // Every Subcontracting Receipt this app creates immediately gets a
+            // mapped Purchase Receipt (create_receipt_documents in
+            // purchase_order.py) — that's the document actually worked from
+            // day to day, so link straight to it instead of the SCR when one
+            // exists.
+            const open_doctype = (r.doctype === 'Subcontracting Receipt' && r.linked_pr) ? 'Purchase Receipt' : r.doctype;
+            const open_name = (r.doctype === 'Subcontracting Receipt' && r.linked_pr) ? r.linked_pr : r.name;
+            return `
             <tr>
-                <td><a href="/app/${of_route(r.doctype)}/${encodeURIComponent(r.name)}" target="_blank" style="font-weight:700;">${of_esc(r.name)}</a>
-                    <div class="of-micro">${of_esc(r.doctype)}</div></td>
+                <td><a href="/app/${of_route(open_doctype)}/${encodeURIComponent(open_name)}" target="_blank" style="font-weight:700;">${of_esc(r.name)}</a>
+                    <div class="of-micro">${of_esc(open_doctype)}${open_doctype !== r.doctype ? ` (via ${of_esc(r.doctype)})` : ''}</div></td>
                 <td style="text-align:left;">
                     <a href="/app/supplier/${encodeURIComponent(r.supplier)}" target="_blank" style="font-weight:600;">${of_esc(r.supplier_name || r.supplier || '')}</a>
                 </td>
@@ -2047,7 +2055,8 @@ class OrderFlow {
                 <td>${of_qty(r.qty, 'pos')}</td>
                 <td>${of_money(r.grand_total, r.currency)}</td>
                 <td>${of_doc_status(r.status)}</td>
-            </tr>`).join('');
+            </tr>`;
+        }).join('');
 
         const subtab = this.pur_subtab || 'mr';
 
@@ -2155,10 +2164,18 @@ class OrderFlow {
                 </td>
             </tr>`).join('');
 
-        const rc_rows = rcs.map(r => `
+        const rc_rows = rcs.map(r => {
+            // Every Subcontracting Receipt this app creates immediately gets a
+            // mapped Purchase Receipt (create_receipt_documents in
+            // purchase_order.py) — that's the document actually worked from
+            // day to day, so link straight to it instead of the SCR when one
+            // exists.
+            const open_doctype = (r.doctype === 'Subcontracting Receipt' && r.linked_pr) ? 'Purchase Receipt' : r.doctype;
+            const open_name = (r.doctype === 'Subcontracting Receipt' && r.linked_pr) ? r.linked_pr : r.name;
+            return `
             <tr>
-                <td><a href="/app/${of_route(r.doctype)}/${encodeURIComponent(r.name)}" target="_blank" style="font-weight:700;">${of_esc(r.name)}</a>
-                    <div class="of-micro">${of_esc(r.doctype)}</div></td>
+                <td><a href="/app/${of_route(open_doctype)}/${encodeURIComponent(open_name)}" target="_blank" style="font-weight:700;">${of_esc(r.name)}</a>
+                    <div class="of-micro">${of_esc(open_doctype)}${open_doctype !== r.doctype ? ` (via ${of_esc(r.doctype)})` : ''}</div></td>
                 <td style="text-align:left;">
                     <a href="/app/supplier/${encodeURIComponent(r.supplier)}" target="_blank" style="font-weight:600;">${of_esc(r.supplier_name || r.supplier || '')}</a>
                 </td>
@@ -2168,7 +2185,8 @@ class OrderFlow {
                 <td>${of_qty(r.qty, 'pos')}</td>
                 <td>${of_money(r.grand_total, r.currency)}</td>
                 <td>${of_doc_status(r.status)}</td>
-            </tr>`).join('');
+            </tr>`;
+        }).join('');
 
         const build_ewo = (list) => list.map(e => {
             const stage = e.work_type === 'Full Piece Job Work' ? e.full_piece_stage : e.panel_stage;
