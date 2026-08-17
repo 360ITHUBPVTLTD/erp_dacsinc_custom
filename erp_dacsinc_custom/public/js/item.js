@@ -14,94 +14,94 @@ frappe.ui.form.on('Item', {
         }
 
         // --- Custom Send to Embroidery Button ---
-        frm.add_custom_button(__('Send to Embroidery'), () => {
-            const dialog = new frappe.ui.Dialog({
-                title: __('Send to Embroidery'),
-                fields: [
-                    {
-                        fieldtype: 'Link',
-                        fieldname: 'target_item',
-                        options: 'Item',
-                        label: __('Target Item (Embroidered)'),
-                        reqd: 1
-                    },
-                    {
-                        fieldtype: 'Link',
-                        fieldname: 'from_warehouse',
-                        options: 'Warehouse',
-                        label: __('From Warehouse'),
-                        reqd: 1,
-                        onchange: function() {
-                            const val = this.get_value();
-                            if (val) {
-                                frappe.call({
-                                    method: 'erp_dacsinc_custom.uniform_transfer_api.get_item_stock_details',
-                                    args: {
-                                        item_code: frm.doc.name,
-                                        warehouse: val
-                                    }
-                                }).then(r => {
-                                    const d = r.message || {};
-                                    const html = `
-                                        <div style="margin-top: 10px; padding: 12px; font-size: 12px; line-height: 1.6; border: 1px solid #d1ecf1; border-radius: 4px; background-color: #f8f9fa; color: #0c5460;">
-                                            <strong style="font-size: 13px;">Stock Details for ${frappe.utils.escape_html(frm.doc.name)}:</strong><br>
-                                            • Actual Physical Qty: <b>${d.actual_qty}</b><br>
-                                            • Reserved for Sales: <b>${d.reserved_qty}</b><br>
-                                            • Reserved for Production: <b>${d.reserved_qty_for_production}</b><br>
-                                            • Reserved for Subcontract: <b>${d.reserved_qty_for_sub_contract}</b><br>
-                                            <div style="border-top: 1px dashed #bee5eb; margin: 8px 0; padding-top: 8px;">
-                                                <span style="color: #28a745; font-weight: 700; font-size: 13px;">✔ Fully Available (Unreserved): ${d.net_available}</span>
-                                            </div>
-                                        </div>
-                                    `;
-                                    dialog.fields_dict.stock_details_html.$wrapper.html(html);
-                                });
-                            } else {
-                                dialog.fields_dict.stock_details_html.$wrapper.html('');
-                            }
-                        }
-                    },
-                    {
-                        fieldtype: 'HTML',
-                        fieldname: 'stock_details_html'
-                    },
-                    {
-                        fieldtype: 'Link',
-                        fieldname: 'wip_warehouse',
-                        options: 'Warehouse',
-                        label: __('WIP Warehouse (Embroiderer)'),
-                        reqd: 1
-                    },
-                    {
-                        fieldtype: 'Float',
-                        fieldname: 'qty',
-                        label: __('Quantity'),
-                        reqd: 1
-                    }
-                ],
-                primary_action_label: __('Send'),
-                primary_action: (values) => {
-                    dialog.get_primary_btn().attr('disabled', true);
-                    frappe.call({
-                        method: 'erp_dacsinc_custom.uniform_transfer_api.create_embroidery_transfer',
-                        args: {
-                            source_item: frm.doc.name,
-                            target_item: values.target_item,
-                            qty: values.qty,
-                            from_warehouse: values.from_warehouse,
-                            wip_warehouse: values.wip_warehouse
-                        }
-                    }).then(r => {
-                        dialog.hide();
-                        frappe.show_alert({message: __('Plain items transferred to embroidery WIP successfully'), color: 'green'});
-                        frm.reload_doc();
-                    }).always(() => {
-                        dialog.get_primary_btn().attr('disabled', false);
-                    });
-                }
-            });
-            dialog.show();
-        });
+        // frm.add_custom_button(__('Send to Embroidery'), () => {
+        //     const dialog = new frappe.ui.Dialog({
+        //         title: __('Send to Embroidery'),
+        //         fields: [
+        //             {
+        //                 fieldtype: 'Link',
+        //                 fieldname: 'target_item',
+        //                 options: 'Item',
+        //                 label: __('Target Item (Embroidered)'),
+        //                 reqd: 1
+        //             },
+        //             {
+        //                 fieldtype: 'Link',
+        //                 fieldname: 'from_warehouse',
+        //                 options: 'Warehouse',
+        //                 label: __('From Warehouse'),
+        //                 reqd: 1,
+        //                 onchange: function() {
+        //                     const val = this.get_value();
+        //                     if (val) {
+        //                         frappe.call({
+        //                             method: 'erp_dacsinc_custom.uniform_transfer_api.get_item_stock_details',
+        //                             args: {
+        //                                 item_code: frm.doc.name,
+        //                                 warehouse: val
+        //                             }
+        //                         }).then(r => {
+        //                             const d = r.message || {};
+        //                             const html = `
+        //                                 <div style="margin-top: 10px; padding: 12px; font-size: 12px; line-height: 1.6; border: 1px solid #d1ecf1; border-radius: 4px; background-color: #f8f9fa; color: #0c5460;">
+        //                                     <strong style="font-size: 13px;">Stock Details for ${frappe.utils.escape_html(frm.doc.name)}:</strong><br>
+        //                                     • Actual Physical Qty: <b>${d.actual_qty}</b><br>
+        //                                     • Reserved for Sales: <b>${d.reserved_qty}</b><br>
+        //                                     • Reserved for Production: <b>${d.reserved_qty_for_production}</b><br>
+        //                                     • Reserved for Subcontract: <b>${d.reserved_qty_for_sub_contract}</b><br>
+        //                                     <div style="border-top: 1px dashed #bee5eb; margin: 8px 0; padding-top: 8px;">
+        //                                         <span style="color: #28a745; font-weight: 700; font-size: 13px;">✔ Fully Available (Unreserved): ${d.net_available}</span>
+        //                                     </div>
+        //                                 </div>
+        //                             `;
+        //                             dialog.fields_dict.stock_details_html.$wrapper.html(html);
+        //                         });
+        //                     } else {
+        //                         dialog.fields_dict.stock_details_html.$wrapper.html('');
+        //                     }
+        //                 }
+        //             },
+        //             {
+        //                 fieldtype: 'HTML',
+        //                 fieldname: 'stock_details_html'
+        //             },
+        //             {
+        //                 fieldtype: 'Link',
+        //                 fieldname: 'wip_warehouse',
+        //                 options: 'Warehouse',
+        //                 label: __('WIP Warehouse (Embroiderer)'),
+        //                 reqd: 1
+        //             },
+        //             {
+        //                 fieldtype: 'Float',
+        //                 fieldname: 'qty',
+        //                 label: __('Quantity'),
+        //                 reqd: 1
+        //             }
+        //         ],
+        //         primary_action_label: __('Send'),
+        //         primary_action: (values) => {
+        //             dialog.get_primary_btn().attr('disabled', true);
+        //             frappe.call({
+        //                 method: 'erp_dacsinc_custom.uniform_transfer_api.create_embroidery_transfer',
+        //                 args: {
+        //                     source_item: frm.doc.name,
+        //                     target_item: values.target_item,
+        //                     qty: values.qty,
+        //                     from_warehouse: values.from_warehouse,
+        //                     wip_warehouse: values.wip_warehouse
+        //                 }
+        //             }).then(r => {
+        //                 dialog.hide();
+        //                 frappe.show_alert({message: __('Plain items transferred to embroidery WIP successfully'), color: 'green'});
+        //                 frm.reload_doc();
+        //             }).always(() => {
+        //                 dialog.get_primary_btn().attr('disabled', false);
+        //             });
+        //         }
+        //     });
+        //     dialog.show();
+        // });
 
         // --- BOM Overview Table ---
         if (frm.fields_dict['custom_bom_html']) {

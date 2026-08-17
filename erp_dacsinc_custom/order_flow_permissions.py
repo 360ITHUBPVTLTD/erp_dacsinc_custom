@@ -60,6 +60,16 @@ def _tab_field(tab):
 # much broader powers (doctype customization, user management, etc.).
 ADMIN_ROLES = ("System Manager", "Super Admin")
 
+# Bridges the Sales Order Workflow's "Pending Final Approval" transition
+# (Frappe workflow transitions are gated by a Role, never by a list of
+# individual users) to the actual source of truth for who may final-approve:
+# Admin Settings > Sales Order Final Approval, a per-user list. Holding any
+# other role — including a broad one like a future "Merchandiser Manager" —
+# must never grant this on its own; only being named in that list (or being
+# an admin, via ADMIN_ROLES/System Manager on the transition itself) does.
+# See sync_sales_order_final_approver_role().
+SALES_ORDER_FINAL_APPROVER_ROLE = "Sales Order Final Approver"
+
 
 def is_admin(user=None):
     """
@@ -293,3 +303,80 @@ def sync_order_flow_page_roles(doc=None, method=None):
     # runs rarely enough (an Admin Settings save, or a migrate) that a full
     # clear is the right trade-off.
     frappe.clear_cache()
+
+
+def get_sales_order_final_approvers():
+    """Users listed in Admin Settings > Sales Order Final Approval."""
+    try:
+        settings = frappe.get_cached_doc("Admin Settings")
+        return [d.user for d in (settings.get("sales_order_final_approval") or []) if d.user]
+    except Exception:
+        frappe.log_error(title="Order Flow: could not read final approvers",
+                         message=frappe.get_traceback())
+        return []
+
+
+def sync_sales_order_final_approver_role(doc=None, method=None):
+    # doc/method accepted (and ignored) so this can be wired both as an
+    # Admin Settings on_update doc_event and as an after_migrate hook, same
+    # as sync_order_flow_page_roles above.
+    """
+    Keep the Sales Order Final Approver role assigned to exactly the users
+    listed in Admin Settings > Sales Order Final Approval — no more, no less.
+
+    This role exists solely to satisfy the Sales Order Workflow's
+    role-gated "Pending Final Approval" transition; it is never assigned by
+    hand and grants nothing beyond passing that one gate (System Manager /
+    Administrator can always pass it too, via a separate transition row —
+    see setup_sales_order_workflow in order_flow_api.py).
+    """
+    if not frappe.db.exists("Role", SALES_ORDER_FINAL_APPROVER_ROLE):
+        return
+
+    frappe.clear_document_cache("Admin Settings", "Admin Settings")
+    wanted = {u for u in get_sales_order_final_approvers() if frappe.db.exists("User", u)}
+
+    has_role = set(frappe.get_all(
+        "Has Role",
+        filters={"role": SALES_ORDER_FINAL_APPROVER_ROLE, "parenttype": "User"},
+        pluck="parent",
+    ))
+
+    changed = False
+    blocked_by_role_profile = []
+    for user in wanted - has_role:
+        user_doc = frappe.get_doc("User", user)
+        if user_doc.role_profile_name:
+            # User.validate() unconditionally repopulates `roles` from the
+            # Role Profile on every save (populate_role_profile_roles) — a
+            # role added here would be silently wiped out by that same
+            # save, not just at some later, unrelated save. Adding it to the
+            # Role Profile instead would grant it to every OTHER user on
+            # that profile too, which is a decision for a human to make
+            # explicitly, not something this sync should do on its own.
+            blocked_by_role_profile.append((user, user_doc.role_profile_name))
+            continue
+        user_doc.add_roles(SALES_ORDER_FINAL_APPROVER_ROLE)
+        changed = True
+
+    if blocked_by_role_profile:
+        frappe.log_error(
+            title="Order Flow: final approver role blocked by Role Profile",
+            message="Could not grant {0} to: {1}. Each has a Role Profile "
+                    "(User.roles is fully repopulated from it on every save), "
+                    "so either add the role to that profile directly or remove "
+                    "the user's Role Profile.".format(
+                        SALES_ORDER_FINAL_APPROVER_ROLE,
+                        ", ".join(f"{u} ({p})" for u, p in blocked_by_role_profile),
+                    ),
+        )
+
+    for user in has_role - wanted:
+        frappe.db.delete("Has Role", {
+            "role": SALES_ORDER_FINAL_APPROVER_ROLE, "parent": user, "parenttype": "User",
+        })
+        changed = True
+
+    if changed:
+        frappe.db.commit()
+        frappe.clear_cache()

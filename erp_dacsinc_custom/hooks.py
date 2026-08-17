@@ -240,16 +240,25 @@ doc_events = {
         # The Order Flow page's role gate is derived from the six tab-role
         # fields on this Single — regenerate it whenever they change. See
         # order_flow_permissions.sync_order_flow_page_roles.
-        "on_update": "erp_dacsinc_custom.order_flow_permissions.sync_order_flow_page_roles"
+        #
+        # sync_sales_order_final_approver_role keeps the bridge role for the
+        # Sales Order Workflow's "Pending Final Approval" transition in sync
+        # with the Sales Order Final Approval user list on this same Single.
+        "on_update": [
+            "erp_dacsinc_custom.order_flow_permissions.sync_order_flow_page_roles",
+            "erp_dacsinc_custom.order_flow_permissions.sync_sales_order_final_approver_role",
+        ]
     }
 }
 
-# Regenerates the Order Flow page's derived Custom Role on every deploy, so a
-# fresh site (or one where nobody has touched Admin Settings yet) still ends
-# up with the correct page-level access instead of relying on a one-shot
-# patch that could drift from the real config over time.
+# Regenerates the Order Flow page's derived Custom Role, and the Sales Order
+# Final Approver role assignments, on every deploy — so a fresh site (or one
+# where nobody has touched Admin Settings yet) still ends up correct instead
+# of relying on a one-shot patch that could drift from the real config over
+# time.
 after_migrate = [
-    "erp_dacsinc_custom.order_flow_permissions.sync_order_flow_page_roles"
+    "erp_dacsinc_custom.order_flow_permissions.sync_order_flow_page_roles",
+    "erp_dacsinc_custom.order_flow_permissions.sync_sales_order_final_approver_role",
 ]
 
 

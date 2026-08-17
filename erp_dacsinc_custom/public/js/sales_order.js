@@ -411,7 +411,7 @@ function generate_stock_overview_table(frm) {
                 </div>
                 <div class="so-empty">
                     <i class="fa fa-save"></i>
-                    Save the Sales Order to enable real-time stock tracking.
+                    Save the Sales Order to Enable Real-Time Stock Tracking.
                 </div>
             </div>
         `);
@@ -424,13 +424,13 @@ function generate_stock_overview_table(frm) {
             <div class="so-card__head">
                 <div>
                     <h4 class="so-card__title">Item Stock &amp; Action Plan</h4>
-                    <span class="so-card__sub">Real-time availability and procurement status</span>
+                    <span class="so-card__sub">Real-Time Availability and Procurement Status</span>
                 </div>
                 <div class="so-card__actions">
                     <span class="so-search">
                         <i class="fa fa-search"></i>
                         <input type="search" id="so-item-search" autocomplete="off"
-                               placeholder="Search item, status, supplier…">
+                               placeholder="Search Item, Status, Supplier…">
                     </span>
                     <span class="so-micro" id="so-search-count"></span>
                     <button class="so-btn" id="btn-refresh-stock-table">
@@ -456,7 +456,7 @@ function generate_stock_overview_table(frm) {
                     </thead>
                     <tbody id="stock-tbody">
                         <tr><td colspan="9" class="so-empty">
-                            <i class="fa fa-spinner fa-spin"></i> Loading stock data…
+                            <i class="fa fa-spinner fa-spin"></i> Loading Stock Data…
                         </td></tr>
                     </tbody>
                 </table>
@@ -471,7 +471,7 @@ function generate_stock_overview_table(frm) {
     const tbody  = container.find('#stock-tbody');
 
     if (!items.length) {
-        tbody.html('<tr><td colspan="9" class="text-center text-muted" style="padding:20px;">Add items to see their stock status.</td></tr>');
+        tbody.html('<tr><td colspan="9" class="text-center text-muted" style="padding:20px;">Add Items to See Their Stock Status.</td></tr>');
         return;
     }
 
@@ -486,7 +486,7 @@ function generate_stock_overview_table(frm) {
         },
         callback: (r) => {
             if (!r.message) {
-                tbody.html('<tr><td colspan="9" class="text-center text-danger" style="padding:20px;">Error loading stock details.</td></tr>');
+                tbody.html('<tr><td colspan="9" class="text-center text-danger" style="padding:20px;">Error Loading Stock Details.</td></tr>');
                 return;
             }
 
@@ -603,7 +603,7 @@ function generate_stock_overview_table(frm) {
                         const line_unpicked  = item.qty - (item.delivered_qty || 0);
                         const line_pick_qty  = Math.min(can_fulfill_qty, line_unpicked);
                         if (line_pick_qty > 0) {
-                            status_html += `<div class="so-micro" style="margin-top:4px;">+${flt(line_pick_qty)} more available</div>`;
+                            status_html += `<div class="so-micro" style="margin-top:4px;">+${flt(line_pick_qty)} More Available</div>`;
                             if (submitted) {
                                 const bd = _build_pick_btn_data(item, line_pick_qty, frm, d);
                                 action_parts.push(`<button class="so-btn" onclick="create_pick_list_for_item(${bd})"><i class="fa fa-plus"></i> Pick ${flt(line_pick_qty)} more</button>`);
@@ -630,17 +630,17 @@ function generate_stock_overview_table(frm) {
                                     // ERPNext will refuse to allocate: a stale Pick List still
                                     // reserves this stock. Offer the repair, not a doomed Pick.
                                     action_parts.push(so_cmd_btn(`so_fix_stale_pick_lists('${ic_arg}')`,
-                                        'wrench', 'Fix stale Pick Lists', true));
-                                    action_parts.push(`<span class="so-action__note">${flt(stale_blocked)} held by a closed order</span>`);
+                                        'wrench', 'Fix Stale Pick Lists', true));
+                                    action_parts.push(`<span class="so-action__note">${flt(stale_blocked)} Held by a Closed Order</span>`);
                                 } else {
                                     const bd = _build_pick_btn_data(item, line_pick_qty, frm, d);
                                     action_parts.push(`<button class="so-btn so-btn--primary" onclick="create_pick_list_for_item(${bd})"><i class="fa fa-hand-paper-o"></i> Pick ${flt(line_pick_qty)}</button>`);
                                 }
                             } else {
-                                action_parts.push(`<span class="so-action__note">Submit the SO to enable picking</span>`);
+                                action_parts.push(`<span class="so-action__note">Submit the SO to Enable Picking</span>`);
                             }
                         } else {
-                            action_parts.push(`<span class="so-action__note">Line fulfilled / planned</span>`);
+                            action_parts.push(`<span class="so-action__note">Line Fulfilled / Planned</span>`);
                         }
                         if (shortage_qty > 0) {
                             action_parts.push(so_shortfall(shortage_qty));
@@ -717,9 +717,9 @@ function generate_stock_overview_table(frm) {
 
                 if ((d.received_for_so_qty || 0) > 0) {
                     avail_html += `<div class="so-micro">
-                        ${flt(d.received_for_so_qty)} for this SO
+                        ${flt(d.received_for_so_qty)} For This SO
                         ${is_subcon_rcpt ? `<span class="so-chip so-chip--sc" title="Includes subcontracted receipts">SC</span>` : ''}
-                        · ${flt(d.general_stock_qty || 0)} general
+                        · ${flt(d.general_stock_qty || 0)} General
                     </div>`;
                 }
                 // Name the warehouse holding the biggest chunk so the number has context.
@@ -747,15 +747,15 @@ function generate_stock_overview_table(frm) {
                     // Spell out that a draft exists — a bare "0" hid the fact that a
                     // Pick List had already been raised against this order.
                     picked_html += `<div class="so-micro" style="color:var(--so-orange);">
-                        ${draft_shown} in draft</div>`;
+                        ${draft_shown} In Draft</div>`;
                 }
                 if (flt(d.stale_pick_qty || 0) > 0) {
                     picked_html += `<div class="so-micro" style="color:var(--so-orange);"
                         title="Delivered without going through this Pick List — it is still open">
-                        ${flt(d.stale_pick_qty)} already delivered</div>`;
+                        ${flt(d.stale_pick_qty)} Already Delivered</div>`;
                 }
                 if (pick_rows.length > 0) {
-                    picked_html += `<div class="so-micro">${pick_rows.length} pick list${pick_rows.length === 1 ? '' : 's'}</div>`;
+                    picked_html += `<div class="so-micro">${pick_rows.length} Pick List${pick_rows.length === 1 ? '' : 's'}</div>`;
                     picked_html += `<button class="so-btn so-btn--view" onclick="show_details_modal('${js_str(pair_key)}','picked')"><i class="fa fa-eye"></i> View</button>`;
                 }
                 picked_html += `</div>`;
@@ -766,8 +766,8 @@ function generate_stock_overview_table(frm) {
                     + so_qty(total_others, total_others > 0 ? 'warn' : null);
                 if (total_others > 0) {
                     const split = [];
-                    if (flt(picked_for_others) > 0) split.push(`${flt(picked_for_others)} submitted`);
-                    if (flt(draft_for_others) > 0)  split.push(`${flt(draft_for_others)} draft`);
+                    if (flt(picked_for_others) > 0) split.push(`${flt(picked_for_others)} Submitted`);
+                    if (flt(draft_for_others) > 0)  split.push(`${flt(draft_for_others)} Draft`);
                     picked_others_html += `<div class="so-micro">${split.join(' · ')}</div>`;
                 }
                 if (Array.isArray(d.conflict_details) && d.conflict_details.length > 0) {
@@ -823,7 +823,7 @@ function generate_stock_overview_table(frm) {
                 return main_row + rm_row_html;
             }).join('');
 
-            tbody.html(rows_html || '<tr><td colspan="9" class="so-empty">No valid items found.</td></tr>');
+            tbody.html(rows_html || '<tr><td colspan="9" class="so-empty">No Valid Items Found.</td></tr>');
 
             _wire_row_toggle_and_search(container, tbody);
 
@@ -905,7 +905,7 @@ function _wire_row_toggle_and_search(container, tbody) {
         $count.text(term ? `${shown} of ${$rows.length}` : '');
         tbody.find('tr.so-no-match').remove();
         if (term && shown === 0) {
-            tbody.append(`<tr class="so-no-match"><td colspan="9" class="so-empty">No items match “${esc(term)}”.</td></tr>`);
+            tbody.append(`<tr class="so-no-match"><td colspan="9" class="so-empty">No Items Match “${esc(term)}”.</td></tr>`);
         }
     };
 
@@ -961,7 +961,7 @@ function _build_incoming_html(item, d, pair_key) {
             html += `<div class="so-brk">
                 <div class="so-brk__label">${pending_pos.length} PO · ${flt(po_qty)}${is_subcon ? ` <span class="so-chip so-chip--sc">SC</span>` : ''}</div>
                 ${suppliers.length ? `<div class="so-brk__sub so-truncate" style="max-width:140px;" title="${esc(suppliers.join(', '))}">${esc(suppliers[0])}${suppliers.length > 1 ? ` +${suppliers.length - 1}` : ''}</div>` : ''}
-                ${due_dates.length ? `<div class="so-brk__sub">due ${fmt_date(due_dates[0])}</div>` : ''}
+                ${due_dates.length ? `<div class="so-brk__sub">Due ${fmt_date(due_dates[0])}</div>` : ''}
             </div>`;
         }
 
@@ -972,8 +972,8 @@ function _build_incoming_html(item, d, pair_key) {
                 <div class="so-brk__label" style="color:var(--so-purple);">
                     ${open_mrs.length} MR · ${mr_pending}
                 </div>
-                <div class="so-brk__sub">requested, not ordered</div>
-                ${mr_dates.length ? `<div class="so-brk__sub">by ${fmt_date(mr_dates[0])}</div>` : ''}
+                <div class="so-brk__sub">Requested, Not Ordered</div>
+                ${mr_dates.length ? `<div class="so-brk__sub">By ${fmt_date(mr_dates[0])}</div>` : ''}
             </div>`;
         }
 
@@ -999,13 +999,13 @@ function _build_incoming_html(item, d, pair_key) {
     if (draft_pos.length > 0) {
         const draft_po_qty = draft_pos.reduce((a, p) => a + flt(p.qty), 0);
         html += `<div class="so-micro" style="color:var(--so-orange);" title="Not yet submitted — not counted above">
-            <i class="fa fa-file-o"></i> ${draft_pos.length} PO in draft · ${flt(draft_po_qty)}
+            <i class="fa fa-file-o"></i> ${draft_pos.length} PO In Draft · ${flt(draft_po_qty)}
         </div>`;
     }
     if (draft_mrs.length > 0) {
         const draft_mr_qty = draft_mrs.reduce((a, m) => a + flt(m.qty), 0);
         html += `<div class="so-micro" style="color:var(--so-orange);" title="Not yet submitted — not counted above">
-            <i class="fa fa-file-o"></i> ${draft_mrs.length} MR in draft · ${flt(draft_mr_qty)}
+            <i class="fa fa-file-o"></i> ${draft_mrs.length} MR In Draft · ${flt(draft_mr_qty)}
         </div>`;
     }
 
@@ -1017,7 +1017,7 @@ function _build_incoming_html(item, d, pair_key) {
     if (draft_receipts.length > 0) {
         const draft_recv_qty = draft_receipts.reduce((s, r) => s + flt(r.qty), 0);
         html += `<div class="so-micro" style="color:var(--so-info);" title="Receipt drafted but not submitted — not yet posted to stock">
-            <i class="fa fa-inbox"></i> ${draft_receipts.length} Receipt in draft · ${flt(draft_recv_qty)}
+            <i class="fa fa-inbox"></i> ${draft_receipts.length} Receipt In Draft · ${flt(draft_recv_qty)}
         </div>`;
     }
 
@@ -1025,12 +1025,12 @@ function _build_incoming_html(item, d, pair_key) {
     // so it is stated as such and never as an incoming quantity.
     if (total_rcvd_qty > 0) {
         html += `<div class="so-micro" title="Already received and counted in Available Stock">
-            <i class="fa fa-check" style="color:var(--so-green);"></i> ${flt(total_rcvd_qty)} received
+            <i class="fa fa-check" style="color:var(--so-green);"></i> ${flt(total_rcvd_qty)} Received
         </div>`;
     }
     if (flt(d.total_other_po_qty) > 0) {
         html += `<div class="so-micro" title="On Purchase Orders not reserved for this Sales Order">
-            +${flt(d.total_other_po_qty)} on other POs
+            +${flt(d.total_other_po_qty)} On Other POs
         </div>`;
     }
 
@@ -1104,7 +1104,9 @@ function get_rm_breakdown_html(data, so_name, docstatus) {
                 <td>
                     ${shortfall_qty > 0
                         ? `<span class="so-val so-val--bad">${shortfall_qty.toFixed(2)}</span><div class="so-micro">${esc(uom)}</div>
-                           ${submitted ? `<button class="so-btn" style="margin-top:4px;" onclick="so_make_material_request('${js_str(so_name)}')"><i class="fa fa-file-text-o"></i> Material Request</button>` : ''}`
+                           ${submitted ? `<button class="so-btn so-btn--primary" style="margin-top:4px;"
+                               onclick="so_make_rm_material_request('${js_str(so_name)}','${js_str(item.rm_code)}',${shortfall_qty},'${js_str(uom)}','${js_str(data.warehouse || '')}')">
+                               <i class="fa fa-file-text-o"></i> Material Request</button>` : ''}`
                         : `<span class="so-val so-val--zero">—</span>`}
                 </td>
             </tr>`;
@@ -1133,16 +1135,16 @@ function get_rm_breakdown_html(data, so_name, docstatus) {
                         <span class="so-pill ${has_shortfall ? 'so-pill--blocked' : 'so-pill--ready'}"
                               title="${has_shortfall ? 'Stock + pending MR + pending PO does not yet cover what this order needs' : 'Every raw material below is fully covered by stock and/or pending MR/PO'}">
                             ${has_shortfall
-                                ? `Shortage on ${items_with_shortage} material${items_with_shortage === 1 ? '' : 's'}`
-                                : 'Materials covered'}
+                                ? `Shortage on ${items_with_shortage} Material${items_with_shortage === 1 ? '' : 's'}`
+                                : 'Materials Covered'}
                         </span>
                         ${fg_already_stocked
                             ? `<span class="so-chip" style="background:var(--so-info);color:#fff;" title="The finished good already has enough stock for this line, so nothing new needs to be produced right now — the material check above is for reference only.">
-                                   <i class="fa fa-info-circle"></i> FG already in stock — no production needed now
+                                   <i class="fa fa-info-circle"></i> FG Already in Stock — No Production Needed Now
                                </span>`
                             : ''}
                         <span class="so-rm__spacer"></span>
-                        <span class="so-rm__note">Coverage = stock + pending MR + pending PO</span>
+                        <span class="so-rm__note">Coverage = Stock + Pending MR + Pending PO</span>
                     </div>
                     <table>
                         <thead>
@@ -1157,7 +1159,7 @@ function get_rm_breakdown_html(data, so_name, docstatus) {
                                 <th>Shortfall</th>
                             </tr>
                         </thead>
-                        <tbody>${rows || '<tr><td colspan="8" class="so-empty">No raw material data available.</td></tr>'}</tbody>
+                        <tbody>${rows || '<tr><td colspan="8" class="so-empty">No Raw Material Data Available.</td></tr>'}</tbody>
                     </table>
                 </div>
             </td>
@@ -1546,6 +1548,36 @@ function so_make_material_request(so_name) {
         method: 'erpnext.selling.doctype.sales_order.sales_order.make_material_request',
         source_name: so_name,
         freeze_message: __('Creating Material Request…')
+    });
+}
+
+/**
+ * Material Request for ONE raw material row in the RM breakdown table.
+ *
+ * so_make_material_request() above maps straight from Sales Order Item, i.e.
+ * the finished good on the SO — it has no notion of a BOM's raw materials at
+ * all. Calling it from an RM row silently requested the finished good
+ * instead of the shortfall material. This targets the RM item explicitly
+ * via the same custom creator the "Get Item From SO" planner uses.
+ */
+function so_make_rm_material_request(so_name, item_code, qty, uom, warehouse) {
+    frappe.call({
+        method: 'erp_dacsinc_custom.custom_script.create_material_request_custom',
+        args: {
+            items: [{ item_code: item_code, qty: qty, uom: uom, warehouse: warehouse || undefined }],
+            company: cur_frm.doc.company,
+            sales_order_name: so_name
+        },
+        freeze: true,
+        freeze_message: __('Creating Material Request for {0}…', [item_code]),
+        callback: (r) => {
+            if (!r.message) return;   // server threw; Frappe has shown the reason
+            window.open(frappe.utils.get_form_link('Material Request', r.message), '_blank');
+            frappe.show_alert({
+                message: __('Material Request {0} created for {1}.', [r.message, item_code]),
+                indicator: 'green'
+            }, 7);
+        }
     });
 }
 
@@ -2302,6 +2334,7 @@ window.show_picked_others_details_modal = show_picked_others_details_modal;
 window.so_open_doc              = so_open_doc;
 window.so_make_delivery_note    = so_make_delivery_note;
 window.so_make_material_request = so_make_material_request;
+window.so_make_rm_material_request = so_make_rm_material_request;
 window.so_make_po_from_mr       = so_make_po_from_mr;
 window.so_make_purchase_order   = so_make_purchase_order;
 window.so_make_subcontract_po   = so_make_subcontract_po;

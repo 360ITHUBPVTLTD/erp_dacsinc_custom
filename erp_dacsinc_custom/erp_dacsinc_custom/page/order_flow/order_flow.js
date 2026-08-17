@@ -1972,10 +1972,13 @@ class OrderFlow {
                 <td>${of_qty(pending, pending > 0 ? 'warn' : null)}</td>
                 <td>${of_doc_status(m.status)}</td>
                 <td>
-                    ${pending > 0
-                        ? `<button class="of-btn of-btn--primary of-action-btn" data-action="make_po_from_mr" data-target="${m.name}">
-                            <i class="fa fa-shopping-cart"></i> Order PO</button>`
-                        : '<span class="of-micro" style="color:var(--of-green);font-weight:600;">Ordered</span>'}
+                    ${flt_of(m.docstatus) === 0
+                        ? `<span class="of-micro" style="color:var(--of-orange);font-weight:600;" title="A Purchase Order can only be made from a submitted Material Request">
+                            <i class="fa fa-exclamation-triangle"></i> Submit MR first</span>`
+                        : pending > 0
+                            ? `<button class="of-btn of-btn--primary of-action-btn" data-action="make_po_from_mr" data-target="${m.name}">
+                                <i class="fa fa-shopping-cart"></i> Order PO</button>`
+                            : '<span class="of-micro" style="color:var(--of-green);font-weight:600;">Ordered</span>'}
                 </td>
             </tr>`;
         }).join('');
@@ -2078,7 +2081,10 @@ class OrderFlow {
                         <thead><tr><th style="min-width:170px;">Material Request</th><th>Sales Order</th><th>Dates</th>
                             <th>Requested</th><th>Ordered</th><th>Not ordered</th><th>Status</th><th>Action</th></tr></thead>
                         <tbody>${mr_rows || of_empty_row(8)}</tbody>
-                    </table>`)}
+                    </table>`,
+                    `<a class="of-btn of-btn--primary" href="/app/material-request/new" target="_blank">
+                        <i class="fa fa-plus"></i> ${__('Create Material Request')}
+                    </a>`)}
             </div>
 
             <div id="of-pur-sec-po" class="${subtab !== 'po' ? 'of-hidden' : ''}">
@@ -2087,7 +2093,10 @@ class OrderFlow {
                         <thead><tr><th style="min-width:170px;">Purchase Order</th><th style="min-width:150px;">Supplier</th>
                             <th>Sales Order</th><th>Dates</th><th>Ordered</th><th>Received</th><th>Amount</th><th>Status</th><th>Action</th></tr></thead>
                         <tbody>${po_rows || of_empty_row(9)}</tbody>
-                    </table>`)}
+                    </table>`,
+                    `<a class="of-btn of-btn--primary" href="/app/purchase-order/new" target="_blank">
+                        <i class="fa fa-plus"></i> ${__('Create Purchase Order')}
+                    </a>`)}
             </div>
 
             <div id="of-pur-sec-receipt" class="${subtab !== 'receipt' ? 'of-hidden' : ''}">
@@ -2096,7 +2105,10 @@ class OrderFlow {
                         <thead><tr><th style="min-width:170px;">Receipt</th><th style="min-width:150px;">Supplier</th>
                             <th>Sales Order</th><th>Against PO</th><th>Date</th><th>Received</th><th>Amount</th><th>Status</th></tr></thead>
                         <tbody>${rc_rows || of_empty_row(8)}</tbody>
-                    </table>`)}
+                    </table>`,
+                    `<a class="of-btn of-btn--primary" href="/app/purchase-receipt/new" target="_blank">
+                        <i class="fa fa-plus"></i> ${__('Create Purchase Receipt')}
+                    </a>`)}
             </div>
 
             <div id="of-pur-sec-bill" class="${subtab !== 'bill' ? 'of-hidden' : ''}">
@@ -2220,7 +2232,10 @@ class OrderFlow {
                         <thead><tr><th style="min-width:170px;">Purchase Order</th><th style="min-width:150px;">Supplier</th>
                             <th>Sales Order</th><th>Dates</th><th>Ordered</th><th>Received</th><th>Amount</th><th>Status</th><th>Action</th></tr></thead>
                         <tbody>${po_rows || of_empty_row(9)}</tbody>
-                    </table>`)}
+                    </table>`,
+                    `<a class="of-btn of-btn--primary" href="/app/purchase-order/new?is_subcontracted=1" target="_blank">
+                        <i class="fa fa-plus"></i> ${__('Create Subcontracting PO')}
+                    </a>`)}
             </div>
 
             <div id="of-job-sec-receipt" class="${subtab !== 'receipt' ? 'of-hidden' : ''}">
@@ -2229,7 +2244,10 @@ class OrderFlow {
                         <thead><tr><th style="min-width:170px;">Receipt</th><th style="min-width:150px;">Supplier</th>
                             <th>Sales Order</th><th>Against PO</th><th>Date</th><th>Received</th><th>Amount</th><th>Status</th></tr></thead>
                         <tbody>${rc_rows || of_empty_row(8)}</tbody>
-                    </table>`)}
+                    </table>`,
+                    `<a class="of-btn of-btn--primary" href="/app/subcontracting-receipt/new" target="_blank">
+                        <i class="fa fa-plus"></i> ${__('Create Subcontracting Receipt')}
+                    </a>`)}
             </div>
             
             <div id="of-job-sec-fp" class="${subtab !== 'fp' ? 'of-hidden' : ''}">
@@ -2406,7 +2424,10 @@ class OrderFlow {
                             <th>Sales Order</th><th>Dates</th><th>Total Amount</th><th>Received</th>
                             <th>Outstanding (Receivable)</th><th>Status</th><th>Action</th></tr></thead>
                         <tbody>${si_rows || of_empty_row(9)}</tbody>
-                    </table>`)}
+                    </table>`,
+                    `<a class="of-btn of-btn--primary" href="/app/sales-invoice/new" target="_blank">
+                        <i class="fa fa-plus"></i> ${__('Create Sales Invoice')}
+                    </a>`)}
             </div>
 
             <div id="of-acc-sec-supplier" class="${subtab !== 'supplier' ? 'of-hidden' : ''}">
@@ -2416,7 +2437,10 @@ class OrderFlow {
                             <th>Sales Order</th><th>Dates</th><th>Total Amount</th><th>Paid</th>
                             <th>Outstanding (Payable)</th><th>Status</th><th>Action</th></tr></thead>
                         <tbody>${sup_rows || of_empty_row(9)}</tbody>
-                    </table>`)}
+                    </table>`,
+                    `<a class="of-btn of-btn--primary" href="/app/purchase-invoice/new" target="_blank">
+                        <i class="fa fa-plus"></i> ${__('Create Purchase Invoice')}
+                    </a>`)}
             </div>
 
             <div id="of-acc-sec-jobber" class="${subtab !== 'jobber' ? 'of-hidden' : ''}">
@@ -2442,11 +2466,11 @@ class OrderFlow {
         const can_final = !!(this.perms && this.perms.is_final_approver);
 
         // An order sits in exactly one bucket, by the step it is actually waiting on.
-        //   Pending My Approval — waiting on ME as the customer's merchandiser
+        //   Pending Approval — waiting on ME as the customer's merchandiser
         //   Unassigned          — no merchandiser on the customer yet
         //   Pending Final       — merchandiser is done; waiting on a final approver
         // An order already at "Pending Final Approval" is NOT waiting on the
-        // merchandiser, so it must not appear under "Pending My Approval".
+        // merchandiser, so it must not appear under "Pending Approval".
         orders.forEach(o => {
             if (o.workflow_state === 'Pending Final Approval') {
                 final_approvals.push(o);
@@ -2565,7 +2589,7 @@ class OrderFlow {
             <!-- Sub-Tab Navigation Bar -->
             <div class="of-subtabs">
                 <button class="of-subtab ${sub === 'merchandiser' ? 'is-active' : ''}" data-subtab="merchandiser">
-                    <i class="fa fa-user" style="color:var(--of-blue);"></i> ${can_final ? '1. Merchandiser Queue (Track)' : '1. Pending My Approval'} (${my_approvals.length})
+                    <i class="fa fa-user" style="color:var(--of-blue);"></i> ${can_final ? '1. Merchandiser Queue (Track)' : '1. Pending Approval'} (${my_approvals.length})
                 </button>
                 <button class="of-subtab ${sub === 'unassigned' ? 'is-active' : ''}" data-subtab="unassigned">
                     <i class="fa fa-users" style="color:var(--of-yellow);"></i> 2. Unassigned Orders (${unassigned_approvals.length})
@@ -2581,7 +2605,7 @@ class OrderFlow {
                 <div class="of-card__head" style="display: flex; justify-content: space-between; align-items: center; padding: 12px 16px;">
                     <div>
                         <i class="fa fa-check-square-o"></i> ${
-                            sub === 'merchandiser' ? (can_final ? __('Merchandiser Queue (Track)') : __('Pending My Approval')) :
+                            sub === 'merchandiser' ? (can_final ? __('Merchandiser Queue (Track)') : __('Pending Approval')) :
                             sub === 'unassigned' ? __('Unassigned Orders (Approve & Claim)') :
                             __('Pending Final Approval')
                         }
@@ -2995,6 +3019,11 @@ class OrderFlow {
                     get_query: () => ({ filters: { is_stock_item: 1, disabled: 0 } }),
                     onchange: function() {
                         const source = this.get_value();
+                        if (source && source === dialog.get_value('target_item')) {
+                            frappe.msgprint(__('Source Item (Plain) and Target Item (Embroidered) cannot be the same item.'));
+                            this.set_value('');
+                            return;
+                        }
                         const warehouse = dialog.get_value('from_warehouse');
                         if (source && warehouse) {
                             fetch_stock_details(source, warehouse);
@@ -3034,6 +3063,13 @@ class OrderFlow {
                     label: __('Target Item (Embroidered)'),
                     reqd: 1,
                     get_query: () => ({ filters: { is_stock_item: 1, disabled: 0 } }),
+                    onchange: function() {
+                        const target = this.get_value();
+                        if (target && target === dialog.get_value('source_item')) {
+                            frappe.msgprint(__('Source Item (Plain) and Target Item (Embroidered) cannot be the same item.'));
+                            this.set_value('');
+                        }
+                    }
                 },
                 { fieldtype: 'Column Break' },
                 {
@@ -3054,6 +3090,10 @@ class OrderFlow {
             ],
             primary_action_label: __('Send to Embroidery'),
             primary_action: (values) => {
+                if (values.source_item === values.target_item) {
+                    frappe.msgprint(__('Source Item (Plain) and Target Item (Embroidered) cannot be the same item.'));
+                    return;
+                }
                 dialog.get_primary_btn().attr('disabled', true);
                 frappe.call({
                     method: 'erp_dacsinc_custom.uniform_transfer_api.create_embroidery_transfer',
@@ -3272,9 +3312,12 @@ function of_links(list, doctype) {
 function of_so_links(list) { return of_links(list, 'Sales Order'); }
 function of_po_links(list) { return of_links(list, 'Purchase Order'); }
 
-function of_card(title, icon, inner) {
+function of_card(title, icon, inner, actions_html) {
     return `<div class="of-card">
-        <div class="of-card__head"><i class="fa fa-${icon}"></i> ${of_esc(title)}</div>
+        <div class="of-card__head" style="${actions_html ? 'display:flex;justify-content:space-between;align-items:center;' : ''}">
+            <span><i class="fa fa-${icon}"></i> ${of_esc(title)}</span>
+            ${actions_html || ''}
+        </div>
         <div class="of-scroll">${inner}</div>
     </div>`;
 }

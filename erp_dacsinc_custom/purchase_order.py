@@ -1213,9 +1213,10 @@ def get_pending_so_with_material_stock(is_subcontracted=False):
             soi.name as so_row_name, soi.parent AS sales_order, so.customer, so.customer_name,
             so.sales_partner AS jobber_name, soi.item_code, soi.item_name, 
             soi.qty, soi.delivered_qty, soi.bom_no AS bom
-        FROM `tabSales Order Item` soi 
+        FROM `tabSales Order Item` soi
         JOIN `tabSales Order` so ON so.name = soi.parent
         WHERE so.docstatus = 1 AND so.status NOT IN ('On Hold', 'Completed', 'Cancelled', 'Closed')
+        AND IFNULL(so.custom_old_record_item_is_disabled, 0) = 0
         AND soi.qty > soi.delivered_qty {condition}
         ORDER BY so.transaction_date ASC, soi.item_code ASC, soi.idx ASC
     """, as_dict=True)
@@ -1573,9 +1574,10 @@ def get_pending_so_with_raw_materials_summary():
             COALESCE(si.delivered_qty, 0) as delivered_qty,
             (si.qty - COALESCE(si.delivered_qty, 0)) as pending_qty,
             so.customer,so.customer_name, si.bom_no as bom, si.uom
-        FROM `tabSales Order Item` si 
+        FROM `tabSales Order Item` si
         JOIN `tabSales Order` so ON si.parent = so.name
         WHERE so.docstatus = 1 AND so.status NOT IN ('Closed', 'Cancelled', 'On Hold')
+          AND IFNULL(so.custom_old_record_item_is_disabled, 0) = 0
           AND (si.qty - COALESCE(si.delivered_qty, 0)) > 0.001
           AND si.bom_no IS NOT NULL AND si.bom_no != ''
         ORDER BY so.transaction_date DESC, so.name
@@ -5135,9 +5137,10 @@ def get_mr_suggestions_for_po():
         FROM `tabMaterial Request Item` child
         INNER JOIN `tabMaterial Request` parent ON child.parent = parent.name
         LEFT JOIN `tabSales Order` so ON child.sales_order = so.name
-        WHERE parent.docstatus = 1 
+        WHERE parent.docstatus = 1
           AND parent.material_request_type = 'Purchase'
           AND (child.qty - child.ordered_qty) > 0
+          AND (so.name IS NULL OR IFNULL(so.custom_old_record_item_is_disabled, 0) = 0)
         ORDER BY child.item_code ASC
     """, as_dict=True)
 

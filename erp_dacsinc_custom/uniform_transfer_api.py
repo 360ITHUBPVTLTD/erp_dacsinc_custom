@@ -17,7 +17,10 @@ def create_embroidery_transfer(source_item, target_item, qty, from_warehouse, wi
     qty = flt(qty)
     if qty <= 0:
         frappe.throw("Quantity must be greater than 0.")
-        
+    if source_item == target_item:
+        frappe.throw("Source Item (Plain) and Target Item (Embroidered) cannot be the same item.")
+
+
     # Check if source item exists and has stock in from_warehouse
     stock_qty = frappe.db.get_value("Bin", {"item_code": source_item, "warehouse": from_warehouse}, "actual_qty") or 0.0
     if stock_qty < qty:
