@@ -17,8 +17,8 @@
   "buying_settings_section",
   "allow_over_collecting_of_fg",
   "section_break_hbuh",
-  "mobile_app_crm_card",
   "bulk_attendance_mobile_app_visibility",
+  "mobile_app_crm_card",
   "crm_reports_config_tab",
   "send_daily_crm_report",
   "crm_daily_report_emails",
@@ -135,9 +135,9 @@
   },
   {
    "fieldname": "mobile_app_crm_card",
-   "fieldtype": "Table MultiSelect",
+   "fieldtype": "Link",
    "label": "Mobile App CRM Card",
-   "options": "Has Department"
+   "options": "Department"
   },
   {
    "fieldname": "what_apps_tab",
@@ -251,7 +251,7 @@
    "label": "Order Flow"
   },
   {
-   "description": "Which roles may open each tab of the Order Flow dashboard. Leave a tab empty to leave it unrestricted — every user who can open the page will see it. A user allowed no tab at all cannot open the page. System Manager and Administrator always see every tab.",
+   "description": "Which roles may open each tab of the Order Flow dashboard. Leave a tab empty to leave it unrestricted \u2014 every user who can open the page will see it. A user allowed no tab at all cannot open the page. System Manager and Administrator always see every tab.",
    "fieldname": "order_flow_access_section",
    "fieldtype": "Section Break",
    "label": "Tab Visibility"
@@ -260,21 +260,21 @@
    "description": "SO Approvals tab. Empty = visible to everyone who can open the page.",
    "fieldname": "of_tab_approval_roles",
    "fieldtype": "Table MultiSelect",
-   "label": "SO Approvals — Allowed Roles",
+   "label": "SO Approvals \u2014 Allowed Roles",
    "options": "Order Flow Tab Role"
   },
   {
    "description": "Sales Tracker tab. Empty = visible to everyone who can open the page.",
    "fieldname": "of_tab_tracker_roles",
    "fieldtype": "Table MultiSelect",
-   "label": "Sales Tracker — Allowed Roles",
+   "label": "Sales Tracker \u2014 Allowed Roles",
    "options": "Order Flow Tab Role"
   },
   {
    "description": "Purchase Flow tab. Empty = visible to everyone who can open the page.",
    "fieldname": "of_tab_purchase_roles",
    "fieldtype": "Table MultiSelect",
-   "label": "Purchase Flow — Allowed Roles",
+   "label": "Purchase Flow \u2014 Allowed Roles",
    "options": "Order Flow Tab Role"
   },
   {
@@ -285,21 +285,21 @@
    "description": "Job Work tab. Empty = visible to everyone who can open the page.",
    "fieldname": "of_tab_jobwork_roles",
    "fieldtype": "Table MultiSelect",
-   "label": "Job Work — Allowed Roles",
+   "label": "Job Work \u2014 Allowed Roles",
    "options": "Order Flow Tab Role"
   },
   {
    "description": "Accounts tab. Empty = visible to everyone who can open the page.",
    "fieldname": "of_tab_accounts_roles",
    "fieldtype": "Table MultiSelect",
-   "label": "Accounts — Allowed Roles",
+   "label": "Accounts \u2014 Allowed Roles",
    "options": "Order Flow Tab Role"
   },
   {
    "description": "Embroidery Transfers tab. Empty = visible to everyone who can open the page.",
    "fieldname": "of_tab_uniform_roles",
    "fieldtype": "Table MultiSelect",
-   "label": "Embroidery Transfers — Allowed Roles",
+   "label": "Embroidery Transfers \u2014 Allowed Roles",
    "options": "Order Flow Tab Role"
   }
  ],
@@ -307,7 +307,7 @@
  "index_web_pages_for_search": 1,
  "issingle": 1,
  "links": [],
- "modified": "2026-08-14 12:00:00.000000",
+ "modified": "2026-08-18 09:48:54.358177",
  "modified_by": "Administrator",
  "module": "Erp Dacsinc Custom",
  "name": "Admin Settings",
