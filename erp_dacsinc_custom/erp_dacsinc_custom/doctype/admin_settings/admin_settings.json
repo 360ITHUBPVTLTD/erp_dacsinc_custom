@@ -137,9 +137,9 @@
   },
   {
    "fieldname": "mobile_app_crm_card",
-   "fieldtype": "Link",
+   "fieldtype": "Table MultiSelect",
    "label": "Mobile App CRM Card",
-   "options": "Department"
+   "options": "Has Department"
   },
   {
    "fieldname": "what_apps_tab",
@@ -323,7 +323,7 @@
  "index_web_pages_for_search": 1,
  "issingle": 1,
  "links": [],
- "modified": "2026-08-18 09:48:54.358177",
+ "modified": "2026-08-18 16:08:39.125928",
  "modified_by": "Administrator",
  "module": "Erp Dacsinc Custom",
  "name": "Admin Settings",
