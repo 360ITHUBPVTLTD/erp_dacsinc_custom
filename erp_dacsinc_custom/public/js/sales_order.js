@@ -371,6 +371,45 @@ function inject_so_styles() {
         .so-modal__h small { font-weight: 400; color: var(--text-muted); font-size: 11px; margin-left: 6px; }
         .so-modal .so-table { border: 1px solid var(--border-color); }
         .so-hint { font-size: 11px; color: var(--text-muted); margin: 12px 0 0 0; }
+
+        /* ── Alert callout ───────────────────────────────────────────
+           A proper card (icon badge + title + body + optional action
+           row), not just a tinted line of text — used wherever a dialog
+           needs to actually stop the reader (an existing draft, a
+           partial/excluded-lines note) rather than just footnote it. */
+        .so-alert {
+            display: flex; gap: 10px; align-items: flex-start;
+            padding: 12px 14px; border-radius: 8px; margin: 0 0 14px 0;
+            font-size: 12px; line-height: 1.5;
+        }
+        .so-alert__icon {
+            flex: 0 0 auto; width: 26px; height: 26px; border-radius: 50%;
+            display: flex; align-items: center; justify-content: center;
+            font-size: 12px; color: #fff;
+        }
+        .so-alert__body { flex: 1 1 auto; min-width: 0; }
+        .so-alert__title { font-weight: 700; font-size: 12.5px; color: var(--heading-color); margin-bottom: 3px; }
+        .so-alert__text { color: var(--text-color); }
+        .so-alert__text b { font-weight: 700; }
+        .so-alert__actions { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
+
+        .so-alert--warning { background: rgba(253, 126, 20, 0.10); border: 1px solid rgba(253, 126, 20, 0.35); }
+        .so-alert--warning .so-alert__icon { background: var(--so-orange); }
+
+        .so-alert--info { background: rgba(52, 152, 219, 0.08); border: 1px solid rgba(52, 152, 219, 0.25); }
+        .so-alert--info .so-alert__icon { background: var(--so-blue); }
+
+        .so-alert--muted { background: var(--subtle-fg); border: 1px solid var(--border-color); }
+        .so-alert--muted .so-alert__icon { background: var(--so-gray); }
+
+        .so-draft-link {
+            display: inline-flex; align-items: center; gap: 6px;
+            padding: 6px 11px; border-radius: 6px;
+            background: var(--card-bg); border: 1px solid var(--so-orange);
+            color: var(--so-orange) !important; font-weight: 600; font-size: 12px;
+            text-decoration: none !important; transition: background .12s, color .12s;
+        }
+        .so-draft-link:hover { background: var(--so-orange); color: #fff !important; }
         /* Editable quantity on a draft Pick List row */
         .so-qty-in {
             width: 80px; padding: 4px 6px; text-align: right;
@@ -439,6 +478,7 @@ function generate_stock_overview_table(frm, callback) {
                     <span id="bulk-pick-action-btn"></span>
                 </div>
             </div>
+            <div id="so-route-banner"></div>
             <div class="so-scroll">
                 <table class="so-table so-table--rows">
                     <thead>
@@ -492,6 +532,26 @@ function generate_stock_overview_table(frm, callback) {
 
             const dataMap = r.message;
             frm.custom_stock_data = dataMap;
+
+            // SO-wide, not per-item — every item's entry carries the same
+            // value (see custom_script.get_item_stock_details_bulk), so the
+            // first one found is enough to gate/annotate the whole-order
+            // Create DN / Create SI buttons below with it.
+            const so_route_lock = Object.values(dataMap)[0]?.so_route_lock || '';
+            const $route_banner = container.find('#so-route-banner');
+            if (so_route_lock === 'si') {
+                $route_banner.html(`
+                    <div class="so-hint" style="margin:0 16px 10px 16px; background:var(--so-blue-tint,rgba(52,152,219,0.08)); border-left:3px solid var(--so-blue);">
+                        <i class="fa fa-lock"></i> ${__('This order is already on the <b>Sales Invoice (Update Stock)</b> route — no Delivery Note is needed or allowed for the remaining items.')}
+                    </div>`);
+            } else if (so_route_lock === 'dn') {
+                $route_banner.html(`
+                    <div class="so-hint" style="margin:0 16px 10px 16px; background:var(--so-blue-tint,rgba(52,152,219,0.08)); border-left:3px solid var(--so-blue);">
+                        <i class="fa fa-lock"></i> ${__('This order is already on the <b>Delivery Note</b> route — a direct Sales Invoice (Update Stock) is not allowed for the remaining items.')}
+                    </div>`);
+            } else {
+                $route_banner.html('');
+            }
 
             let eligible_for_picking = false;
             let bulk_eligible_items = {};
@@ -910,6 +970,18 @@ function generate_stock_overview_table(frm, callback) {
 
                 const draft_count = existing_pls.filter(x => flt(x.docstatus) === 0).length;
                 const submitted_pls = existing_pls.filter(x => flt(x.docstatus) === 1);
+                // A Pick List already Completed has nothing left to deliver
+                // or invoice — excluded. "Partly Delivered" still has a
+                // remaining un-delivered balance on its line (picked_qty
+                // minus what's already gone out), so it belongs in this
+                // flow too; show_bulk_dn_si_modal and
+                // create_dn_or_si_from_pick_lists both compute that
+                // remainder rather than the full picked_qty, so only the
+                // outstanding balance ever gets mapped into the new DN/SI.
+                // "Open" is this doctype's own core status for "nothing
+                // delivered yet" — there is no "Submitted" option here.
+                const eligible_pls = submitted_pls.filter(x => ['Open', 'Partly Delivered'].includes(x.status || 'Open'));
+                const already_processed_count = submitted_pls.length - eligible_pls.length;
 
                 const unique_draft_dns = new Set();
                 const unique_draft_sis = new Set();
@@ -935,14 +1007,16 @@ function generate_stock_overview_table(frm, callback) {
                             <i class="fa fa-plus"></i> New${total_bulk_qty > 0 ? ` · ${Math.floor(total_bulk_qty)}` : ''}
                         </button>
                     ` : ''}
-                    ${submitted_pls.length > 0 ? `
+                    ${eligible_pls.length > 0 && so_route_lock !== 'si' ? `
                         <button class="so-btn so-btn--success" id="btn-bulk-create-dn" style="margin-left:6px;"
-                                title="Create a Delivery Note from all submitted Pick Lists">
+                                title="Create a Delivery Note from Pick Lists not fully delivered or invoiced">
                             <i class="fa fa-truck"></i> Create DN
                             ${unique_draft_dns.size ? `<span class="so-chip" style="background:var(--so-orange); margin-left:4px;">${unique_draft_dns.size} draft</span>` : ''}
                         </button>
+                    ` : ''}
+                    ${eligible_pls.length > 0 && so_route_lock !== 'dn' ? `
                         <button class="so-btn so-btn--primary" id="btn-bulk-create-si" style="margin-left:6px;"
-                                title="Create a Sales Invoice from all submitted Pick Lists">
+                                title="Create a Sales Invoice (Update Stock) from Pick Lists not fully delivered or invoiced">
                             <i class="fa fa-file-text-o"></i> Create SI
                             ${unique_draft_sis.size ? `<span class="so-chip" style="background:var(--so-orange); margin-left:4px;">${unique_draft_sis.size} draft</span>` : ''}
                         </button>
@@ -954,12 +1028,14 @@ function generate_stock_overview_table(frm, callback) {
                         create_pick_list_for_bulk(frm, bulk_items, total_bulk_qty);
                     });
                 }
-                if (submitted_pls.length > 0) {
+                if (eligible_pls.length > 0 && so_route_lock !== 'si') {
                     $bulk_btn.find('#btn-bulk-create-dn').on('click', () => {
-                        show_bulk_dn_si_modal(frm, submitted_pls, 'Delivery Note');
+                        show_bulk_dn_si_modal(frm, eligible_pls, 'Delivery Note', already_processed_count, Array.from(unique_draft_dns));
                     });
+                }
+                if (eligible_pls.length > 0 && so_route_lock !== 'dn') {
                     $bulk_btn.find('#btn-bulk-create-si').on('click', () => {
-                        show_bulk_dn_si_modal(frm, submitted_pls, 'Sales Invoice');
+                        show_bulk_dn_si_modal(frm, eligible_pls, 'Sales Invoice', already_processed_count, Array.from(unique_draft_sis));
                     });
                 }
                 if (callback) callback();
@@ -1259,6 +1335,22 @@ function get_rm_breakdown_html(data, so_name, docstatus) {
             ).join(', ');
             if (po_links) refs.push(`<b>PO:</b> ${po_links}`);
         }
+        // Drafts commit nothing yet, so they're never in rm_pending_mr_total/
+        // rm_pending_so_linked_total — but the "Material Request" button just
+        // creates one and opens it for review, so without this a click here
+        // would show no trace at all until someone remembers to submit it.
+        if (item.draft_mr_documents && item.draft_mr_documents.length) {
+            const draft_mr_links = item.draft_mr_documents.filter(Boolean).map(mr =>
+                `<a href="/app/material-request/${encodeURIComponent(mr)}" target="_blank" title="Draft Material Request: ${esc(mr)}" style="color:#805ad5; font-weight:bold; text-decoration:underline;">${esc(mr)}</a>`
+            ).join(', ');
+            if (draft_mr_links) refs.push(`<b>MR (Draft):</b> ${draft_mr_links}`);
+        }
+        if (item.draft_po_documents && item.draft_po_documents.length) {
+            const draft_po_links = item.draft_po_documents.filter(Boolean).map(po =>
+                `<a href="/app/purchase-order/${encodeURIComponent(po)}" target="_blank" title="Draft Purchase Order: ${esc(po)}" style="color:#2b6cb0; font-weight:bold; text-decoration:underline;">${esc(po)}</a>`
+            ).join(', ');
+            if (draft_po_links) refs.push(`<b>PO (Draft):</b> ${draft_po_links}`);
+        }
 
         const shortfall_qty = flt(item.rm_shortfall_total || 0);
         // Three distinct states, not a covered/shortfall binary: "Covered"
@@ -1296,7 +1388,7 @@ function get_rm_breakdown_html(data, so_name, docstatus) {
                 <td>
                     ${shortfall_qty > 0
                 ? `<span class="so-val so-val--bad">${shortfall_qty.toFixed(2)}</span><div class="so-micro">${esc(uom)}</div>
-                           ${submitted ? `<button class="so-btn so-btn--primary" style="margin-top:4px;"
+                           ${submitted ? `<button class="so-btn so-btn--primary" style="margin-top:4px; white-space:normal; text-align:left; max-width:100%;"
                                onclick="so_make_rm_material_request('${js_str(so_name)}','${js_str(item.rm_code)}',${shortfall_qty},'${js_str(uom)}','${js_str(data.warehouse || '')}')">
                                <i class="fa fa-file-text-o"></i> Material Request</button>` : ''}`
                 : `<span class="so-val so-val--zero">—</span>`}
@@ -2657,42 +2749,105 @@ function get_cached_stock_row(pair_key) {
 }
 
 
-function show_bulk_dn_si_modal(frm, submitted_pls, doctype) {
+function show_bulk_dn_si_modal(frm, submitted_pls, doctype, already_processed_count, existing_drafts) {
+    // This dialog can be opened straight from the dashboard's top-level
+    // "Create DN / SI" action (order_flow.js), with no Sales Order widget
+    // ever rendered on the page first — so the shared .so-* stylesheet
+    // (normally injected once by whichever widget loads first) may not
+    // exist yet. inject_so_styles() is a no-op once it's already there.
+    inject_so_styles();
+
     if (!submitted_pls || !submitted_pls.length) {
         frappe.msgprint(__('No submitted Pick Lists found.'));
         return;
     }
+    existing_drafts = existing_drafts || [];
+    const route_doctype = doctype === 'Delivery Note' ? 'delivery-note' : 'sales-invoice';
 
+    // A "Partly Delivered" Pick List still has a remaining, un-delivered
+    // balance on its line — picked_qty minus what's already gone out via an
+    // earlier DN/SI — so that remainder, not the full picked_qty, is what
+    // this preview (and the actual document the server builds) must use.
     const grouped = {};
+    let any_partial = false;
     submitted_pls.forEach(p => {
+        const remaining = flt(p.picked_qty != null ? p.picked_qty : p.qty) - flt(p.delivered_qty || 0);
+        if (remaining <= 0) return;
+
+        const is_partial = (p.status || 'Open') === 'Partly Delivered';
+        if (is_partial) any_partial = true;
+
         const key = `${p.item_code}||${p.warehouse}`;
         if (!grouped[key]) {
             grouped[key] = {
                 item_code: p.item_code,
                 warehouse: p.warehouse,
                 qty: 0,
-                pick_lists: new Set()
+                pick_lists: new Set(),
+                partial_pick_lists: new Set()
             };
         }
-        grouped[key].qty += flt(p.qty);
+        grouped[key].qty += remaining;
         grouped[key].pick_lists.add(p.name);
+        if (is_partial) grouped[key].partial_pick_lists.add(p.name);
     });
+
+    if (!Object.keys(grouped).length) {
+        frappe.msgprint(__('Every selected Pick List line is already fully delivered or invoiced — nothing left to create.'));
+        return;
+    }
 
     const rows_html = Object.values(grouped).map(g => `
         <tr>
             <td><b>${esc(g.item_code)}</b></td>
             <td>${esc(g.warehouse || '—')}</td>
             <td>${so_qty(g.qty)}</td>
-            <td class="so-meta">${Array.from(g.pick_lists).join(', ')}</td>
+            <td class="so-meta">${Array.from(g.pick_lists).map(name =>
+                g.partial_pick_lists.has(name) ? `${esc(name)} <span class="so-chip" style="background:var(--so-orange);">Partial — remaining only</span>` : esc(name)
+            ).join(', ')}</td>
         </tr>
     `).join('');
 
     const body_html = `
         <div class="so-modal">
-            <div class="so-hint" style="margin-bottom:12px;">
-                <i class="fa fa-info-circle"></i>
-                ${__('Creating a draft <b>{0}</b> mapping the items and quantities picked below:', [doctype])}
+            ${existing_drafts.length ? `
+                <div class="so-alert so-alert--warning">
+                    <div class="so-alert__icon"><i class="fa fa-exclamation-triangle"></i></div>
+                    <div class="so-alert__body">
+                        <div class="so-alert__title">${__('{0} already in progress', [doctype])}</div>
+                        <div class="so-alert__text">${__('This order already has a draft {0} below. Open it to continue working on it — only make a new one if you specifically mean to create a separate document.', [doctype])}</div>
+                        <div class="so-alert__actions">
+                            ${existing_drafts.map(name => `
+                                <a class="so-draft-link" href="/app/${route_doctype}/${encodeURIComponent(name)}" target="_blank">
+                                    <i class="fa fa-external-link"></i> ${esc(name)}
+                                </a>
+                            `).join('')}
+                        </div>
+                    </div>
+                </div>
+            ` : ''}
+            <div class="so-alert so-alert--info">
+                <div class="so-alert__icon"><i class="fa fa-info-circle"></i></div>
+                <div class="so-alert__body">
+                    <div class="so-alert__text">${__('Creating a draft <b>{0}</b> mapping the items and quantities picked below:', [doctype])}</div>
+                </div>
             </div>
+            ${already_processed_count > 0 ? `
+                <div class="so-alert so-alert--muted">
+                    <div class="so-alert__icon"><i class="fa fa-check-circle"></i></div>
+                    <div class="so-alert__body">
+                        <div class="so-alert__text">${__('{0} Pick List line(s) are already fully delivered/invoiced and are not shown here — only lines with something outstanding appear below.', [already_processed_count])}</div>
+                    </div>
+                </div>
+            ` : ''}
+            ${any_partial ? `
+                <div class="so-alert so-alert--muted">
+                    <div class="so-alert__icon"><i class="fa fa-exclamation-circle"></i></div>
+                    <div class="so-alert__body">
+                        <div class="so-alert__text">${__('One or more Pick Lists below are already Partly Delivered — only their remaining, not-yet-delivered balance is included in the quantities shown.')}</div>
+                    </div>
+                </div>
+            ` : ''}
             <table class="so-table">
                 <thead>
                     <tr>
@@ -2718,9 +2873,13 @@ function show_bulk_dn_si_modal(frm, submitted_pls, doctype) {
         primary_action_label: __(`Create ${doctype}`),
         primary_action: () => {
             dialog.hide();
+            const confirm_msg = existing_drafts.length
+                ? __('A draft <b>{0}</b> ({1}) already exists for this order. Create ANOTHER one for customer <b>{2}</b> anyway?',
+                     [doctype, existing_drafts.map(esc).join(', '), esc(frm.doc.customer_name || frm.doc.customer)])
+                : __('Create a draft <b>{0}</b> for customer <b>{1}</b> from these Pick Lists?',
+                     [doctype, esc(frm.doc.customer_name || frm.doc.customer)]);
             frappe.confirm(
-                __('Create a draft <b>{0}</b> for customer <b>{1}</b> from these Pick Lists?',
-                   [doctype, esc(frm.doc.customer_name || frm.doc.customer)]),
+                confirm_msg,
                 () => {
                     const unique_pls = Array.from(new Set(submitted_pls.map(p => p.name)));
                     frappe.call({

@@ -1339,6 +1339,7 @@ function show_so_selection_and_rm_purchase_dialog(frm, sales_orders) {
                 let required_for_1_unit = rm.bom_qty_per_unit || 0;
                 return `<div class="rm-preview-line" data-base-qty="${required_for_1_unit}">
                     <span class="rm-prev-name" title="${rm.item_name}">${rm.item_code}</span>
+                    <span class="rm-prev-calc" style="font-family:monospace; font-size:9px; color:#888; margin-right:6px;">${required_for_1_unit.toFixed(2)}/unit</span>
                     <span class="rm-prev-stat status-text" style="color: #999;">Waiting...</span>
                 </div>`;
             }).join('');
@@ -1423,7 +1424,7 @@ function show_so_selection_and_rm_purchase_dialog(frm, sales_orders) {
             <!-- SECTION 2 HEADER -->
             <div class="d-flex justify-content-between align-items-center mb-2">
                 <h6 style="text-transform: capitalize; letter-spacing: 0.5px; font-size: 14px; color: black; margin:0;">2. Raw Material Requirements (Consolidated)</h6>
-                <div style="font-size: 14px; color: #666; font-style: italic;">Net Need = (Required - Stock - Pending POs)</div>
+                <div style="font-size: 14px; color: #666; font-style: italic;">Net Need = (Required - Stock - Pending POs - Pending MRs)</div>
             </div>
             
             <!-- CALCULATED RESULTS AREA -->
@@ -1466,15 +1467,19 @@ function show_so_selection_and_rm_purchase_dialog(frm, sales_orders) {
                             uom: rm.uom,
                             available_stock: flt(rm.available_qty),
                             general_po_coming: flt(rm.incoming_general_qty),
+                            general_mr_coming: flt(rm.mr_general_qty),
                             required_qty: 0,
                             linked_po_qty_total: 0,
+                            linked_mr_qty_total: 0,
                             po_refs: rm.existing_po_list || [],
+                            mr_refs: rm.existing_mr_list || [],
                             breakdown: []
                         };
                     }
                     let req = fg_qty * flt(rm.bom_qty_per_unit);
                     consolidated_rms[rm.item_code].required_qty += req;
                     consolidated_rms[rm.item_code].linked_po_qty_total += flt(rm.ordered_linked_qty);
+                    consolidated_rms[rm.item_code].linked_mr_qty_total += flt(rm.mr_linked_qty);
                     consolidated_rms[rm.item_code].breakdown.push({
                         so: so_data.sales_order, fg: so_data.item_code,
                         fg_qty: fg_qty, rm_qty: req
@@ -1494,8 +1499,13 @@ function show_so_selection_and_rm_purchase_dialog(frm, sales_orders) {
             let base_bom = parseFloat($line.data('base-qty'));
             let total_rm_req = base_bom * fg_qty;
             let rm_data = so_data.raw_materials[i];
-            let coverage = flt(rm_data.available_qty) + flt(rm_data.ordered_linked_qty) + flt(rm_data.incoming_general_qty);
+            let coverage = flt(rm_data.available_qty) + flt(rm_data.ordered_linked_qty) + flt(rm_data.incoming_general_qty)
+                + flt(rm_data.mr_linked_qty) + flt(rm_data.mr_general_qty);
             let shortfall = total_rm_req - coverage;
+
+            // The calculator: per-unit x qty-to-make = total required for
+            // this line, spelled out rather than just the final number.
+            $line.find('.rm-prev-calc').text(`${base_bom.toFixed(2)} x ${flt(fg_qty)} = ${total_rm_req.toFixed(2)}`);
 
             if (shortfall > 0.001) {
                 $line.find('.rm-prev-stat').html(`<span style="color:#d62222; font-weight:bold;">-${shortfall.toFixed(1)}</span>`);
@@ -1512,9 +1522,9 @@ function show_so_selection_and_rm_purchase_dialog(frm, sales_orders) {
                 <th width="20%">Raw Material</th>
                 <th width="12%" class="text-right">Required</th>
                 <th width="12%" class="text-right">Stock</th>
-                <th width="12%" class="text-right">Incoming PO</th>
+                <th width="12%" class="text-right">Incoming (PO+MR)</th>
                 <th width="12%" class="text-right">Effective</th>
-                <th width="20%">Existing Ref</th>
+                <th width="20%">Existing Ref (PO/MR)</th>
                 <th width="12%" class="text-right" style="background: #ebf8ff; border-bottom: 2px solid #5e64ff;">Purchase</th>
             </tr></thead>
             <tbody>`;
@@ -1524,7 +1534,8 @@ function show_so_selection_and_rm_purchase_dialog(frm, sales_orders) {
         } else {
             Object.keys(rms).forEach(code => {
                 let d = rms[code];
-                let effective_stock = d.available_stock + d.linked_po_qty_total + d.general_po_coming;
+                let effective_stock = d.available_stock + d.linked_po_qty_total + d.general_po_coming
+                    + d.linked_mr_qty_total + d.general_mr_coming;
                 let purchase_rec = Math.max(0, d.required_qty - effective_stock);
                 //  let po_links = d.po_refs
                 // .slice(0, 3)
@@ -1533,14 +1544,34 @@ function show_so_selection_and_rm_purchase_dialog(frm, sales_orders) {
                 let po_links = (d.po_refs || []).slice(0, 3)
                     .map(po => `<a href="/app/purchase-order/${encodeURIComponent(po)}" target="_blank" style="font-weight:bold; text-decoration:underline;">${po}</a>`)
                     .join(", ");
+                // Why the number was reduced, not just the number — same
+                // reasoning as the PO refs above, but for the Material
+                // Requests netted off via mr_linked_qty_total/general_mr_coming.
+                let mr_links = (d.mr_refs || []).slice(0, 3)
+                    .map(mr => `<a href="/app/material-request/${encodeURIComponent(mr.name)}" target="_blank"
+                            style="font-weight:bold; text-decoration:underline; color:#6d28d9;">${mr.name}</a>
+                            ${mr.docstatus == 1 ? '' : '<span style="font-size:8px; color:#ea580c;"> (Draft)</span>'}`)
+                    .join(", ");
+                let ref_links = [po_links, mr_links].filter(Boolean).join("<br>")
+                    || '<span style="color:#cbd5e1;">—</span>';
+
+                // The calculator, spelled out per contributing line — each
+                // selected Sales Order's own qty-to-make x per-unit BOM
+                // ratio, not just the consolidated total with no way to see
+                // how it was built.
+                let calc_lines = (d.breakdown || []).map(b => {
+                    let per_unit = flt(b.fg_qty) ? (flt(b.rm_qty) / flt(b.fg_qty)) : 0;
+                    return `<div style="font-family:monospace; font-size:9px; color:#888;" title="${b.so} — ${b.fg}">
+                        ${flt(b.fg_qty).toFixed(2)} &times; ${per_unit.toFixed(2)} = ${flt(b.rm_qty).toFixed(2)}</div>`;
+                }).join('');
 
                 html += `<tr data-item-code="${code}" data-meta='${safe_meta}'>
             <td><div class="text-highlight">${get_link("Item", code)}</div><small class="text-muted">${d.name}</small></td>
-            <td class="text-right" style="font-weight:bold;">${d.required_qty.toFixed(2)}</td>
+            <td class="text-right" style="font-weight:bold;">${d.required_qty.toFixed(2)}<div style="text-align:left;">${calc_lines}</div></td>
             <td class="text-right text-muted">${d.available_stock.toFixed(2)}</td>
-            <td class="text-right text-primary">${(d.linked_po_qty_total + d.general_po_coming).toFixed(2)}</td>
+            <td class="text-right text-primary">${(d.linked_po_qty_total + d.general_po_coming + d.linked_mr_qty_total + d.general_mr_coming).toFixed(2)}</td>
             <td class="text-right text-dark">${effective_stock.toFixed(2)}</td>
-            <td style="font-size:10px;">${po_links}</td>
+            <td style="font-size:10px;">${ref_links}</td>
             <td class="text-right">
                 <input type="number" class="form-control qty-input final-buy-input text-right" 
                     style="${purchase_rec > 0 ? 'color:#d62222; background:#fff5f5;' : 'color:#999;'}"
@@ -1585,34 +1616,52 @@ function show_so_selection_and_rm_purchase_dialog(frm, sales_orders) {
                 return;
             }
 
-            frm.clear_table("items");
-            if (has_breakdown) frm.clear_table("custom_rm_source_breakdown");
+            // This dialog is for buying raw material to stock — it must
+            // never leave the PO in subcontracted mode, since that's what
+            // makes "Finished Good" mandatory on rows that have no
+            // finished good to report (build_rm_purchase_rows deliberately
+            // never sets fg_item either).
+            if (frm.doc.is_subcontracted) {
+                frm.set_value('is_subcontracted', 0);
+            }
 
-            to_add.forEach(row => {
-                frm.add_child("items", {
-                    item_code: row.item_code,
-                    item_name: row.item_name,
-                    qty: row.qty,
-                    uom: row.uom,
-                    schedule_date: frappe.datetime.get_today()
-                });
+            frappe.call({
+                method: 'erp_dacsinc_custom.purchase_order.build_rm_purchase_rows',
+                args: { rows: JSON.stringify(to_add) },
+                freeze: true,
+                freeze_message: __('Fetching item details…'),
+                callback: (r) => {
+                    const built_rows = r.message || [];
+                    if (!built_rows.length) {
+                        frappe.msgprint(__('No valid rows to add.'));
+                        return;
+                    }
 
-                if (has_breakdown) {
-                    row.breakdown.forEach(b => {
-                        frm.add_child("custom_rm_source_breakdown", {
-                            raw_material_item: row.item_code,
-                            source_sales_order: b.so,
-                            source_finished_good: b.fg,
-                            order_for_fg: b.fg_qty,
-                            order_for_rm: b.rm_qty
-                        });
+                    frm.clear_table("items");
+                    if (has_breakdown) frm.clear_table("custom_rm_source_breakdown");
+
+                    built_rows.forEach(built => {
+                        frm.add_child("items", built);
+
+                        if (has_breakdown) {
+                            const source = to_add.find(r => r.item_code === built.item_code);
+                            (source && source.breakdown || []).forEach(b => {
+                                frm.add_child("custom_rm_source_breakdown", {
+                                    raw_material_item: built.item_code,
+                                    source_sales_order: b.so,
+                                    source_finished_good: b.fg,
+                                    order_for_fg: b.fg_qty,
+                                    order_for_rm: b.rm_qty
+                                });
+                            });
+                        }
                     });
+
+                    frm.refresh_field("items");
+                    if (has_breakdown) frm.refresh_field("custom_rm_source_breakdown");
+                    dialog.hide();
                 }
             });
-
-            frm.refresh_field("items");
-            if (has_breakdown) frm.refresh_field("custom_rm_source_breakdown");
-            dialog.hide();
         }
     });
 

@@ -117,6 +117,25 @@ function render_fulfillment_dialog(frm, data) {
         return links.map(l => `<div style="margin-bottom:6px; font-size:10px;">${link('Material Request', l.name)}<br><span style="color:${l.docstatus == 1 ? '#059669' : '#ea580c'}; font-weight:800;">${l.status}</span></div>`).join('');
     };
 
+    // Why the number was reduced, not just the number — clicking through
+    // shows exactly which Purchase Order already covers part of this need.
+    const format_po_links = (links) => {
+        if (!links || links.length === 0) return '';
+        return links.map(l => `<div style="margin-bottom:6px; font-size:10px;">${link('Purchase Order', l.name)}
+            ${l.is_subcontracted ? '<span style="background:#ede9fe; color:#6d28d9; border-radius:8px; padding:0 5px; font-size:8px; font-weight:800;">SC</span>' : ''}<br>
+            <span style="color:${l.docstatus == 1 ? '#059669' : '#ea580c'}; font-weight:800;">${l.docstatus == 1 ? 'Submitted' : 'Draft'}</span></div>`).join('');
+    };
+
+    // Combines the MR and PO reference lists for one cell — "No links" only
+    // when there is truly nothing covering this line from either side.
+    const format_mr_po_links = (mr_links, po_links) => {
+        if ((!mr_links || !mr_links.length) && (!po_links || !po_links.length)) {
+            return '<div style="color:#cbd5e1; font-style:italic;">No links</div>';
+        }
+        return format_links(mr_links).replace('<div style="color:#cbd5e1; font-style:italic;">No links</div>', '')
+            + format_po_links(po_links);
+    };
+
     // --- TABLE 1: Standard Items (Individual Requirements) ---
     let h_std = `
     <div style="max-height: 300px; overflow-y: auto; border: 1px solid #e2e8f0; border-radius: 8px;">
@@ -126,7 +145,7 @@ function render_fulfillment_dialog(frm, data) {
                     <th width="40px" class="text-center p-2"><input type="checkbox" id="m_check_std"></th>
                     <th width="30%" class="p-2">Item Code & Sales Order</th>
                     <th width="20%" class="p-2">Current Analysis</th>
-                    <th width="20%" class="p-2">Existing MRs</th>
+                    <th width="20%" class="p-2">Existing MRs / POs</th>
                     <th width="10%" class="text-center p-2">Warehouse</th>
                     <th width="15%" class="text-center p-2" style="background:#fffbeb; color:#854d0e;">Net Need</th>
                 </tr>
@@ -147,9 +166,11 @@ function render_fulfillment_dialog(frm, data) {
             </td>
             <td class="p-2" style="line-height:1.6;">
                 Ord: <b>${row.order_qty}</b> | Pick: -${row.picked}<br>
-                <span style="color:#6366f1;">Outstanding MR: -${row.on_request_pending}</span>
+                <span style="color:#059669;">Stock: -${(Number(row.available) || 0).toFixed(2)}</span><br>
+                <span style="color:#6366f1;">Outstanding MR: -${row.on_request_pending}</span><br>
+                <span style="color:#2563eb;">Pending PO: -${(Number(row.po_pending) || 0).toFixed(2)}</span>
             </td>
-            <td class="p-2">${format_links(row.mr_links)}</td>
+            <td class="p-2">${format_mr_po_links(row.mr_links, row.po_links)}</td>
             <td class="text-center p-2"><div style="font-weight:800;">${row.available}</div><small style="color:#94a3b8;">${row.uom}</small></td>
             <td class="p-2 text-center" style="background:#fffbeb;"><input type="number" min="0" class="form-control form-control-sm text-center qty-std font-weight-bold" style="color:#dc2626; border:0; background:transparent;" value="${row.shortage}"></td>
         </tr>`;
@@ -164,8 +185,8 @@ function render_fulfillment_dialog(frm, data) {
                     <th width="40px" class="text-center p-2"><input type="checkbox" id="m_check_rm"></th>
                     <th width="20%" class="p-2">Item Code</th>
                     <th width="35%" class="p-2">Linked Orders & Customer</th>
-                    <th width="15%" class="p-2">Current MRs</th>
-                    <th width="15%" class="p-2">Math (Need-Sup)</th>
+                    <th width="15%" class="p-2">Current MRs / POs</th>
+                    <th width="15%" class="p-2">Math (Need-Stock-MR-PO)</th>
                     <th width="15%" class="text-center p-2" style="background:#ecfdf5;">Demand</th>
                 </tr>
             </thead><tbody>`;
@@ -181,17 +202,21 @@ function render_fulfillment_dialog(frm, data) {
                 <small style="color:#059669; font-weight:700;">Stock: ${rm.available}</small>
             </td>
             <td class="p-2">
-                <div style="max-height:60px; overflow-y:auto; border:1px solid #e2e8f0; padding:4px; border-radius:4px; display:flex; flex-direction:column; gap:3px;">
+                <div style="max-height:70px; overflow-y:auto; border:1px solid #e2e8f0; padding:4px; border-radius:4px; display:flex; flex-direction:column; gap:3px;">
                     ${rm.linked_orders.map(o => `
                         <div style="background:#fff; border:1px solid #e2e8f0; padding:2px 4px; font-size:9px; border-radius:3px;">
                             ${link('Sales Order', o.name)} &bull; ${link('Customer', o.customer || o.customer_name, o.customer_name)}
+                            ${o.fg_qty != null ? `<div style="font-family:monospace; color:#888;" title="${o.fg_item_code || ''}: qty-to-make &times; BOM qty per unit">
+                                ${(Number(o.fg_qty) || 0).toFixed(2)} &times; ${(Number(o.bom_qty_per_unit) || 0).toFixed(2)}/unit = ${(Number(o.qty) || 0).toFixed(2)}</div>` : ''}
                         </div>`).join('')}
                 </div>
             </td>
-            <td class="p-2">${format_links(rm.mr_links)}</td>
+            <td class="p-2">${format_mr_po_links(rm.mr_links, rm.po_links)}</td>
             <td class="p-2" style="line-height:1.4;">
                 Need: <b>${rm.qty_needed.toFixed(2)}</b><br>
-                <span style="color:#d97706;">Sup: -${rm.open_supply_qty.toFixed(2)}</span>
+                <span style="color:#059669;">Stock: -${(Number(rm.available) || 0).toFixed(2)}</span><br>
+                <span style="color:#d97706;">MR Sup: -${rm.open_supply_qty.toFixed(2)}</span><br>
+                <span style="color:#2563eb;">PO Sup: -${(Number(rm.po_supply_qty) || 0).toFixed(2)}</span>
             </td>
             <td class="p-2 text-center" style="background:#ecfdf5;"><input type="number" min="0" class="form-control form-control-sm text-center qty-rm font-weight-bold" style="border:0; background:transparent;" value="${rm.final_shortage.toFixed(2)}"></td>
         </tr>`;
@@ -239,11 +264,41 @@ function process_submission(d, frm, data) {
         if(q > 0) to_be_added.push({ item_code: row.item_code, qty: q, warehouse: row.warehouse, sales_order: row.so_id, uom: row.uom });
     });
 
-    // RMs
+    // RMs — split into one row PER source Sales Order rather than one
+    // consolidated row with a free-text description. A raw material's
+    // shortage is inherently many-orders-to-one-item, but the Item Stock &
+    // Action Plan's own RM tracking (custom_script.get_item_stock_details_bulk)
+    // finds pending MRs by filtering Material Request Item.sales_order —
+    // a description mentioning the orders isn't queryable, so an MR built the
+    // old way was invisible on every one of those orders' own dashboards.
+    // Each order's own qty share (linked_orders[].qty, from
+    // fetch_multi_order_requirements) is used to split the — possibly
+    // user-edited — total proportionally.
     d.$wrapper.find('.chk-rm:checked').each(function() {
         let i = $(this).data('idx'); let rm = data.raw[i];
         let q = parseFloat($(this).closest('tr').find('.qty-rm').val()) || 0;
-        if(q > 0) to_be_added.push({ item_code: rm.item_code, qty: q, warehouse: rm.warehouse, uom: rm.uom, description: `Consolidated BOM Items: ${rm.linked_orders.map(o => o.name).join(', ')}` });
+        if (q <= 0) return;
+
+        let orders = rm.linked_orders || [];
+        let total_need = orders.reduce((s, o) => s + (o.qty || 0), 0);
+
+        if (!orders.length || total_need <= 0) {
+            // No traceable per-order share — fall back to one untracked row
+            // rather than silently dropping the requirement.
+            to_be_added.push({ item_code: rm.item_code, qty: q, warehouse: rm.warehouse, uom: rm.uom,
+                description: `Consolidated BOM Items: ${orders.map(o => o.name).join(', ')}` });
+            return;
+        }
+
+        orders.forEach(o => {
+            let share_qty = q * ((o.qty || 0) / total_need);
+            if (share_qty <= 0) return;
+            to_be_added.push({
+                item_code: rm.item_code, qty: share_qty, warehouse: rm.warehouse, uom: rm.uom,
+                sales_order: o.name,
+                description: `Raw material for ${o.name} (BOM component)`
+            });
+        });
     });
 
     if (to_be_added.length === 0) return frappe.msgprint("Please select items with a quantity greater than zero.");

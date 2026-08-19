@@ -288,7 +288,11 @@ def validate_and_get_items_for_po(selected_items, is_subcontracted=0):
 
         # Common fields (both paths)
         item_details.setdefault("warehouse", None)   # let ERPNext decide / ask user
-        # You can add rate, uom, etc. here if get_item_details_for_po doesn't
+        item_details.setdefault("schedule_date", nowdate())
+        # get_item_details_for_po supplies rate but never amount, since it
+        # has no qty of its own to multiply by — do that here now that qty
+        # is set, so this row doesn't land on rate>0/amount=0.
+        item_details["amount"] = flt(item_details.get("rate")) * flt(item_details.get("qty"))
 
         valid_items.append(item_details)
 
@@ -1335,13 +1339,73 @@ def get_pending_so_with_material_stock(is_subcontracted=False):
 
 
 
-def get_item_details_for_po(item_code):
+def get_item_details_for_po(item_code, uom=None):
     if not item_code: return {}
-    details = frappe.db.get_value("Item", item_code, ["purchase_uom", "stock_uom", "description", "item_name"], as_dict=True)
+    details = frappe.db.get_value(
+        "Item", item_code,
+        ["purchase_uom", "stock_uom", "description", "item_name", "last_purchase_rate", "valuation_rate"],
+        as_dict=True,
+    )
     if not details: return {}
-    uom = details.purchase_uom or details.stock_uom
-    factor = frappe.db.get_value("UOM Conversion Detail", {"parent": item_code, "uom": uom}, "conversion_factor") or 1.0
-    return {"uom": uom, "stock_uom": details.stock_uom, "description": details.description, "item_name": details.item_name, "conversion_factor": factor}
+    # `uom` may be forced by the caller (e.g. the row's own SO-item uom) —
+    # the conversion factor must be looked up against THAT uom, never a
+    # different one, or it silently misstates the row's actual stock qty.
+    uom = uom or details.purchase_uom or details.stock_uom
+    if uom == details.stock_uom:
+        factor = 1.0
+    else:
+        factor = flt(frappe.db.get_value("UOM Conversion Detail", {"parent": item_code, "uom": uom}, "conversion_factor")) or 1.0
+    # A grid row added by script (rather than typed in by hand) never runs
+    # ERPNext's own item_code trigger, so nothing populates rate on its own —
+    # falling back through last purchase rate, then valuation, keeps the row
+    # from landing on a bare 0 that a human would never actually save.
+    rate = flt(details.last_purchase_rate) or flt(details.valuation_rate) or 0
+    return {
+        "uom": uom, "stock_uom": details.stock_uom, "description": details.description,
+        "item_name": details.item_name, "conversion_factor": factor, "rate": rate,
+    }
+
+
+@frappe.whitelist()
+def build_rm_purchase_rows(rows):
+    """
+    Turns the "Fetch Raw Materials from SO" dialog's selected rows into
+    fully-valid Purchase Order Item dicts — uom, stock_uom,
+    conversion_factor and rate all come from get_item_details_for_po
+    instead of being left blank, which is what made conversion_factor
+    (unconditionally mandatory on this doctype) and a real rate/amount
+    missing when the dialog only ever set item_code/qty/uom itself.
+
+    This dialog is for buying raw material to stock, never for a
+    subcontracted PO (it only shows on a plain Purchase Order) — so
+    fg_item/fg_item_qty are deliberately never touched here.
+    """
+    if isinstance(rows, str):
+        rows = json.loads(rows or "[]")
+
+    built = []
+    for row in rows:
+        item_code = row.get("item_code")
+        qty = flt(row.get("qty"))
+        if not item_code or qty <= 0:
+            continue
+
+        details = get_item_details_for_po(item_code, uom=row.get("uom")) or {}
+        rate = flt(details.get("rate"))
+        built.append({
+            "item_code": item_code,
+            "item_name": row.get("item_name") or details.get("item_name"),
+            "description": details.get("description"),
+            "qty": qty,
+            "uom": details.get("uom") or row.get("uom"),
+            "stock_uom": details.get("stock_uom"),
+            "conversion_factor": flt(details.get("conversion_factor")) or 1.0,
+            "rate": rate,
+            "amount": rate * qty,
+            "schedule_date": nowdate(),
+        })
+
+    return built
 
 
 def _get_bom_stock_details(bom, fg_qty):
@@ -1570,6 +1634,7 @@ def get_pending_so_with_raw_materials_summary():
     # ------------------------------------------------------------------
     so_items = frappe.db.sql("""
         SELECT
+            si.name as so_item_name,
             si.parent as sales_order, si.item_code, si.item_name, si.qty,
             COALESCE(si.delivered_qty, 0) as delivered_qty,
             (si.qty - COALESCE(si.delivered_qty, 0)) as pending_qty,
@@ -1593,12 +1658,23 @@ def get_pending_so_with_raw_materials_summary():
     
     # Map BOM -> List of RMs
     all_bom_items = {}
+    # BOM Item.stock_qty is the qty needed for the BOM's OWN reference
+    # quantity (BOM.quantity — usually 1, but not always), not necessarily
+    # "per 1 finished good" — normalizing here is what makes the per-unit
+    # figure shown to the user (and the qty_needed math above it) correct
+    # for a batch-sized BOM instead of silently assuming quantity=1.
+    bom_qty_map = {}
     if boms_to_fetch:
-        db_bom_items = frappe.get_all("BOM Item", 
-            filters={"parent": ("in", list(boms_to_fetch))}, 
+        bom_qty_map = {
+            b.name: flt(b.quantity) or 1.0
+            for b in frappe.get_all("BOM", filters={"name": ("in", list(boms_to_fetch))}, fields=["name", "quantity"])
+        }
+        db_bom_items = frappe.get_all("BOM Item",
+            filters={"parent": ("in", list(boms_to_fetch))},
             fields=["parent", "item_code", "item_name", "stock_uom", "stock_qty"]
         )
         for bom_item in db_bom_items:
+            bom_item["stock_qty_per_unit"] = flt(bom_item.stock_qty) / bom_qty_map.get(bom_item.parent, 1.0)
             all_bom_items.setdefault(bom_item.parent, []).append(bom_item)
             all_bom_item_codes.add(bom_item.item_code)
 
@@ -1609,6 +1685,9 @@ def get_pending_so_with_raw_materials_summary():
     incoming_po_map = {}     # General incoming POs (Net pending)
     so_linked_po_map = {}    # Specific SO-Linked POs (Net pending)
     existing_po_refs = {}    # Links for UI
+    mr_pending_map = {}      # General pending MRs (Net pending)
+    so_linked_mr_map = {}    # Specific SO-Linked MRs (Net pending)
+    existing_mr_refs = {}    # Links for UI
 
     if all_material_codes:
         # A. Get Physical Actual Stock (In Bin)
@@ -1667,12 +1746,40 @@ def get_pending_so_with_raw_materials_summary():
 
             # 3. Existing PO Links (String for UI)
             po_refs = frappe.db.sql("""
-                SELECT DISTINCT po.name, poi.item_code 
+                SELECT DISTINCT po.name, poi.item_code
                 FROM `tabPurchase Order Item` poi JOIN `tabPurchase Order` po ON poi.parent = po.name
                 WHERE poi.item_code IN %s AND po.docstatus = 1 AND po.status NOT IN ('Closed', 'Cancelled', 'Completed')
             """, (rm_tuple,), as_dict=True)
             for ref in po_refs:
                 existing_po_refs.setdefault(ref['item_code'], []).append(ref['name'])
+
+            # 4. Pending Material Requests for these raw materials — the
+            # reverse of the fix applied to the MR planner's own RM demand
+            # calc (custom_script.fetch_multi_order_requirements): an MR
+            # already raised for this RM (e.g. via that same planner, or the
+            # Item Stock & Action Plan's per-row "Material Request" button)
+            # already covers part of the need, so this dialog must not
+            # suggest buying the full amount again on top of it.
+            mr_pending_data = frappe.db.sql("""
+                SELECT mri.item_code, mri.sales_order, mr.name as mr_name, mr.docstatus,
+                       SUM(mri.qty - mri.ordered_qty) as pending_qty
+                FROM `tabMaterial Request Item` mri
+                JOIN `tabMaterial Request` mr ON mr.name = mri.parent
+                WHERE mri.item_code IN %s AND mr.docstatus < 2 AND mr.status != 'Stopped'
+                  AND (mri.qty - mri.ordered_qty) > 0
+                GROUP BY mri.item_code, mri.sales_order, mr.name, mr.docstatus
+            """, (rm_tuple,), as_dict=True)
+            for row in mr_pending_data:
+                mr_pending_map[row.item_code] = mr_pending_map.get(row.item_code, 0.0) + flt(row.pending_qty)
+                if row.sales_order:
+                    so_linked_mr_map[(row.sales_order, row.item_code)] = (
+                        so_linked_mr_map.get((row.sales_order, row.item_code), 0.0) + flt(row.pending_qty))
+                # Traceable "why is this already covered" reference — same
+                # spirit as existing_po_refs, so the dialog can show WHICH
+                # Material Request already covers part of the need, not just
+                # a smaller number with nothing to click through to.
+                existing_mr_refs.setdefault(row.item_code, []).append(
+                    {"name": row.mr_name, "docstatus": row.docstatus})
 
     # 3. FG In-Production Data
     # ------------------------------------------------------------------
@@ -1695,11 +1802,21 @@ def get_pending_so_with_raw_materials_summary():
         item_code = so_item['item_code']
 
         # Get Picking Info (Optional context)
+        # Scoped to this exact Sales Order line (falling back to unscoped for
+        # older Pick List rows that predate sales_order_item being reliably
+        # set) — item_code + sales_order alone would also match a picked
+        # PLAIN (non-BOM) line for the same item_code on this order, silently
+        # crediting that pick against this BOM line's qty_awaiting_pick and
+        # understating the raw materials this line actually still needs.
         picked_stats = frappe.db.sql("""
-            SELECT 
-                (SELECT SUM(pli.picked_qty) FROM `tabPick List Item` pli JOIN `tabPick List` pl ON pli.parent=pl.name WHERE pli.sales_order=%s AND pli.item_code=%s AND pl.docstatus=1) as sub,
-                (SELECT SUM(pli.qty) FROM `tabPick List Item` pli JOIN `tabPick List` pl ON pli.parent=pl.name WHERE pli.sales_order=%s AND pli.item_code=%s AND pl.docstatus=0) as drft
-        """, (sales_order, item_code, sales_order, item_code), as_dict=1)
+            SELECT
+                (SELECT SUM(pli.picked_qty) FROM `tabPick List Item` pli JOIN `tabPick List` pl ON pli.parent=pl.name
+                 WHERE pli.sales_order=%(so)s AND pli.item_code=%(item)s AND pl.docstatus=1
+                   AND (pli.sales_order_item=%(so_item)s OR IFNULL(pli.sales_order_item,'')='')) as sub,
+                (SELECT SUM(pli.qty) FROM `tabPick List Item` pli JOIN `tabPick List` pl ON pli.parent=pl.name
+                 WHERE pli.sales_order=%(so)s AND pli.item_code=%(item)s AND pl.docstatus=0
+                   AND (pli.sales_order_item=%(so_item)s OR IFNULL(pli.sales_order_item,'')='')) as drft
+        """, {"so": sales_order, "item": item_code, "so_item": so_item.get("so_item_name")}, as_dict=1)
         
         picked_submitted = flt(picked_stats[0]['sub']) if picked_stats else 0
         picked_draft = flt(picked_stats[0]['drft']) if picked_stats else 0
@@ -1730,15 +1847,24 @@ def get_pending_so_with_raw_materials_summary():
             # Unallocated = Total Pending - Linked Pending (Ensure no double count or negative)
             unallocated_pending = max(0, total_pending - linked_pending)
 
+            # Same shape as the PO figures above, for Material Requests —
+            # an MR already raised for this RM covers part of the need too.
+            linked_mr_pending = so_linked_mr_map.get((sales_order, rm_code), 0)
+            total_mr_pending = mr_pending_map.get(rm_code, 0)
+            unallocated_mr_pending = max(0, total_mr_pending - linked_mr_pending)
+
             raw_materials_list.append({
                 "item_code": rm_code,
                 "item_name": rm['item_name'],
                 "uom": rm['stock_uom'],
-                "bom_qty_per_unit": flt(rm['stock_qty']),
+                "bom_qty_per_unit": flt(rm['stock_qty_per_unit']),
                 "available_qty": stock_map.get(rm_code, 0),        # Only Real Warehouse Stock
                 "ordered_linked_qty": linked_pending,              # Only unreceived specific POs
                 "incoming_general_qty": unallocated_pending,       # Only unreceived general POs
-                "existing_po_list": existing_po_refs.get(rm_code, [])
+                "mr_linked_qty": linked_mr_pending,                # Only open specific MRs
+                "mr_general_qty": unallocated_mr_pending,          # Only open general MRs
+                "existing_po_list": existing_po_refs.get(rm_code, []),
+                "existing_mr_list": existing_mr_refs.get(rm_code, [])
             })
 
         so_item['raw_materials'] = raw_materials_list

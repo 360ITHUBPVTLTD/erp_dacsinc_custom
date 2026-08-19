@@ -610,6 +610,17 @@ class OrderFlow {
             this.toggle_doc_items_row($row, $btn.data('doctype'), $btn.data('docname'), $btn);
         });
 
+        // Embroidery Work Order rows — item-wise Sent/Received/Pending,
+        // straight from the same items child table the receive dialogs
+        // already read via get_ewo_details, instead of only the row's
+        // aggregate totals across every item on the order.
+        this.$body.on('click', 'tr.of-ewo-row', (e) => {
+            if ($(e.target).closest('a, button').length) return;
+            const $row = $(e.currentTarget);
+            const $btn = $row.find('.of-ewo-items-toggle');
+            this.toggle_ewo_items_row($row, $btn.data('ewo'), $btn);
+        });
+
         // Same idea for Embroidery Transfers, which carry no Sales Order at
         // all — the only further detail that exists is the partial-receipt
         // history of that one transfer.
@@ -694,11 +705,61 @@ class OrderFlow {
                     source_name: po,
                     freeze_message: __('Creating Purchase Invoice…')
                 });
-            } else if (action === 'make_dn' && target) {
-                frappe.model.open_mapped_doc({
-                    method: 'erpnext.stock.doctype.pick_list.pick_list.create_delivery_note',
-                    source_name: target,
-                    freeze_message: __('Creating Delivery Note from Pick List…')
+            } else if (action === 'make_dn_or_si' && so) {
+                // Same either-route choice the Sales Order's own "Item Stock
+                // & Action Plan" widget offers per item — reused here as-is
+                // (show_bulk_dn_si_modal only ever reads frm.doc.name/
+                // customer/customer_name, so a lightweight mock frm from
+                // this row's own data attributes is enough; no real Sales
+                // Order form needed on this dashboard).
+                const route_lock = btn.data('routeLock') || '';
+                const mock_frm = { doc: { name: so, customer: btn.data('customer') || '', customer_name: btn.data('customerName') || '' } };
+
+                Promise.all([
+                    frappe.call({
+                        method: 'erp_dacsinc_custom.order_flow_api.get_pick_lists_for_so',
+                        args: { sales_order: so }
+                    }),
+                    frappe.call({
+                        method: 'erp_dacsinc_custom.order_flow_api.get_draft_dn_si_for_so',
+                        args: { sales_order: so }
+                    })
+                ]).then(([pl_res, draft_res]) => {
+                    // "Open" is Pick List's own core status for "nothing
+                    // delivered yet" — there is no "Submitted" option on
+                    // this doctype (confirmed against the live status
+                    // field options: Draft/Open/Partly Delivered/
+                    // Completed/Cancelled).
+                    const pls = (pl_res.message || []).filter(x =>
+                        flt_of(x.docstatus) === 1 && ['Open', 'Partly Delivered'].includes(x.status || 'Open'));
+                    if (!pls.length) {
+                        frappe.msgprint(__('No submitted Pick List found to create a Delivery Note or Sales Invoice from.'));
+                        return;
+                    }
+                    const drafts = draft_res.message || {};
+
+                    frappe.require('/assets/erp_dacsinc_custom/js/sales_order.js', () => {
+                        if (route_lock === 'dn') {
+                            show_bulk_dn_si_modal(mock_frm, pls, 'Delivery Note', 0, drafts.draft_dns || []);
+                        } else if (route_lock === 'si') {
+                            show_bulk_dn_si_modal(mock_frm, pls, 'Sales Invoice', 0, drafts.draft_sis || []);
+                        } else {
+                            const choice = new frappe.ui.Dialog({
+                                title: __('Choose Fulfillment Route'),
+                                fields: [{
+                                    fieldtype: 'HTML',
+                                    options: `<div class="of-hint"><i class="fa fa-info-circle"></i> ${
+                                        __('This order has not committed to a route yet. A Delivery Note ships the stock and bills separately later; a Sales Invoice with Update Stock ships and bills in one document. Once you pick one, every remaining line on this order must follow the same route.')
+                                    }</div>`
+                                }],
+                                primary_action_label: __('Create Delivery Note'),
+                                primary_action: () => { choice.hide(); show_bulk_dn_si_modal(mock_frm, pls, 'Delivery Note', 0, drafts.draft_dns || []); },
+                                secondary_action_label: __('Create Sales Invoice (Update Stock)'),
+                                secondary_action: () => { choice.hide(); show_bulk_dn_si_modal(mock_frm, pls, 'Sales Invoice', 0, drafts.draft_sis || []); }
+                            });
+                            choice.show();
+                        }
+                    });
                 });
             } else if (action === 'make_picklist' && so) {
                 // Opens the existing Sales Order (a Pick List is created
@@ -855,6 +916,45 @@ class OrderFlow {
                     this.refresh(true);
                 });
             }, __('Enter Rejection Comment'));
+        });
+
+        // Embroidery Work Order — "Receive Finished Goods" against the PO's
+        // Subcontracting Order. Reuses the exact dialog the Purchase Order
+        // form itself uses (show_receive_items_dialog) — that function only
+        // ever calls frm.refresh_field/frm.refresh, never reads frm.doc.*,
+        // so a lightweight mock frm is enough; no real PO form needed here.
+        this.$body.on('click', '.of-ewo-receive-btn', (e) => {
+            e.stopPropagation();
+            const sco_name = $(e.currentTarget).data('sco');
+            if (!sco_name) {
+                frappe.msgprint(__('No Subcontracting Order found for this Purchase Order.'));
+                return;
+            }
+            frappe.require('/assets/erp_dacsinc_custom/js/purchase_order.js', () => {
+                const mock_frm = { refresh_field: () => {}, refresh: () => this.refresh(true) };
+                show_receive_items_dialog(mock_frm, sco_name);
+            });
+        });
+
+        // Embroidery Work Order — per-stage actions, the same 3 steps the
+        // Purchase Order's own Panel dashboard offers (Send -> Receive ->
+        // Close), plus Full Piece's single Receive step, done here so the
+        // user never has to leave the dashboard to advance a job.
+        this.$body.on('click', '.of-ewo-send-btn', (e) => {
+            e.stopPropagation();
+            this.show_ewo_send_dialog($(e.currentTarget).data('name'));
+        });
+        this.$body.on('click', '.of-ewo-receive-panel-btn', (e) => {
+            e.stopPropagation();
+            this.show_ewo_receive_panel_dialog($(e.currentTarget).data('name'));
+        });
+        this.$body.on('click', '.of-ewo-close-btn', (e) => {
+            e.stopPropagation();
+            this.show_ewo_close_dialog($(e.currentTarget).data('name'));
+        });
+        this.$body.on('click', '.of-ewo-receive-fp-btn', (e) => {
+            e.stopPropagation();
+            this.show_ewo_receive_fp_dialog($(e.currentTarget).data('name'));
         });
 
         // Uniform Embroidery Receive Click Handler
@@ -1568,6 +1668,64 @@ class OrderFlow {
         </table>`;
     }
 
+    // Item-wise Sent/Received/Pending for one Embroidery Work Order — same
+    // get_ewo_details call the receive dialogs already use, just displayed
+    // read-only instead of feeding an input.
+    toggle_ewo_items_row($row, ewo_name, $btn) {
+        let $details = $row.next('.of-ewo-items-row');
+        if (!$details.length) {
+            const colspan = $row.find('td').length || 10;
+            $details = $(`
+                <tr class="of-ewo-items-row of-hidden" style="display:none;">
+                    <td colspan="${colspan}" style="padding:12px 15px; background:var(--subtle-fg); text-align:left;">
+                        <div class="of-ewo-items-panel"><div class="of-empty"><i class="fa fa-spinner fa-spin"></i> ${__('Loading items…')}</div></div>
+                    </td>
+                </tr>`);
+            $row.after($details);
+        }
+
+        const collapsed = $details.hasClass('of-hidden') || !$details.is(':visible');
+        if (collapsed) {
+            $details.removeClass('of-hidden').show();
+            $btn.removeClass('fa-caret-right').addClass('fa-caret-down').css('color', 'var(--of-blue)');
+
+            const $panel = $details.find('.of-ewo-items-panel');
+            if ($panel.find('.of-empty').length) {
+                frappe.call({
+                    method: 'erp_dacsinc_custom.purchase_order.get_ewo_details',
+                    args: { name: ewo_name }
+                }).then(r => {
+                    const items = (r.message && r.message.items) || [];
+                    $panel.html(this.ewo_items_table_html(items));
+                });
+            }
+        } else {
+            $details.addClass('of-hidden').hide();
+            $btn.removeClass('fa-caret-down').addClass('fa-caret-right').css('color', 'var(--text-light)');
+        }
+    }
+
+    ewo_items_table_html(rows) {
+        if (!rows.length) {
+            return `<div class="of-empty">${__('No items found.')}</div>`;
+        }
+        const line = it => {
+            const sent = flt_of(it.ordered_qty);
+            const received = flt_of(it.received_qty);
+            const pending = sent - received;
+            return `<tr>
+                <td>${of_esc(it.item_code)}</td>
+                <td>${sent}</td>
+                <td class="${received > 0 ? 'of-val--pos' : ''}">${received}</td>
+                <td class="${pending > 0 ? 'of-val--warn' : ''}">${pending}</td>
+            </tr>`;
+        };
+        return `<table class="of-table">
+            <thead><tr><th>Item</th><th>Sent</th><th>Received</th><th>Pending</th></tr></thead>
+            <tbody>${rows.map(line).join('')}</tbody>
+        </table>`;
+    }
+
     // Embroidery Transfers carry no Sales Order and are already one item per
     // row — the only further detail that exists is the partial-receipt
     // history of that one transfer.
@@ -1644,7 +1802,10 @@ class OrderFlow {
             let html = '';
             if (this.active === 'tracker')  html = this.tracker_html(data);
             if (this.active === 'purchase') html = this.purchase_html(data);
-            if (this.active === 'jobwork')  html = this.jobwork_html(data);
+            if (this.active === 'jobwork') {
+                html = this.jobwork_html(data);
+                this.load_ewo_receive_actions(data);
+            }
             if (this.active === 'stock') {
                 this._stock_items = data || []; // for toggle_stock_wh_row's warehouse drill-down
                 html = this.stock_html(data);
@@ -1723,7 +1884,10 @@ class OrderFlow {
                             data-action="${st.action_type}"
                             data-target="${st.target_doc || ''}"
                             data-doctype="${st.target_doctype || ''}"
-                            data-so="${o.name}">
+                            data-so="${o.name}"
+                            data-customer="${of_esc(o.customer || '')}"
+                            data-customer-name="${of_esc(o.customer_name || '')}"
+                            data-route-lock="${of_esc(st.route_lock || '')}">
                         <i class="fa fa-${st.icon || 'arrow-right'}"></i> ${of_esc(st.action_label || 'Act')}
                     </button>`;
             } else {
@@ -2173,7 +2337,8 @@ class OrderFlow {
                 <td><i class="fa fa-caret-right of-doc-items-toggle" data-doctype="Material Request" data-docname="${of_esc(m.name)}" style="cursor:pointer;margin-right:4px;color:var(--text-light);"></i>
                     <a href="/app/material-request/${encodeURIComponent(m.name)}" target="_blank" style="font-weight:700;">${of_esc(m.name)}</a>
                     <div class="of-micro">${of_esc(m.material_request_type || '')}</div></td>
-                <td>${of_so_links(m.sales_orders)}</td>
+                <td>${of_so_links(m.sales_orders)}
+                    ${m.so_customer_names ? `<div class="of-micro text-muted">${of_esc(m.so_customer_names)}</div>` : ''}</td>
                 <td class="of-meta">${of_date(m.transaction_date)}
                     <div class="of-micro">by ${of_date(m.schedule_date)}</div></td>
                 <td>${of_qty(m.qty)}<div class="of-micro">${of_num(m.item_count)} item(s)</div></td>
@@ -2199,9 +2364,9 @@ class OrderFlow {
                     ${flt_of(p.is_subcontracted) === 1 ? '<div><span class="of-chip">Subcontract</span></div>' : ''}</td>
                 <td style="text-align:left;">
                     <a href="/app/supplier/${encodeURIComponent(p.supplier)}" target="_blank" style="font-weight:600;">${of_esc(p.supplier_name || p.supplier || '')}</a>
-                    <div class="of-micro text-muted">${of_esc(p.supplier || '')}</div>
                 </td>
-                <td>${of_so_links(p.sales_orders)}</td>
+                <td>${of_so_links(p.sales_orders)}
+                    ${p.so_customer_names ? `<div class="of-micro text-muted">${of_esc(p.so_customer_names)}</div>` : ''}</td>
                 <td class="of-meta">${of_date(p.transaction_date)}
                     <div class="of-micro">exp ${of_date(p.schedule_date)}</div></td>
                 <td>${of_qty(p.qty)}</td>
@@ -2222,9 +2387,9 @@ class OrderFlow {
                     <a href="/app/purchase-order/${encodeURIComponent(p.name)}" target="_blank" style="font-weight:700;">${of_esc(p.name)}</a></td>
                 <td style="text-align:left;">
                     <a href="/app/supplier/${encodeURIComponent(p.supplier)}" target="_blank" style="font-weight:600;">${of_esc(p.supplier_name || p.supplier || '')}</a>
-                    <div class="of-micro text-muted">${of_esc(p.supplier || '')}</div>
                 </td>
-                <td>${of_so_links(p.sales_orders)}</td>
+                <td>${of_so_links(p.sales_orders)}
+                    ${p.so_customer_names ? `<div class="of-micro text-muted">${of_esc(p.so_customer_names)}</div>` : ''}</td>
                 <td class="of-meta">${of_date(p.transaction_date)}
                     <div class="of-micro">exp ${of_date(p.schedule_date)}</div></td>
                 <td>${of_qty(p.qty)}</td>
@@ -2261,8 +2426,10 @@ class OrderFlow {
                 <td style="text-align:left;">
                     <a href="/app/supplier/${encodeURIComponent(r.supplier)}" target="_blank" style="font-weight:600;">${of_esc(r.supplier_name || r.supplier || '')}</a>
                 </td>
-                <td>${of_so_links(r.sales_orders)}</td>
-                <td>${of_po_links(r.purchase_orders)}</td>
+                <td>${of_so_links(r.sales_orders)}
+                    ${r.so_customer_names ? `<div class="of-micro text-muted">${of_esc(r.so_customer_names)}</div>` : ''}</td>
+                <td>${of_po_links(r.purchase_orders)}
+                    ${r.supplier_name ? `<div class="of-micro text-muted">${of_esc(r.supplier_name)}</div>` : ''}</td>
                 <td class="of-meta">${of_date(r.posting_date)}</td>
                 <td>${of_qty(r.qty, 'pos')}</td>
                 <td>${of_money(r.grand_total, r.currency)}</td>
@@ -2342,6 +2509,206 @@ class OrderFlow {
             </div>`;
     }
 
+    // Once an Embroidery Work Order's rows paint with just a "Track" link,
+    // check — per unique Purchase Order, not per row — whether that PO's
+    // Subcontracting Order is actually ready to receive Finished Goods
+    // (erp_dacsinc_custom.purchase_order.get_sco_status_for_po, the same
+    // gate the PO form itself uses for its own "Receive Finished Goods"
+    // button), and if so add that real action here instead of leaving the
+    // user to go find it on the PO.
+    load_ewo_receive_actions(data) {
+        const ewos = (data && data.embroidery_orders) || [];
+        const unique_pos = Array.from(new Set(ewos.map(e => e.purchase_order).filter(Boolean)));
+        unique_pos.forEach(po_name => {
+            frappe.call({
+                method: 'erp_dacsinc_custom.purchase_order.get_sco_status_for_po',
+                args: { purchase_order_name: po_name }
+            }).then(r => {
+                const status = r.message || {};
+                const ready = status.sco_exists && status.items_pending && !status.is_panel_job_open;
+                if (!ready) return;
+
+                const $cells = this.$body.find(`.of-ewo-action[data-po="${po_name}"]`);
+                $cells.each((i, el) => {
+                    const $cell = $(el);
+                    if ($cell.find('.of-ewo-receive-btn').length) return;
+                    $cell.prepend(`
+                        <button class="of-btn of-btn--primary of-ewo-receive-btn"
+                                data-sco="${of_esc(status.sco_name || '')}" style="margin-right:4px;">
+                            <i class="fa fa-inbox"></i> Receive Finished Goods
+                        </button>
+                    `);
+                });
+            });
+        });
+    }
+
+    // Panel step 2: assign a jobber and send. Standalone here (not reused
+    // from purchase_order.js) since that file's version closes over a real
+    // `frm`/`dialog` this dashboard doesn't have — same server call though.
+    show_ewo_send_dialog(name) {
+        const d = new frappe.ui.Dialog({
+            title: __('Send to Panel Jobber'),
+            fields: [
+                { label: __('Jobber (Supplier)'), fieldname: 's', fieldtype: 'Link', options: 'Supplier', reqd: 1 },
+                { label: __('Notes'), fieldname: 'n', fieldtype: 'Small Text' }
+            ],
+            primary_action_label: __('Send to Jobber'),
+            primary_action: (v) => {
+                d.hide();
+                frappe.call({
+                    method: 'erp_dacsinc_custom.purchase_order.update_panel_process_stage',
+                    args: { name: name, next_stage: 'Sent to Panel Jobber', notes: v.n, panel_jobber: v.s },
+                    freeze: true
+                }).then(() => {
+                    frappe.show_alert({message: __('Sent to Jobber'), color: 'green'});
+                    this.refresh(true);
+                });
+            }
+        });
+        d.show();
+    }
+
+    // Panel step 3: receive back (partial receipts allowed — the server
+    // only advances panel_stage once every row's received_qty catches up
+    // to ordered_qty, so re-opening this after a partial receipt is normal).
+    show_ewo_receive_panel_dialog(name) {
+        frappe.call({
+            method: 'erp_dacsinc_custom.purchase_order.get_ewo_details',
+            args: { name: name }
+        }).then(res => {
+            const items = (res.message && res.message.items) || [];
+            let tbl = `<table class="table table-bordered table-sm" style="font-size:12px;">
+                <thead><tr class="bg-light"><th>${__('Item')}</th><th class="text-right">${__('Sent')}</th><th class="text-right">${__('Balance')}</th><th width="120">${__('Receive Qty')}</th></tr></thead><tbody>`;
+            items.forEach(i => {
+                const bal = flt_of(i.ordered_qty) - flt_of(i.received_qty);
+                tbl += `<tr data-row="${i.name}">
+                    <td>${of_esc(i.item_code)}</td>
+                    <td class="text-right">${flt_of(i.ordered_qty)}</td>
+                    <td class="text-right font-weight-bold">${bal}</td>
+                    <td><input type="number" class="form-control form-control-sm of-ewo-qty-in text-right" value="${bal}" min="0" max="${bal}" ${bal <= 0 ? 'disabled' : ''}></td>
+                </tr>`;
+            });
+            tbl += `</tbody></table>`;
+
+            const d = new frappe.ui.Dialog({
+                title: __('Receive from Panel Jobber'),
+                fields: [
+                    { fieldtype: 'HTML', options: tbl },
+                    { label: __('Note'), fieldname: 'n', fieldtype: 'Small Text' }
+                ],
+                primary_action_label: __('Receive'),
+                primary_action: (v) => {
+                    const items_data = [];
+                    d.$wrapper.find('tbody tr').each(function () {
+                        const qty = parseFloat($(this).find('.of-ewo-qty-in').val()) || 0;
+                        if (qty > 0) items_data.push({ name: $(this).data('row'), qty: qty });
+                    });
+                    if (!items_data.length) {
+                        frappe.msgprint(__('Enter a quantity greater than 0 for at least one item.'));
+                        return;
+                    }
+                    frappe.call({
+                        method: 'erp_dacsinc_custom.purchase_order.receive_panel_items',
+                        args: { name: name, items_data: JSON.stringify(items_data), notes: v.n },
+                        freeze: true
+                    }).then(() => {
+                        d.hide();
+                        frappe.show_alert({message: __('Receipt recorded'), color: 'green'});
+                        this.refresh(true);
+                    });
+                }
+            });
+            d.show();
+        });
+    }
+
+    // Panel step 4 (terminal): close the job once panel_stage has already
+    // advanced to "Received from Panel Jobber" — no qty entry, just notes.
+    show_ewo_close_dialog(name) {
+        const d = new frappe.ui.Dialog({
+            title: __('Close Panel Job'),
+            fields: [{ label: __('Closing Instruction / Notes'), fieldname: 'n', fieldtype: 'Small Text' }],
+            primary_action_label: __('Close Job'),
+            primary_action: (v) => {
+                d.hide();
+                frappe.call({
+                    method: 'erp_dacsinc_custom.purchase_order.update_panel_process_stage',
+                    args: { name: name, next_stage: 'Returned to Jobber (Closed)', notes: v.n },
+                    freeze: true
+                }).then(() => {
+                    frappe.show_alert({message: __('Job closed'), color: 'green'});
+                    this.refresh(true);
+                });
+            }
+        });
+        d.show();
+    }
+
+    // Full Piece's only open step — receive back what was sent. The server
+    // auto-closes full_piece_stage once every row is fully received, same
+    // "partial receipts keep it open" behaviour as the Panel receive step.
+    show_ewo_receive_fp_dialog(ewo_name) {
+        frappe.call({
+            method: 'erp_dacsinc_custom.purchase_order.get_ewo_details',
+            args: { name: ewo_name }
+        }).then(res => {
+            const items = (res.message && res.message.items) || [];
+            let tbl = `<table class="table table-sm table-bordered">
+                <thead><tr class="bg-light"><th>${__('Item')}</th><th class="text-right">${__('Sent')}</th><th class="text-right">${__('Balance')}</th><th width="120">${__('Qty to Receive')}</th></tr></thead><tbody>`;
+            items.forEach(i => {
+                const bal = flt_of(i.ordered_qty) - flt_of(i.received_qty);
+                tbl += `<tr data-row-name="${i.name}">
+                    <td>${of_esc(i.item_code)}</td>
+                    <td class="text-right">${flt_of(i.ordered_qty)}</td>
+                    <td class="text-right font-weight-bold">${bal}</td>
+                    <td><input type="number" class="form-control text-right of-ewo-fp-qty-in" value="${bal}" min="0" max="${bal}" data-max="${bal}" ${bal <= 0 ? 'disabled' : ''}></td>
+                </tr>`;
+            });
+            tbl += `</tbody></table>`;
+
+            const d = new frappe.ui.Dialog({
+                title: __('Confirm Full Piece Receipt for {0}', [ewo_name]),
+                fields: [{ fieldtype: 'HTML', options: tbl }],
+                primary_action_label: __('Create Receipt'),
+                primary_action: () => {
+                    const items_to_receive = [];
+                    let has_error = false;
+                    d.$wrapper.find('tbody tr').each(function () {
+                        const $input = $(this).find('.of-ewo-fp-qty-in');
+                        const qty = parseFloat($input.val()) || 0;
+                        const max = parseFloat($input.data('max'));
+                        if (qty < 0 || qty > max) {
+                            has_error = true;
+                            $input.addClass('is-invalid');
+                        } else {
+                            $input.removeClass('is-invalid');
+                        }
+                        if (qty > 0) items_to_receive.push({ name: $(this).data('row-name'), qty: qty });
+                    });
+                    if (has_error) {
+                        frappe.msgprint(__('Please fix the quantities in red.'));
+                        return;
+                    }
+                    if (!items_to_receive.length) {
+                        frappe.msgprint(__('Enter a quantity greater than 0 for at least one item.'));
+                        return;
+                    }
+                    frappe.call({
+                        method: 'erp_dacsinc_custom.purchase_order.create_full_piece_receipt',
+                        args: { ewo_name: ewo_name, items_data: JSON.stringify(items_to_receive) },
+                        freeze: true
+                    }).then(() => {
+                        d.hide();
+                        frappe.show_alert({message: __('Receipt created successfully'), color: 'green'});
+                        this.refresh(true);
+                    });
+                }
+            });
+            d.show();
+        });
+    }
+
     // ── Tab 3: job work ──────────────────────────────────────────
     jobwork_html(data) {
         data = data || {};
@@ -2360,9 +2727,9 @@ class OrderFlow {
                     <div><span class="of-chip" style="background:var(--of-purple);color:#fff;">Job Work</span></div></td>
                 <td style="text-align:left;">
                     <a href="/app/supplier/${encodeURIComponent(p.supplier)}" target="_blank" style="font-weight:600;">${of_esc(p.supplier_name || p.supplier || '')}</a>
-                    <div class="of-micro text-muted">${of_esc(p.supplier || '')}</div>
                 </td>
-                <td>${of_so_links(p.sales_orders)}</td>
+                <td>${of_so_links(p.sales_orders)}
+                    ${p.so_customer_names ? `<div class="of-micro text-muted">${of_esc(p.so_customer_names)}</div>` : ''}</td>
                 <td class="of-meta">${of_date(p.transaction_date)}
                     <div class="of-micro">exp ${of_date(p.schedule_date)}</div></td>
                 <td>${of_qty(p.qty)}</td>
@@ -2393,8 +2760,10 @@ class OrderFlow {
                 <td style="text-align:left;">
                     <a href="/app/supplier/${encodeURIComponent(r.supplier)}" target="_blank" style="font-weight:600;">${of_esc(r.supplier_name || r.supplier || '')}</a>
                 </td>
-                <td>${of_so_links(r.sales_orders)}</td>
-                <td>${of_po_links(r.purchase_orders)}</td>
+                <td>${of_so_links(r.sales_orders)}
+                    ${r.so_customer_names ? `<div class="of-micro text-muted">${of_esc(r.so_customer_names)}</div>` : ''}</td>
+                <td>${of_po_links(r.purchase_orders)}
+                    ${r.supplier_name ? `<div class="of-micro text-muted">${of_esc(r.supplier_name)}</div>` : ''}</td>
                 <td class="of-meta">${of_date(r.posting_date)}</td>
                 <td>${of_qty(r.qty, 'pos')}</td>
                 <td>${of_money(r.grand_total, r.currency)}</td>
@@ -2402,12 +2771,40 @@ class OrderFlow {
             </tr>`;
         }).join('');
 
+        // The real next action for THIS stage, not just a link to go look —
+        // same 3-step Panel lifecycle (Send to Jobber -> Receive from Jobber
+        // -> Close) and 1-step Full Piece lifecycle (Receive from Jobber,
+        // the only step still open once a row exists — create_full_piece_send
+        // itself already creates it at "Sent") the Purchase Order form
+        // offers, reachable here without leaving the dashboard.
+        const ewo_track_link = (name) => `<a class="of-btn" href="/app/embroidery-work-order/${encodeURIComponent(name)}" target="_blank" title="Open the Embroidery Work Order">
+            <i class="fa fa-external-link"></i></a>`;
+
         const build_ewo = (list) => list.map(e => {
             const stage = e.work_type === 'Full Piece Job Work' ? e.full_piece_stage : e.panel_stage;
             const pending = flt_of(e.ordered_qty) - flt_of(e.received_qty);
             const jobber_id = e.panel_jobber || e.full_piece_jobber;
-            return `<tr>
-                <td><a href="/app/embroidery-work-order/${encodeURIComponent(e.name)}" target="_blank" style="font-weight:700;">${of_esc(e.name)}</a>
+
+            let action_html;
+            if (e.work_type === 'Panel Job Work' && stage === 'Received from Jobber (Internal)') {
+                action_html = `<button class="of-btn of-btn--primary of-ewo-send-btn" data-name="${of_esc(e.name)}">
+                    <i class="fa fa-paper-plane"></i> Send to Jobber</button>`;
+            } else if (e.work_type === 'Panel Job Work' && stage === 'Sent to Panel Jobber') {
+                action_html = `<button class="of-btn of-btn--primary of-ewo-receive-panel-btn" data-name="${of_esc(e.name)}">
+                    <i class="fa fa-inbox"></i> Receive from Jobber</button>`;
+            } else if (e.work_type === 'Panel Job Work' && stage === 'Received from Panel Jobber') {
+                action_html = `<button class="of-btn of-btn--success of-ewo-close-btn" data-name="${of_esc(e.name)}">
+                    <i class="fa fa-check"></i> Close Job</button>`;
+            } else if (e.work_type === 'Full Piece Job Work' && stage === 'Sent to Full Piece Jobber') {
+                action_html = `<button class="of-btn of-btn--primary of-ewo-receive-fp-btn" data-name="${of_esc(e.name)}">
+                    <i class="fa fa-inbox"></i> Receive from Jobber</button>`;
+            } else {
+                action_html = ewo_track_link(e.name);
+            }
+
+            return `<tr class="of-ewo-row" data-ewo="${of_esc(e.name)}">
+                <td><i class="fa fa-caret-right of-ewo-items-toggle" data-ewo="${of_esc(e.name)}" style="cursor:pointer;margin-right:4px;color:var(--text-light);"></i>
+                    <a href="/app/embroidery-work-order/${encodeURIComponent(e.name)}" target="_blank" style="font-weight:700;">${of_esc(e.name)}</a>
                     <div class="of-micro">${of_esc(e.work_type || '')}</div></td>
                 <td style="text-align:left;">
                     ${jobber_id ? `
@@ -2415,18 +2812,16 @@ class OrderFlow {
                     ` : of_esc(e.jobber_name || '')}
                 </td>
                 <td>${of_po_links(e.purchase_order)}
+                    ${e.po_supplier_name ? `<div class="of-micro text-muted">${of_esc(e.po_supplier_name)}</div>` : ''}
                     ${e.subcontracting_order ? `<div class="of-micro"><span class="of-chip">Subcontract</span></div>` : ''}</td>
-                <td>${of_so_links(e.sales_orders)}</td>
+                <td>${of_so_links(e.sales_orders)}
+                    ${e.so_customer_names ? `<div class="of-micro text-muted">${of_esc(e.so_customer_names)}</div>` : ''}</td>
                 <td class="of-meta">${of_date(e.date)}</td>
                 <td>${of_qty(e.ordered_qty)}</td>
                 <td>${of_qty(e.received_qty, flt_of(e.received_qty) > 0 ? 'pos' : null)}</td>
                 <td>${of_qty(pending, pending > 0 ? 'warn' : null)}</td>
                 <td><span class="of-pill of-pill--planned">${of_esc(of_to_title_case(stage || e.status || ''))}</span></td>
-                <td>
-                    <a class="of-btn" href="/app/embroidery-work-order/${encodeURIComponent(e.name)}" target="_blank">
-                        <i class="fa fa-external-link"></i> Track
-                    </a>
-                </td>
+                <td class="of-ewo-action" data-po="${of_esc(e.purchase_order || '')}">${action_html}</td>
             </tr>`;
         }).join('');
         const ewo_fp_rows = build_ewo(ewo_fp);
@@ -2641,7 +3036,8 @@ class OrderFlow {
                     <tbody>${rows.map(x => `<tr>
                         <td><a href="/app/pick-list/${encodeURIComponent(x.name)}" target="_blank">${of_esc(x.name)}</a></td>
                         <td>${of_esc(x.warehouse || '')}</td>
-                        <td>${x.sales_order ? `<a href="/app/sales-order/${encodeURIComponent(x.sales_order)}" target="_blank">${of_esc(x.sales_order)}</a>` : ''}</td>
+                        <td>${x.sales_order ? `<a href="/app/sales-order/${encodeURIComponent(x.sales_order)}" target="_blank">${of_esc(x.sales_order)}</a>
+                            ${x.customer_name ? `<div class="of-micro text-muted">${of_esc(x.customer_name)}</div>` : ''}` : ''}</td>
                         <td style="font-weight:700;">${flt_of(x.qty)}</td>
                     </tr>`).join('')}</tbody>
                 </table>`;
@@ -2651,7 +3047,7 @@ class OrderFlow {
                     <tbody>${rows.map(x => `<tr>
                         <td><a href="/app/${of_route(x.doctype)}/${encodeURIComponent(x.name)}" target="_blank">${of_esc(x.name)}</a>
                             <div class="of-micro text-muted">${of_esc(x.doctype)}</div></td>
-                        <td>${of_esc(x.supplier || '')}</td>
+                        <td>${of_esc(x.supplier_name || x.supplier || '')}</td>
                         <td>${flt_of(x.qty)}</td>
                     </tr>`).join('')}</tbody>
                 </table>`;
@@ -2748,7 +3144,8 @@ class OrderFlow {
                     <a href="/app/customer/${encodeURIComponent(s.customer)}" target="_blank" style="font-weight:600;">${of_esc(s.customer_name || s.customer || '')}</a>
                     <div class="of-micro text-muted">${of_esc(s.customer || '')}</div>
                 </td>
-                <td>${of_so_links(s.sales_orders)}</td>
+                <td>${of_so_links(s.sales_orders)}
+                    ${s.so_customer_names ? `<div class="of-micro text-muted">${of_esc(s.so_customer_names)}</div>` : ''}</td>
                 <td class="of-meta">${of_date(s.posting_date)}
                     <div class="of-micro">Due ${of_date(s.due_date)}</div></td>
                 <td style="font-weight:700;">${of_money(s.grand_total, s.currency)}</td>
@@ -2775,9 +3172,9 @@ class OrderFlow {
                     <a href="/app/purchase-invoice/${encodeURIComponent(p.name)}" target="_blank" style="font-weight:700;">${of_esc(p.name)}</a></td>
                 <td style="text-align:left;">
                     <a href="/app/supplier/${encodeURIComponent(p.supplier)}" target="_blank" style="font-weight:600;">${of_esc(p.supplier_name || p.supplier || '')}</a>
-                    <div class="of-micro text-muted">${of_esc(p.supplier || '')}</div>
                 </td>
-                <td>${of_so_links(p.sales_orders)}</td>
+                <td>${of_so_links(p.sales_orders)}
+                    ${p.so_customer_names ? `<div class="of-micro text-muted">${of_esc(p.so_customer_names)}</div>` : ''}</td>
                 <td class="of-meta">${of_date(p.posting_date)}
                     <div class="of-micro">Due ${of_date(p.due_date)}</div></td>
                 <td style="font-weight:700;">${of_money(p.grand_total, p.currency)}</td>
@@ -2804,9 +3201,10 @@ class OrderFlow {
                     <a href="/app/purchase-invoice/${encodeURIComponent(p.name)}" target="_blank" style="font-weight:700;">${of_esc(p.name)}</a></td>
                 <td style="text-align:left;">
                     <a href="/app/supplier/${encodeURIComponent(p.supplier)}" target="_blank" style="font-weight:600;">${of_esc(p.supplier_name || p.supplier || '')}</a>
-                    <div class="of-micro text-muted">${of_esc(p.supplier || '')} <span class="of-chip">Jobber</span></div>
+                    <div class="of-micro text-muted"><span class="of-chip">Jobber</span></div>
                 </td>
-                <td>${of_so_links(p.sales_orders)}</td>
+                <td>${of_so_links(p.sales_orders)}
+                    ${p.so_customer_names ? `<div class="of-micro text-muted">${of_esc(p.so_customer_names)}</div>` : ''}</td>
                 <td class="of-meta">${of_date(p.posting_date)}
                     <div class="of-micro">Due ${of_date(p.due_date)}</div></td>
                 <td style="font-weight:700;">${of_money(p.grand_total, p.currency)}</td>
