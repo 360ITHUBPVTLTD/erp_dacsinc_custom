@@ -3164,15 +3164,15 @@ def create_putaway_picklist(doc, method=None):
         for so_name, items in so_items_map.items():
             customer = frappe.db.get_value("Sales Order", so_name, "customer")
             
-            pl = frappe.new_doc("Pick List")
-            pl.company = doc.company
-            pl.purpose = "Delivery"
-            pl.customer = customer
-            pl.parent_warehouse = doc.set_warehouse
-            pl.custom_purchase_receipt = doc.name
-            pl.custom_notes = f"Created from PR {doc.name}"
-
             for i in items:
+                pl = frappe.new_doc("Pick List")
+                pl.company = doc.company
+                pl.purpose = "Delivery"
+                pl.customer = customer
+                pl.parent_warehouse = doc.set_warehouse
+                pl.custom_purchase_receipt = doc.name
+                pl.custom_notes = f"Created from PR {doc.name}"
+
                 pl.append("locations", {
                     "item_code": i["item_code"],
                     "item_name": i["item_name"],
@@ -3188,13 +3188,13 @@ def create_putaway_picklist(doc, method=None):
                     "batch_no": i["batch_no"]
                 })
 
-            # Save as Draft (No Submit)
-            pl.insert(ignore_permissions=True)
-            
-            frappe.msgprint(
-                f"Pick List Created (Draft): <a href='/app/pick-list/{pl.name}'><b>{pl.name}</b></a>", 
-                indicator="green"
-            )
+                # Save as Draft (No Submit)
+                pl.insert(ignore_permissions=True)
+                
+                frappe.msgprint(
+                    f"Pick List Created (Draft): <a href='/app/pick-list/{pl.name}'><b>{pl.name}</b></a> for item {i['item_code']}", 
+                    indicator="green"
+                )
 
     except Exception as e:
         frappe.log_error(f"PL Creation Error: {str(e)}", "Pick List Automation")

@@ -46,6 +46,8 @@
   "of_tab_purchase_roles",
   "of_column_break_tabs",
   "of_tab_jobwork_roles",
+  "of_tab_stock_roles",
+  "of_tab_billing_roles",
   "of_tab_accounts_roles",
   "of_tab_uniform_roles"
  ],
@@ -289,10 +291,24 @@
    "options": "Order Flow Tab Role"
   },
   {
-   "description": "Accounts tab. Empty = visible to everyone who can open the page.",
-   "fieldname": "of_tab_accounts_roles",
+   "description": "Stock Tracker tab (global item availability & Pick List reservations). Empty = visible to everyone who can open the page.",
+   "fieldname": "of_tab_stock_roles",
+   "fieldtype": "Table MultiSelect",
+   "label": "Stock Tracker — Allowed Roles",
+   "options": "Order Flow Tab Role"
+  },
+  {
+   "description": "Accounts tab (Sales Orders with a Delivery Note that still need billing). Empty = visible to everyone who can open the page.",
+   "fieldname": "of_tab_billing_roles",
    "fieldtype": "Table MultiSelect",
    "label": "Accounts \u2014 Allowed Roles",
+   "options": "Order Flow Tab Role"
+  },
+  {
+   "description": "Finance tab (receivables/payables). Empty = visible to everyone who can open the page.",
+   "fieldname": "of_tab_accounts_roles",
+   "fieldtype": "Table MultiSelect",
+   "label": "Finance \u2014 Allowed Roles",
    "options": "Order Flow Tab Role"
   },
   {

@@ -85,6 +85,9 @@ function load_smart_planner(frm) {
     frappe.dom.freeze(__('Fetching Live Status...'));
     frappe.call({
         method: 'erp_dacsinc_custom.custom_script.fetch_multi_order_requirements',
+        args: {
+            exclude_mr: frm.doc.name
+        },
         callback: function(r) {
             frappe.dom.unfreeze();
             if (r.message) render_fulfillment_dialog(frm, r.message);

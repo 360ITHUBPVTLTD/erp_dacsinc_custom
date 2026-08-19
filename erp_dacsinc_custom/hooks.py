@@ -191,7 +191,9 @@ doc_events = {
         "validate": [
             "erp_dacsinc_custom.custom_script.validate_non_zero_rate",
             "erp_dacsinc_custom.custom_script.sales_invoice_validate"
-        ]
+        ],
+        "before_submit": "erp_dacsinc_custom.custom_script.guard_so_fulfillment_route_lock",
+        "on_submit": "erp_dacsinc_custom.custom_script.update_pick_lists_on_stock_si_submit"
     },
     "Sales Order": {
         "on_submit": "erp_dacsinc_custom.custom_script.sales_order_on_submit",
@@ -204,6 +206,7 @@ doc_events = {
        "validate": "erp_dacsinc_custom.custom_script.validate_non_zero_rate"
     },
     "Delivery Note": {
+        "before_submit": "erp_dacsinc_custom.custom_script.guard_so_fulfillment_route_lock",
         "on_submit": "erp_dacsinc_custom.custom_script.update_pick_lists_on_dn_submit"
     },
     "BOM": {

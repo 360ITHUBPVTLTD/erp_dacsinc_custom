@@ -1964,55 +1964,6 @@ function show_stock_check_dialog(frm, materials, linked_subcontracting_docs) {
                     }
                 }
             });
-        },
-
-        secondary_action_label: __("Create Material Request for Shortage"),
-        secondary_action: function () {
-            // Get the *original* required quantities and current available for MR calculation
-            let current_dialog_materials = [];
-            $(dialog.body).find('input.qty-to-supply-input').each(function () {
-                const itemCode = $(this).data('item-code');
-                const materialData = materials.find(m => m.item_code === itemCode);
-                if (materialData) {
-                    current_dialog_materials.push({
-                        item_code: itemCode,
-                        required_qty: materialData.required_qty,
-                        available_qty: materialData.available_qty
-                    });
-                }
-            });
-
-            frappe.call({
-                method: "erp_dacsinc_custom.purchase_order.create_material_request_for_shortage",
-                args: {
-                    purchase_order_name: frm.doc.name,
-                    materials_for_mr_calculation: JSON.stringify(current_dialog_materials)
-                },
-                freeze: true,
-                freeze_message: __("Creating Material Request..."),
-                callback: function (r) {
-                    if (r.message && r.message.mr_name) {
-                        frappe.msgprint({
-                            title: __("Material Request Created"),
-                            message: __("Created {0} for the missing items.", [frappe.utils.get_form_link("Material Request", r.message.mr_name, true)]),
-                            indicator: 'green'
-                        });
-                        dialog.hide();
-                    } else if (r.message === "No stock shortage found. Material Request not created.") {
-                        frappe.msgprint({
-                            title: __("No Shortage"),
-                            message: r.message,
-                            indicator: 'blue'
-                        });
-                        dialog.hide();
-                    } else if (r.exc) {
-                        frappe.show_alert({
-                            message: __("Error creating Material Request: {0}", [r.exc]),
-                            indicator: 'red'
-                        }, 5);
-                    }
-                }
-            });
         }
     });
 
