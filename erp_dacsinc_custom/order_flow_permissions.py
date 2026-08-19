@@ -23,14 +23,22 @@ from frappe import _
 
 # Ordered left-to-right exactly as the tab strip renders. The order is
 # load-bearing: allowed_tabs[0] becomes the landing tab on the client.
-OF_TABS = ("approval", "tracker", "purchase", "jobwork", "accounts", "uniform")
+#
+# "accounts" was the original receivables/payables tab and is now labelled
+# "Finance" (see OF_TAB_LABELS) — its key stays "accounts" so existing
+# of_tab_accounts_roles configuration keeps applying unchanged. "billing" is
+# the new tab that took over the "Accounts" label: Sales Orders that have a
+# Delivery Note but still need to be billed.
+OF_TABS = ("approval", "tracker", "purchase", "jobwork", "stock", "billing", "accounts", "uniform")
 
 OF_TAB_LABELS = {
     "approval": "SO Approvals",
     "tracker": "Sales Tracker",
     "purchase": "Purchase Flow",
     "jobwork": "Job Work",
-    "accounts": "Accounts",
+    "stock": "Stock Tracker",
+    "billing": "Accounts",
+    "accounts": "Finance",
     "uniform": "Embroidery Transfers",
 }
 

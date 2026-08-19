@@ -171,6 +171,18 @@ def get_embroidery_transfers(status=None, search=None, scope=None, **kwargs):
     """, values, as_dict=1)
 
 @frappe.whitelist()
+def get_transfer_receipts(transfer_id):
+    """Partial-receipt history for one transfer — backs the row-level "see
+    items" toggle on the Embroidery Transfers tab (a transfer already moves
+    a single item, so its receipt history is the only further detail that
+    exists to expand into)."""
+    guard_tab("uniform")
+    return frappe.get_all("Uniform Embroidery Transfer Receipt",
+        filters={"parent": transfer_id, "parenttype": "Uniform Embroidery Transfer"},
+        fields=["date", "qty", "to_warehouse", "stock_entry"], order_by="date asc")
+
+
+@frappe.whitelist()
 def get_item_stock_details(item_code, warehouse):
     """
     Returns detailed stock quantities for an item in a specific warehouse,

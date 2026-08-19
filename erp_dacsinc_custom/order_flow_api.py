@@ -24,6 +24,7 @@ from erp_dacsinc_custom.order_flow_permissions import (
     get_order_flow_permissions,
     is_scoped_to_own_customers,
 )
+from erp_dacsinc_custom.custom_script import _so_has_submitted_dn, _so_has_submitted_stock_si
 
 
 # --------------------------------------------------------------------------
@@ -820,20 +821,33 @@ def _compute_stage_info(order):
 
     # If skip_dn, Pick List submitted triggers need_to_bill directly
     is_ready_to_bill = False
+    is_fully_picked_or_delivered = False
     if skip_dn:
+        # Load so_items to compute picker status
+        so_items = frappe.db.get_values(
+            "Sales Order Item",
+            {"parent": order["name"]},
+            ["qty", "delivered_qty", "picked_qty"],
+            as_dict=True
+        )
+        total_qty = sum(flt(i.qty) for i in so_items)
+        total_picked_or_delivered = sum(min(flt(i.qty), flt(i.picked_qty) + flt(i.delivered_qty)) for i in so_items)
+        is_fully_picked_or_delivered = (total_picked_or_delivered >= total_qty) if total_qty > 0 else False
+
         if subm_pls or delivered >= 100:
             is_ready_to_bill = True
     else:
         if delivered >= 100:
             is_ready_to_bill = True
+            is_fully_picked_or_delivered = True
 
     if is_ready_to_bill and billed < 100:
         if draft_invoices:
             inv_name = draft_invoices[0]
             return {
                 "stage_key": "need_to_bill",
-                "stage_label": "Need to Bill",
-                "badge_class": "of-pill--need-bill",
+                "stage_label": "Need to Bill" if is_fully_picked_or_delivered else "Need to Bill (Partial)",
+                "badge_class": "of-pill--need-bill" if is_fully_picked_or_delivered else "of-pill--warn",
                 "icon": "file-text-o",
                 "target_doc": inv_name,
                 "target_doctype": "Sales Invoice",
@@ -844,12 +858,12 @@ def _compute_stage_info(order):
         else:
             return {
                 "stage_key": "need_to_bill",
-                "stage_label": "Need to Bill",
-                "badge_class": "of-pill--need-bill",
+                "stage_label": "Need to Bill" if is_fully_picked_or_delivered else "Need to Bill (Partial)",
+                "badge_class": "of-pill--need-bill" if is_fully_picked_or_delivered else "of-pill--warn",
                 "icon": "file-text-o",
                 "action_type": "make_invoice",
-                "action_label": "Create Sales Invoice",
-                "action_btn_class": "of-btn--primary"
+                "action_label": "Create Sales Invoice" if is_fully_picked_or_delivered else "Create Sales Invoice (Partial)",
+                "action_btn_class": "of-btn--primary" if is_fully_picked_or_delivered else "of-btn--warning"
             }
 
     if draft_pls:
@@ -867,19 +881,66 @@ def _compute_stage_info(order):
         }
 
     # For standard flow, if Pick List is submitted, we create Delivery Note
+    # OR a Sales Invoice with Update Stock — same either-route choice the
+    # Sales Order's own "Item Stock & Action Plan" widget already offers
+    # per item (so_prompt_dn_or_si). Once this order has committed to one
+    # route (a submitted DN, or a submitted SI with Update Stock already
+    # exists), the button collapses to that single route instead of asking
+    # again — mirroring guard_so_fulfillment_route_lock, which would reject
+    # the other route at submit time anyway.
     if subm_pls and not skip_dn:
         pl_name = subm_pls[0]
-        return {
-            "stage_key": "ready_to_deliver",
-            "stage_label": "Ready for Delivery",
-            "badge_class": "of-pill--dn",
-            "icon": "truck",
-            "target_doc": pl_name,
-            "target_doctype": "Pick List",
-            "action_type": "make_dn",
-            "action_label": "Create Delivery Note",
-            "action_btn_class": "of-btn--success"
-        }
+        so_items = frappe.db.get_values(
+            "Sales Order Item",
+            {"parent": order["name"]},
+            ["qty", "delivered_qty", "picked_qty"],
+            as_dict=True
+        )
+        total_qty = sum(flt(i.qty) for i in so_items)
+        total_picked_or_delivered = sum(min(flt(i.qty), flt(i.picked_qty) + flt(i.delivered_qty)) for i in so_items)
+        is_fully_picked = (total_picked_or_delivered >= total_qty) if total_qty > 0 else False
+
+        route_lock = ""
+        if _so_has_submitted_dn(order["name"]):
+            route_lock = "dn"
+        elif _so_has_submitted_stock_si(order["name"]):
+            route_lock = "si"
+
+        if route_lock == "si":
+            label = "Create Sales Invoice (Update Stock)" if is_fully_picked else "Create Sales Invoice (Update Stock, Partial)"
+            icon = "file-text-o"
+        else:
+            label = "Create DN / SI" if not route_lock else "Create Delivery Note"
+            if not is_fully_picked:
+                label += " (Partial)"
+            icon = "truck"
+
+        if is_fully_picked:
+            return {
+                "stage_key": "ready_to_deliver",
+                "stage_label": "Ready for Delivery",
+                "badge_class": "of-pill--dn",
+                "icon": icon,
+                "target_doc": pl_name,
+                "target_doctype": "Pick List",
+                "action_type": "make_dn_or_si",
+                "action_label": label,
+                "action_btn_class": "of-btn--success",
+                "route_lock": route_lock
+            }
+        else:
+            return {
+                "stage_key": "ready_to_deliver",
+                "stage_label": "Partially Ready for Delivery",
+                "badge_class": "of-pill--warn",
+                "icon": icon,
+                "target_doc": pl_name,
+                "target_doctype": "Pick List",
+                "action_type": "make_dn_or_si",
+                "action_label": label,
+                "action_btn_class": "of-btn--warning",
+                "route_lock": route_lock
+            }
 
     # A Purchase/Subcontracting Receipt only posts to the stock ledger on
     # submit — a draft one has moved nothing yet, so it must never read as
@@ -1150,6 +1211,7 @@ def get_purchase_flow(days=120, search=None, scope="open", merchandiser=None):
                po.supplier, sup.supplier_name, po.is_subcontracted, po.currency,
                po.per_received, po.per_billed, po.grand_total,
                GROUP_CONCAT(DISTINCT poi.sales_order ORDER BY poi.sales_order SEPARATOR ', ') AS sales_orders,
+               GROUP_CONCAT(DISTINCT so.customer_name ORDER BY so.customer_name SEPARATOR ', ') AS so_customer_names,
                COUNT(DISTINCT poi.item_code) AS item_count,
                SUM(CASE WHEN po.is_subcontracted = 1 THEN poi.fg_item_qty ELSE poi.qty END) AS qty,
                SUM(poi.received_qty) AS received_qty
@@ -1195,6 +1257,7 @@ def get_purchase_flow(days=120, search=None, scope="open", merchandiser=None):
         (SELECT 'Purchase Receipt' AS doctype, pr.name, pr.posting_date, pr.status, pr.docstatus,
                 pr.supplier, sup.supplier_name, pr.is_subcontracted, pr.currency, pr.grand_total,
                 GROUP_CONCAT(DISTINCT pri.sales_order ORDER BY pri.sales_order SEPARATOR ', ') AS sales_orders,
+                GROUP_CONCAT(DISTINCT so.customer_name ORDER BY so.customer_name SEPARATOR ', ') AS so_customer_names,
                 GROUP_CONCAT(DISTINCT pri.purchase_order ORDER BY pri.purchase_order SEPARATOR ', ') AS purchase_orders,
                 SUM(pri.received_qty) AS qty, NULL AS linked_pr
          FROM `tabPurchase Receipt Item` pri
@@ -1211,6 +1274,7 @@ def get_purchase_flow(days=120, search=None, scope="open", merchandiser=None):
         (SELECT 'Subcontracting Receipt', scr.name, scr.posting_date, scr.status, scr.docstatus,
                 scr.supplier, sup.supplier_name, 1, NULL, NULL,
                 GROUP_CONCAT(DISTINCT poi.sales_order ORDER BY poi.sales_order SEPARATOR ', '),
+                GROUP_CONCAT(DISTINCT so.customer_name ORDER BY so.customer_name SEPARATOR ', '),
                 GROUP_CONCAT(DISTINCT scri.purchase_order ORDER BY scri.purchase_order SEPARATOR ', '),
                 SUM(scri.qty),
                 (SELECT pr2.name FROM `tabPurchase Receipt` pr2
@@ -1232,6 +1296,7 @@ def get_purchase_flow(days=120, search=None, scope="open", merchandiser=None):
         SELECT mr.name, mr.transaction_date, mr.schedule_date, mr.material_request_type,
                mr.status, mr.docstatus, mr.per_ordered, mr.per_received,
                GROUP_CONCAT(DISTINCT mri.sales_order ORDER BY mri.sales_order SEPARATOR ', ') AS sales_orders,
+               GROUP_CONCAT(DISTINCT so.customer_name ORDER BY so.customer_name SEPARATOR ', ') AS so_customer_names,
                COUNT(DISTINCT mri.item_code) AS item_count,
                SUM(mri.qty) AS qty, SUM(mri.ordered_qty) AS ordered_qty
         FROM `tabMaterial Request Item` mri
@@ -1297,6 +1362,7 @@ def get_jobwork_flow(days=180, search=None, scope="open", merchandiser=None):
                po.supplier, sup.supplier_name, po.is_subcontracted, po.currency,
                po.per_received, po.per_billed, po.grand_total,
                GROUP_CONCAT(DISTINCT poi.sales_order ORDER BY poi.sales_order SEPARATOR ', ') AS sales_orders,
+               GROUP_CONCAT(DISTINCT so.customer_name ORDER BY so.customer_name SEPARATOR ', ') AS so_customer_names,
                COUNT(DISTINCT poi.item_code) AS item_count,
                SUM(poi.fg_item_qty) AS qty,
                SUM(poi.received_qty) AS received_qty
@@ -1341,6 +1407,7 @@ def get_jobwork_flow(days=180, search=None, scope="open", merchandiser=None):
         (SELECT 'Purchase Receipt' AS doctype, pr.name, pr.posting_date, pr.status, pr.docstatus,
                 pr.supplier, sup.supplier_name, pr.is_subcontracted, pr.currency, pr.grand_total,
                 GROUP_CONCAT(DISTINCT pri.sales_order ORDER BY pri.sales_order SEPARATOR ', ') AS sales_orders,
+                GROUP_CONCAT(DISTINCT so.customer_name ORDER BY so.customer_name SEPARATOR ', ') AS so_customer_names,
                 GROUP_CONCAT(DISTINCT pri.purchase_order ORDER BY pri.purchase_order SEPARATOR ', ') AS purchase_orders,
                 SUM(pri.received_qty) AS qty, NULL AS linked_pr
          FROM `tabPurchase Receipt Item` pri
@@ -1357,6 +1424,11 @@ def get_jobwork_flow(days=180, search=None, scope="open", merchandiser=None):
                  FROM `tabPurchase Order Item` poi
                  JOIN `tabSubcontracting Receipt Item` scri2 ON scri2.purchase_order = poi.parent
                  WHERE scri2.parent = scr.name) AS sales_orders,
+                (SELECT GROUP_CONCAT(DISTINCT so2.customer_name ORDER BY so2.customer_name SEPARATOR ', ')
+                 FROM `tabPurchase Order Item` poi2
+                 JOIN `tabSubcontracting Receipt Item` scri3 ON scri3.purchase_order = poi2.parent
+                 LEFT JOIN `tabSales Order` so2 ON so2.name = poi2.sales_order
+                 WHERE scri3.parent = scr.name) AS so_customer_names,
                 GROUP_CONCAT(DISTINCT scri.purchase_order ORDER BY scri.purchase_order SEPARATOR ', ') AS purchase_orders,
                 SUM(scri.qty) AS qty,
                 -- Every Subcontracting Receipt this app creates immediately gets a
@@ -1383,22 +1455,25 @@ def get_jobwork_flow(days=180, search=None, scope="open", merchandiser=None):
                ewo.panel_stage, ewo.full_piece_stage, ewo.per_received,
                ewo.panel_jobber, ewo.full_piece_jobber,
                COALESCE(fp.supplier_name, pn.supplier_name) AS jobber_name,
+               po.supplier AS po_supplier, po_sup.supplier_name AS po_supplier_name,
                (SELECT SUM(c.ordered_qty) FROM `tabEmbroidery Work Order Item` c WHERE c.parent = ewo.name) AS ordered_qty,
                (SELECT SUM(c.received_qty) FROM `tabEmbroidery Work Order Item` c WHERE c.parent = ewo.name) AS received_qty,
                (SELECT GROUP_CONCAT(DISTINCT poi.sales_order ORDER BY poi.sales_order SEPARATOR ', ')
-                  FROM `tabPurchase Order Item` poi WHERE poi.parent = ewo.purchase_order) AS sales_orders
+                  FROM `tabPurchase Order Item` poi WHERE poi.parent = ewo.purchase_order) AS sales_orders,
+               GROUP_CONCAT(DISTINCT so.customer_name ORDER BY so.customer_name SEPARATOR ', ') AS so_customer_names
         FROM `tabEmbroidery Work Order` ewo
         LEFT JOIN `tabSupplier` fp ON fp.name = ewo.full_piece_jobber
         LEFT JOIN `tabSupplier` pn ON pn.name = ewo.panel_jobber
         LEFT JOIN `tabPurchase Order` po ON po.name = ewo.purchase_order
+        LEFT JOIN `tabSupplier` po_sup ON po_sup.name = po.supplier
         LEFT JOIN `tabPurchase Order Item` poi ON poi.parent = ewo.purchase_order
         LEFT JOIN `tabSales Order` so ON so.name = poi.sales_order
-        LEFT JOIN `tabCustomer` cust ON cust.name = so.customer
         WHERE {' AND '.join(ewo_conditions)}
         GROUP BY ewo.name, ewo.date, ewo.status, ewo.docstatus, ewo.work_type,
                  ewo.purchase_order, ewo.subcontracting_order, ewo.completed_on,
                  ewo.panel_stage, ewo.full_piece_stage, ewo.per_received,
-                 ewo.panel_jobber, ewo.full_piece_jobber, fp.supplier_name, pn.supplier_name
+                 ewo.panel_jobber, ewo.full_piece_jobber, fp.supplier_name, pn.supplier_name,
+                 po.supplier, po_sup.supplier_name
         ORDER BY ewo.date DESC
         LIMIT 300
     """, params, as_dict=1)
@@ -1515,7 +1590,8 @@ def get_accounts_flow(days=120, search=None, scope="open", merchandiser=None):
                si.customer, cust.customer_name, si.currency,
                si.grand_total, si.outstanding_amount,
                (si.grand_total - si.outstanding_amount) AS paid_amount,
-               GROUP_CONCAT(DISTINCT sii.sales_order ORDER BY sii.sales_order SEPARATOR ', ') AS sales_orders
+               GROUP_CONCAT(DISTINCT sii.sales_order ORDER BY sii.sales_order SEPARATOR ', ') AS sales_orders,
+               GROUP_CONCAT(DISTINCT so.customer_name ORDER BY so.customer_name SEPARATOR ', ') AS so_customer_names
         FROM `tabSales Invoice Item` sii
         JOIN `tabSales Invoice` si ON si.name = sii.parent
         LEFT JOIN `tabCustomer` cust ON cust.name = si.customer
@@ -1546,7 +1622,8 @@ def get_accounts_flow(days=120, search=None, scope="open", merchandiser=None):
                IFNULL(sup.custom_is_jobber, 0) AS is_jobber,
                pi.grand_total, pi.outstanding_amount,
                (pi.grand_total - pi.outstanding_amount) AS paid_amount,
-               GROUP_CONCAT(DISTINCT poi.sales_order ORDER BY poi.sales_order SEPARATOR ', ') AS sales_orders
+               GROUP_CONCAT(DISTINCT poi.sales_order ORDER BY poi.sales_order SEPARATOR ', ') AS sales_orders,
+               GROUP_CONCAT(DISTINCT so.customer_name ORDER BY so.customer_name SEPARATOR ', ') AS so_customer_names
         FROM `tabPurchase Invoice Item` pii
         JOIN `tabPurchase Invoice` pi ON pi.name = pii.parent
         LEFT JOIN `tabPurchase Order Item` poi ON poi.parent = pii.purchase_order
@@ -1591,6 +1668,394 @@ def get_accounts_flow(days=120, search=None, scope="open", merchandiser=None):
             "jobber_outstanding": jobber_outstanding
         }
     }
+
+
+# --------------------------------------------------------------------------
+# Pick List review, for the Sales Order stock widget's "Pick Lists" button
+# (public/js/sales_order.js — shared by the real Sales Order form and every
+# dashboard tab that expands a Sales Order row)
+# --------------------------------------------------------------------------
+
+@frappe.whitelist()
+def get_pick_lists_for_so(sales_order):
+    """Every draft/submitted Pick List line tied to this Sales Order — one
+    item now maps to one Pick List (see
+    custom_script._create_pick_lists_one_per_item), so an order with several
+    lines can have several to review at once. `pick_list_item` is the child
+    row's own name, needed to edit a draft's quantity before submitting it
+    (custom_script.update_and_submit_pick_list)."""
+    _guard()
+    return frappe.db.sql("""
+        SELECT pl.name, pl.status, pl.docstatus, pli.name AS pick_list_item,
+               pli.item_code, pli.qty, pli.picked_qty, IFNULL(pli.delivered_qty, 0) AS delivered_qty,
+               pli.warehouse
+        FROM `tabPick List Item` pli
+        JOIN `tabPick List` pl ON pl.name = pli.parent
+        WHERE pli.sales_order = %(so)s AND pl.docstatus < 2
+        ORDER BY pl.docstatus ASC, pl.creation ASC
+    """, {"so": sales_order}, as_dict=1)
+
+
+@frappe.whitelist()
+def get_draft_dn_si_for_so(sales_order):
+    """Existing draft Delivery Notes/Sales Invoices already against this
+    Sales Order — surfaced before offering to create a new one from the
+    dashboard's "Create DN / SI" action, so that action never builds a
+    duplicate draft next to one the user already started."""
+    _guard()
+    draft_dns = frappe.db.sql_list("""
+        SELECT DISTINCT dn.name
+        FROM `tabDelivery Note Item` dni
+        JOIN `tabDelivery Note` dn ON dn.name = dni.parent
+        WHERE dni.against_sales_order = %s AND dn.docstatus = 0
+    """, sales_order)
+    # Scoped to update_stock=1 — a plain draft invoice (e.g. billing against
+    # an existing DN) is a different, expected document, not a duplicate of
+    # the "Sales Invoice with Update Stock" fulfillment route this action
+    # creates.
+    draft_sis = frappe.db.sql_list("""
+        SELECT DISTINCT si.name
+        FROM `tabSales Invoice Item` sii
+        JOIN `tabSales Invoice` si ON si.name = sii.parent
+        WHERE sii.sales_order = %s AND si.docstatus = 0 AND si.update_stock = 1
+    """, sales_order)
+    return {"draft_dns": draft_dns, "draft_sis": draft_sis}
+
+
+# --------------------------------------------------------------------------
+# Tab — Accounts (Sales Orders with a Delivery Note that still need billing)
+# --------------------------------------------------------------------------
+
+@frappe.whitelist()
+def get_billing_flow(days=120, search=None, scope="open"):
+    """
+    Sales Orders that have shipped (a submitted Delivery Note exists) but are
+    not yet fully billed — the queue this tab exists to clear.
+    """
+    _guard()
+    _guard_tab("billing")
+    conditions = ["so.docstatus = 1", "so.per_billed < 100", "so.transaction_date >= %(from_date)s", _NOT_DISABLED_SO]
+    params = {"from_date": _from_date(days)}
+
+    if scope == "open":
+        conditions.append("so.status NOT IN ('Closed', 'Cancelled')")
+    elif scope == "mine":
+        conditions.append("so.owner = %(me)s")
+        params["me"] = frappe.session.user
+
+    if search:
+        conditions.append("(so.name LIKE %(q)s OR so.customer_name LIKE %(q)s OR so.customer LIKE %(q)s)")
+        params["q"] = f"%{search}%"
+
+    conditions.append("""EXISTS (
+        SELECT 1 FROM `tabDelivery Note Item` dni
+        JOIN `tabDelivery Note` dn ON dn.name = dni.parent
+        WHERE dni.against_sales_order = so.name AND dn.docstatus = 1
+    )""")
+
+    orders = frappe.db.sql(f"""
+        SELECT so.name, so.customer, so.customer_name, so.transaction_date, so.grand_total,
+               so.currency, so.per_delivered, so.per_billed, so.status, so.owner
+        FROM `tabSales Order` so
+        WHERE {' AND '.join(conditions)}
+        ORDER BY so.transaction_date DESC
+        LIMIT 300
+    """, params, as_dict=1)
+
+    return {
+        "orders": orders,
+        "metrics": {
+            "count": len(orders),
+            "total_to_bill": sum(flt(o.grand_total) * (100 - flt(o.per_billed)) / 100 for o in orders),
+        }
+    }
+
+
+# --------------------------------------------------------------------------
+# Purchase Flow / Job Work / Finance — row-level "see items" toggle
+# --------------------------------------------------------------------------
+
+@frappe.whitelist()
+def get_document_items(doctype, docname):
+    """
+    Item child-table rows for one document — backs the row-level "see items"
+    toggle on Purchase Flow / Job Work / Finance (those rows are Purchase
+    Orders, Material Requests, Receipts and Invoices, not Sales Orders, so
+    the Sales Order stock widget doesn't apply — this shows the document's
+    own line items instead).
+
+    A subcontracted Purchase Order is a named special case: its own `items`
+    are the raw/service material sent to the jobber, and `fg_item`/
+    `fg_item_qty` on those same rows describe the finished good it produces
+    — both are surfaced as separate rows so the panel reads as "sent X, get
+    back Y" rather than just the raw material.
+    """
+    _guard()
+    allowed = {"Purchase Order", "Material Request", "Purchase Receipt",
+               "Subcontracting Receipt", "Sales Invoice", "Purchase Invoice"}
+    if doctype not in allowed:
+        frappe.throw(_("Unsupported document type: {0}").format(doctype))
+
+    doc = frappe.get_doc(doctype, docname)
+    doc.check_permission("read")
+    is_subcontracted_po = doctype == "Purchase Order" and bool(doc.get("is_subcontracted"))
+
+    rows = []
+    for item in doc.get("items") or []:
+        rows.append({
+            "item_code": item.item_code, "item_name": item.get("item_name"),
+            "qty": item.qty, "uom": item.get("uom"),
+            "rate": item.get("rate"), "warehouse": item.get("warehouse"),
+            "role": "Raw / Service Item" if is_subcontracted_po else None,
+        })
+        if is_subcontracted_po and item.get("fg_item"):
+            rows.append({
+                "item_code": item.get("fg_item"), "item_name": None, "qty": item.get("fg_item_qty"),
+                "uom": None, "rate": None, "warehouse": None, "role": "Finished Good",
+            })
+    return rows
+
+
+# --------------------------------------------------------------------------
+# Tab — Stock Tracker (global item availability & Pick List reservations)
+# --------------------------------------------------------------------------
+
+def _get_global_pick_reservations(item_codes, warehouse=None):
+    """
+    {item_code: {"draft_qty": x, "submitted_qty": y}} — the same held_qty
+    computation custom_script._get_pick_blockers already uses per Sales
+    Order (draft rows count stock_qty, submitted rows count picked_qty
+    minus delivered_qty, excluding Completed/Cancelled Pick Lists),
+    aggregated globally across every Sales Order instead of scoped to one.
+    """
+    if not item_codes:
+        return {}
+
+    params = {"items": tuple(item_codes)}
+    wh_filter = ""
+    if warehouse:
+        wh_filter = "AND pli.warehouse = %(warehouse)s"
+        params["warehouse"] = warehouse
+
+    rows = frappe.db.sql(f"""
+        SELECT pli.item_code, pl.docstatus,
+               SUM(CASE WHEN pli.picked_qty > 0 AND pl.docstatus = 1
+                        THEN pli.picked_qty - IFNULL(pli.delivered_qty, 0)
+                        ELSE pli.stock_qty END) AS reserved_qty
+        FROM `tabPick List Item` pli
+        JOIN `tabPick List` pl ON pl.name = pli.parent
+        WHERE pli.item_code IN %(items)s
+          AND (pli.picked_qty > 0 OR pli.stock_qty > 0)
+          AND pl.status NOT IN ('Completed', 'Cancelled')
+          AND pli.docstatus != 2
+          {wh_filter}
+        GROUP BY pli.item_code, pl.docstatus
+    """, params, as_dict=1)
+
+    out = {}
+    for r in rows:
+        entry = out.setdefault(r.item_code, {"draft_qty": 0.0, "submitted_qty": 0.0})
+        entry["submitted_qty" if r.docstatus == 1 else "draft_qty"] += flt(r.reserved_qty)
+    return out
+
+
+@frappe.whitelist()
+def get_stock_tracker(search=None, warehouse=None):
+    """
+    Global (not per-Sales-Order) item availability report: physical stock by
+    warehouse, how much of it is already reserved by draft/submitted Pick
+    Lists across every Sales Order, and the resulting net-available
+    quantity — stock that looks free in Bin may already be claimed by
+    another order's Pick List.
+    """
+    _guard()
+    _guard_tab("stock")
+
+    # Every stock item shows by default — search/warehouse only narrow from
+    # there, they never gate which items appear. An item with zero stock and
+    # no reservation is still a valid, useful row (it's the "out of stock"
+    # signal); the warehouse filter narrows each item's figures below, not
+    # the item list itself.
+    conditions = ["i.disabled = 0", "i.is_stock_item = 1"]
+    params = {}
+    if search:
+        conditions.append("(i.item_code LIKE %(q)s OR i.item_name LIKE %(q)s)")
+        params["q"] = f"%{search}%"
+
+    items = frappe.db.sql(f"""
+        SELECT i.item_code, i.item_name, i.stock_uom
+        FROM `tabItem` i
+        WHERE {' AND '.join(conditions)}
+        ORDER BY i.item_code
+        LIMIT 300
+    """, params, as_dict=1)
+    if not items:
+        return []
+
+    item_codes = [i.item_code for i in items]
+
+    bin_params = {"items": tuple(item_codes)}
+    bin_where = "item_code IN %(items)s AND actual_qty != 0"
+    if warehouse:
+        bin_where += " AND warehouse = %(warehouse)s"
+        bin_params["warehouse"] = warehouse
+    bins = frappe.db.sql(f"""
+        SELECT item_code, warehouse, actual_qty, reserved_qty,
+               reserved_qty_for_production, reserved_qty_for_sub_contract
+        FROM `tabBin` WHERE {bin_where} ORDER BY actual_qty DESC
+    """, bin_params, as_dict=1)
+
+    bins_by_item = {}
+    for b in bins:
+        bins_by_item.setdefault(b.item_code, []).append(b)
+
+    reservations = _get_global_pick_reservations(item_codes, warehouse)
+
+    result = []
+    for i in items:
+        wh_rows = bins_by_item.get(i.item_code, [])
+        total_available = sum(flt(w.actual_qty) for w in wh_rows)
+        res = reservations.get(i.item_code, {"draft_qty": 0.0, "submitted_qty": 0.0})
+        net_available = total_available - res["draft_qty"] - res["submitted_qty"]
+        result.append({
+            "item_code": i.item_code, "item_name": i.item_name, "stock_uom": i.stock_uom,
+            "total_available_stock": total_available,
+            "warehouse_stock": wh_rows,
+            "picked_draft_qty": res["draft_qty"], "picked_submitted_qty": res["submitted_qty"],
+            "net_available": net_available,
+        })
+    return result
+
+
+@frappe.whitelist()
+def get_warehouses():
+    _guard()
+    return frappe.get_all("Warehouse", filters={"disabled": 0, "is_group": 0},
+                           fields=["name"], order_by="name")
+
+
+@frappe.whitelist()
+def get_stock_reservation_details(item_code, warehouse, kind):
+    """
+    Which documents are actually behind one of the Stock Tracker's three
+    Bin reservation counters, for its "click the count, see why" drill-down.
+    Bin itself only stores the number — this re-derives the source rows the
+    same way ERPNext's own Bin recalculation does for each counter:
+
+      reserved                -> submitted, open Sales Order Item lines
+      reserved_for_production -> submitted, open Work Order requirements
+      reserved_for_subcontract -> submitted, open Subcontracting Order /
+                                  old-flow Purchase Order raw-material
+                                  requirements (both subcontracting flows)
+    """
+    _guard()
+    params = {"item_code": item_code, "warehouse": warehouse}
+
+    if kind == "reserved":
+        # Matches erpnext.stock.stock_balance.get_reserved_qty's own two
+        # sources: a direct Sales Order Item line, or the item riding along
+        # as a component of a Product Bundle sold on the order (a Packed
+        # Item row) — Bin.reserved_qty sums both, so a bundle-only
+        # reservation would otherwise show a count with nothing behind it.
+        direct = frappe.db.sql("""
+            SELECT so.name, so.customer_name, soi.qty, soi.delivered_qty,
+                   (soi.qty - soi.delivered_qty) AS outstanding_qty
+            FROM `tabSales Order Item` soi
+            JOIN `tabSales Order` so ON so.name = soi.parent
+            WHERE soi.item_code = %(item_code)s AND soi.warehouse = %(warehouse)s
+              AND (soi.delivered_by_supplier IS NULL OR soi.delivered_by_supplier = 0)
+              AND so.docstatus = 1 AND so.status NOT IN ('On Hold', 'Closed')
+              AND soi.qty > soi.delivered_qty
+            ORDER BY so.transaction_date DESC
+        """, params, as_dict=1)
+
+        bundled = frappe.db.sql("""
+            SELECT so.name, so.customer_name, pi.qty,
+                   IFNULL(soi.delivered_qty, 0) AS delivered_qty,
+                   (pi.qty - IFNULL(soi.delivered_qty, 0)) AS outstanding_qty
+            FROM `tabPacked Item` pi
+            JOIN `tabSales Order` so ON so.name = pi.parent AND pi.parenttype = 'Sales Order'
+            LEFT JOIN `tabSales Order Item` soi ON soi.name = pi.parent_detail_docname
+            WHERE pi.item_code = %(item_code)s AND pi.warehouse = %(warehouse)s
+              AND pi.item_code != pi.parent_item
+              AND so.docstatus = 1 AND so.status NOT IN ('On Hold', 'Closed')
+            ORDER BY so.transaction_date DESC
+        """, params, as_dict=1)
+
+        return list(direct) + list(bundled)
+
+    if kind == "production":
+        return frappe.db.sql("""
+            SELECT wo.name, wo.status, woi.required_qty, woi.transferred_qty,
+                   (woi.required_qty - woi.transferred_qty) AS outstanding_qty
+            FROM `tabWork Order Item` woi
+            JOIN `tabWork Order` wo ON wo.name = woi.parent
+            WHERE woi.item_code = %(item_code)s AND wo.source_warehouse = %(warehouse)s
+              AND wo.docstatus = 1 AND wo.status NOT IN ('Stopped', 'Completed', 'Closed')
+              AND (woi.required_qty - woi.transferred_qty) > 0
+            ORDER BY wo.creation DESC
+        """, params, as_dict=1)
+
+    if kind == "subcontract":
+        new_flow = frappe.db.sql("""
+            SELECT sco.name, 'Subcontracting Order' AS doctype, sco.supplier, sup.supplier_name,
+                   scosi.required_qty AS qty
+            FROM `tabSubcontracting Order Supplied Item` scosi
+            JOIN `tabSubcontracting Order` sco ON sco.name = scosi.parent
+            LEFT JOIN `tabSupplier` sup ON sup.name = sco.supplier
+            WHERE scosi.rm_item_code = %(item_code)s AND scosi.reserve_warehouse = %(warehouse)s
+              AND sco.docstatus = 1 AND sco.per_received < 100
+        """, params, as_dict=1)
+        old_flow = frappe.db.sql("""
+            SELECT po.name, 'Purchase Order' AS doctype, po.supplier, sup.supplier_name,
+                   poisup.required_qty AS qty
+            FROM `tabPurchase Order Item Supplied` poisup
+            JOIN `tabPurchase Order` po ON po.name = poisup.parent
+            LEFT JOIN `tabSupplier` sup ON sup.name = po.supplier
+            WHERE poisup.rm_item_code = %(item_code)s AND poisup.reserve_warehouse = %(warehouse)s
+              AND po.docstatus = 1 AND IFNULL(po.is_old_subcontracting_flow, 0) = 1
+              AND po.per_received < 100
+        """, params, as_dict=1)
+        return list(new_flow) + list(old_flow)
+
+    if kind == "pick_draft":
+        wh_cond = ""
+        if warehouse:
+            wh_cond = "AND pli.warehouse = %(warehouse)s"
+        return frappe.db.sql(f"""
+            SELECT pl.name, pli.warehouse, pli.sales_order, so.customer_name, pli.stock_qty AS qty
+            FROM `tabPick List Item` pli
+            JOIN `tabPick List` pl ON pl.name = pli.parent
+            LEFT JOIN `tabSales Order` so ON so.name = pli.sales_order
+            WHERE pli.item_code = %(item_code)s
+              AND pli.stock_qty > 0
+              AND pl.docstatus = 0
+              AND pl.status NOT IN ('Completed', 'Cancelled')
+              AND pli.docstatus != 2
+              {wh_cond}
+            ORDER BY pl.creation DESC
+        """, params, as_dict=1)
+
+    if kind == "pick_submitted":
+        wh_cond = ""
+        if warehouse:
+            wh_cond = "AND pli.warehouse = %(warehouse)s"
+        return frappe.db.sql(f"""
+            SELECT pl.name, pli.warehouse, pli.sales_order, so.customer_name,
+                   (pli.picked_qty - IFNULL(pli.delivered_qty, 0)) AS qty
+            FROM `tabPick List Item` pli
+            JOIN `tabPick List` pl ON pl.name = pli.parent
+            LEFT JOIN `tabSales Order` so ON so.name = pli.sales_order
+            WHERE pli.item_code = %(item_code)s
+              AND pli.picked_qty > IFNULL(pli.delivered_qty, 0)
+              AND pl.docstatus = 1
+              AND pl.status NOT IN ('Completed', 'Cancelled')
+              AND pli.docstatus != 2
+              {wh_cond}
+            ORDER BY pl.creation DESC
+        """, params, as_dict=1)
+
+    frappe.throw(_("Unknown reservation kind: {0}").format(kind))
 
 
 @frappe.whitelist()
@@ -2258,5 +2723,14 @@ def mark_notification_as_unseen(event_doctype, event_name, event_docstatus=None,
     seen_dict.pop(_seen_key(tab, event_doctype, event_name, event_docstatus, event_status), None)
     _save_seen_dict(seen_dict)
     return True
+
+
+@frappe.whitelist()
+def repost_bin_qty(item_code, warehouse):
+    _guard()
+    from erpnext.stock.stock_balance import repost_stock
+    repost_stock(item_code, warehouse, only_bin=True)
+    return True
+
 
 

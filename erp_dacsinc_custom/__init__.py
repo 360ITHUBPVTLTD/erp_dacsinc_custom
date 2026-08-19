@@ -103,18 +103,21 @@ def patch_search_widget():
 			original_search_widget = frappe_search.search_widget
 			
 			@frappe.whitelist()
-			def patched_search_widget(doctype, txt, query=None, searchfield=None, start=0, page_length=10, filters=None, filter_fields=None, as_dict=False, *args, **kwargs):
+			def patched_search_widget(doctype, txt, query=None, searchfield=None, start=0, page_length=10, filters=None, filter_fields=None, as_dict=False, **kwargs):
+				# Safely pop or ignore unexpected arguments like 'cmd' that might be passed via form_dict
+				kwargs.pop('cmd', None)
+				
 				txt = txt.strip() if txt else ""
 				if doctype not in ["Item", "Customer", "Supplier"] or not txt:
-					return original_search_widget(doctype, txt, query, searchfield, start, page_length, filters, filter_fields, as_dict, *args, **kwargs)
+					return original_search_widget(doctype, txt, query, searchfield, start, page_length, filters, filter_fields, as_dict, **kwargs)
 
 				words = [w for w in txt.split() if w]
 				if len(words) <= 1:
-					raw_results = original_search_widget(doctype, txt, query, searchfield, start, page_length, filters, filter_fields, as_dict, *args, **kwargs)
+					raw_results = original_search_widget(doctype, txt, query, searchfield, start, page_length, filters, filter_fields, as_dict, **kwargs)
 				else:
 					matching_names_per_word = []
 					for w in words:
-						res = original_search_widget(doctype, w, query, searchfield, 0, 3000, filters, filter_fields, True, *args, **kwargs)
+						res = original_search_widget(doctype, w, query, searchfield, 0, 3000, filters, filter_fields, True, **kwargs)
 						names = {item['name'] for item in res if 'name' in item}
 						matching_names_per_word.append(names)
 
@@ -128,7 +131,7 @@ def patch_search_widget():
 					if not common_names:
 						return []
 
-					first_word_results = original_search_widget(doctype, words[0], query, searchfield, 0, 3000, filters, filter_fields, as_dict, *args, **kwargs)
+					first_word_results = original_search_widget(doctype, words[0], query, searchfield, 0, 3000, filters, filter_fields, as_dict, **kwargs)
 
 					raw_results = []
 					seen = set()
