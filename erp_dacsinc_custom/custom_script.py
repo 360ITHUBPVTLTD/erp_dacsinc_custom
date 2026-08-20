@@ -8686,6 +8686,36 @@ def remove_duplicate_bom_items():
     }
 
 
+@frappe.whitelist()
+def remove_duplicate_items_for_bom(bom_name):
+    if "System Manager" not in frappe.get_roles():
+        frappe.throw(frappe._("Not permitted"), frappe.PermissionError)
+        
+    bom_doc = frappe.get_doc("BOM", bom_name)
+    if bom_doc.docstatus != 0:
+        frappe.throw(frappe._("Only draft BOMs can be deduplicated."))
+        
+    seen_items = set()
+    new_items = []
+    duplicates_found = False
+    
+    for item in bom_doc.items:
+        item_key = (item.item_code, flt(item.qty))
+        if item_key not in seen_items:
+            seen_items.add(item_key)
+            new_items.append(item)
+        else:
+            duplicates_found = True
+            
+    if duplicates_found:
+        bom_doc.set("items", new_items)
+        bom_doc.save(ignore_permissions=True)
+        return True
+    return False
+
+
+
+
 
 
 
