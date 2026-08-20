@@ -8640,3 +8640,49 @@ def create_dn_or_si_from_pick_lists(sales_order, pick_lists, doctype):
     return doc.as_dict()
 
 
+@frappe.whitelist()
+def remove_duplicate_bom_items():
+    # Only process BOMs that are in Draft status (docstatus = 0)
+    draft_boms = frappe.get_all("BOM", filters={"docstatus": 0}, fields=["name"])
+    
+    modified_boms = []
+    errors = []
+    
+    for bom in draft_boms:
+        try:
+            bom_doc = frappe.get_doc("BOM", bom.name)
+            
+            seen_items = set()
+            new_items = []
+            duplicates_found = False
+            
+            for item in bom_doc.items:
+                # Deduplicate by item_code and qty
+                item_key = (item.item_code, flt(item.qty))
+                if item_key not in seen_items:
+                    seen_items.add(item_key)
+                    new_items.append(item)
+                else:
+                    duplicates_found = True
+            
+            if duplicates_found:
+                # Replace the items list with the deduplicated list
+                bom_doc.set("items", new_items)
+                
+                # Save the document (will trigger cost recalculations and update exploded items)
+                bom_doc.save(ignore_permissions=True)
+                modified_boms.append(bom.name)
+        except Exception as e:
+            frappe.log_error(message=frappe.get_traceback(), title=f"Error removing duplicates from BOM {bom.name}")
+            errors.append(f"BOM {bom.name}: {str(e)}")
+            
+    return {
+        "status": "success",
+        "modified_boms": modified_boms,
+        "errors": errors
+    }
+
+
+
+
+
