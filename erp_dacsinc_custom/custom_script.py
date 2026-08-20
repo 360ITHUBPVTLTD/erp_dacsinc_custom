@@ -8642,6 +8642,9 @@ def create_dn_or_si_from_pick_lists(sales_order, pick_lists, doctype):
 
 @frappe.whitelist()
 def remove_duplicate_bom_items():
+    if "System Manager" not in frappe.get_roles():
+        frappe.throw(frappe._("Not permitted"), frappe.PermissionError)
+
     # Only process BOMs that are in Draft status (docstatus = 0)
     draft_boms = frappe.get_all("BOM", filters={"docstatus": 0}, fields=["name"])
     
