@@ -23,7 +23,7 @@ def get_approved_leave_applications():
 
         fields=["name",'employee_name', "leave_approver", 'from_date', 'to_date', 'total_leave_days','name']
     )
-    print("LLLLLLLLLLllllllLLLlllllLLLllllLlllLLL",leave_applications)
+    # print("LLLLLLLLLLllllllLLLlllllLLLllllLlllLLL",leave_applications)
     for app in leave_applications:
         if app.leave_approver and app.leave_approver in emp_dict:
             
