@@ -190,6 +190,7 @@ def _get_pick_list_reserved_qty(sales_order, item_code):
 import frappe
 import json
 from frappe.utils import flt, cint
+from erp_dacsinc_custom.custom_script import check_bom_raw_materials_in_stock
 
 @frappe.whitelist()
 def validate_and_get_items_for_po(selected_items, is_subcontracted=0):
@@ -199,6 +200,7 @@ def validate_and_get_items_for_po(selected_items, is_subcontracted=0):
     is_subcontracted = cint(is_subcontracted)
     valid_items = []
     rejected_items = []
+    rm_bom_cache = {}
 
     for entry in selected_items:
         qty_to_add = flt(entry.get("pendingQty") or entry.get("qty"), 0)
@@ -217,7 +219,7 @@ def validate_and_get_items_for_po(selected_items, is_subcontracted=0):
         so_item = frappe.db.get_value(
             "Sales Order Item",
             {"parent": sales_order, "item_code": item_code},
-            ["qty", "delivered_qty"],
+            ["name", "qty", "delivered_qty"],
             as_dict=True,
         )
 
@@ -233,6 +235,23 @@ def validate_and_get_items_for_po(selected_items, is_subcontracted=0):
         if is_subcontracted:
             service_item_code = None
             bom_name = entry.get("bom_no") or entry.get("bom")
+
+            # Hard block, no override: this dialog's checkbox is already
+            # disabled client-side when RM is short, but re-check here too
+            # so a bypassed/stale checkbox (or a direct API call) still
+            # can't get a Subcontract PO row past this point.
+            is_fulfilled, shortages = check_bom_raw_materials_in_stock(bom_name, qty_to_add, rm_bom_cache)
+            if not is_fulfilled:
+                shortage_desc = "; ".join(
+                    f"{s['item_code']} needs {s['required_qty']:.2f} {s['uom']}, only {s['available_qty']:.2f} in stock"
+                    for s in shortages
+                )
+                rejected_items.append({
+                    "sales_order": sales_order,
+                    "item_name": entry.get("itemName", item_code),
+                    "reason": f"Raw materials not physically in stock — {shortage_desc}"
+                })
+                continue
 
             # 1. From passed BOM
             if bom_name:
@@ -258,6 +277,12 @@ def validate_and_get_items_for_po(selected_items, is_subcontracted=0):
                 "fg_item": item_code,            # the item being manufactured
                 "fg_item_qty": qty_to_add,
                 "sales_order": sales_order,
+                # Links this row back to the exact Sales Order Item it fulfils
+                # — without it, Order Flow's is_rm_tier check (_EVENT_SQL) has
+                # nothing to key on and silently mistakes this PO for a
+                # raw-material-only request, hiding it from "PO Raised" /
+                # Document Flow and leaving the order stuck on "Newly Created".
+                "sales_order_item": so_item.name,
                 "bom": bom_name,
             })
 
@@ -277,6 +302,10 @@ def validate_and_get_items_for_po(selected_items, is_subcontracted=0):
                 "item_code": item_code,
                 "qty": qty_to_add,
                 "sales_order": sales_order,
+                # Same reasoning as the subcontracted branch above — without
+                # this, a plain direct-buy PO for this SO's own item is
+                # mistaken for a raw-material request by Order Flow.
+                "sales_order_item": so_item.name,
                 # Important: make sure subcontracting fields are NOT set
                 "fg_item": None,
                 "fg_item_qty": None,
@@ -1259,10 +1288,11 @@ def get_pending_so_with_material_stock(is_subcontracted=False):
         pick_bank[(p.sales_order, p.item_code, p.docstatus)] = flt(p.total_qty)
 
     final_rows = []
-    
+
     so_linked_po_tracker = defaultdict(float)
     so_pick_sub_tracker = defaultdict(float)
     so_pick_draft_tracker = defaultdict(float)
+    rm_bom_cache = {}
 
     for row in pending_orders:
         it, so = row.item_code, row.sales_order
@@ -1305,9 +1335,23 @@ def get_pending_so_with_material_stock(is_subcontracted=False):
         others = [p for p in po_data if p.item_code == it and p.sales_order != so]
         row["other_po_qty"] = sum(flt(p.qty) for p in others)
         row["other_po_list"] = [
-            {"id": p.po_name, "sup": p.supplier_name or p.supplier_id, "qty": p.qty} 
+            {"id": p.po_name, "sup": p.supplier_name or p.supplier_id, "qty": p.qty}
             for p in others
         ]
+
+        # --- D. RM physical-stock check (subcontract/BOM rows only) ---
+        # Hard block, no override: a BOM row this dialog would send on to
+        # validate_and_get_items_for_po must already show as blocked here,
+        # or "select all" would happily check a row the backend then
+        # silently drops. qty_needed mirrors the client's own `to_buy` math
+        # (req - linked PO - sub picks - draft picks) so the two agree.
+        row["rm_in_stock"] = True
+        row["rm_shortage_items"] = []
+        if is_subcontracted and row.bom:
+            qty_needed = max(0, rem_after_all_picks - allocated_po)
+            is_fulfilled, shortages = check_bom_raw_materials_in_stock(row.bom, qty_needed, rm_bom_cache)
+            row["rm_in_stock"] = is_fulfilled
+            row["rm_shortage_items"] = shortages
 
         final_rows.append(row)
 

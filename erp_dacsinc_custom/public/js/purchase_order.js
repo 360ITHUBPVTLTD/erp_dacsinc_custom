@@ -1114,7 +1114,18 @@ function show_sales_order_dialog(frm, data, is_subcontracted) {
         const draft_picks = flt(so.pick_draft || 0); // <--- ADDED DRAFT DEDUCTION
         const linked_po_qty = flt(so.linked_po_qty || 0);
         const to_buy = Math.max(0, req - linked_po_qty - sub_picks - draft_picks); // *** UPDATED MATH ***
-        const isDisabled = to_buy <= 0;
+        // Hard block, no override: a BOM row whose raw materials aren't
+        // physically in stock yet (so.rm_in_stock, computed server-side in
+        // get_pending_so_with_material_stock) can't be selected here even if
+        // it otherwise still needs buying — re-checked again server-side in
+        // validate_and_get_items_for_po so this can't be bypassed either.
+        const rm_blocked = !!so.bom && so.rm_in_stock === false;
+        const isDisabled = to_buy <= 0 || rm_blocked;
+        const rm_shortage_title = rm_blocked
+            ? (so.rm_shortage_items || []).map(s =>
+                `${s.item_code}: needs ${flt(s.required_qty).toFixed(2)} ${s.uom}, only ${flt(s.available_qty).toFixed(2)} in stock`
+              ).join('\n')
+            : '';
 
         let linked_list = (so.linked_po_details || []).map(p => `
             <div class="po-detail-line">
@@ -1153,7 +1164,8 @@ function show_sales_order_dialog(frm, data, is_subcontracted) {
                             ${so.item_code}
                         </a>
                     </div>
-                
+                    ${rm_blocked ? `<span class="rm-req" title="${frappe.utils.escape_html(rm_shortage_title)}"><i class="fa fa-ban"></i> RM Not in Stock</span>` : ''}
+
                     <!-- Customer Link (Name + ID) -->
                     <div style="margin-top: 4px;">
                         <a href="/app/customer/${so.customer}" target="_blank" class="text-muted" style="font-size: 11px; text-decoration: none;">

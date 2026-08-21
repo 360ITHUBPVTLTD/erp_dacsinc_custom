@@ -3931,6 +3931,75 @@ def create_pick_list_for_items(sales_order, items=None):
     return {"created": created}
 
 
+def check_bom_raw_materials_in_stock(bom_no, qty_needed, bom_cache=None):
+    """
+    True only if every raw material in `bom_no` has enough qty physically in
+    tabBin (actual_qty, summed across warehouses — the same measure already
+    used as rm_available_stock in get_item_stock_details_bulk) to cover
+    `qty_needed` units of the finished good. A pending Material Request or
+    Purchase Order for the shortfall does NOT count as fulfilled here — only
+    stock actually on hand right now. This is the one place the "physically
+    in stock" rule lives; every PO-creation guard for a BOM item reuses it so
+    the same Sales Order Item reads the same way everywhere.
+
+    Returns (is_fulfilled, shortages) where shortages is a list of
+    {"item_code", "item_name", "uom", "required_qty", "available_qty"} for
+    every raw material that falls short — empty when is_fulfilled is True.
+
+    `bom_cache` is an optional dict a caller can pass in and reuse across
+    several calls in the same request, so the same BOM is never exploded
+    (and its stock re-queried) more than once. Deliberately does not net
+    stock consumption across multiple calls sharing one cache — each call is
+    a snapshot against current Bin quantities, same as elsewhere in this file.
+    """
+    qty_needed = flt(qty_needed)
+    if not bom_no or qty_needed <= 0:
+        return True, []
+
+    cache = bom_cache if bom_cache is not None else {}
+    rm_lines = cache.get(bom_no)
+    if rm_lines is None:
+        try:
+            bom_doc = frappe.get_doc("BOM", bom_no)
+        except frappe.DoesNotExistError:
+            cache[bom_no] = []
+            return True, []
+
+        rm_codes = [bi.item_code for bi in bom_doc.items]
+        stock_map = {}
+        if rm_codes:
+            for s in frappe.db.sql("""
+                SELECT item_code, SUM(actual_qty) as qty FROM `tabBin`
+                WHERE item_code IN %s AND actual_qty > 0 GROUP BY item_code
+            """, (tuple(rm_codes),), as_dict=1):
+                stock_map[s.item_code] = flt(s.qty)
+
+        rm_lines = []
+        for bi in bom_doc.items:
+            qty_per_fg = flt(bi.stock_qty) if bi.stock_qty else flt(bi.qty)
+            rm_lines.append({
+                "item_code": bi.item_code,
+                "item_name": bi.item_name or frappe.db.get_value("Item", bi.item_code, "item_name") or bi.item_code,
+                "uom": bi.uom or bi.stock_uom,
+                "qty_per_fg": qty_per_fg,
+                "available_qty": stock_map.get(bi.item_code, 0.0),
+            })
+        cache[bom_no] = rm_lines
+
+    shortages = []
+    for rm in rm_lines:
+        required_qty = flt(rm["qty_per_fg"]) * qty_needed
+        if required_qty <= 0:
+            continue
+        if flt(rm["available_qty"]) < required_qty:
+            shortages.append({
+                "item_code": rm["item_code"], "item_name": rm["item_name"], "uom": rm["uom"],
+                "required_qty": required_qty, "available_qty": flt(rm["available_qty"]),
+            })
+
+    return (len(shortages) == 0), shortages
+
+
 @frappe.whitelist()
 def make_subcontract_purchase_order(sales_order, item_code, qty=None):
     """
@@ -3955,6 +4024,20 @@ def make_subcontract_purchase_order(sales_order, item_code, qty=None):
         frappe.throw(_("{0} is not on Sales Order {1}.").format(item_code, sales_order))
 
     qty = flt(qty) or max(0, flt(so_row.qty) - flt(so_row.delivered_qty)) or flt(so_row.qty)
+
+    # Hard block, no override: raw materials must be physically in stock
+    # before a Subcontract PO can be raised for this item — a pending MR/PO
+    # for the shortfall is not enough (see check_bom_raw_materials_in_stock).
+    is_fulfilled, shortages = check_bom_raw_materials_in_stock(so_row.bom_no, qty)
+    if not is_fulfilled:
+        shortage_lines = "<br>".join(
+            _("{0} — needs {1:.2f} {2}, only {3:.2f} in stock").format(
+                s["item_code"], s["required_qty"], s["uom"], s["available_qty"])
+            for s in shortages
+        )
+        frappe.throw(_(
+            "Cannot create a Subcontract PO for {0}: raw materials are not physically in stock yet.<br>{1}"
+        ).format(item_code, shortage_lines))
 
     service_item = None
     supplier = None

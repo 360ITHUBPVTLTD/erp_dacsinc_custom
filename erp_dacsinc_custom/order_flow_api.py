@@ -24,7 +24,9 @@ from erp_dacsinc_custom.order_flow_permissions import (
     get_order_flow_permissions,
     is_scoped_to_own_customers,
 )
-from erp_dacsinc_custom.custom_script import _so_has_submitted_dn, _so_has_submitted_stock_si
+from erp_dacsinc_custom.custom_script import (
+    _so_has_submitted_dn, _so_has_submitted_stock_si, check_bom_raw_materials_in_stock,
+)
 
 
 # --------------------------------------------------------------------------
@@ -1121,6 +1123,24 @@ def _compute_stage_info(order):
     else:
         action_label = "Raise MR from SO"
 
+    # Calling this "Create Subcontract PO" would be a lie if the raw material
+    # for it isn't physically in stock — the SO's own widget (so_buy_btn) and
+    # the backend (make_subcontract_purchase_order) both hard-block that PO,
+    # so the label here must say so too instead of sending the user to a dead
+    # end. Only worth checking for orders with a BOM item that could actually
+    # reach this branch (see _has_bom_rm_shortage's own docstring for why the
+    # "newly_created" state makes the qty math simple here).
+    if has_bom and _has_bom_rm_shortage(order["name"]):
+        return {
+            "stage_key": "newly_created",
+            "stage_label": "Newly Created — RM Shortage",
+            "badge_class": "of-pill--warn",
+            "icon": "exclamation-triangle",
+            "action_type": "make_mr",
+            "action_label": "RM Not in Stock — Cannot Create PO Yet",
+            "action_btn_class": "of-btn--warning"
+        }
+
     return {
         "stage_key": "newly_created",
         "stage_label": "Newly Created",
@@ -1133,6 +1153,39 @@ def _compute_stage_info(order):
         "action_label": action_label,
         "action_btn_class": "of-btn--primary"
     }
+
+
+def _has_bom_rm_shortage(sales_order_name):
+    """
+    True when at least one BOM item still pending on this Sales Order (qty >
+    delivered_qty) has a raw material that is not yet physically in stock —
+    see check_bom_raw_materials_in_stock. This is only ever called from the
+    "newly_created" branch of _compute_stage_info, which is reached only when
+    the order has no MR/PO/pick/receipt anywhere on it yet — so each BOM
+    row's own qty - delivered_qty is exactly what's still needed, with no
+    further netting against other documents required. Fails open (treats as
+    fulfilled) on any lookup error so a bad BOM never breaks the tracker.
+    """
+    try:
+        bom_rows = frappe.db.sql("""
+            SELECT item_code, bom_no, qty, delivered_qty
+            FROM `tabSales Order Item`
+            WHERE parent = %s AND bom_no IS NOT NULL AND bom_no != ''
+        """, sales_order_name, as_dict=True)
+
+        bom_cache = {}
+        for row in bom_rows:
+            qty_needed = flt(row.qty) - flt(row.delivered_qty)
+            if qty_needed <= 0:
+                continue
+            is_fulfilled, _shortages = check_bom_raw_materials_in_stock(row.bom_no, qty_needed, bom_cache)
+            if not is_fulfilled:
+                return True
+        return False
+    except Exception:
+        frappe.log_error(title="Order Flow: RM shortage check failed",
+                          message=frappe.get_traceback())
+        return False
 
 
 @frappe.whitelist()

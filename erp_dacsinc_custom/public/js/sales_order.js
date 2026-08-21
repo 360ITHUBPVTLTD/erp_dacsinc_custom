@@ -819,6 +819,13 @@ function generate_stock_overview_table(frm, callback) {
                                 : (mr_open > 0
                                     ? so_pill('planned', 'file-text-o', 'Requested')
                                     : so_pill('blocked', 'exclamation-triangle', 'Out of Stock'));
+                            // Surface the RM block right here too, not only inside the
+                            // collapsible Raw Material Pipeline sub-row below — otherwise
+                            // "why is there no PO button" is invisible until it's expanded.
+                            if (d.is_bom_item && !so_rm_physically_in_stock(d)) {
+                                status_html += `<div class="so-micro" style="margin-top:4px;color:var(--so-red);font-weight:600;">
+                                    <i class="fa fa-flask"></i> RM Not in Stock</div>`;
+                            }
                             action_parts.push(so_shortfall(needed_stock_qty));
 
                             if (has_incoming) {
@@ -2746,6 +2753,18 @@ function so_cmd_btn(onclick, icon, label, primary) {
         + `<i class="fa fa-${icon}"></i> ${esc(label)}</button>`;
 }
 
+// True only when every raw material line of this BOM item is PHYSICALLY in
+// stock right now (available >= needed) — a pending Material Request or
+// Purchase Order for the shortfall does not count. Mirrors the server-side
+// rule in custom_script.check_bom_raw_materials_in_stock, computed here from
+// the same rm_items_status data get_rm_breakdown_html already renders, so
+// the two never disagree. An item with no rm_items_status at all (lookup
+// failed, or a BOM with no lines) fails open — nothing to block on.
+function so_rm_physically_in_stock(d) {
+    const rm_items = ((d.rm_procurement_status || {}).rm_items_status) || [];
+    return rm_items.every(rm => flt(rm.rm_available_stock) >= flt(rm.rm_needed_for_shortfall) - 0.0001);
+}
+
 /**
  * The right way to buy this item.
  * A finished good with a BOM (or flagged as sub-contracted) is not bought off the
@@ -2754,11 +2773,21 @@ function so_cmd_btn(onclick, icon, label, primary) {
  */
 function so_buy_btn(d, so_name_arg, item_arg, qty, primary) {
     const subcontract = (d.is_sub_contracted_item || d.is_bom_item) && d.bom_no;
-    return subcontract
-        ? so_cmd_btn(`so_make_subcontract_po('${so_name_arg}','${item_arg}',${flt(qty)})`,
-            'cogs', 'Subcontract PO', primary)
-        : so_cmd_btn(`so_make_purchase_order('${so_name_arg}','${item_arg}')`,
+    if (!subcontract) {
+        return so_cmd_btn(`so_make_purchase_order('${so_name_arg}','${item_arg}')`,
             'shopping-cart', 'Purchase Order', primary);
+    }
+    // Hard block, no override: raw materials must be physically in stock
+    // before a Subcontract PO can be raised — see so_rm_physically_in_stock.
+    // The server enforces this too (make_subcontract_purchase_order), so this
+    // is about giving the user the right indication, not just UX polish.
+    if (!so_rm_physically_in_stock(d)) {
+        return `<span class="so-action__note so-action__note--blocked" style="color:var(--so-red);font-weight:600;"
+            title="${esc('Raw materials for this BOM are not fully in stock yet. See the Raw Material Pipeline below — request or order the shortfall, then wait for it to arrive before creating a Subcontract PO.')}">
+            <i class="fa fa-ban"></i> RM Not in Stock — PO Blocked</span>`;
+    }
+    return so_cmd_btn(`so_make_subcontract_po('${so_name_arg}','${item_arg}',${flt(qty)})`,
+        'cogs', 'Subcontract PO', primary);
 }
 
 // Map an ERPNext document status onto the pill palette.
