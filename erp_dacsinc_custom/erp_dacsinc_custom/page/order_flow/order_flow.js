@@ -1662,10 +1662,10 @@ class OrderFlow {
             <td>${of_esc(it.warehouse || '')}</td>
             <td>${it.role ? `<span class="of-chip">${of_esc(it.role)}</span>` : ''}</td>
         </tr>`;
-        return `<table class="of-table">
+        return `<div class="of-scroll"><table class="of-table">
             <thead><tr><th>Item</th><th>Qty</th><th>UOM</th><th>Rate</th><th>Warehouse</th><th></th></tr></thead>
             <tbody>${rows.map(line).join('')}</tbody>
-        </table>`;
+        </table></div>`;
     }
 
     // Item-wise Sent/Received/Pending for one Embroidery Work Order — same
@@ -1720,10 +1720,10 @@ class OrderFlow {
                 <td class="${pending > 0 ? 'of-val--warn' : ''}">${pending}</td>
             </tr>`;
         };
-        return `<table class="of-table">
+        return `<div class="of-scroll"><table class="of-table">
             <thead><tr><th>Item</th><th>Sent</th><th>Received</th><th>Pending</th></tr></thead>
             <tbody>${rows.map(line).join('')}</tbody>
-        </table>`;
+        </table></div>`;
     }
 
     // Embroidery Transfers carry no Sales Order and are already one item per
@@ -1754,7 +1754,7 @@ class OrderFlow {
                     args: { transfer_id }
                 }).then(r => {
                     const rows = r.message || [];
-                    $panel.html(rows.length ? `<table class="of-table">
+                    $panel.html(rows.length ? `<div class="of-scroll"><table class="of-table">
                         <thead><tr><th>Date</th><th>Qty Received</th><th>Warehouse</th><th>Stock Entry</th></tr></thead>
                         <tbody>${rows.map(rc => `<tr>
                             <td>${of_date(rc.date)}</td>
@@ -1764,7 +1764,7 @@ class OrderFlow {
                                 ? `<a href="/app/stock-entry/${encodeURIComponent(rc.stock_entry)}" target="_blank">${of_esc(rc.stock_entry)}</a>`
                                 : '—'}</td>
                         </tr>`).join('')}</tbody>
-                    </table>` : `<div class="of-empty">${__('No receipts recorded yet.')}</div>`);
+                    </table></div>` : `<div class="of-empty">${__('No receipts recorded yet.')}</div>`);
                 });
             }
         } else {
@@ -1872,6 +1872,50 @@ class OrderFlow {
                 return `<span class="of-micro of-link-flow" data-doctype="${doctype}" data-docs="${docs_data}" style="display:inline-block;white-space:nowrap;margin:1px 3px 1px 0;color:var(--of-info);font-weight:600;cursor:pointer;text-decoration:underline;" title="Click to view linked ${label}"><b>${n}</b> ${label}</span>`;
             }).join('');
 
+            // Raw-material-tier procurement (MR/PO/Receipt for a BOM component,
+            // never the SO's own sold item — see rm_counts/rm_mrs/rm_pos/rm_receipts
+            // from get_sales_tracker) shown as its own wave, entirely separate from
+            // the chain above: it must never be mistaken for progress on the item
+            // actually sold on this order, and it never drives Current Stage /
+            // Action Required (see _compute_stage_info on the server).
+            const rm_c = o.rm_counts || {};
+            const rm_chain_items = [
+                ['MR', rm_c['Material Request'], o.rm_mrs, 'Material Request'],
+                ['PO', rm_c['Purchase Order'], o.rm_pos, 'Purchase Order'],
+                ['Recv', (rm_c['Purchase Receipt'] || 0) + (rm_c['Subcontracting Receipt'] || 0), o.rm_receipts, 'Receipt']
+            ].filter(([, n]) => n);
+
+            const rm_chain_html = rm_chain_items.length ? `
+                <div class="of-rm-chain" title="${of_esc('Requests and purchase orders raised for the raw materials needed to make this item. Shown here separately from the order’s own delivery progress.')}">
+                    <i class="fa fa-flask" style="color:var(--of-purple);"></i>
+                    <span style="font-weight:700;color:var(--of-purple);">RM:</span>
+                    ${rm_chain_items.map(([label, n, docs, doctype]) => {
+                        const docs_data = doctype === 'Receipt'
+                            ? encodeURIComponent(JSON.stringify(docs || []))
+                            : (docs || []).join(',');
+                        return `<span class="of-micro of-link-flow" data-doctype="${doctype}" data-docs="${docs_data}" style="display:inline-block;white-space:nowrap;margin:1px 3px 1px 0;color:var(--of-purple);font-weight:600;cursor:pointer;text-decoration:underline;" title="Click to view linked ${label}"><b>${n}</b> ${label}</span>`;
+                    }).join('')}
+                </div>` : '';
+
+            // A short note under the main "Current Stage" pill so the RM
+            // pipeline is visible right where the user is already looking —
+            // without it, an order sitting at "Newly Created" because its own
+            // sold item has no MR/PO yet looks like nothing is happening, even
+            // though raw material for it is already being procured. Precedence
+            // (Received > Ordered > Requested) mirrors how far along that
+            // pipeline actually is, same idea as the main stage's own hierarchy.
+            let rm_stage_note_html = '';
+            if (rm_chain_items.length) {
+                const has_recv = rm_chain_items.some(([label]) => label === 'Recv');
+                const has_po = rm_chain_items.some(([label]) => label === 'PO');
+                const rm_note_text = has_recv ? 'RM Received' : has_po ? 'RM Ordered (PO)' : 'RM Requested (MR)';
+                rm_stage_note_html = `
+                    <div class="of-micro of-rm-note" style="margin-top:4px;color:var(--of-purple);font-weight:600;"
+                         title="Raw materials for this item are being requested or purchased. This order's stage above updates once the item itself is ready to pick or deliver.">
+                        <i class="fa fa-flask"></i> ${rm_note_text}
+                    </div>`;
+            }
+
             // Action Button HTML
             let action_btn_html = '';
             if (view_only) {
@@ -1918,11 +1962,12 @@ class OrderFlow {
                     <span class="of-pill ${st.badge_class || 'of-pill--draft'}">
                         <i class="fa fa-${st.icon || 'circle'}"></i> ${of_esc(of_to_title_case(st.stage_label || 'Open'))}
                     </span>
+                    ${rm_stage_note_html}
                 </td>
                 <td>
                     ${action_btn_html}
                 </td>
-                <td style="text-align:left;">${chain}</td>
+                <td style="text-align:left;">${chain}${rm_chain_html}</td>
                 <td>
                     ${of_status_chip(o.per_delivered, st.stage_key, 'delivered', o.delivery_notes, null, o.stock_invoices)}
                 </td>
@@ -1948,6 +1993,7 @@ class OrderFlow {
                     <i class="fa fa-tasks"></i> Sales Order Stage &amp; Required Action Plan
                     <small>Clear next action button for every order</small>
                 </div>
+                <div class="of-scroll-hint"><i class="fa fa-arrows-h"></i> ${__('Scroll sideways to see every column')}</div>
                 <div class="of-scroll">
                     <table class="of-table of-table--tracker">
                         <thead><tr>
@@ -2578,7 +2624,7 @@ class OrderFlow {
             args: { name: name }
         }).then(res => {
             const items = (res.message && res.message.items) || [];
-            let tbl = `<table class="table table-bordered table-sm" style="font-size:12px;">
+            let tbl = `<div class="of-scroll"><table class="table table-bordered table-sm" style="font-size:12px;">
                 <thead><tr class="bg-light"><th>${__('Item')}</th><th class="text-right">${__('Sent')}</th><th class="text-right">${__('Balance')}</th><th width="120">${__('Receive Qty')}</th></tr></thead><tbody>`;
             items.forEach(i => {
                 const bal = flt_of(i.ordered_qty) - flt_of(i.received_qty);
@@ -2589,7 +2635,7 @@ class OrderFlow {
                     <td><input type="number" class="form-control form-control-sm of-ewo-qty-in text-right" value="${bal}" min="0" max="${bal}" ${bal <= 0 ? 'disabled' : ''}></td>
                 </tr>`;
             });
-            tbl += `</tbody></table>`;
+            tbl += `</tbody></table></div>`;
 
             const d = new frappe.ui.Dialog({
                 title: __('Receive from Panel Jobber'),
@@ -2654,7 +2700,7 @@ class OrderFlow {
             args: { name: ewo_name }
         }).then(res => {
             const items = (res.message && res.message.items) || [];
-            let tbl = `<table class="table table-sm table-bordered">
+            let tbl = `<div class="of-scroll"><table class="table table-sm table-bordered">
                 <thead><tr class="bg-light"><th>${__('Item')}</th><th class="text-right">${__('Sent')}</th><th class="text-right">${__('Balance')}</th><th width="120">${__('Qty to Receive')}</th></tr></thead><tbody>`;
             items.forEach(i => {
                 const bal = flt_of(i.ordered_qty) - flt_of(i.received_qty);
@@ -2665,7 +2711,7 @@ class OrderFlow {
                     <td><input type="number" class="form-control text-right of-ewo-fp-qty-in" value="${bal}" min="0" max="${bal}" data-max="${bal}" ${bal <= 0 ? 'disabled' : ''}></td>
                 </tr>`;
             });
-            tbl += `</tbody></table>`;
+            tbl += `</tbody></table></div>`;
 
             const d = new frappe.ui.Dialog({
                 title: __('Confirm Full Piece Receipt for {0}', [ewo_name]),
@@ -2961,7 +3007,7 @@ class OrderFlow {
                             data-kind="${kind}" data-label="${of_esc(label)}">${qty}</a>`;
             };
 
-            const body = wh_rows.length ? `<table class="of-table">
+            const body = wh_rows.length ? `<div class="of-scroll"><table class="of-table">
                 <thead><tr><th>Warehouse</th><th>Actual Qty</th><th>Reserved</th>
                     <th>Reserved for Production</th><th>Reserved for Subcontract</th></tr></thead>
                 <tbody>${wh_rows.map(w => `<tr>
@@ -2971,7 +3017,7 @@ class OrderFlow {
                     <td>${reserve_cell(w.warehouse, w.reserved_qty_for_production, 'production', `Reserved for Production — ${of_esc(item_code)} at ${of_esc(w.warehouse)} — Work Orders`)}</td>
                     <td>${reserve_cell(w.warehouse, w.reserved_qty_for_sub_contract, 'subcontract', `Reserved for Subcontract — ${of_esc(item_code)} at ${of_esc(w.warehouse)} — Purchase / Subcontracting Orders`)}</td>
                 </tr>`).join('')}</tbody>
-            </table>` : `<div class="of-empty">${__('No warehouse stock for this item.')}</div>`;
+            </table></div>` : `<div class="of-empty">${__('No warehouse stock for this item.')}</div>`;
 
             $details = $(`
                 <tr class="of-doc-items-row of-hidden" style="display:none;">
@@ -3058,7 +3104,7 @@ class OrderFlow {
                 size: 'large',
                 fields: [{ fieldtype: 'HTML', fieldname: 'content' }]
             });
-            dialog.fields_dict.content.$wrapper.html(body);
+            dialog.fields_dict.content.$wrapper.html(`<div class="of-scroll">${body}</div>`);
             dialog.$wrapper.on('click', '.of-repost-btn', (e) => {
                 const btn = $(e.currentTarget);
                 const item = btn.data('item');
@@ -3477,6 +3523,7 @@ class OrderFlow {
                         ` : ''}
                     </div>
                 </div>
+                <div class="of-scroll-hint"><i class="fa fa-arrows-h"></i> ${__('Scroll sideways to see every column')}</div>
                 <div class="of-scroll">
                     <table class="of-table of-table--approval">
                         <thead><tr>
@@ -3825,6 +3872,7 @@ class OrderFlow {
                         <i class="fa fa-plus"></i> Create Transfer
                     </button>
                 </div>
+                <div class="of-scroll-hint"><i class="fa fa-arrows-h"></i> ${__('Scroll sideways to see every column')}</div>
                 <div class="of-scroll">
                     <table class="of-table">
                         <thead>
@@ -4173,6 +4221,7 @@ function of_card(title, icon, inner, actions_html) {
             <span><i class="fa fa-${icon}"></i> ${of_esc(title)}</span>
             ${actions_html || ''}
         </div>
+        <div class="of-scroll-hint"><i class="fa fa-arrows-h"></i> ${__('Scroll sideways to see every column')}</div>
         <div class="of-scroll">${inner}</div>
     </div>`;
 }

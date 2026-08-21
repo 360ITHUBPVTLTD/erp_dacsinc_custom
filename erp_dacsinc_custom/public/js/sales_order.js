@@ -422,6 +422,61 @@ function inject_so_styles() {
         /* ── Empty states ────────────────────────────────────────── */
         .so-empty { padding: 24px 16px; text-align: center; color: var(--text-muted); font-size: 12px; }
         .so-empty--sm { padding: 12px 0; text-align: left; }
+
+        /* This table genuinely scrolls sideways on a narrow screen (see the
+           768px media query below), but a phone hides its scrollbar until you
+           touch it — with nothing else on screen, a table cut off at the edge
+           just looks broken. This line says outright that there's more to see
+           and which way to find it. Hidden on desktop, where it already fits. */
+        .so-scroll-hint { display: none; }
+
+        /* ── Responsive: tablet ──────────────────────────────────── */
+        @media (max-width: 768px) {
+            /* The header row (title + search/refresh/bulk-pick actions) already
+               wraps as two flex items via .so-card__head's flex-wrap; let the
+               actions themselves wrap too instead of overflowing the card. */
+            .so-card__actions { flex-wrap: wrap; row-gap: 8px; }
+            .so-search input { width: 130px; }
+
+            /* A long Next-Action label ("Create Sales Invoice", "Subcontract PO")
+               inside a table cell should wrap onto a second line rather than
+               force the column — and the table's own .so-scroll — wider than
+               it needs to be. */
+            .so-table td .so-btn {
+                white-space: normal;
+                height: auto;
+                line-height: 1.3;
+                word-break: break-word;
+            }
+
+            .so-scroll-hint {
+                display: flex;
+                align-items: center;
+                gap: 4px;
+                font-size: 10px;
+                font-weight: 700;
+                color: var(--so-blue);
+                padding: 6px 16px;
+                border-bottom: 1px solid var(--border-color);
+                background: var(--subtle-fg);
+            }
+        }
+
+        /* ── Responsive: phone ───────────────────────────────────── */
+        @media (max-width: 480px) {
+            .so-card__actions {
+                flex-direction: column;
+                align-items: stretch;
+                width: 100%;
+            }
+            .so-search { width: 100%; box-sizing: border-box; }
+            .so-search input { width: 100%; }
+
+            /* Chips are normally short enough to stay on one line, but a
+               longer label must still be able to wrap instead of forcing an
+               even wider horizontal scroll on its table. */
+            .so-chip { white-space: normal; font-size: 9px; }
+        }
     `;
     document.head.appendChild(style);
 }
@@ -479,6 +534,7 @@ function generate_stock_overview_table(frm, callback) {
                 </div>
             </div>
             <div id="so-route-banner"></div>
+            <div class="so-scroll-hint"><i class="fa fa-arrows-h"></i> ${__('Scroll sideways to see every column')}</div>
             <div class="so-scroll">
                 <table class="so-table so-table--rows">
                     <thead>
@@ -763,6 +819,13 @@ function generate_stock_overview_table(frm, callback) {
                                 : (mr_open > 0
                                     ? so_pill('planned', 'file-text-o', 'Requested')
                                     : so_pill('blocked', 'exclamation-triangle', 'Out of Stock'));
+                            // Surface the RM block right here too, not only inside the
+                            // collapsible Raw Material Pipeline sub-row below — otherwise
+                            // "why is there no PO button" is invisible until it's expanded.
+                            if (d.is_bom_item && !so_rm_physically_in_stock(d)) {
+                                status_html += `<div class="so-micro" style="margin-top:4px;color:var(--so-red);font-weight:600;">
+                                    <i class="fa fa-flask"></i> RM Not in Stock</div>`;
+                            }
                             action_parts.push(so_shortfall(needed_stock_qty));
 
                             if (has_incoming) {
@@ -1084,10 +1147,10 @@ function show_so_picklists_modal(frm, pick_lists) {
         </tr>`;
     }).join('')).join('');
 
-    const table_html = `<table class="so-table">
+    const table_html = `<div class="so-scroll"><table class="so-table">
         <thead><tr><th>Sales Order</th><th>Customer</th><th>Pick List</th><th>Item</th><th>Qty</th><th>Warehouse</th><th>Status</th><th></th></tr></thead>
         <tbody>${rows_html}</tbody>
-    </table>`;
+    </table></div>`;
 
     so_open_modal(`Pick Lists — ${frm.doc.name}`, table_html);
 }
@@ -1353,14 +1416,18 @@ function get_rm_breakdown_html(data, so_name, docstatus) {
         }
 
         const shortfall_qty = flt(item.rm_shortfall_total || 0);
-        // Three distinct states, not a covered/shortfall binary: "Covered"
+        // Four distinct states, not a covered/shortfall binary: "Covered"
         // means stock is actually in hand; "Requested" means a pending
-        // MR/PO closes the gap but nothing has arrived yet — collapsing
-        // those two read as "Covered" the instant an MR was raised, with
-        // zero stock on hand, which is exactly backwards.
+        // MR/PO closes the gap but nothing has arrived yet; "Not Required"
+        // means this RM isn't being drawn on right now at all (e.g. the
+        // finished good already has enough stock) — collapsing any of these
+        // into "Covered" reads as "the stock is here" when it may not be,
+        // which is exactly backwards.
         const rm_status = item.status || (shortfall_qty > 0 ? 'Shortage' : 'Covered');
         const status_pill_class = shortfall_qty > 0 ? 'so-pill--blocked'
-            : rm_status === 'Requested' ? 'so-pill--wait' : 'so-pill--ready';
+            : rm_status === 'Requested' ? 'so-pill--wait'
+            : rm_status === 'Not Required' ? 'so-pill--draft'
+            : 'so-pill--ready';
         const rm_name = item.rm_name && item.rm_name !== item.rm_code ? item.rm_name : '';
 
         return `
@@ -1381,7 +1448,11 @@ function get_rm_breakdown_html(data, so_name, docstatus) {
                     ${refs.join('<br>') || '<span class="so-micro">—</span>'}
                 </td>
                 <td>
-                    <span class="so-pill ${status_pill_class}" title="${rm_status === 'Requested' ? 'A Material Request covers the shortfall, but nothing has arrived yet' : ''}">
+                    <span class="so-pill ${status_pill_class}" title="${rm_status === 'Requested'
+                ? 'A Material Request or Purchase Order has been raised to cover this, but it has not arrived yet'
+                : rm_status === 'Not Required'
+                    ? 'This item already has enough stock, so this raw material is not needed right now'
+                    : ''}">
                         ${esc(rm_status)}
                     </span>
                 </td>
@@ -1404,7 +1475,24 @@ function get_rm_breakdown_html(data, so_name, docstatus) {
     // every row below plainly showed 0 stock against a non-zero Needed.
     const items_with_shortage = (rm.rm_items_status || []).filter(i => flt(i.rm_shortfall_total || 0) > 0).length;
     const has_shortfall = !!rm.rm_shortfall_exists;
+    // "Covered" and "still just Requested" both mean no NEW action is needed,
+    // but they are not the same fact: Covered means the stock is physically in
+    // hand; Requested means a pending MR/PO closes the gap on paper only,
+    // nothing has arrived. Collapsing them said "Materials Covered" the moment
+    // an MR was raised, with every row underneath still showing 0.00 in Stock —
+    // exactly the "stock is here" claim that isn't true yet.
+    const pending_arrival = !has_shortfall && !!rm.rm_pending_arrival_exists;
     const fg_already_stocked = !(flt(rm.fg_shortfall) > 0);
+
+    const header_pill_class = has_shortfall ? 'so-pill--blocked' : pending_arrival ? 'so-pill--wait' : 'so-pill--ready';
+    const header_pill_label = has_shortfall
+        ? `Shortage on ${items_with_shortage} Material${items_with_shortage === 1 ? '' : 's'}`
+        : pending_arrival ? 'Requested — Awaiting Arrival' : 'Materials Covered';
+    const header_pill_title = has_shortfall
+        ? 'Stock on hand plus what is already requested or ordered still falls short of what this order needs'
+        : pending_arrival
+            ? 'A Material Request or Purchase Order has been raised for every material below, but none of it has arrived yet'
+            : 'Every raw material below is either already in stock or not needed for this order right now';
 
     return `
         <tr class="so-rm-row">
@@ -1416,20 +1504,19 @@ function get_rm_breakdown_html(data, so_name, docstatus) {
             ? `<a class="so-chip so-chip--bom" href="/app/bom/${encodeURIComponent(data.bom_no)}" target="_blank"
                                   title="Open BOM ${esc(data.bom_no)}">${esc(data.bom_no)}</a>`
             : ''}
-                        <span class="so-pill ${has_shortfall ? 'so-pill--blocked' : 'so-pill--ready'}"
-                              title="${has_shortfall ? 'Stock + pending MR + pending PO does not yet cover what this order needs' : 'Every raw material below is fully covered by stock and/or pending MR/PO'}">
-                            ${has_shortfall
-            ? `Shortage on ${items_with_shortage} Material${items_with_shortage === 1 ? '' : 's'}`
-            : 'Materials Covered'}
+                        <span class="so-pill ${header_pill_class}" title="${header_pill_title}">
+                            ${header_pill_label}
                         </span>
                         ${fg_already_stocked
-            ? `<span class="so-chip" style="background:var(--so-info);color:#fff;" title="The finished good already has enough stock for this line, so nothing new needs to be produced right now — the material check above is for reference only.">
+            ? `<span class="so-chip" style="background:var(--so-info);color:#fff;" title="This item already has enough stock for this order, so nothing new needs to be produced right now. The materials listed below are shown for reference only.">
                                    <i class="fa fa-info-circle"></i> FG Already in Stock — No Production Needed Now
                                </span>`
             : ''}
                         <span class="so-rm__spacer"></span>
                         <span class="so-rm__note">Coverage = Stock + Pending MR + Pending PO</span>
                     </div>
+                    <div class="so-scroll-hint"><i class="fa fa-arrows-h"></i> ${__('Scroll sideways to see every column')}</div>
+                    <div class="so-scroll">
                     <table>
                         <thead>
                             <tr>
@@ -1445,6 +1532,7 @@ function get_rm_breakdown_html(data, so_name, docstatus) {
                         </thead>
                         <tbody>${rows || '<tr><td colspan="8" class="so-empty">No Raw Material Data Available.</td></tr>'}</tbody>
                     </table>
+                    </div>
                 </div>
             </td>
         </tr>`;
@@ -2665,6 +2753,18 @@ function so_cmd_btn(onclick, icon, label, primary) {
         + `<i class="fa fa-${icon}"></i> ${esc(label)}</button>`;
 }
 
+// True only when every raw material line of this BOM item is PHYSICALLY in
+// stock right now (available >= needed) — a pending Material Request or
+// Purchase Order for the shortfall does not count. Mirrors the server-side
+// rule in custom_script.check_bom_raw_materials_in_stock, computed here from
+// the same rm_items_status data get_rm_breakdown_html already renders, so
+// the two never disagree. An item with no rm_items_status at all (lookup
+// failed, or a BOM with no lines) fails open — nothing to block on.
+function so_rm_physically_in_stock(d) {
+    const rm_items = ((d.rm_procurement_status || {}).rm_items_status) || [];
+    return rm_items.every(rm => flt(rm.rm_available_stock) >= flt(rm.rm_needed_for_shortfall) - 0.0001);
+}
+
 /**
  * The right way to buy this item.
  * A finished good with a BOM (or flagged as sub-contracted) is not bought off the
@@ -2673,11 +2773,21 @@ function so_cmd_btn(onclick, icon, label, primary) {
  */
 function so_buy_btn(d, so_name_arg, item_arg, qty, primary) {
     const subcontract = (d.is_sub_contracted_item || d.is_bom_item) && d.bom_no;
-    return subcontract
-        ? so_cmd_btn(`so_make_subcontract_po('${so_name_arg}','${item_arg}',${flt(qty)})`,
-            'cogs', 'Subcontract PO', primary)
-        : so_cmd_btn(`so_make_purchase_order('${so_name_arg}','${item_arg}')`,
+    if (!subcontract) {
+        return so_cmd_btn(`so_make_purchase_order('${so_name_arg}','${item_arg}')`,
             'shopping-cart', 'Purchase Order', primary);
+    }
+    // Hard block, no override: raw materials must be physically in stock
+    // before a Subcontract PO can be raised — see so_rm_physically_in_stock.
+    // The server enforces this too (make_subcontract_purchase_order), so this
+    // is about giving the user the right indication, not just UX polish.
+    if (!so_rm_physically_in_stock(d)) {
+        return `<span class="so-action__note so-action__note--blocked" style="color:var(--so-red);font-weight:600;"
+            title="${esc('Raw materials for this BOM are not fully in stock yet. See the Raw Material Pipeline below — request or order the shortfall, then wait for it to arrive before creating a Subcontract PO.')}">
+            <i class="fa fa-ban"></i> RM Not in Stock — PO Blocked</span>`;
+    }
+    return so_cmd_btn(`so_make_subcontract_po('${so_name_arg}','${item_arg}',${flt(qty)})`,
+        'cogs', 'Subcontract PO', primary);
 }
 
 // Map an ERPNext document status onto the pill palette.
@@ -2711,6 +2821,7 @@ function so_section(title, table_html, show, note) {
     if (!show) return '';
     return `<div class="so-modal__section">
         <div class="so-modal__h">${title}${note ? ` <small>${note}</small>` : ''}</div>
+        <div class="so-scroll-hint"><i class="fa fa-arrows-h"></i> ${__('Scroll sideways to see every column')}</div>
         <div class="so-scroll">${table_html}</div>
     </div>`;
 }
@@ -2848,6 +2959,7 @@ function show_bulk_dn_si_modal(frm, submitted_pls, doctype, already_processed_co
                     </div>
                 </div>
             ` : ''}
+            <div class="so-scroll">
             <table class="so-table">
                 <thead>
                     <tr>
@@ -2861,6 +2973,7 @@ function show_bulk_dn_si_modal(frm, submitted_pls, doctype, already_processed_co
                     ${rows_html}
                 </tbody>
             </table>
+            </div>
         </div>
     `;
 
