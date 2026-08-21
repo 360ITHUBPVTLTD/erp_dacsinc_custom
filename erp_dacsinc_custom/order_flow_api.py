@@ -34,7 +34,8 @@ from erp_dacsinc_custom.custom_script import _so_has_submitted_dn, _so_has_submi
 _EVENT_SQL = """
     SELECT 'Material Request' AS doctype, mr.name, mri.sales_order AS sales_order,
            mr.modified AS ts, mr.creation AS created, mr.status, mr.docstatus, mr.owner,
-           NULL AS party, NULL AS party_name
+           NULL AS party, NULL AS party_name,
+           IF(MAX(CASE WHEN mri.sales_order_item IS NOT NULL AND mri.sales_order_item != '' THEN 1 ELSE 0 END) > 0, 0, 1) AS is_rm_tier
     FROM `tabMaterial Request Item` mri
     JOIN `tabMaterial Request` mr ON mr.name = mri.parent
     WHERE mri.sales_order IS NOT NULL AND mri.sales_order != '' AND mr.docstatus <= 2
@@ -44,7 +45,8 @@ _EVENT_SQL = """
 
     SELECT 'Purchase Order', po.name, poi.sales_order,
            po.modified, po.creation, po.status, po.docstatus, po.owner,
-           po.supplier, sup.supplier_name
+           po.supplier, sup.supplier_name,
+           IF(MAX(CASE WHEN poi.sales_order_item IS NOT NULL AND poi.sales_order_item != '' THEN 1 ELSE 0 END) > 0, 0, 1) AS is_rm_tier
     FROM `tabPurchase Order Item` poi
     JOIN `tabPurchase Order` po ON po.name = poi.parent
     LEFT JOIN `tabSupplier` sup ON sup.name = po.supplier
@@ -55,7 +57,8 @@ _EVENT_SQL = """
 
     SELECT 'Purchase Receipt', pr.name, pri.sales_order,
            pr.modified, pr.creation, pr.status, pr.docstatus, pr.owner,
-           pr.supplier, sup.supplier_name
+           pr.supplier, sup.supplier_name,
+           IF(MAX(CASE WHEN pri.sales_order_item IS NOT NULL AND pri.sales_order_item != '' THEN 1 ELSE 0 END) > 0, 0, 1) AS is_rm_tier
     FROM `tabPurchase Receipt Item` pri
     JOIN `tabPurchase Receipt` pr ON pr.name = pri.parent
     LEFT JOIN `tabSupplier` sup ON sup.name = pr.supplier
@@ -66,7 +69,8 @@ _EVENT_SQL = """
 
     SELECT 'Subcontracting Receipt', scr.name, poi.sales_order,
            scr.modified, scr.creation, scr.status, scr.docstatus, scr.owner,
-           scr.supplier, sup.supplier_name
+           scr.supplier, sup.supplier_name,
+           IF(MAX(CASE WHEN poi.sales_order_item IS NOT NULL AND poi.sales_order_item != '' THEN 1 ELSE 0 END) > 0, 0, 1) AS is_rm_tier
     FROM `tabSubcontracting Receipt Item` scri
     JOIN `tabSubcontracting Receipt` scr ON scr.name = scri.parent
     JOIN `tabPurchase Order Item` poi ON poi.name = scri.purchase_order_item
@@ -79,9 +83,11 @@ _EVENT_SQL = """
     -- Subcontracting Orders are tracked through their Purchase Order: the event
     -- carries the PO id, never the SCO id, so nothing in the dashboard links to
     -- a Subcontracting Order. The doctype label keeps the "job work" signal.
+    -- Always main-item tier: a subcontract Job Work IS the finished good's own
+    -- production step, never a raw-material-only request.
     SELECT 'Job Work (Subcontract)', sco.purchase_order, poi.sales_order,
            sco.modified, sco.creation, sco.status, sco.docstatus, sco.owner,
-           sco.supplier, sup.supplier_name
+           sco.supplier, sup.supplier_name, 0 AS is_rm_tier
     FROM `tabSubcontracting Order` sco
     JOIN `tabPurchase Order Item` poi ON poi.parent = sco.purchase_order
     LEFT JOIN `tabSupplier` sup ON sup.name = sco.supplier
@@ -94,7 +100,7 @@ _EVENT_SQL = """
     SELECT 'Embroidery Work Order', ewo.purchase_order, poi.sales_order,
            ewo.modified, ewo.creation, ewo.status, ewo.docstatus, ewo.owner,
            COALESCE(ewo.full_piece_jobber, ewo.panel_jobber),
-           COALESCE(fp.supplier_name, pn.supplier_name)
+           COALESCE(fp.supplier_name, pn.supplier_name), 0 AS is_rm_tier
     FROM `tabEmbroidery Work Order` ewo
     JOIN `tabPurchase Order Item` poi ON poi.parent = ewo.purchase_order
     LEFT JOIN `tabSupplier` fp ON fp.name = ewo.full_piece_jobber
@@ -107,7 +113,7 @@ _EVENT_SQL = """
 
     SELECT 'Pick List', pl.name, pli.sales_order,
            pl.modified, pl.creation, pl.status, pl.docstatus, pl.owner,
-           pl.customer, cust.customer_name
+           pl.customer, cust.customer_name, 0 AS is_rm_tier
     FROM `tabPick List Item` pli
     JOIN `tabPick List` pl ON pl.name = pli.parent
     LEFT JOIN `tabCustomer` cust ON cust.name = pl.customer
@@ -118,7 +124,7 @@ _EVENT_SQL = """
 
     SELECT 'Delivery Note', dn.name, dni.against_sales_order,
            dn.modified, dn.creation, dn.status, dn.docstatus, dn.owner,
-           dn.customer, cust.customer_name
+           dn.customer, cust.customer_name, 0 AS is_rm_tier
     FROM `tabDelivery Note Item` dni
     JOIN `tabDelivery Note` dn ON dn.name = dni.parent
     LEFT JOIN `tabCustomer` cust ON cust.name = dn.customer
@@ -129,7 +135,7 @@ _EVENT_SQL = """
 
     SELECT 'Sales Invoice', si.name, sii.sales_order,
            si.modified, si.creation, si.status, si.docstatus, si.owner,
-           si.customer, cust.customer_name
+           si.customer, cust.customer_name, 0 AS is_rm_tier
     FROM `tabSales Invoice Item` sii
     JOIN `tabSales Invoice` si ON si.name = sii.parent
     LEFT JOIN `tabCustomer` cust ON cust.name = si.customer
@@ -140,7 +146,7 @@ _EVENT_SQL = """
 
     SELECT 'Purchase Invoice', pi.name, poi.sales_order,
            pi.modified, pi.creation, pi.status, pi.docstatus, pi.owner,
-           pi.supplier, sup.supplier_name
+           pi.supplier, sup.supplier_name, 0 AS is_rm_tier
     FROM `tabPurchase Invoice Item` pii
     JOIN `tabPurchase Invoice` pi ON pi.name = pii.parent
     JOIN `tabPurchase Order Item` poi ON poi.parent = pii.purchase_order
@@ -152,7 +158,7 @@ _EVENT_SQL = """
 
     SELECT 'Sales Order' AS doctype, so.name, so.name AS sales_order,
            so.modified AS ts, so.creation AS created, COALESCE(so.workflow_state, so.status) AS status, so.docstatus, so.owner,
-           so.customer AS party, so.customer_name AS party_name
+           so.customer AS party, so.customer_name AS party_name, 0 AS is_rm_tier
     FROM `tabSales Order` so
     WHERE so.docstatus <= 2
 
@@ -160,7 +166,7 @@ _EVENT_SQL = """
 
     SELECT 'Comment' AS doctype, c.name, c.reference_name AS sales_order,
            c.modified AS ts, c.creation AS created, c.content AS status, 0 AS docstatus, c.owner,
-           NULL AS party, NULL AS party_name
+           NULL AS party, NULL AS party_name, 0 AS is_rm_tier
     FROM `tabComment` c
     WHERE c.reference_doctype = 'Sales Order' AND c.comment_type = 'Comment'
 
@@ -172,7 +178,7 @@ _EVENT_SQL = """
     -- has to tolerate a NULL sales_order.
     SELECT 'Uniform Embroidery Transfer' AS doctype, uet.name, NULL AS sales_order,
            uet.modified AS ts, uet.creation AS created, uet.status, uet.docstatus, uet.owner,
-           NULL AS party, NULL AS party_name
+           NULL AS party, NULL AS party_name, 0 AS is_rm_tier
     FROM `tabUniform Embroidery Transfer` uet
 """
 
@@ -624,6 +630,18 @@ def get_sales_tracker(days=120, search=None, scope="open", stage_filter=None, me
         o["invoices"] = []
         o["draft_invoices"] = []
         o["delivery_notes"] = []
+        # Raw-material-tier procurement (an MR/PO/Receipt for a BOM component,
+        # not the SO's own sold item) — tracked separately so it can be shown
+        # as its own pipeline without ever driving the main stage/action below.
+        # See is_rm_tier in _EVENT_SQL: true only when every item on that
+        # document has no sales_order_item, i.e. it was never mapped from a
+        # Sales Order Item row (so_make_rm_material_request never sets it;
+        # the standard "Raise MR from SO" / subcontract-PO flows always do).
+        o["rm_counts"] = {}
+        o["rm_mrs"] = []
+        o["rm_pos"] = []
+        o["rm_open_pos"] = []
+        o["rm_receipts"] = []
         # Submitted Sales Invoices carrying "Update Stock". On a Direct Bill
         # order the goods leave on the invoice, so these — not Delivery Notes —
         # are the documents that delivered the order.
@@ -651,9 +669,32 @@ def get_sales_tracker(days=120, search=None, scope="open", stage_filter=None, me
         if row and r.name not in row["stock_invoices"]:
             row["stock_invoices"].append(r.name)
 
+    # Whether this order's own items are made-to-order (a bom_no on the Sales
+    # Order Item, produced via Subcontract PO) or plain trade items (bought
+    # via a Material Request) — the "Newly Created" fallback stage below needs
+    # this to word its action correctly. A Sales Order full of BOM items has
+    # no Material Request step at all in this company's flow (see the
+    # per-item widget's own so_buy_btn: is_bom_item always routes to
+    # "Subcontract PO", never "Material Request"), so defaulting every such
+    # order's first action to "Raise MR from SO" was simply wrong for it.
+    for r in frappe.db.sql("""
+        SELECT parent AS sales_order, COUNT(*) AS item_count,
+               SUM(CASE WHEN bom_no IS NOT NULL AND bom_no != '' THEN 1 ELSE 0 END) AS bom_item_count
+        FROM `tabSales Order Item`
+        WHERE parent IN %(names)s
+        GROUP BY parent
+    """, {"names": tuple(names)}, as_dict=1):
+        row = by_name.get(r.sales_order)
+        if not row:
+            continue
+        item_count = cint(r.item_count)
+        bom_item_count = cint(r.bom_item_count)
+        row["has_bom_items"] = bom_item_count > 0
+        row["all_bom_items"] = item_count > 0 and bom_item_count == item_count
+
     # Roll every linked document up to its Sales Order in one pass.
     events = frappe.db.sql(f"""
-        SELECT sales_order, doctype, name, ts, status, docstatus
+        SELECT sales_order, doctype, name, ts, status, docstatus, is_rm_tier
         FROM ({_EVENT_SQL}) ev
         WHERE ev.sales_order IN %(names)s
         ORDER BY ts DESC
@@ -665,13 +706,24 @@ def get_sales_tracker(days=120, search=None, scope="open", stage_filter=None, me
             continue
         dt = ev.doctype
         ds = ev.docstatus
+        # True only for a Material Request / Purchase Order / Receipt raised for
+        # a BOM raw material (see is_rm_tier in _EVENT_SQL) — never for the SO's
+        # own sold item. Kept out of row["counts"]/mrs/pos/receipts entirely so
+        # it can never reach _compute_stage_info and flip the order's main
+        # Current Stage / Action Required; it is rolled up into the rm_* lists
+        # below instead, for its own "RM Pipeline" indicator on the tracker row.
+        is_rm = bool(ev.get("is_rm_tier")) and dt in (
+            "Material Request", "Purchase Order", "Purchase Receipt", "Subcontracting Receipt")
 
         # A cancelled document is not live progress — it must still surface as
         # the order's last activity (below) but must never count toward doc-flow
         # tallies or stage computation, or a cancelled PO/MR/Receipt would make
         # an order look further along than it actually is.
         if ds != 2:
-            row["counts"][dt] = row["counts"].get(dt, 0) + 1
+            if is_rm:
+                row["rm_counts"][dt] = row["rm_counts"].get(dt, 0) + 1
+            else:
+                row["counts"][dt] = row["counts"].get(dt, 0) + 1
 
             if dt == "Pick List":
                 if ev.name not in row["pick_lists"]:
@@ -683,27 +735,44 @@ def get_sales_tracker(days=120, search=None, scope="open", stage_filter=None, me
                     if ev.name not in row["submitted_pick_lists"]:
                         row["submitted_pick_lists"].append(ev.name)
             elif dt == "Purchase Order":
-                if ev.name not in row["pos"]:
-                    row["pos"].append(ev.name)
-                if ds == 1 and ev.name not in row["open_pos"]:
-                    row["open_pos"].append(ev.name)
+                if is_rm:
+                    if ev.name not in row["rm_pos"]:
+                        row["rm_pos"].append(ev.name)
+                    if ds == 1 and ev.name not in row["rm_open_pos"]:
+                        row["rm_open_pos"].append(ev.name)
+                else:
+                    if ev.name not in row["pos"]:
+                        row["pos"].append(ev.name)
+                    if ds == 1 and ev.name not in row["open_pos"]:
+                        row["open_pos"].append(ev.name)
             elif dt in ("Purchase Receipt", "Subcontracting Receipt"):
                 receipt_obj = {"name": ev.name, "doctype": ev.doctype}
-                if receipt_obj not in row["receipts"]:
-                    row["receipts"].append(receipt_obj)
-                # A draft Receipt has posted nothing to the stock ledger yet —
-                # only a submitted one actually brings stock in. Tracked
-                # separately so _compute_stage_info never calls stock
-                # "Arrived" off a document that hasn't moved anything.
-                if ds == 1:
-                    if receipt_obj not in row["submitted_receipts"]:
-                        row["submitted_receipts"].append(receipt_obj)
-                elif ds == 0:
-                    if receipt_obj not in row["draft_receipts"]:
-                        row["draft_receipts"].append(receipt_obj)
+                if is_rm:
+                    if receipt_obj not in row["rm_receipts"]:
+                        row["rm_receipts"].append(receipt_obj)
+                    # RM-tier receipts only ever feed the separate RM Pipeline
+                    # indicator, never stage computation — draft/submitted
+                    # distinction is irrelevant there, so it isn't tracked.
+                else:
+                    if receipt_obj not in row["receipts"]:
+                        row["receipts"].append(receipt_obj)
+                    # A draft Receipt has posted nothing to the stock ledger yet —
+                    # only a submitted one actually brings stock in. Tracked
+                    # separately so _compute_stage_info never calls stock
+                    # "Arrived" off a document that hasn't moved anything.
+                    if ds == 1:
+                        if receipt_obj not in row["submitted_receipts"]:
+                            row["submitted_receipts"].append(receipt_obj)
+                    elif ds == 0:
+                        if receipt_obj not in row["draft_receipts"]:
+                            row["draft_receipts"].append(receipt_obj)
             elif dt == "Material Request":
-                if ev.name not in row["mrs"]:
-                    row["mrs"].append(ev.name)
+                if is_rm:
+                    if ev.name not in row["rm_mrs"]:
+                        row["rm_mrs"].append(ev.name)
+                else:
+                    if ev.name not in row["mrs"]:
+                        row["mrs"].append(ev.name)
             elif dt == "Job Work (Subcontract)":
                 # ev.name is the Purchase Order, not the Subcontracting Order.
                 job_obj = {"name": ev.name, "doctype": "Purchase Order"}
@@ -1038,13 +1107,30 @@ def _compute_stage_info(order):
             "action_btn_class": "of-btn--primary"
         }
 
+    # "Raise MR from SO" only makes sense for a plain trade item — a BOM item
+    # is produced via Subcontract PO, with no Material Request step at all
+    # (see so_buy_btn on the Sales Order widget). Word the action to match
+    # what this order's own items actually need, not a one-size label that
+    # was wrong for every made-to-order line.
+    all_bom = bool(order.get("all_bom_items"))
+    has_bom = bool(order.get("has_bom_items"))
+    if all_bom:
+        action_label = "Create Subcontract PO"
+    elif has_bom:
+        action_label = "Raise MR / Subcontract PO"
+    else:
+        action_label = "Raise MR from SO"
+
     return {
         "stage_key": "newly_created",
         "stage_label": "Newly Created",
         "badge_class": "of-pill--new",
         "icon": "star",
+        # Still just opens the Sales Order (see the "make_mr" branch client-side)
+        # — the per-item widget there already offers the right button
+        # (Material Request / Subcontract PO) for each line.
         "action_type": "make_mr",
-        "action_label": "Raise MR from SO",
+        "action_label": action_label,
         "action_btn_class": "of-btn--primary"
     }
 

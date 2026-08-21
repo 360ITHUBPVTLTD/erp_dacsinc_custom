@@ -627,6 +627,15 @@
     overflow-x: auto;
 }
 
+/* These tables genuinely scroll sideways on a narrow screen (see the 768px
+   media query below), but a phone hides its scrollbar until you touch it —
+   with nothing else on screen, a table that's cut off at the edge just looks
+   broken. This line says outright that there's more to see and which way to
+   find it. Hidden on desktop, where the whole table already fits. */
+.of-scroll-hint {
+    display: none;
+}
+
 .of-table {
     width: 100%;
     border-collapse: collapse;
@@ -918,6 +927,97 @@
 
     .of-fin-summary {
         grid-template-columns: 1fr;
+    }
+
+    /* Percentage columns only pay off on a wide desktop card; on a narrow
+       screen they cram every column, so fall back to natural auto-sizing
+       inside the existing horizontal scroll. */
+    .of-table.of-table--tracker, .of-table.of-table--approval { table-layout: auto; }
+
+    /* Card headers pair a title with one or more action buttons via an
+       inline display:flex (see of_card() in order_flow.js) — let that row
+       wrap instead of squeezing the button against the title or clipping it. */
+    .of-card__head {
+        flex-wrap: wrap;
+        row-gap: 6px;
+    }
+
+    /* A long action-button label inside a table cell should wrap onto a
+       second line rather than force the column (and the table's own
+       .of-scroll) wider than it needs to be. */
+    .of-table td .of-btn {
+        white-space: normal;
+        height: auto;
+        min-height: 26px;
+        line-height: 1.3;
+        word-break: break-word;
+    }
+
+    .of-scroll-hint {
+        display: flex;
+        align-items: center;
+        gap: 4px;
+        font-size: 10px;
+        font-weight: 700;
+        color: var(--of-blue);
+        padding: 6px 14px;
+        border-bottom: 1px solid var(--border-color);
+        background: var(--subtle-fg);
+    }
+}
+
+@media (max-width: 480px) {
+    /* Toolbar: stack filter controls into a full-width column instead of
+       relying on flex-wrap alone. */
+    .of-toolbar {
+        flex-direction: column;
+        align-items: stretch;
+    }
+
+    .of-toolbar .of-search,
+    .of-toolbar .of-select,
+    .of-toolbar #of-btn-refresh {
+        width: 100%;
+        box-sizing: border-box;
+    }
+
+    .of-search input {
+        width: 100%;
+    }
+
+    .of-spacer {
+        display: none;
+    }
+
+    .of-tab {
+        padding: 8px 9px;
+        font-size: 12px;
+        gap: 5px;
+    }
+
+    .of-tile__label {
+        font-size: 9px;
+    }
+
+    .of-tile__value {
+        font-size: 16px;
+    }
+
+    .of-card__head {
+        flex-wrap: wrap;
+        row-gap: 6px;
+    }
+
+    .of-chip {
+        white-space: normal;
+        font-size: 9px;
+    }
+
+    /* The settlement strip (of_settlement_bar) already wraps its pieces
+       onto new lines via flex-wrap — just let the trailing doc-count note
+       drop under the rest instead of forcing extra width. */
+    .of-settle__docs {
+        margin-left: 0;
     }
 }
 

@@ -3126,7 +3126,12 @@ def get_item_stock_details_bulk(item_bom_pairs, sales_order_name):
         fg_shortfall = max(0, pending_fg_for_so - truly_available_fg)
         
         rm_procurement_status = {
-            "rm_shortfall_exists": False, "rm_items_status": [], "fg_shortfall": fg_shortfall
+            "rm_shortfall_exists": False, "rm_items_status": [], "fg_shortfall": fg_shortfall,
+            # True when at least one RM is only covered on paper (a pending MR/PO),
+            # with nothing physically arrived yet — see the per-row "Requested"
+            # status below. Kept distinct from rm_shortfall_exists so the header
+            # pill never claims "Materials Covered" while stock is still 0.
+            "rm_pending_arrival_exists": False,
         }
 
         if bom_no:
@@ -3324,13 +3329,23 @@ def get_item_stock_details_bulk(item_bom_pairs, sales_order_name):
                     # MR just raised for the full need immediately flipped
                     # this to "Covered" with zero stock on hand. "Requested"
                     # is the honest middle state.
-                    if shortfall > 0:
+                    if rm["rm_needed_for_shortfall"] <= 0:
+                        # Nothing is being drawn on this RM right now (e.g. the
+                        # finished good already has enough stock, so fg_shortfall
+                        # is 0) — 0 needed is trivially "covered" by any stock
+                        # level, including zero, so this must never read as
+                        # "Covered" and imply real stock is sitting there.
+                        rm["status"] = "Not Required"
+                    elif shortfall > 0:
                         rm["status"] = "Shortage"
                     elif rm["rm_available_stock"] >= rm["rm_needed_for_shortfall"]:
                         rm["status"] = "Covered"
                     else:
                         rm["status"] = "Requested"
-                    if shortfall > 0: rm_procurement_status["rm_shortfall_exists"] = True
+                    if shortfall > 0:
+                        rm_procurement_status["rm_shortfall_exists"] = True
+                    if rm["status"] == "Requested":
+                        rm_procurement_status["rm_pending_arrival_exists"] = True
                     rm_procurement_status["rm_items_status"].append(rm)
 
             except Exception as e:
