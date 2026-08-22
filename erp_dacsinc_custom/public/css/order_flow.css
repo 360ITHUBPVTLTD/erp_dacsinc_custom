@@ -135,7 +135,8 @@
 }
 
 /* ── Financial Cards (Accounts Tab) ───────────────────────────── */
-.of-acc-subtabs, .of-subtabs {
+.of-acc-subtabs,
+.of-subtabs {
     display: flex;
     gap: 6px;
     margin-bottom: 10px;
@@ -146,7 +147,8 @@
     border: 1px solid var(--border-color);
 }
 
-.of-acc-subtab, .of-subtab {
+.of-acc-subtab,
+.of-subtab {
     border: none;
     background: transparent;
     cursor: pointer;
@@ -159,12 +161,14 @@
     outline: none;
 }
 
-.of-acc-subtab:hover, .of-subtab:hover {
+.of-acc-subtab:hover,
+.of-subtab:hover {
     background: var(--subtle-fg);
     color: var(--text-color);
 }
 
-.of-acc-subtab.is-active, .of-subtab.is-active {
+.of-acc-subtab.is-active,
+.of-subtab.is-active {
     background: var(--of-blue);
     color: #fff;
     box-shadow: 0 2px 6px rgba(0, 0, 0, 0.1);
@@ -234,9 +238,17 @@
     font-size: 12px;
 }
 
-.of-settle--receivable { border-left-color: var(--of-green); }
-.of-settle--payable    { border-left-color: var(--of-red); }
-.of-settle--jobber     { border-left-color: var(--of-purple); }
+.of-settle--receivable {
+    border-left-color: var(--of-green);
+}
+
+.of-settle--payable {
+    border-left-color: var(--of-red);
+}
+
+.of-settle--jobber {
+    border-left-color: var(--of-purple);
+}
 
 .of-settle__title {
     font-weight: 600;
@@ -255,9 +267,17 @@
     color: var(--text-color);
 }
 
-.of-settle--receivable .of-settle__stat b { color: var(--of-green); }
-.of-settle--payable    .of-settle__stat b { color: var(--of-info); }
-.of-settle--jobber     .of-settle__stat b { color: var(--of-purple); }
+.of-settle--receivable .of-settle__stat b {
+    color: var(--of-green);
+}
+
+.of-settle--payable .of-settle__stat b {
+    color: var(--of-info);
+}
+
+.of-settle--jobber .of-settle__stat b {
+    color: var(--of-purple);
+}
 
 /* The bar takes the slack, so the row never leaves a dead gap */
 .of-settle__bar {
@@ -309,6 +329,7 @@
     white-space: nowrap;
     -webkit-overflow-scrolling: touch;
 }
+
 .of-tabs::-webkit-scrollbar {
     display: none;
 }
@@ -636,6 +657,177 @@
     display: none;
 }
 
+/* ── Pagination bar ──────────────────────────────────────────── */
+/* Sits below .of-scroll, never inside it — a control the user needs to
+   click must stay put while the table scrolls sideways underneath it.
+   Ghost-button style throughout: most of these lists have exactly one
+   page, so the bar should read as a quiet footer line, not a second boxy
+   widget competing with the table above it. */
+.of-pagination {
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    flex-wrap: wrap;
+    padding: 7px 14px;
+    border-top: 1px solid var(--border-color);
+}
+
+.of-pagination__info {
+    font-size: 11.5px;
+    color: var(--text-muted);
+    white-space: nowrap;
+    font-variant-numeric: tabular-nums;
+}
+
+.of-pagination__pages {
+    display: flex;
+    align-items: center;
+    gap: 2px;
+    flex-wrap: wrap;
+    margin-left: auto;
+}
+
+.of-page-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 24px;
+    height: 24px;
+    padding: 0 6px;
+    font-size: 11.5px;
+    font-weight: 600;
+    font-variant-numeric: tabular-nums;
+    border: none;
+    background: transparent;
+    color: var(--text-muted);
+    border-radius: 6px;
+    cursor: pointer;
+    transition: background .12s ease, color .12s ease;
+}
+
+.of-page-btn:hover:not([disabled]):not(.is-active) {
+    background: var(--subtle-fg);
+    color: var(--text-color);
+}
+
+.of-page-btn.is-active {
+    background: var(--of-blue);
+    color: #fff;
+    cursor: default;
+}
+
+.of-page-btn[disabled] {
+    opacity: .35;
+    cursor: not-allowed;
+}
+
+.of-page-ellipsis {
+    padding: 0 2px;
+    font-size: 11px;
+    color: var(--text-light);
+}
+
+.of-page-size-select {
+    height: 24px;
+    border: none;
+    background: var(--subtle-fg);
+    color: var(--text-muted);
+    font-weight: 600;
+    font-size: 11px;
+    border-radius: 6px;
+    padding: 0 8px;
+    cursor: pointer;
+}
+
+/* A tracker note when the stage-filter candidate ceiling is hit — see
+   _TRACKER_ROW_CEILING in order_flow_api.py. Rare in practice; visible and
+   explicit rather than a silently truncated list. */
+.of-truncated-note {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 8px 12px;
+    margin-bottom: 10px;
+    border: 1px solid var(--of-orange);
+    border-radius: 6px;
+    background: rgba(253, 126, 20, 0.08);
+    color: var(--of-orange);
+    font-size: 12px;
+    font-weight: 500;
+}
+
+/* ── Stat strip ──────────────────────────────────────────────── */
+/* Secondary, non-interactive tab summaries (Purchase/Job Work/Billing/
+   Finance) — a single row with thin dividers instead of six bordered,
+   individually-colored tiles. Meaning still lives in the value's color,
+   not in a whole tinted box, so a "1" and a "₹2,621.00" no longer carry
+   the same visual weight. The interactive Sales Tracker stage tiles
+   (.of-tile, above) are a different thing — those are click-to-filter
+   controls, not a plain readout — and keep their own card treatment. */
+.of-stat-strip {
+    display: flex;
+    align-items: stretch;
+    flex-wrap: wrap;
+    background: var(--subtle-fg);
+    border: 1px solid var(--border-color);
+    border-radius: 8px;
+    margin-bottom: 10px;
+}
+
+.of-stat {
+    display: flex;
+    align-items: baseline;
+    gap: 7px;
+    padding: 9px 16px;
+    border-right: 1px solid var(--border-color);
+}
+
+.of-stat:last-child {
+    border-right: none;
+}
+
+.of-stat__value {
+    font-size: 16px;
+    font-weight: 700;
+    font-variant-numeric: tabular-nums;
+    color: var(--text-color);
+    white-space: nowrap;
+}
+
+.of-stat__label {
+    font-size: 11px;
+    color: var(--text-muted);
+    white-space: nowrap;
+}
+
+.of-stat--green .of-stat__value {
+    color: var(--of-green);
+}
+
+.of-stat--amber .of-stat__value {
+    color: var(--of-amber);
+}
+
+.of-stat--orange .of-stat__value {
+    color: var(--of-orange);
+}
+
+.of-stat--info .of-stat__value {
+    color: var(--of-info);
+}
+
+.of-stat--purple .of-stat__value {
+    color: var(--of-purple);
+}
+
+.of-stat--red .of-stat__value {
+    color: var(--of-red);
+}
+
+.of-stat--gold .of-stat__value {
+    color: var(--of-gold);
+}
+
 .of-table {
     width: 100%;
     border-collapse: collapse;
@@ -932,7 +1124,10 @@
     /* Percentage columns only pay off on a wide desktop card; on a narrow
        screen they cram every column, so fall back to natural auto-sizing
        inside the existing horizontal scroll. */
-    .of-table.of-table--tracker, .of-table.of-table--approval { table-layout: auto; }
+    .of-table.of-table--tracker,
+    .of-table.of-table--approval {
+        table-layout: auto;
+    }
 
     /* Card headers pair a title with one or more action buttons via an
        inline display:flex (see of_card() in order_flow.js) — let that row
@@ -964,9 +1159,23 @@
         border-bottom: 1px solid var(--border-color);
         background: var(--subtle-fg);
     }
+
+    .of-pagination {
+        justify-content: center;
+    }
+
+    .of-pagination__info {
+        width: 100%;
+        text-align: center;
+    }
+
+    .of-page-size-select {
+        margin-left: 0;
+    }
 }
 
 @media (max-width: 480px) {
+
     /* Toolbar: stack filter controls into a full-width column instead of
        relying on flex-wrap alone. */
     .of-toolbar {
@@ -1019,6 +1228,38 @@
     .of-settle__docs {
         margin-left: 0;
     }
+
+    /* Collapse the full page-number strip down to just Prev/Next + the
+       "Showing X-Y of Z" label — a numbered strip is too fine-grained to
+       tap reliably on a phone, and there is no room for it anyway. */
+    .of-pagination {
+        flex-direction: column;
+        gap: 6px;
+    }
+
+    .of-page-btn:not(.of-page-btn--nav),
+    .of-page-ellipsis {
+        display: none;
+    }
+
+    .of-pagination__pages {
+        justify-content: center;
+        width: 100%;
+    }
+
+    .of-page-size-select {
+        width: 100%;
+        box-sizing: border-box;
+    }
+
+    .of-stat {
+        padding: 7px 10px;
+        gap: 5px;
+    }
+
+    .of-stat__value {
+        font-size: 14px;
+    }
 }
 
 /* Hide header title area and save vertical space */
@@ -1032,4 +1273,240 @@
 [data-page-route="order-flow"] .page-container {
     padding-top: 0 !important;
     margin-top: 0 !important;
+}
+
+/* ── Merged Styles from Page CSS ── */
+
+.of-acc-subtabs {
+    display: flex;
+    gap: 8px;
+    margin-bottom: 14px;
+    flex-wrap: wrap;
+    background: var(--card-bg);
+    padding: 6px;
+    border-radius: 8px;
+    border: 1px solid var(--border-color);
+}
+
+.of-acc-subtab {
+    border: none;
+    background: transparent;
+    cursor: pointer;
+    padding: 7px 14px;
+    border-radius: 6px;
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--text-muted);
+    transition: all 0.15s;
+}
+
+.of-acc-subtab:hover {
+    background: var(--subtle-fg);
+    color: var(--text-color);
+}
+
+.of-acc-subtab.is-active {
+    background: var(--of-blue);
+    color: #fff;
+    box-shadow: 0 2px 6px rgba(0, 0, 0, 0.1);
+}
+
+.of-table.of-table--tracker,
+.of-table.of-table--approval {
+    table-layout: fixed;
+    font-size: 12px;
+}
+
+.of-table.of-table--tracker th,
+.of-table.of-table--approval th {
+    font-size: 10.5px;
+    padding: 7px 6px;
+}
+
+.of-table.of-table--tracker td,
+.of-table.of-table--approval td {
+    overflow: hidden;
+    max-width: 0;
+}
+
+.of-table.of-table--tracker td .of-btn {
+    white-space: normal;
+    height: auto;
+    min-height: 26px;
+    padding: 4px 8px;
+    line-height: 1.3;
+    word-break: break-word;
+    max-width: 100%;
+    width: 100%;
+    justify-content: center;
+}
+
+.of-table.of-table--approval td .of-btn {
+    white-space: nowrap;
+    height: auto;
+    min-height: 26px;
+    padding: 4px 8px;
+    line-height: 1.3;
+    max-width: 100%;
+    width: auto;
+    justify-content: center;
+}
+
+.of-link-flow {
+    cursor: pointer;
+}
+
+.of-link-flow:hover {
+    text-decoration: underline !important;
+    opacity: 0.85;
+}
+
+.of-table.of-table--tracker td .of-docflow,
+.of-table.of-table--approval td .of-docflow {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 2px;
+    align-items: center;
+}
+
+.of-rm-chain {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 2px;
+    margin-top: 4px;
+    padding-top: 4px;
+    border-top: 1px dashed var(--border-color);
+}
+
+.of-chip--action {
+    background: var(--of-red);
+    color: #fff;
+    margin-right: 4px;
+}
+
+.of-chip--mine {
+    background: transparent;
+    color: var(--text-muted);
+    border: 1px solid var(--border-color);
+    font-weight: 500;
+    margin-right: 4px;
+}
+
+.of-last-activity {
+    font-size: 11px;
+    font-weight: 600;
+    color: var(--text-color);
+    line-height: 1.35;
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+}
+
+.of-last-activity.is-minor {
+    font-weight: 500;
+    color: var(--text-muted);
+}
+
+.of-feed__item.is-seen {
+    opacity: 0.65;
+    background-color: var(--subtle-fg) !important;
+}
+
+.of-feed__item.is-seen:hover {
+    opacity: 0.95;
+    background-color: var(--fg-hover-color, var(--subtle-fg)) !important;
+}
+
+.of-feed__item.is-unseen {
+    opacity: 1;
+    font-weight: 500;
+}
+
+.of-feed__item--ready {
+    border-left-color: var(--of-green);
+}
+
+.of-feed__item--dn {
+    border-left-color: var(--of-info);
+}
+
+.of-feed__item--wait {
+    border-left-color: var(--of-amber);
+}
+
+.of-feed__item--draft {
+    border-left-color: var(--of-orange);
+}
+
+.of-feed__item--blocked {
+    border-left-color: var(--of-red);
+}
+
+.of-feed__item--planned {
+    border-left-color: var(--of-purple);
+}
+
+.of-feed__item--new {
+    border-left-color: var(--of-purple);
+}
+
+.of-feed-seen-toggle {
+    display: inline-flex !important;
+    align-items: center;
+    justify-content: center;
+    gap: 4px;
+    margin: 0 0 0 5px !important;
+    padding: 2px 7px;
+    border: 1px solid var(--border-color);
+    border-radius: 4px;
+    font-size: 10px;
+    font-weight: 600;
+    color: var(--text-muted);
+    white-space: nowrap;
+    cursor: pointer;
+    transition: all 0.15s ease;
+}
+
+.of-feed-seen-toggle:hover {
+    color: var(--of-green);
+    border-color: var(--of-green);
+    background-color: rgba(46, 204, 113, 0.1);
+}
+
+.of-feed-seen-toggle input[type="checkbox"] {
+    margin: 0;
+    cursor: pointer;
+}
+
+.of-feed__item.needs-action {
+    background: rgba(231, 76, 60, .06);
+    border-left-color: var(--of-red) !important;
+}
+
+.of-feed__reason {
+    font-style: italic;
+    opacity: .8;
+}
+
+.of-btn-mark-stream-seen:hover {
+    color: var(--of-blue) !important;
+    border-color: var(--of-blue) !important;
+    background-color: var(--subtle-fg) !important;
+}
+
+/* Missing inner rules for @media (max-width: 480px) */
+@media (max-width: 480px) {
+    .of-count {
+        text-align: left;
+    }
+
+    .of-tabs {
+        gap: 2px;
+    }
+
+    .of-tile {
+        width: 92px;
+    }
 }

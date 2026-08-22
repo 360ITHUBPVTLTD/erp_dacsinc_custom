@@ -136,6 +136,39 @@ class OrderFlow {
         this.approval_stage_filter = '';
         this.uniform_status_filter = ''; // Embroidery Transfers tab only — see #of-uniform-status
         this.stock_warehouse_filter = ''; // Stock Tracker tab only — see #of-stock-warehouse
+
+        // Per-tab pagination state. A tab whose data is one list (tracker,
+        // stock, billing, approval, uniform) tracks a single {page,
+        // page_size}; a tab whose response carries several independently-
+        // paginated sub-lists (purchase: mr/po/receipt; jobwork:
+        // po/receipt/ewo; accounts: sales/supplier/jobber) tracks one such
+        // object per sub-list, keyed the same way the server's response is
+        // — see build_pagination_args/reset_all_pagination below.
+        this.pagination = {
+            tracker: { page: 1, page_size: 100 },
+            purchase: {
+                mr: { page: 1, page_size: 100 },
+                po: { page: 1, page_size: 100 },
+                receipt: { page: 1, page_size: 100 },
+                bill: { page: 1, page_size: 100 },
+            },
+            jobwork: {
+                po: { page: 1, page_size: 100 },
+                receipt: { page: 1, page_size: 100 },
+                ewo_fp: { page: 1, page_size: 100 },
+                ewo_pn: { page: 1, page_size: 100 },
+            },
+            stock: { page: 1, page_size: 100 },
+            billing: { page: 1, page_size: 100 },
+            accounts: {
+                sales: { page: 1, page_size: 100 },
+                supplier: { page: 1, page_size: 100 },
+                jobber: { page: 1, page_size: 100 },
+            },
+            approval: { page: 1, page_size: 100 },
+            uniform: { page: 1, page_size: 100 },
+        };
+
         this.cache = {};
         this.activity_cache = null;
         this.last_seen = '';
@@ -432,15 +465,26 @@ class OrderFlow {
         this.$body.on('input', '#of-search', (e) => {
             this.search = e.target.value.trim();
             clearTimeout(timer);
-            timer = setTimeout(() => this.refresh(true), 300);
+            timer = setTimeout(() => { this.reset_all_pagination(); this.refresh(true); }, 300);
         });
 
-        this.$body.on('change', '#of-merchandiser', (e) => { this.merchandiser_filter = e.target.value; this.refresh(true); });
-        this.$body.on('change', '#of-approval-stage', (e) => { this.approval_stage_filter = e.target.value; this.refresh(true); });
-        this.$body.on('change', '#of-uniform-status', (e) => { this.uniform_status_filter = e.target.value; this.refresh(true); });
-        this.$body.on('change', '#of-stock-warehouse', (e) => { this.stock_warehouse_filter = e.target.value; this.refresh(true); });
-        this.$body.on('change', '#of-scope', (e) => { this.scope = e.target.value; this.refresh(true); });
-        this.$body.on('change', '#of-days',  (e) => { this.days  = e.target.value; this.refresh(true); });
+        this.$body.on('change', '#of-merchandiser', (e) => { this.merchandiser_filter = e.target.value; this.reset_all_pagination(); this.refresh(true); });
+        this.$body.on('change', '#of-approval-stage', (e) => { this.approval_stage_filter = e.target.value; this.reset_all_pagination(); this.refresh(true); });
+        this.$body.on('change', '#of-uniform-status', (e) => { this.uniform_status_filter = e.target.value; this.reset_all_pagination(); this.refresh(true); });
+        this.$body.on('change', '#of-stock-warehouse', (e) => { this.stock_warehouse_filter = e.target.value; this.reset_all_pagination(); this.refresh(true); });
+        this.$body.on('change', '#of-scope', (e) => { this.scope = e.target.value; this.reset_all_pagination(); this.refresh(true); });
+        this.$body.on('change', '#of-days',  (e) => { this.days  = e.target.value; this.reset_all_pagination(); this.refresh(true); });
+
+        // Pagination bar — one reusable control, shared by every tab's
+        // (sub-)list. See render_pagination_bar/build_pagination_args.
+        this.$body.on('click', '.of-page-btn:not([disabled]):not(.is-active)', (e) => {
+            const $btn = $(e.currentTarget);
+            this.set_page($btn.data('tab'), $btn.data('sublist') || null, parseInt($btn.data('page'), 10));
+        });
+        this.$body.on('change', '.of-page-size-select', (e) => {
+            const $sel = $(e.currentTarget);
+            this.set_page_size($sel.data('tab'), $sel.data('sublist') || null, parseInt($sel.val(), 10));
+        });
 
         // Row-wise seen / unseen toggle: a plain checkbox per notification, either
         // direction, so a user can park an event back on their own list until
@@ -1081,7 +1125,66 @@ class OrderFlow {
             .filter(`[data-stage="${this.stage_filter}"]`).addClass('is-active');
         this.$body.find('.of-tile').removeClass('is-active')
             .filter(`[data-stage="${this.stage_filter}"]`).addClass('is-active');
+        this.reset_all_pagination();
         this.refresh(true);
+    }
+
+    // ── Pagination ───────────────────────────────────────────────
+    // "Page 1" means something different the moment any shared filter
+    // (search/scope/days/merchandiser/stage/etc.) changes the underlying
+    // matching set — every such filter change must land back on page 1 for
+    // every tab, not leave some tabs stranded on a page number that may no
+    // longer exist once they're switched to.
+    reset_all_pagination() {
+        Object.keys(this.pagination).forEach(tab => {
+            const p = this.pagination[tab];
+            if ('page' in p) {
+                p.page = 1;
+            } else {
+                Object.keys(p).forEach(k => { p[k].page = 1; });
+            }
+        });
+    }
+
+    // {page, page_size} args for the active tab's frappe.call — a flat
+    // {page, page_size} for a single-list tab, or `${key}_page`/
+    // `${key}_page_size` per sub-list for a multi-list tab (matching each
+    // backend method's own parameter names exactly).
+    build_pagination_args(tab) {
+        const p = this.pagination[tab];
+        if (!p) return {};
+        if ('page' in p) return { page: p.page, page_size: p.page_size };
+        const out = {};
+        Object.keys(p).forEach(k => {
+            out[`${k}_page`] = p[k].page;
+            out[`${k}_page_size`] = p[k].page_size;
+        });
+        return out;
+    }
+
+    // Same shape as build_pagination_args, but joined into the cache key so
+    // paging forward/back (or changing page size) is treated as a distinct
+    // fetch — without this, page 2 would silently reuse page 1's cached rows.
+    pagination_cache_part(tab) {
+        const p = this.pagination[tab];
+        if (!p) return '';
+        if ('page' in p) return `${p.page}:${p.page_size}`;
+        return Object.keys(p).sort().map(k => `${k}=${p[k].page}:${p[k].page_size}`).join(',');
+    }
+
+    set_page(tab, sublist, page) {
+        const p = this.pagination[tab];
+        if (!p || page < 1) return;
+        if (sublist) { p[sublist].page = page; } else { p.page = page; }
+        this.refresh();
+    }
+
+    set_page_size(tab, sublist, size) {
+        const p = this.pagination[tab];
+        if (!p) return;
+        if (sublist) { p[sublist].page = 1; p[sublist].page_size = size; }
+        else { p.page = 1; p.page_size = size; }
+        this.refresh();
     }
 
     // The "All Merchandisers" filter belongs to the SO Approvals and Sales
@@ -1152,7 +1255,7 @@ class OrderFlow {
         this.load_summary();
         if (force) this.cache = {};
 
-        const key = `${this.active}:${this.days}:${this.scope}:${this.stage_filter}:${this.search}:${this.merchandiser_filter}:${this.approval_stage_filter}:${this.uniform_status_filter}:${this.stock_warehouse_filter}`;
+        const key = `${this.active}:${this.days}:${this.scope}:${this.stage_filter}:${this.search}:${this.merchandiser_filter}:${this.approval_stage_filter}:${this.uniform_status_filter}:${this.stock_warehouse_filter}:${this.pagination_cache_part(this.active)}`;
         if (this.cache[key]) {
             this.paint(this.cache[key]);
             this.load_activity();
@@ -1190,6 +1293,7 @@ class OrderFlow {
         if (this.active === 'stock') {
             args.warehouse = this.stock_warehouse_filter || null;
         }
+        Object.assign(args, this.build_pagination_args(this.active));
 
         frappe.call({ method, args }).then(r => {
             const data = r.message;
@@ -1211,7 +1315,7 @@ class OrderFlow {
                 this.render_tracker_summary(s);
             });
         } else {
-            const key = `${this.active}:${this.days}:${this.scope}:${this.stage_filter}:${this.search}`;
+            const key = `${this.active}:${this.days}:${this.scope}:${this.stage_filter}:${this.search}:${this.merchandiser_filter}:${this.approval_stage_filter}:${this.uniform_status_filter}:${this.stock_warehouse_filter}:${this.pagination_cache_part(this.active)}`;
             const data = this.cache[key];
             if (data) {
                 if (this.active === 'purchase') this.render_purchase_summary(data);
@@ -1261,85 +1365,58 @@ class OrderFlow {
     }
 
     render_purchase_summary(data) {
-        const mrs = data.material_requests || [];
-        const pos = data.purchase_orders || [];
-        const rcs = data.receipts || [];
+        // Totals come from the server now (each sub-list's own `.total`,
+        // plus the dedicated `metrics` aggregate) — computed over every
+        // matching row, not just whichever page happens to be displayed.
+        const m = data.metrics || {};
+        const mr_total = (data.material_requests || {}).total || 0;
+        const po_total = (data.purchase_orders || {}).total || 0;
+        const rc_total = (data.receipts || {}).total || 0;
 
-        const pending_mrs = mrs.filter(m => flt_of(m.qty) - flt_of(m.ordered_qty) > 0).length;
-        const open_pos = pos.filter(p => p.status === 'To Receive and Bill' || p.status === 'To Receive').length;
-        const total_ordered = pos.reduce((sum, p) => sum + flt_of(p.grand_total), 0);
-
-        const tile = (label, value, mod, hint) => `
-            <div class="of-tile of-tile--${mod} no-click" title="${hint || ''}">
-                <span class="of-tile__label">${label}</span>
-                <div class="of-tile__value">${value}</div>
-            </div>`;
-
-        this.$body.find('#of-summary-purchase').html(
-            tile(__('Pending MRs'), pending_mrs, 'wait', 'Material Requests waiting to be ordered')
-            + tile(__('Total MRs'), mrs.length, 'info', 'Total active Material Requests')
-            + tile(__('Active POs'), open_pos, 'need-bill', 'Purchase Orders waiting for receipt')
-            + tile(__('Total POs'), pos.length, 'dn', 'Total active Purchase Orders')
-            + tile(__('Total Receipts'), rcs.length, 'rcpt', 'Total Purchase/Subcontracting Receipts')
-            + tile(__('Ordered Amount'), of_money(total_ordered), 'ok', 'Grand total of active Purchase Orders')
-        );
+        this.$body.find('#of-summary-purchase').html(of_stat_strip([
+            { label: __('Pending MRs'), value: m.pending_mrs || 0, tone: 'amber', hint: 'Material Requests waiting to be ordered' },
+            { label: __('Total MRs'), value: mr_total, tone: 'info', hint: 'Total active Material Requests' },
+            { label: __('Active POs'), value: m.open_pos || 0, tone: 'gold', hint: 'Purchase Orders waiting for receipt' },
+            { label: __('Total POs'), value: po_total, tone: 'info', hint: 'Total active Purchase Orders' },
+            { label: __('Total Receipts'), value: rc_total, tone: 'green', hint: 'Total Purchase/Subcontracting Receipts' },
+            { label: __('Ordered Amount'), value: of_money(m.total_ordered || 0), tone: 'green', hint: 'Grand total of active Purchase Orders' },
+        ]));
     }
 
     render_jobwork_summary(data) {
-        const pos = data.purchase_orders || [];
-        const ewos = data.embroidery_orders || [];
+        const m = data.metrics || {};
+        const po_total = (data.purchase_orders || {}).total || 0;
+        const ewo_total = ((data.ewo_fp || {}).total || 0) + ((data.ewo_pn || {}).total || 0);
 
-        const active_pos = pos.filter(p => p.status !== 'Completed' && p.status !== 'Closed').length;
-        const active_ewos = ewos.filter(e => e.status !== 'Completed' && e.status !== 'Closed').length;
-        const pending_po_qty = pos.reduce((sum, p) => sum + Math.max(0, flt_of(p.qty) - flt_of(p.received_qty)), 0);
-
-        const tile = (label, value, mod, hint) => `
-            <div class="of-tile of-tile--${mod} no-click" title="${hint || ''}">
-                <span class="of-tile__label">${label}</span>
-                <div class="of-tile__value">${value}</div>
-            </div>`;
-
-        this.$body.find('#of-summary-jobwork').html(
-            tile(__('Active Subcontract POs'), active_pos, 'info', 'Active Subcontracting Purchase Orders')
-            + tile(__('Total Subcontract POs'), pos.length, 'draft', 'Total Subcontracting Purchase Orders')
-            + tile(__('Active Embroidery'), active_ewos, 'wait', 'Active Embroidery Work Orders')
-            + tile(__('Total Embroidery'), ewos.length, 'new', 'Total Embroidery Work Orders')
-            + tile(__('Pending Subcontract Qty'), Math.floor(pending_po_qty), 'bad', 'Quantity remaining to receive from subcontracting')
-        );
+        this.$body.find('#of-summary-jobwork').html(of_stat_strip([
+            { label: __('Active Subcontract POs'), value: m.active_pos || 0, tone: 'info', hint: 'Active Subcontracting Purchase Orders' },
+            { label: __('Total Subcontract POs'), value: po_total, tone: 'orange', hint: 'Total Subcontracting Purchase Orders' },
+            { label: __('Active Embroidery'), value: m.active_ewos || 0, tone: 'amber', hint: 'Active Embroidery Work Orders' },
+            { label: __('Total Embroidery'), value: ewo_total, tone: 'purple', hint: 'Total Embroidery Work Orders' },
+            { label: __('Pending Subcontract Qty'), value: Math.floor(m.pending_po_qty || 0), tone: 'red', hint: 'Quantity remaining to receive from subcontracting' },
+        ]));
     }
 
     render_accounts_summary(data) {
         const m = data.metrics || {};
 
-        const tile = (label, value, mod, is_money, hint) => `
-            <div class="of-tile of-tile--${mod} no-click" title="${hint || ''}">
-                <span class="of-tile__label">${label}</span>
-                <div class="of-tile__value" style="font-size: 12px; font-weight:700;">${is_money ? of_money(value) : value}</div>
-            </div>`;
-
-        this.$body.find('#of-summary-accounts').html(
-            tile(__('Customer Receivables'), m.sales_outstanding || 0, 'bad', true, 'Pending customer payments to collect')
-            + tile(__('Total Sales Billed'), m.sales_total || 0, 'info', true, 'Total sales invoice amount')
-            + tile(__('Supplier Payables'), m.supplier_outstanding || 0, 'need-bill', true, 'Pending supplier payments to make')
-            + tile(__('Total Supplier Billed'), m.supplier_total || 0, 'dn', true, 'Total supplier bill amount')
-            + tile(__('Jobber Payables'), m.jobber_outstanding || 0, 'wait', true, 'Pending jobber payments to make')
-            + tile(__('Total Jobber Billed'), m.jobber_total || 0, 'new', true, 'Total jobber bill amount')
-        );
+        this.$body.find('#of-summary-accounts').html(of_stat_strip([
+            { label: __('Customer Receivables'), value: of_money(m.sales_outstanding || 0), tone: 'red', hint: 'Pending customer payments to collect' },
+            { label: __('Total Sales Billed'), value: of_money(m.sales_total || 0), tone: 'info', hint: 'Total sales invoice amount' },
+            { label: __('Supplier Payables'), value: of_money(m.supplier_outstanding || 0), tone: 'gold', hint: 'Pending supplier payments to make' },
+            { label: __('Total Supplier Billed'), value: of_money(m.supplier_total || 0), tone: 'info', hint: 'Total supplier bill amount' },
+            { label: __('Jobber Payables'), value: of_money(m.jobber_outstanding || 0), tone: 'amber', hint: 'Pending jobber payments to make' },
+            { label: __('Total Jobber Billed'), value: of_money(m.jobber_total || 0), tone: 'purple', hint: 'Total jobber bill amount' },
+        ]));
     }
 
     render_billing_summary(data) {
         const m = (data && data.metrics) || {};
 
-        const tile = (label, value, mod, is_money, hint) => `
-            <div class="of-tile of-tile--${mod} no-click" title="${hint || ''}">
-                <span class="of-tile__label">${label}</span>
-                <div class="of-tile__value">${is_money ? of_money(value) : value}</div>
-            </div>`;
-
-        this.$body.find('#of-summary-billing').html(
-            tile(__('Orders Needing Billing'), m.count || 0, 'need-bill', false, 'Delivered Sales Orders not yet fully billed')
-            + tile(__('Amount Still to Bill'), m.total_to_bill || 0, 'bad', true, 'Remaining un-invoiced value across these orders')
-        );
+        this.$body.find('#of-summary-billing').html(of_stat_strip([
+            { label: __('Orders Needing Billing'), value: m.count || 0, tone: 'gold', hint: 'Delivered Sales Orders not yet fully billed' },
+            { label: __('Amount Still to Bill'), value: of_money(m.total_to_bill || 0), tone: 'red', hint: 'Remaining un-invoiced value across these orders' },
+        ]));
     }
 
     load_activity() {
@@ -1813,7 +1890,7 @@ class OrderFlow {
                 this.load_ewo_receive_actions(data);
             }
             if (this.active === 'stock') {
-                this._stock_items = data || []; // for toggle_stock_wh_row's warehouse drill-down
+                this._stock_items = (data && data.rows) || []; // for toggle_stock_wh_row's warehouse drill-down
                 html = this.stock_html(data);
             }
             if (this.active === 'billing')  html = this.billing_html(data);
@@ -1836,11 +1913,16 @@ class OrderFlow {
     }
 
     // ── Tab 1: tracker ───────────────────────────────────────────
-    tracker_html(orders) {
-        orders = orders || [];
+    tracker_html(data) {
+        data = data || {};
+        const orders = data.rows || [];
         this.$body.find('#of-count').text(
-            orders.length ? __('{0} order(s) shown', [orders.length]) : ''
+            data.total ? __('{0} order(s) match', [data.total]) : ''
         );
+        const truncated_note = data.truncated ? `
+            <div class="of-truncated-note"><i class="fa fa-exclamation-triangle"></i>
+                ${__('Too many matching orders to compute stages for all of them — showing the most recent 5,000. Narrow the search or date range to see the rest.')}
+            </div>` : '';
 
         // True only for a user whose SOLE reason for seeing this tab is the
         // Merchandiser User role (see is_scoped_to_own_customers on the
@@ -1996,6 +2078,7 @@ class OrderFlow {
 
             <!-- Top Summary Cards (Interactive Stage Number Cards) -->
             <div class="of-summary" id="of-summary-tracker"></div>
+            ${truncated_note}
 
             <!-- Sales Order Action Tracker Table -->
             <div class="of-card">
@@ -2020,6 +2103,7 @@ class OrderFlow {
                              <i class="fa fa-inbox"></i>No orders match the selected stage filter.</td></tr>`}</tbody>
                     </table>
                 </div>
+                ${of_pagination_html('tracker', null, data)}
             </div>`;
     }
 
@@ -2381,11 +2465,16 @@ class OrderFlow {
     // ── Tab 2: purchase ──────────────────────────────────────────
     purchase_html(data) {
         data = data || {};
-        const mrs = data.material_requests || [];
-        const pos = data.purchase_orders || [];
-        const rcs = data.receipts || [];
-        const pos_need_bill = pos.filter(p => flt_of(p.per_received) >= 100 && flt_of(p.per_billed) < 100);
-        this.$body.find('#of-count').text(__('{0} MR · {1} PO · {2} receipts · {3} need bill', [mrs.length, pos.length, rcs.length, pos_need_bill.length]));
+        const mrs_env = data.material_requests || {};
+        const pos_env = data.purchase_orders || {};
+        const rcs_env = data.receipts || {};
+        const bill_env = data.bill_orders || {};
+        const mrs = mrs_env.rows || [];
+        const pos = pos_env.rows || [];
+        const rcs = rcs_env.rows || [];
+        const pos_need_bill = bill_env.rows || [];
+        this.$body.find('#of-count').text(__('{0} MR · {1} PO · {2} receipts · {3} need bill',
+            [mrs_env.total || 0, pos_env.total || 0, rcs_env.total || 0, bill_env.total || 0]));
 
         const mr_rows = mrs.map(m => {
             const pending = flt_of(m.qty) - flt_of(m.ordered_qty);
@@ -2528,7 +2617,7 @@ class OrderFlow {
                     </table>`,
                     `<a class="of-btn of-btn--primary" href="/app/material-request/new" target="_blank">
                         <i class="fa fa-plus"></i> ${__('Create Material Request')}
-                    </a>`)}
+                    </a>`, of_pagination_html('purchase', 'mr', mrs_env))}
             </div>
 
             <div id="of-pur-sec-po" class="${subtab !== 'po' ? 'of-hidden' : ''}">
@@ -2540,7 +2629,7 @@ class OrderFlow {
                     </table>`,
                     `<a class="of-btn of-btn--primary" href="/app/purchase-order/new" target="_blank">
                         <i class="fa fa-plus"></i> ${__('Create Purchase Order')}
-                    </a>`)}
+                    </a>`, of_pagination_html('purchase', 'po', pos_env))}
             </div>
 
             <div id="of-pur-sec-receipt" class="${subtab !== 'receipt' ? 'of-hidden' : ''}">
@@ -2552,7 +2641,7 @@ class OrderFlow {
                     </table>`,
                     `<a class="of-btn of-btn--primary" href="/app/purchase-receipt/new" target="_blank">
                         <i class="fa fa-plus"></i> ${__('Create Purchase Receipt')}
-                    </a>`)}
+                    </a>`, of_pagination_html('purchase', 'receipt', rcs_env))}
             </div>
 
             <div id="of-pur-sec-bill" class="${subtab !== 'bill' ? 'of-hidden' : ''}">
@@ -2561,7 +2650,7 @@ class OrderFlow {
                         <thead><tr><th style="min-width:170px;">Purchase Order</th><th style="min-width:150px;">Supplier</th>
                             <th>Sales Order</th><th>Dates</th><th>Ordered</th><th>Received</th><th>Amount</th><th>Status</th><th>Action</th></tr></thead>
                         <tbody>${bill_rows || of_empty_row(9)}</tbody>
-                    </table>`)}
+                    </table>`, null, of_pagination_html('purchase', 'bill', bill_env))}
             </div>`;
     }
 
@@ -2573,7 +2662,8 @@ class OrderFlow {
     // button), and if so add that real action here instead of leaving the
     // user to go find it on the PO.
     load_ewo_receive_actions(data) {
-        const ewos = (data && data.embroidery_orders) || [];
+        data = data || {};
+        const ewos = [...((data.ewo_fp || {}).rows || []), ...((data.ewo_pn || {}).rows || [])];
         const unique_pos = Array.from(new Set(ewos.map(e => e.purchase_order).filter(Boolean)));
         unique_pos.forEach(po_name => {
             frappe.call({
@@ -2768,13 +2858,16 @@ class OrderFlow {
     // ── Tab 3: job work ──────────────────────────────────────────
     jobwork_html(data) {
         data = data || {};
-        const pos = data.purchase_orders || [];
-        const rcs = data.receipts || [];
-        const ewos = data.embroidery_orders || [];
-        const ewo_fp = ewos.filter(e => e.work_type === 'Full Piece Job Work');
-        const ewo_pn = ewos.filter(e => e.work_type === 'Panel Job Work');
-        this.$body.find('#of-count').text(__('{0} job work POs · {1} receipts · {2} full piece · {3} panel', 
-            [pos.length, rcs.length, ewo_fp.length, ewo_pn.length]));
+        const pos_env = data.purchase_orders || {};
+        const rcs_env = data.receipts || {};
+        const ewo_fp_env = data.ewo_fp || {};
+        const ewo_pn_env = data.ewo_pn || {};
+        const pos = pos_env.rows || [];
+        const rcs = rcs_env.rows || [];
+        const ewo_fp = ewo_fp_env.rows || [];
+        const ewo_pn = ewo_pn_env.rows || [];
+        this.$body.find('#of-count').text(__('{0} job work POs · {1} receipts · {2} full piece · {3} panel',
+            [pos_env.total || 0, rcs_env.total || 0, ewo_fp_env.total || 0, ewo_pn_env.total || 0]));
 
         const po_rows = pos.map(p => `
             <tr class="of-doc-row">
@@ -2918,7 +3011,7 @@ class OrderFlow {
                     </table>`,
                     `<a class="of-btn of-btn--primary" href="/app/purchase-order/new?is_subcontracted=1" target="_blank">
                         <i class="fa fa-plus"></i> ${__('Create Subcontracting PO')}
-                    </a>`)}
+                    </a>`, of_pagination_html('jobwork', 'po', pos_env))}
             </div>
 
             <div id="of-job-sec-receipt" class="${subtab !== 'receipt' ? 'of-hidden' : ''}">
@@ -2930,9 +3023,9 @@ class OrderFlow {
                     </table>`,
                     `<a class="of-btn of-btn--primary" href="/app/subcontracting-receipt/new" target="_blank">
                         <i class="fa fa-plus"></i> ${__('Create Subcontracting Receipt')}
-                    </a>`)}
+                    </a>`, of_pagination_html('jobwork', 'receipt', rcs_env))}
             </div>
-            
+
             <div id="of-job-sec-fp" class="${subtab !== 'fp' ? 'of-hidden' : ''}">
                 ${of_card('Embroidery Work Orders (Full Piece Work)', 'magic', `
                     <table class="of-table">
@@ -2940,9 +3033,9 @@ class OrderFlow {
                             <th>Purchase Order</th><th>Sales Order</th><th>Date</th>
                             <th>Sent</th><th>Received</th><th>Pending</th><th>Stage</th><th>Action</th></tr></thead>
                         <tbody>${ewo_fp_rows || of_empty_row(10)}</tbody>
-                    </table>`)}
+                    </table>`, null, of_pagination_html('jobwork', 'ewo_fp', ewo_fp_env))}
             </div>
-            
+
             <div id="of-job-sec-pn" class="${subtab !== 'pn' ? 'of-hidden' : ''}">
                 ${of_card('Embroidery Work Orders (Panel Work)', 'scissors', `
                     <table class="of-table">
@@ -2950,7 +3043,7 @@ class OrderFlow {
                             <th>Purchase Order</th><th>Sales Order</th><th>Date</th>
                             <th>Sent</th><th>Received</th><th>Pending</th><th>Stage</th><th>Action</th></tr></thead>
                         <tbody>${ewo_pn_rows || of_empty_row(10)}</tbody>
-                    </table>`)}
+                    </table>`, null, of_pagination_html('jobwork', 'ewo_pn', ewo_pn_env))}
             </div>`;
     }
 
@@ -2963,10 +3056,11 @@ class OrderFlow {
     // rather than the raw available figure, so "what can I actually promise
     // right now" is answered directly instead of left for the reader to work
     // out by hand.
-    stock_html(items) {
-        items = items || [];
+    stock_html(data) {
+        data = data || {};
+        const items = data.rows || [];
         this.$body.find('#of-count').text(
-            items.length ? __('{0} item(s) shown', [items.length]) : ''
+            data.total ? __('{0} item(s) match', [data.total]) : ''
         );
 
         const rows = items.map(it => {
@@ -2994,7 +3088,7 @@ class OrderFlow {
                     <thead><tr><th style="min-width:180px;">Item</th><th>Physical Stock</th>
                         <th>Picked (Draft)</th><th>Picked (Submitted)</th><th>Net Available</th></tr></thead>
                     <tbody>${rows || of_empty_row(5)}</tbody>
-                </table>`)}
+                </table>`, null, of_pagination_html('stock', null, data))}
         `;
     }
 
@@ -3136,10 +3230,11 @@ class OrderFlow {
 
     billing_html(data) {
         data = data || {};
-        const orders = data.orders || [];
+        const orders_env = data.orders || {};
+        const orders = orders_env.rows || [];
 
         this.$body.find('#of-count').text(
-            orders.length ? __('{0} order(s) need billing', [orders.length]) : ''
+            orders_env.total ? __('{0} order(s) need billing', [orders_env.total]) : ''
         );
 
         const rows = orders.map(o => `<tr data-so="${of_esc(o.name)}" class="of-row-main">
@@ -3171,19 +3266,23 @@ class OrderFlow {
                     <thead><tr><th style="min-width:160px;">Sales Order</th><th style="min-width:160px;">Customer</th>
                         <th>Order Date</th><th>Grand Total</th><th>Delivered %</th><th>Billed %</th><th>Action</th></tr></thead>
                     <tbody>${rows || of_empty_row(7)}</tbody>
-                </table>`)}
+                </table>`, null, of_pagination_html('billing', null, orders_env))}
         `;
     }
 
     accounts_html(data) {
         data = data || {};
-        const sis = data.sales_invoices || [];
-        const sups = data.supplier_invoices || [];
-        const jobs = data.jobber_invoices || [];
+        const sis_env = data.sales_invoices || {};
+        const sups_env = data.supplier_invoices || {};
+        const jobs_env = data.jobber_invoices || {};
+        const sis = sis_env.rows || [];
+        const sups = sups_env.rows || [];
+        const jobs = jobs_env.rows || [];
         const m = data.metrics || {};
 
         this.$body.find('#of-count').text(
-            __('{0} Customer Invoices · {1} Supplier Invoices · {2} Jobber Invoices', [sis.length, sups.length, jobs.length])
+            __('{0} Customer Invoices · {1} Supplier Invoices · {2} Jobber Invoices',
+                [sis_env.total || 0, sups_env.total || 0, jobs_env.total || 0])
         );
 
         // Render Sales Invoices Rows
@@ -3307,21 +3406,21 @@ class OrderFlow {
                 title: __('Customer collection'), icon: 'arrow-circle-down',
                 settled_label: __('Received'), settled: m.sales_received,
                 open_label: __('still to collect'), open: m.sales_outstanding,
-                total: m.sales_total, docs: sis.length, doc_label: __('customer invoice')
+                total: m.sales_total, docs: sis_env.total || 0, doc_label: __('customer invoice')
             })}
             ${of_settlement_bar({
                 hidden: subtab !== 'supplier', id: 'of-acc-kpi-supplier', tone: 'payable',
                 title: __('Supplier settlement'), icon: 'arrow-circle-up',
                 settled_label: __('Paid'), settled: m.supplier_paid,
                 open_label: __('still to pay'), open: m.supplier_outstanding,
-                total: m.supplier_total, docs: sups.length, doc_label: __('supplier invoice')
+                total: m.supplier_total, docs: sups_env.total || 0, doc_label: __('supplier invoice')
             })}
             ${of_settlement_bar({
                 hidden: subtab !== 'jobber', id: 'of-acc-kpi-jobber', tone: 'jobber',
                 title: __('Jobber settlement'), icon: 'cogs',
                 settled_label: __('Paid'), settled: m.jobber_paid,
                 open_label: __('still to pay'), open: m.jobber_outstanding,
-                total: m.jobber_total, docs: jobs.length, doc_label: __('jobber invoice')
+                total: m.jobber_total, docs: jobs_env.total || 0, doc_label: __('jobber invoice')
             })}
 
             <!-- Tables -->
@@ -3335,7 +3434,7 @@ class OrderFlow {
                     </table>`,
                     `<a class="of-btn of-btn--primary" href="/app/sales-invoice/new" target="_blank">
                         <i class="fa fa-plus"></i> ${__('Create Sales Invoice')}
-                    </a>`)}
+                    </a>`, of_pagination_html('accounts', 'sales', sis_env))}
             </div>
 
             <div id="of-acc-sec-supplier" class="${subtab !== 'supplier' ? 'of-hidden' : ''}">
@@ -3348,7 +3447,7 @@ class OrderFlow {
                     </table>`,
                     `<a class="of-btn of-btn--primary" href="/app/purchase-invoice/new" target="_blank">
                         <i class="fa fa-plus"></i> ${__('Create Purchase Invoice')}
-                    </a>`)}
+                    </a>`, of_pagination_html('accounts', 'supplier', sups_env))}
             </div>
 
             <div id="of-acc-sec-jobber" class="${subtab !== 'jobber' ? 'of-hidden' : ''}">
@@ -3358,12 +3457,22 @@ class OrderFlow {
                             <th>Sales Order</th><th>Dates</th><th>Total Amount</th><th>Paid</th>
                             <th>Outstanding (Payable)</th><th>Status</th><th>Action</th></tr></thead>
                         <tbody>${job_rows || of_empty_row(9)}</tbody>
-                    </table>`)}
+                    </table>`, null, of_pagination_html('accounts', 'jobber', jobs_env))}
             </div>`;
     }
 
-    approval_html(orders) {
-        orders = orders || [];
+    approval_html(data) {
+        data = data || {};
+        const orders = data.rows || [];
+        // The merchandiser/unassigned/final buckets below are a client-side
+        // partition of whatever page of the overall approval queue is
+        // loaded — not three independently-paginated lists. Draft Sales
+        // Orders awaiting approval are a small, actively-cleared queue by
+        // nature (unlike the tracker/purchase/job-work backlogs), so this
+        // is a deliberate simplification: paginate the queue as a whole
+        // (see of_pagination_html below) rather than adding three more
+        // independently-paginated backend lists for a tab that rarely
+        // grows past one page in practice.
 
         const current_user = frappe.session.user;
         const my_approvals = [];
@@ -3412,7 +3521,7 @@ class OrderFlow {
         }
 
         this.$body.find('#of-count').text(
-            active_orders.length ? __('{0} pending order(s) shown', [active_orders.length]) : ''
+            data.total ? __('{0} pending order(s) on this page (of {1} total)', [active_orders.length, data.total]) : ''
         );
 
         const rows = active_orders.map(o => {
@@ -3561,6 +3670,7 @@ class OrderFlow {
                         </tbody>
                     </table>
                 </div>
+                ${of_pagination_html('approval', null, data)}
             </div>`;
     }
 
@@ -3817,8 +3927,12 @@ class OrderFlow {
         dialog.show();
     }
 
-    uniform_html(transfers) {
-        transfers = transfers || [];
+    uniform_html(data) {
+        data = data || {};
+        const transfers = data.rows || [];
+        this.$body.find('#of-count').text(
+            data.total ? __('{0} transfer(s) match', [data.total]) : ''
+        );
 
         const rows_html = transfers.map(t => {
             const total = flt_of(t.qty);
@@ -3904,6 +4018,7 @@ class OrderFlow {
                         </tbody>
                     </table>
                 </div>
+                ${of_pagination_html('uniform', null, data)}
             </div>
         `;
     }
@@ -4089,6 +4204,60 @@ function of_esc(v) {
 
 function of_num(v) { return flt_of(v) || 0; }
 
+/**
+ * One reusable pagination bar for every tab's (sub-)list — Prev/Next, a
+ * collapsing page-number strip, a page-size selector, and a "Showing X–Y
+ * of Z" label. `state` is the {rows, total, page, page_size} envelope every
+ * paginated backend method now returns. `tab` and `sublist` are stamped
+ * onto every control as data-attributes so the single delegated click/change
+ * handlers in bind() (.of-page-btn / .of-page-size-select) know which
+ * pagination state to update — `sublist` is omitted (empty string) for a
+ * tab with only one list.
+ *
+ * Returns '' when there is nothing to page through, so a tab with no rows
+ * doesn't show an empty, confusing "Showing 0–0 of 0" bar.
+ */
+function of_pagination_html(tab, sublist, state) {
+    state = state || {};
+    const total = of_num(state.total);
+    if (!total) return '';
+
+    const page = Math.max(1, parseInt(state.page, 10) || 1);
+    const page_size = parseInt(state.page_size, 10) || 100;
+    const total_pages = Math.max(1, Math.ceil(total / page_size));
+    const start = (page - 1) * page_size + 1;
+    const end = Math.min(total, page * page_size);
+    const attrs = `data-tab="${tab}" data-sublist="${sublist || ''}"`;
+
+    let page_nums = [];
+    if (total_pages <= 7) {
+        for (let i = 1; i <= total_pages; i++) page_nums.push(i);
+    } else {
+        page_nums.push(1);
+        if (page > 4) page_nums.push('…');
+        for (let i = Math.max(2, page - 2); i <= Math.min(total_pages - 1, page + 2); i++) page_nums.push(i);
+        if (page < total_pages - 3) page_nums.push('…');
+        page_nums.push(total_pages);
+    }
+    const num_btns = page_nums.map(n => n === '…'
+        ? `<span class="of-page-ellipsis">…</span>`
+        : `<button type="button" class="of-page-btn ${n === page ? 'is-active' : ''}" ${attrs} data-page="${n}">${n}</button>`
+    ).join('');
+
+    return `
+        <div class="of-pagination">
+            <div class="of-pagination__info">${__('Showing {0}–{1} of {2}', [start, end, total])}</div>
+            <div class="of-pagination__pages">
+                <button type="button" class="of-page-btn of-page-btn--nav" ${attrs} data-page="${page - 1}" ${page <= 1 ? 'disabled' : ''} title="${__('Previous page')}"><i class="fa fa-angle-left"></i></button>
+                ${num_btns}
+                <button type="button" class="of-page-btn of-page-btn--nav" ${attrs} data-page="${page + 1}" ${page >= total_pages ? 'disabled' : ''} title="${__('Next page')}"><i class="fa fa-angle-right"></i></button>
+            </div>
+            <select class="of-select of-page-size-select" ${attrs} title="${__('Rows per page')}">
+                ${[50, 100, 200].map(n => `<option value="${n}" ${n === page_size ? 'selected' : ''}>${n} / ${__('page')}</option>`).join('')}
+            </select>
+        </div>`;
+}
+
 function of_qty(v, tone) {
     const n = flt_of(v);
     const cls = n ? (tone ? `of-val of-val--${tone}` : 'of-val') : 'of-val of-val--zero';
@@ -4225,7 +4394,33 @@ function of_links(list, doctype) {
 function of_so_links(list) { return of_links(list, 'Sales Order'); }
 function of_po_links(list) { return of_links(list, 'Purchase Order'); }
 
-function of_card(title, icon, inner, actions_html) {
+/**
+ * One quiet summary row for a tab's secondary numbers (Purchase/Job Work/
+ * Billing/Finance) — a single line with thin dividers between figures
+ * instead of six individually bordered, colored tiles, so a "1" doesn't
+ * carry the same visual weight as a "₹2,621.00". Meaning still lives in
+ * the value's own color, not in a whole tinted box.
+ *
+ * `stats` is an array of {label, value, tone, hint}; `tone` is one of
+ * green/amber/orange/info/purple/red/gold (see .of-stat--* in
+ * order_flow.css), or omitted for the plain text color.
+ *
+ * Not used for the Sales Tracker's stage tiles (.of-tile) — those are
+ * click-to-filter controls, a different thing from a plain readout.
+ */
+function of_stat_strip(stats) {
+    const cells = stats.map(s => `
+        <div class="of-stat ${s.tone ? `of-stat--${s.tone}` : ''}" title="${of_esc(s.hint || '')}">
+            <span class="of-stat__value">${s.value}</span>
+            <span class="of-stat__label">${of_esc(s.label)}</span>
+        </div>`).join('');
+    return `<div class="of-stat-strip">${cells}</div>`;
+}
+
+function of_card(title, icon, inner, actions_html, footer_html) {
+    // footer_html (e.g. a pagination bar) renders AFTER .of-scroll, not
+    // inside it — a control the user needs to click must stay put while the
+    // table scrolls sideways underneath it, not scroll away with the table.
     return `<div class="of-card">
         <div class="of-card__head" style="${actions_html ? 'display:flex;justify-content:space-between;align-items:center;' : ''}">
             <span><i class="fa fa-${icon}"></i> ${of_esc(title)}</span>
@@ -4233,6 +4428,7 @@ function of_card(title, icon, inner, actions_html) {
         </div>
         <div class="of-scroll-hint"><i class="fa fa-arrows-h"></i> ${__('Scroll sideways to see every column')}</div>
         <div class="of-scroll">${inner}</div>
+        ${footer_html || ''}
     </div>`;
 }
 

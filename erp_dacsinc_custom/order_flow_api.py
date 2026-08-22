@@ -13,6 +13,7 @@ All queries are read-only and scoped by the standard Sales Order read permission
 """
 
 import re
+from collections import defaultdict
 
 import frappe
 from frappe import _
@@ -202,6 +203,27 @@ _NOT_DISABLED_SO2 = "(so2.name IS NULL OR IFNULL(so2.custom_old_record_item_is_d
 
 def _from_date(days):
     return add_days(nowdate(), -abs(int(days or 120)))
+
+
+def _paged_query(sql, params, page, page_size):
+    """
+    Run `sql` (a complete SELECT — GROUP BY/UNION/ORDER BY all fine, but no
+    trailing LIMIT/OFFSET of its own) paginated, plus a COUNT(*) over the
+    same filtered result for an honest total. This is the one place every
+    tab's row-cap-to-real-pagination rewrite shares: replaces a hardcoded
+    `LIMIT 300` (silently dropping anything past it, with no total anyone
+    could see) with a real page + a true count of everything that matches.
+    """
+    page = max(1, cint(page))
+    page_size = cint(page_size) or 100
+    offset = (page - 1) * page_size
+
+    total = frappe.db.sql(f"SELECT COUNT(*) FROM ({sql}) _pg_count", params)[0][0]
+    rows = frappe.db.sql(
+        f"{sql} LIMIT %(_pg_limit)s OFFSET %(_pg_offset)s",
+        {**params, "_pg_limit": page_size, "_pg_offset": offset}, as_dict=1,
+    )
+    return {"rows": rows, "total": total, "page": page, "page_size": page_size}
 
 
 # --------------------------------------------------------------------------
@@ -545,13 +567,32 @@ def _event_relevance(ev, ctx):
 # Tab 1 — Sales Order tracker + activity
 # --------------------------------------------------------------------------
 
-@frappe.whitelist()
-def get_sales_tracker(days=120, search=None, scope="open", stage_filter=None, merchandiser=None, approval_stage=None):
+# Sales Orders matching the days/scope/search/merchandiser/approval_stage
+# filters can, in principle, be unbounded — this ceiling is the same
+# "explicit, surfaced cap instead of a silent one" pattern used throughout
+# this app's other large-data work (see custom_script.py's scalability
+# pass): pagination itself has no upper bound, but the one thing that
+# CANNOT be pushed into SQL here is `stage_filter` (it depends on
+# _compute_stage_info, business logic this app has hardened multiple times
+# and does not want reimplemented a second time as a WHERE clause), so the
+# candidate set that gets enriched+staged before that filter applies is
+# capped here. 5,000 is far above any real "orders active in the last N
+# days" count; if it's ever hit, `truncated` tells the caller so the UI can
+# say so instead of silently dropping rows.
+_TRACKER_ROW_CEILING = 5000
+
+
+def _get_tracker_rows(days=120, search=None, scope="open", merchandiser=None, approval_stage=None):
     """
-    Sales Orders ordered by most recent downstream activity, with exact stage & next action.
+    Sales Orders ordered by most recent downstream activity, each enriched
+    with doc-flow counts and `stage` (via _compute_stage_info) — the full
+    matching set, unpaginated and not yet filtered by stage. Shared by
+    get_sales_tracker (which paginates and applies stage_filter on top) and
+    get_summary (which counts across every stage without paginating), so
+    the two can never compute different figures for the same filters.
+
+    Returns {"rows": [...], "truncated": bool} — see _TRACKER_ROW_CEILING.
     """
-    _guard()
-    _guard_tab("tracker")
     from_date = _from_date(days)
 
     if approval_stage in ("Draft", "Pending Merchandiser Approval", "Pending Final Approval", "Rejected"):
@@ -572,10 +613,7 @@ def get_sales_tracker(days=120, search=None, scope="open", stage_filter=None, me
             conditions.append("so.workflow_state = %(approval_stage)s")
             params["approval_stage"] = approval_stage
 
-    if stage_filter == "completed":
-        # Force completed orders to show even under 'open' scope
-        pass
-    elif scope == "open":
+    if scope == "open":
         conditions.append("so.status NOT IN ('Closed', 'Completed', 'Cancelled')")
     
     if scope == "mine":
@@ -610,6 +648,20 @@ def get_sales_tracker(days=120, search=None, scope="open", stage_filter=None, me
         conditions.append("cust.custom_merchandiser_user = %(merch_scope)s")
         params["merch_scope"] = frappe.session.user
 
+    total_matching = frappe.db.sql(f"""
+        SELECT COUNT(*) FROM `tabSales Order` so
+        LEFT JOIN `tabCustomer` cust ON cust.name = so.customer
+        WHERE {' AND '.join(conditions)}
+    """, params)[0][0]
+    truncated = total_matching > _TRACKER_ROW_CEILING
+    if truncated:
+        frappe.log_error(
+            title="Order Flow: tracker row ceiling hit",
+            message=f"{total_matching} orders matched (days={days}, scope={scope}, "
+                    f"search={search!r}, merchandiser={merchandiser!r}, approval_stage={approval_stage!r}); "
+                    f"truncated to {_TRACKER_ROW_CEILING}.",
+        )
+
     orders = frappe.db.sql(f"""
         SELECT so.name, so.customer, so.customer_name, so.transaction_date, so.delivery_date,
                so.status, so.grand_total, so.currency, so.per_delivered, so.per_billed,
@@ -620,11 +672,11 @@ def get_sales_tracker(days=120, search=None, scope="open", stage_filter=None, me
         LEFT JOIN `tabUser` mu ON mu.name = cust.custom_merchandiser_user
         WHERE {' AND '.join(conditions)}
         ORDER BY so.transaction_date DESC
-        LIMIT 300
-    """, params, as_dict=1)
+        LIMIT %(ceiling)s
+    """, {**params, "ceiling": _TRACKER_ROW_CEILING}, as_dict=1)
 
     if not orders:
-        return []
+        return {"rows": [], "truncated": truncated}
 
     names = [o.name for o in orders]
     by_name = {o.name: o for o in orders}
@@ -838,18 +890,49 @@ def get_sales_tracker(days=120, search=None, scope="open", stage_filter=None, me
     # Orders with fresh activity first; then by order date.
     orders.sort(key=lambda r: (r.get("last_event_on") or r.get("modified") or ""), reverse=True)
 
-    filtered_orders = []
     for o in orders:
-        stage_info = _compute_stage_info(o)
-        o["stage"] = stage_info
-        if stage_filter and stage_filter != "all":
-            if stage_filter == "overdue" and not o.get("is_overdue"):
-                continue
-            elif stage_filter != "overdue" and stage_info.get("stage_key") != stage_filter:
-                continue
-        filtered_orders.append(o)
+        o["stage"] = _compute_stage_info(o)
 
-    return filtered_orders
+    return {"rows": orders, "truncated": truncated}
+
+
+@frappe.whitelist()
+def get_sales_tracker(days=120, search=None, scope="open", stage_filter=None, merchandiser=None,
+                       approval_stage=None, page=1, page_size=100):
+    """
+    Paginated view over _get_tracker_rows, with `stage_filter` applied in
+    Python (stage is a computed field, not a column — see
+    _compute_stage_info) before slicing to the requested page. `total` is
+    the count AFTER stage_filter, matching what the pagination bar shows.
+    """
+    _guard()
+    _guard_tab("tracker")
+    # Completed orders are excluded at the SQL level under scope="open" (see
+    # _get_tracker_rows) — force scope to "all" so clicking the "Completed"
+    # stage tile can actually find them, same override get_summary already
+    # applies for its own always-count-every-stage needs.
+    effective_scope = "all" if stage_filter == "completed" else scope
+    full = _get_tracker_rows(days=days, search=search, scope=effective_scope,
+                              merchandiser=merchandiser, approval_stage=approval_stage)
+    rows = full["rows"]
+    if stage_filter and stage_filter != "all":
+        if stage_filter == "overdue":
+            rows = [o for o in rows if o.get("is_overdue")]
+        else:
+            rows = [o for o in rows if o.get("stage", {}).get("stage_key") == stage_filter]
+
+    total = len(rows)
+    page = max(1, cint(page))
+    page_size = cint(page_size) or 100
+    start = (page - 1) * page_size
+
+    return {
+        "rows": rows[start:start + page_size],
+        "total": total,
+        "page": page,
+        "page_size": page_size,
+        "truncated": full["truncated"],
+    }
 
 
 def _compute_stage_info(order):
@@ -1336,8 +1419,17 @@ def get_activity(days=21, limit=80, merchandiser=None, scope="open", search=None
 # --------------------------------------------------------------------------
 
 @frappe.whitelist()
-def get_purchase_flow(days=120, search=None, scope="open", merchandiser=None):
-    """Purchase Orders with their receipt progress, tied back to the Sales Order."""
+def get_purchase_flow(days=120, search=None, scope="open", merchandiser=None,
+                       po_page=1, po_page_size=100, mr_page=1, mr_page_size=100,
+                       receipt_page=1, receipt_page_size=100, bill_page=1, bill_page_size=100):
+    """Purchase Orders with their receipt progress, tied back to the Sales Order.
+
+    Returns four independently-paginated sub-lists (material_requests,
+    purchase_orders, receipts, bill_orders) — one per sub-tab in the UI —
+    each its own {"rows", "total", "page", "page_size"} envelope, since a
+    Sales Order can be far along on POs while its MRs/receipts sub-tab has a
+    totally different page count.
+    """
     _guard()
     _guard_tab("purchase")
     conditions = ["po.docstatus < 2", "po.transaction_date >= %(from_date)s", "IFNULL(po.is_subcontracted, 0) = 0", _NOT_DISABLED_SO]
@@ -1357,7 +1449,7 @@ def get_purchase_flow(days=120, search=None, scope="open", merchandiser=None):
         params["q"] = f"%{search}%"
 
 
-    purchase_orders = frappe.db.sql(f"""
+    purchase_orders = _paged_query(f"""
         SELECT po.name, po.transaction_date, po.schedule_date, po.status, po.docstatus,
                po.supplier, sup.supplier_name, po.is_subcontracted, po.currency,
                po.per_received, po.per_billed, po.grand_total,
@@ -1376,8 +1468,32 @@ def get_purchase_flow(days=120, search=None, scope="open", merchandiser=None):
                  po.supplier, sup.supplier_name, po.is_subcontracted, po.currency,
                  po.per_received, po.per_billed, po.grand_total
         ORDER BY po.transaction_date DESC, po.name DESC
-        LIMIT 300
-    """, params, as_dict=1)
+    """, params, po_page, po_page_size)
+
+    # "To Bill" sub-tab: fully-received POs still waiting on a Purchase
+    # Invoice — same base filters as purchase_orders, plus the bill-status
+    # condition, as its own independently-paginated list rather than a
+    # client-side .filter() over whichever PO page happens to be loaded.
+    bill_orders = _paged_query(f"""
+        SELECT po.name, po.transaction_date, po.schedule_date, po.status, po.docstatus,
+               po.supplier, sup.supplier_name, po.is_subcontracted, po.currency,
+               po.per_received, po.per_billed, po.grand_total,
+               GROUP_CONCAT(DISTINCT poi.sales_order ORDER BY poi.sales_order SEPARATOR ', ') AS sales_orders,
+               GROUP_CONCAT(DISTINCT so.customer_name ORDER BY so.customer_name SEPARATOR ', ') AS so_customer_names,
+               COUNT(DISTINCT poi.item_code) AS item_count,
+               SUM(CASE WHEN po.is_subcontracted = 1 THEN poi.fg_item_qty ELSE poi.qty END) AS qty,
+               SUM(poi.received_qty) AS received_qty
+        FROM `tabPurchase Order Item` poi
+        JOIN `tabPurchase Order` po ON po.name = poi.parent
+        LEFT JOIN `tabSupplier` sup ON sup.name = po.supplier
+        LEFT JOIN `tabSales Order` so ON so.name = poi.sales_order
+        LEFT JOIN `tabCustomer` cust ON cust.name = so.customer
+        WHERE {' AND '.join(conditions + ["po.per_received >= 100", "po.per_billed < 100"])}
+        GROUP BY po.name, po.transaction_date, po.schedule_date, po.status, po.docstatus,
+                 po.supplier, sup.supplier_name, po.is_subcontracted, po.currency,
+                 po.per_received, po.per_billed, po.grand_total
+        ORDER BY po.transaction_date DESC, po.name DESC
+    """, params, bill_page, bill_page_size)
 
     mr_conditions = ["mr.docstatus < 2", "mr.transaction_date >= %(from_date)s", _NOT_DISABLED_SO]
     if scope == "open":
@@ -1404,7 +1520,7 @@ def get_purchase_flow(days=120, search=None, scope="open", merchandiser=None):
         scr_conditions.append("(scr.name LIKE %(q)s OR scr.supplier LIKE %(q)s OR sup.supplier_name LIKE %(q)s)")
 
 
-    receipts = frappe.db.sql(f"""
+    receipts = _paged_query(f"""
         (SELECT 'Purchase Receipt' AS doctype, pr.name, pr.posting_date, pr.status, pr.docstatus,
                 pr.supplier, sup.supplier_name, pr.is_subcontracted, pr.currency, pr.grand_total,
                 GROUP_CONCAT(DISTINCT pri.sales_order ORDER BY pri.sales_order SEPARATOR ', ') AS sales_orders,
@@ -1440,10 +1556,9 @@ def get_purchase_flow(days=120, search=None, scope="open", merchandiser=None):
          GROUP BY scr.name, scr.posting_date, scr.status, scr.docstatus, scr.supplier, sup.supplier_name)
 
         ORDER BY posting_date DESC
-        LIMIT 300
-    """, params, as_dict=1)
+    """, params, receipt_page, receipt_page_size)
 
-    material_requests = frappe.db.sql(f"""
+    material_requests = _paged_query(f"""
         SELECT mr.name, mr.transaction_date, mr.schedule_date, mr.material_request_type,
                mr.status, mr.docstatus, mr.per_ordered, mr.per_received,
                GROUP_CONCAT(DISTINCT mri.sales_order ORDER BY mri.sales_order SEPARATOR ', ') AS sales_orders,
@@ -1458,8 +1573,7 @@ def get_purchase_flow(days=120, search=None, scope="open", merchandiser=None):
         GROUP BY mr.name, mr.transaction_date, mr.schedule_date, mr.material_request_type,
                  mr.status, mr.docstatus, mr.per_ordered, mr.per_received
         ORDER BY mr.transaction_date DESC
-        LIMIT 300
-    """, params, as_dict=1)
+    """, params, mr_page, mr_page_size)
 
     draft_pis = frappe.db.sql("""
         SELECT pii.purchase_order, pi.name
@@ -1471,14 +1585,53 @@ def get_purchase_flow(days=120, search=None, scope="open", merchandiser=None):
     po_draft_pi = {}
     for d in draft_pis:
         po_draft_pi[d.purchase_order] = d.name
-        
-    for p in purchase_orders:
+
+    for p in purchase_orders["rows"]:
         p["draft_invoice"] = po_draft_pi.get(p.name)
+    for p in bill_orders["rows"]:
+        p["draft_invoice"] = po_draft_pi.get(p.name)
+
+    # Summary-tile aggregates over every matching row, not just the page
+    # being displayed — these used to be computed client-side from the
+    # already-fetched (once capped at 300, now one page of) rows, which
+    # would have quietly gone from "approximate at 300+" to "only this
+    # page" the moment real pagination replaced that cap.
+    pending_mrs = frappe.db.sql(f"""
+        SELECT COUNT(*) FROM (
+            SELECT mr.name, SUM(mri.qty) AS total_qty, SUM(mri.ordered_qty) AS total_ordered
+            FROM `tabMaterial Request Item` mri
+            JOIN `tabMaterial Request` mr ON mr.name = mri.parent
+            LEFT JOIN `tabSales Order` so ON so.name = mri.sales_order
+            WHERE {' AND '.join(mr_conditions)}
+            GROUP BY mr.name
+            HAVING total_qty - total_ordered > 0
+        ) t
+    """, params)[0][0]
+
+    po_agg = frappe.db.sql(f"""
+        SELECT
+            SUM(CASE WHEN x.status IN ('To Receive and Bill', 'To Receive') THEN 1 ELSE 0 END) AS open_count,
+            SUM(x.grand_total) AS total_ordered
+        FROM (
+            SELECT DISTINCT po.name, po.status, po.grand_total
+            FROM `tabPurchase Order Item` poi
+            JOIN `tabPurchase Order` po ON po.name = poi.parent
+            LEFT JOIN `tabSupplier` sup ON sup.name = po.supplier
+            LEFT JOIN `tabSales Order` so ON so.name = poi.sales_order
+            WHERE {' AND '.join(conditions)}
+        ) x
+    """, params, as_dict=1)[0]
 
     return {
         "material_requests": material_requests,
         "purchase_orders": purchase_orders,
         "receipts": receipts,
+        "bill_orders": bill_orders,
+        "metrics": {
+            "pending_mrs": cint(pending_mrs),
+            "open_pos": cint(po_agg.open_count),
+            "total_ordered": flt(po_agg.total_ordered),
+        },
     }
 
 
@@ -1487,8 +1640,18 @@ def get_purchase_flow(days=120, search=None, scope="open", merchandiser=None):
 # --------------------------------------------------------------------------
 
 @frappe.whitelist()
-def get_jobwork_flow(days=180, search=None, scope="open", merchandiser=None):
-    """Subcontracting/Job Work POs with their receipt progress, tied back to the Sales Order."""
+def get_jobwork_flow(days=180, search=None, scope="open", merchandiser=None,
+                      po_page=1, po_page_size=100, receipt_page=1, receipt_page_size=100,
+                      ewo_fp_page=1, ewo_fp_page_size=100, ewo_pn_page=1, ewo_pn_page_size=100):
+    """Subcontracting/Job Work POs with their receipt progress, tied back to the Sales Order.
+
+    Four independently-paginated sub-lists (purchase_orders, receipts,
+    ewo_fp, ewo_pn), same reasoning as get_purchase_flow — Full Piece and
+    Panel embroidery work used to be one query the client split in Python by
+    work_type, which meant pagination on the combined list could put every
+    Full Piece row on a page with none of the Panel rows a user actually
+    wanted, or vice versa.
+    """
     _guard()
     _guard_tab("jobwork")
     conditions = ["po.docstatus < 2", "po.transaction_date >= %(from_date)s", "po.is_subcontracted = 1", _NOT_DISABLED_SO]
@@ -1508,7 +1671,7 @@ def get_jobwork_flow(days=180, search=None, scope="open", merchandiser=None):
         params["q"] = f"%{search}%"
 
 
-    purchase_orders = frappe.db.sql(f"""
+    purchase_orders = _paged_query(f"""
         SELECT po.name, po.transaction_date, po.schedule_date, po.status, po.docstatus,
                po.supplier, sup.supplier_name, po.is_subcontracted, po.currency,
                po.per_received, po.per_billed, po.grand_total,
@@ -1527,8 +1690,7 @@ def get_jobwork_flow(days=180, search=None, scope="open", merchandiser=None):
                  po.supplier, sup.supplier_name, po.is_subcontracted, po.currency,
                  po.per_received, po.per_billed, po.grand_total
         ORDER BY po.transaction_date DESC, po.name DESC
-        LIMIT 300
-    """, params, as_dict=1)
+    """, params, po_page, po_page_size)
 
     pr_conditions = ["pr.docstatus < 2", "pr.posting_date >= %(from_date)s", "pr.is_subcontracted = 1", _NOT_DISABLED_SO]
     scr_conditions = ["scr.docstatus < 2", "scr.posting_date >= %(from_date)s", _NOT_DISABLED_SO]
@@ -1554,7 +1716,7 @@ def get_jobwork_flow(days=180, search=None, scope="open", merchandiser=None):
                                   OR fp.supplier_name LIKE %(q)s OR pn.supplier_name LIKE %(q)s)""")
 
 
-    receipts = frappe.db.sql(f"""
+    receipts = _paged_query(f"""
         (SELECT 'Purchase Receipt' AS doctype, pr.name, pr.posting_date, pr.status, pr.docstatus,
                 pr.supplier, sup.supplier_name, pr.is_subcontracted, pr.currency, pr.grand_total,
                 GROUP_CONCAT(DISTINCT pri.sales_order ORDER BY pri.sales_order SEPARATOR ', ') AS sales_orders,
@@ -1597,42 +1759,80 @@ def get_jobwork_flow(days=180, search=None, scope="open", merchandiser=None):
          WHERE {' AND '.join(scr_conditions)}
          GROUP BY scr.name, scr.posting_date, scr.status, scr.docstatus, scr.supplier, sup.supplier_name)
         ORDER BY posting_date DESC, name DESC
-        LIMIT 300
-    """, params, as_dict=1)
+    """, params, receipt_page, receipt_page_size)
 
-    embroidery_orders = frappe.db.sql(f"""
-        SELECT ewo.name, ewo.date, ewo.status, ewo.docstatus, ewo.work_type,
-               ewo.purchase_order, ewo.subcontracting_order, ewo.completed_on,
-               ewo.panel_stage, ewo.full_piece_stage, ewo.per_received,
-               ewo.panel_jobber, ewo.full_piece_jobber,
-               COALESCE(fp.supplier_name, pn.supplier_name) AS jobber_name,
-               po.supplier AS po_supplier, po_sup.supplier_name AS po_supplier_name,
-               (SELECT SUM(c.ordered_qty) FROM `tabEmbroidery Work Order Item` c WHERE c.parent = ewo.name) AS ordered_qty,
-               (SELECT SUM(c.received_qty) FROM `tabEmbroidery Work Order Item` c WHERE c.parent = ewo.name) AS received_qty,
-               (SELECT GROUP_CONCAT(DISTINCT poi.sales_order ORDER BY poi.sales_order SEPARATOR ', ')
-                  FROM `tabPurchase Order Item` poi WHERE poi.parent = ewo.purchase_order) AS sales_orders,
-               GROUP_CONCAT(DISTINCT so.customer_name ORDER BY so.customer_name SEPARATOR ', ') AS so_customer_names
+    def _ewo_sql(work_type):
+        return f"""
+            SELECT ewo.name, ewo.date, ewo.status, ewo.docstatus, ewo.work_type,
+                   ewo.purchase_order, ewo.subcontracting_order, ewo.completed_on,
+                   ewo.panel_stage, ewo.full_piece_stage, ewo.per_received,
+                   ewo.panel_jobber, ewo.full_piece_jobber,
+                   COALESCE(fp.supplier_name, pn.supplier_name) AS jobber_name,
+                   po.supplier AS po_supplier, po_sup.supplier_name AS po_supplier_name,
+                   (SELECT SUM(c.ordered_qty) FROM `tabEmbroidery Work Order Item` c WHERE c.parent = ewo.name) AS ordered_qty,
+                   (SELECT SUM(c.received_qty) FROM `tabEmbroidery Work Order Item` c WHERE c.parent = ewo.name) AS received_qty,
+                   (SELECT GROUP_CONCAT(DISTINCT poi.sales_order ORDER BY poi.sales_order SEPARATOR ', ')
+                      FROM `tabPurchase Order Item` poi WHERE poi.parent = ewo.purchase_order) AS sales_orders,
+                   GROUP_CONCAT(DISTINCT so.customer_name ORDER BY so.customer_name SEPARATOR ', ') AS so_customer_names
+            FROM `tabEmbroidery Work Order` ewo
+            LEFT JOIN `tabSupplier` fp ON fp.name = ewo.full_piece_jobber
+            LEFT JOIN `tabSupplier` pn ON pn.name = ewo.panel_jobber
+            LEFT JOIN `tabPurchase Order` po ON po.name = ewo.purchase_order
+            LEFT JOIN `tabSupplier` po_sup ON po_sup.name = po.supplier
+            LEFT JOIN `tabPurchase Order Item` poi ON poi.parent = ewo.purchase_order
+            LEFT JOIN `tabSales Order` so ON so.name = poi.sales_order
+            WHERE {' AND '.join(ewo_conditions)} AND ewo.work_type = %(work_type)s
+            GROUP BY ewo.name, ewo.date, ewo.status, ewo.docstatus, ewo.work_type,
+                     ewo.purchase_order, ewo.subcontracting_order, ewo.completed_on,
+                     ewo.panel_stage, ewo.full_piece_stage, ewo.per_received,
+                     ewo.panel_jobber, ewo.full_piece_jobber, fp.supplier_name, pn.supplier_name,
+                     po.supplier, po_sup.supplier_name
+            ORDER BY ewo.date DESC
+        """
+
+    ewo_params_fp = {**params, "work_type": "Full Piece Job Work"}
+    ewo_params_pn = {**params, "work_type": "Panel Job Work"}
+    ewo_fp = _paged_query(_ewo_sql("Full Piece Job Work"), ewo_params_fp, ewo_fp_page, ewo_fp_page_size)
+    ewo_pn = _paged_query(_ewo_sql("Panel Job Work"), ewo_params_pn, ewo_pn_page, ewo_pn_page_size)
+
+    # Same reasoning as get_purchase_flow's metrics block: aggregate over
+    # every matching row, not just the displayed page.
+    po_agg = frappe.db.sql(f"""
+        SELECT
+            SUM(CASE WHEN x.status NOT IN ('Completed', 'Closed') THEN 1 ELSE 0 END) AS active_count,
+            SUM(GREATEST(x.qty - x.received_qty, 0)) AS pending_qty
+        FROM (
+            SELECT po.name, po.status, SUM(poi.fg_item_qty) AS qty, SUM(poi.received_qty) AS received_qty
+            FROM `tabPurchase Order Item` poi
+            JOIN `tabPurchase Order` po ON po.name = poi.parent
+            LEFT JOIN `tabSupplier` sup ON sup.name = po.supplier
+            LEFT JOIN `tabSales Order` so ON so.name = poi.sales_order
+            WHERE {' AND '.join(conditions)}
+            GROUP BY po.name, po.status
+        ) x
+    """, params, as_dict=1)[0]
+
+    active_ewos = frappe.db.sql(f"""
+        SELECT COUNT(DISTINCT CASE WHEN ewo.status NOT IN ('Completed', 'Closed') THEN ewo.name END)
         FROM `tabEmbroidery Work Order` ewo
         LEFT JOIN `tabSupplier` fp ON fp.name = ewo.full_piece_jobber
         LEFT JOIN `tabSupplier` pn ON pn.name = ewo.panel_jobber
         LEFT JOIN `tabPurchase Order` po ON po.name = ewo.purchase_order
-        LEFT JOIN `tabSupplier` po_sup ON po_sup.name = po.supplier
         LEFT JOIN `tabPurchase Order Item` poi ON poi.parent = ewo.purchase_order
         LEFT JOIN `tabSales Order` so ON so.name = poi.sales_order
         WHERE {' AND '.join(ewo_conditions)}
-        GROUP BY ewo.name, ewo.date, ewo.status, ewo.docstatus, ewo.work_type,
-                 ewo.purchase_order, ewo.subcontracting_order, ewo.completed_on,
-                 ewo.panel_stage, ewo.full_piece_stage, ewo.per_received,
-                 ewo.panel_jobber, ewo.full_piece_jobber, fp.supplier_name, pn.supplier_name,
-                 po.supplier, po_sup.supplier_name
-        ORDER BY ewo.date DESC
-        LIMIT 300
-    """, params, as_dict=1)
+    """, params)[0][0]
 
     return {
         "purchase_orders": purchase_orders,
         "receipts": receipts,
-        "embroidery_orders": embroidery_orders,
+        "ewo_fp": ewo_fp,
+        "ewo_pn": ewo_pn,
+        "metrics": {
+            "active_pos": cint(po_agg.active_count),
+            "pending_po_qty": flt(po_agg.pending_qty),
+            "active_ewos": cint(active_ewos),
+        },
     }
 
 
@@ -1650,7 +1850,8 @@ def get_summary(days=120, scope="open", search=None, merchandiser=None, approval
     # To compute accurate summary counts for all stages (including completed ones),
     # we override "open" scope to "all". "mine" scope is preserved to only count the user's orders.
     summary_scope = "all" if scope == "open" else scope
-    orders_all = get_sales_tracker(days=days, scope=summary_scope, search=search, merchandiser=merchandiser, approval_stage=approval_stage)
+    orders_all = _get_tracker_rows(days=days, scope=summary_scope, search=search,
+                                    merchandiser=merchandiser, approval_stage=approval_stage)["rows"]
 
     open_orders = 0
     completed = 0
@@ -1715,9 +1916,19 @@ def get_summary(days=120, scope="open", search=None, merchandiser=None, approval
 # --------------------------------------------------------------------------
 
 @frappe.whitelist()
-def get_accounts_flow(days=120, search=None, scope="open", merchandiser=None):
+def get_accounts_flow(days=120, search=None, scope="open", merchandiser=None,
+                       sales_page=1, sales_page_size=100, supplier_page=1, supplier_page_size=100,
+                       jobber_page=1, jobber_page_size=100):
     """
     Financial summary & invoices split into Receivables, Supplier Payables, and Jobber Payables (custom_is_jobber = 1).
+
+    Supplier vs jobber payables used to be one query, split into two lists
+    in Python after the fact — that meant they couldn't be paginated
+    independently (a page of the combined result could be all-supplier or
+    all-jobber depending on sort order) and `metrics` totals were computed
+    over whatever page happened to be fetched. Now each is its own query
+    with its own page, and `metrics` comes from separate aggregate queries
+    over every matching row, not just the displayed page.
     """
     _guard()
     _guard_tab("accounts")
@@ -1736,7 +1947,7 @@ def get_accounts_flow(days=120, search=None, scope="open", merchandiser=None):
         params["q"] = f"%{search}%"
 
 
-    sales_invoices = frappe.db.sql(f"""
+    sales_invoices = _paged_query(f"""
         SELECT si.name, si.posting_date, si.due_date, si.status, si.docstatus,
                si.customer, cust.customer_name, si.currency,
                si.grand_total, si.outstanding_amount,
@@ -1751,8 +1962,21 @@ def get_accounts_flow(days=120, search=None, scope="open", merchandiser=None):
         GROUP BY si.name, si.posting_date, si.due_date, si.status, si.docstatus,
                  si.customer, cust.customer_name, si.currency, si.grand_total, si.outstanding_amount
         ORDER BY si.posting_date DESC, si.name DESC
-        LIMIT 300
-    """, params, as_dict=1)
+    """, params, sales_page, sales_page_size)
+
+    sales_agg = frappe.db.sql(f"""
+        SELECT SUM(x.grand_total) AS total, SUM(x.grand_total - x.outstanding_amount) AS paid,
+               SUM(x.outstanding_amount) AS outstanding
+        FROM (
+            SELECT si.name, si.grand_total, si.outstanding_amount
+            FROM `tabSales Invoice Item` sii
+            JOIN `tabSales Invoice` si ON si.name = sii.parent
+            LEFT JOIN `tabCustomer` cust ON cust.name = si.customer
+            LEFT JOIN `tabSales Order` so ON so.name = sii.sales_order
+            WHERE {' AND '.join(si_conditions)}
+            GROUP BY si.name, si.grand_total, si.outstanding_amount
+        ) x
+    """, params, as_dict=1)[0]
 
     pi_params = {"from_date": from_date}
     pi_conditions = ["pi.docstatus = 1", "pi.posting_date >= %(from_date)s", _NOT_DISABLED_SO]
@@ -1767,56 +1991,62 @@ def get_accounts_flow(days=120, search=None, scope="open", merchandiser=None):
         pi_params["q"] = f"%{search}%"
 
 
-    purchase_invoices = frappe.db.sql(f"""
-        SELECT pi.name, pi.posting_date, pi.due_date, pi.status, pi.docstatus,
-               pi.supplier, sup.supplier_name, pi.currency,
-               IFNULL(sup.custom_is_jobber, 0) AS is_jobber,
-               pi.grand_total, pi.outstanding_amount,
-               (pi.grand_total - pi.outstanding_amount) AS paid_amount,
-               GROUP_CONCAT(DISTINCT poi.sales_order ORDER BY poi.sales_order SEPARATOR ', ') AS sales_orders,
-               GROUP_CONCAT(DISTINCT so.customer_name ORDER BY so.customer_name SEPARATOR ', ') AS so_customer_names
-        FROM `tabPurchase Invoice Item` pii
-        JOIN `tabPurchase Invoice` pi ON pi.name = pii.parent
-        LEFT JOIN `tabPurchase Order Item` poi ON poi.parent = pii.purchase_order
-        LEFT JOIN `tabSupplier` sup ON sup.name = pi.supplier
-        LEFT JOIN `tabSales Order` so ON so.name = poi.sales_order
-        LEFT JOIN `tabCustomer` cust ON cust.name = so.customer
-        WHERE {' AND '.join(pi_conditions)}
-        GROUP BY pi.name, pi.posting_date, pi.due_date, pi.status, pi.docstatus,
-                 pi.supplier, sup.supplier_name, sup.custom_is_jobber, pi.currency, pi.grand_total, pi.outstanding_amount
-        ORDER BY pi.posting_date DESC, pi.name DESC
-        LIMIT 300
-    """, pi_params, as_dict=1)
+    def _purchase_invoice_sql(jobber_flag):
+        return f"""
+            SELECT pi.name, pi.posting_date, pi.due_date, pi.status, pi.docstatus,
+                   pi.supplier, sup.supplier_name, pi.currency,
+                   IFNULL(sup.custom_is_jobber, 0) AS is_jobber,
+                   pi.grand_total, pi.outstanding_amount,
+                   (pi.grand_total - pi.outstanding_amount) AS paid_amount,
+                   GROUP_CONCAT(DISTINCT poi.sales_order ORDER BY poi.sales_order SEPARATOR ', ') AS sales_orders,
+                   GROUP_CONCAT(DISTINCT so.customer_name ORDER BY so.customer_name SEPARATOR ', ') AS so_customer_names
+            FROM `tabPurchase Invoice Item` pii
+            JOIN `tabPurchase Invoice` pi ON pi.name = pii.parent
+            LEFT JOIN `tabPurchase Order Item` poi ON poi.parent = pii.purchase_order
+            LEFT JOIN `tabSupplier` sup ON sup.name = pi.supplier
+            LEFT JOIN `tabSales Order` so ON so.name = poi.sales_order
+            LEFT JOIN `tabCustomer` cust ON cust.name = so.customer
+            WHERE {' AND '.join(pi_conditions)} AND IFNULL(sup.custom_is_jobber, 0) = {jobber_flag}
+            GROUP BY pi.name, pi.posting_date, pi.due_date, pi.status, pi.docstatus,
+                     pi.supplier, sup.supplier_name, sup.custom_is_jobber, pi.currency, pi.grand_total, pi.outstanding_amount
+            ORDER BY pi.posting_date DESC, pi.name DESC
+        """
 
-    supplier_invoices = [p for p in purchase_invoices if flt(p.get("is_jobber")) == 0]
-    jobber_invoices   = [p for p in purchase_invoices if flt(p.get("is_jobber")) == 1]
+    def _purchase_invoice_agg(jobber_flag):
+        return frappe.db.sql(f"""
+            SELECT SUM(x.grand_total) AS total, SUM(x.grand_total - x.outstanding_amount) AS paid,
+                   SUM(x.outstanding_amount) AS outstanding
+            FROM (
+                SELECT pi.name, pi.grand_total, pi.outstanding_amount
+                FROM `tabPurchase Invoice Item` pii
+                JOIN `tabPurchase Invoice` pi ON pi.name = pii.parent
+                LEFT JOIN `tabPurchase Order Item` poi ON poi.parent = pii.purchase_order
+                LEFT JOIN `tabSupplier` sup ON sup.name = pi.supplier
+                LEFT JOIN `tabSales Order` so ON so.name = poi.sales_order
+                WHERE {' AND '.join(pi_conditions)} AND IFNULL(sup.custom_is_jobber, 0) = {jobber_flag}
+                GROUP BY pi.name, pi.grand_total, pi.outstanding_amount
+            ) x
+        """, pi_params, as_dict=1)[0]
 
-    sales_total = sum(flt(s.grand_total) for s in sales_invoices)
-    sales_received = sum(flt(s.paid_amount) for s in sales_invoices)
-    sales_outstanding = sum(flt(s.outstanding_amount) for s in sales_invoices)
-
-    supplier_total = sum(flt(p.grand_total) for p in supplier_invoices)
-    supplier_paid = sum(flt(p.paid_amount) for p in supplier_invoices)
-    supplier_outstanding = sum(flt(p.outstanding_amount) for p in supplier_invoices)
-
-    jobber_total = sum(flt(p.grand_total) for p in jobber_invoices)
-    jobber_paid = sum(flt(p.paid_amount) for p in jobber_invoices)
-    jobber_outstanding = sum(flt(p.outstanding_amount) for p in jobber_invoices)
+    supplier_invoices = _paged_query(_purchase_invoice_sql(0), pi_params, supplier_page, supplier_page_size)
+    jobber_invoices = _paged_query(_purchase_invoice_sql(1), pi_params, jobber_page, jobber_page_size)
+    supplier_agg = _purchase_invoice_agg(0)
+    jobber_agg = _purchase_invoice_agg(1)
 
     return {
         "sales_invoices": sales_invoices,
         "supplier_invoices": supplier_invoices,
         "jobber_invoices": jobber_invoices,
         "metrics": {
-            "sales_total": sales_total,
-            "sales_received": sales_received,
-            "sales_outstanding": sales_outstanding,
-            "supplier_total": supplier_total,
-            "supplier_paid": supplier_paid,
-            "supplier_outstanding": supplier_outstanding,
-            "jobber_total": jobber_total,
-            "jobber_paid": jobber_paid,
-            "jobber_outstanding": jobber_outstanding
+            "sales_total": flt(sales_agg.total),
+            "sales_received": flt(sales_agg.paid),
+            "sales_outstanding": flt(sales_agg.outstanding),
+            "supplier_total": flt(supplier_agg.total),
+            "supplier_paid": flt(supplier_agg.paid),
+            "supplier_outstanding": flt(supplier_agg.outstanding),
+            "jobber_total": flt(jobber_agg.total),
+            "jobber_paid": flt(jobber_agg.paid),
+            "jobber_outstanding": flt(jobber_agg.outstanding),
         }
     }
 
@@ -1878,7 +2108,7 @@ def get_draft_dn_si_for_so(sales_order):
 # --------------------------------------------------------------------------
 
 @frappe.whitelist()
-def get_billing_flow(days=120, search=None, scope="open"):
+def get_billing_flow(days=120, search=None, scope="open", page=1, page_size=100):
     """
     Sales Orders that have shipped (a submitted Delivery Note exists) but are
     not yet fully billed — the queue this tab exists to clear.
@@ -1904,20 +2134,32 @@ def get_billing_flow(days=120, search=None, scope="open"):
         WHERE dni.against_sales_order = so.name AND dn.docstatus = 1
     )""")
 
-    orders = frappe.db.sql(f"""
+    orders = _paged_query(f"""
         SELECT so.name, so.customer, so.customer_name, so.transaction_date, so.grand_total,
                so.currency, so.per_delivered, so.per_billed, so.status, so.owner
         FROM `tabSales Order` so
         WHERE {' AND '.join(conditions)}
         ORDER BY so.transaction_date DESC
-        LIMIT 300
-    """, params, as_dict=1)
+    """, params, page, page_size)
+
+    # True totals over every matching order, not just the displayed page —
+    # the old `len(orders)`/`sum(... for o in orders)` were computed from
+    # the already-LIMIT-300'd list, so both silently understated reality
+    # past 300 matching orders.
+    agg = frappe.db.sql(f"""
+        SELECT COUNT(*) AS cnt, SUM(x.grand_total * (100 - x.per_billed) / 100) AS to_bill
+        FROM (
+            SELECT so.name, so.grand_total, so.per_billed
+            FROM `tabSales Order` so
+            WHERE {' AND '.join(conditions)}
+        ) x
+    """, params, as_dict=1)[0]
 
     return {
         "orders": orders,
         "metrics": {
-            "count": len(orders),
-            "total_to_bill": sum(flt(o.grand_total) * (100 - flt(o.per_billed)) / 100 for o in orders),
+            "count": cint(agg.cnt),
+            "total_to_bill": flt(agg.to_bill),
         }
     }
 
@@ -2011,7 +2253,7 @@ def _get_global_pick_reservations(item_codes, warehouse=None):
 
 
 @frappe.whitelist()
-def get_stock_tracker(search=None, warehouse=None):
+def get_stock_tracker(search=None, warehouse=None, page=1, page_size=100):
     """
     Global (not per-Sales-Order) item availability report: physical stock by
     warehouse, how much of it is already reserved by draft/submitted Pick
@@ -2033,15 +2275,15 @@ def get_stock_tracker(search=None, warehouse=None):
         conditions.append("(i.item_code LIKE %(q)s OR i.item_name LIKE %(q)s)")
         params["q"] = f"%{search}%"
 
-    items = frappe.db.sql(f"""
+    paged_items = _paged_query(f"""
         SELECT i.item_code, i.item_name, i.stock_uom
         FROM `tabItem` i
         WHERE {' AND '.join(conditions)}
         ORDER BY i.item_code
-        LIMIT 300
-    """, params, as_dict=1)
+    """, params, page, page_size)
+    items = paged_items["rows"]
     if not items:
-        return []
+        return {**paged_items, "rows": []}
 
     item_codes = [i.item_code for i in items]
 
@@ -2075,7 +2317,7 @@ def get_stock_tracker(search=None, warehouse=None):
             "picked_draft_qty": res["draft_qty"], "picked_submitted_qty": res["submitted_qty"],
             "net_available": net_available,
         })
-    return result
+    return {**paged_items, "rows": result}
 
 
 @frappe.whitelist()
@@ -2222,7 +2464,7 @@ def get_approval_permissions():
 
 
 @frappe.whitelist()
-def get_pending_approvals(search=None, merchandiser=None, approval_stage=None):
+def get_pending_approvals(search=None, merchandiser=None, approval_stage=None, page=1, page_size=100):
     _guard()
     _guard_tab("approval")
     setup_sales_order_workflow()
@@ -2260,13 +2502,13 @@ def get_pending_approvals(search=None, merchandiser=None, approval_stage=None):
         )""")
         params["q"] = f"%{search}%"
         
-    orders = frappe.db.sql(f"""
+    paged = _paged_query(f"""
         SELECT so.name, so.customer, so.customer_name, so.transaction_date, so.delivery_date,
                so.workflow_state, so.grand_total, so.currency, so.owner, so.modified,
                cust.custom_merchandiser_user,
                u.full_name AS custom_merchandiser_name,
-               (SELECT content FROM `tabComment` 
-                WHERE reference_doctype = 'Sales Order' AND reference_name = so.name 
+               (SELECT content FROM `tabComment`
+                WHERE reference_doctype = 'Sales Order' AND reference_name = so.name
                   AND (content LIKE '%%Rejected%%' OR content LIKE '%%Rejection%%')
                 ORDER BY creation DESC LIMIT 1) as rejection_comment
         FROM `tabSales Order` so
@@ -2274,13 +2516,23 @@ def get_pending_approvals(search=None, merchandiser=None, approval_stage=None):
         LEFT JOIN `tabUser` u ON u.name = cust.custom_merchandiser_user
         WHERE {' AND '.join(conditions)}
         ORDER BY so.modified DESC
-        LIMIT 300
-    """, params, as_dict=1)
-    
+    """, params, page, page_size)
+    orders = paged["rows"]
+
+    # Bulk-fetch every displayed order's items in one query instead of one
+    # `Sales Order Item` fetch per row — with a full page of orders this
+    # used to mean a query per row just to build the "items" summary text.
+    items_by_so = defaultdict(list)
+    if orders:
+        for it in frappe.get_all(
+            "Sales Order Item", filters={"parent": ["in", [o.name for o in orders]]},
+            fields=["parent", "item_name", "qty"],
+        ):
+            items_by_so[it.parent].append(it)
+
     for o in orders:
-        items = frappe.get_all("Sales Order Item", filters={"parent": o.name}, fields=["item_name", "qty"])
         items_formatted = []
-        for it in items:
+        for it in items_by_so.get(o.name, []):
             qty_val = it.qty
             if qty_val == int(qty_val):
                 qty_str = str(int(qty_val))
@@ -2288,8 +2540,8 @@ def get_pending_approvals(search=None, merchandiser=None, approval_stage=None):
                 qty_str = str(qty_val)
             items_formatted.append(f"{it.item_name} ({qty_str})")
         o["items_list"] = ", ".join(items_formatted)
-        
-    return orders
+
+    return paged
 
 
 @frappe.whitelist()

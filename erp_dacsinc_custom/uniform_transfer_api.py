@@ -6,6 +6,7 @@ import frappe
 from frappe.utils import nowdate, flt
 
 from erp_dacsinc_custom.order_flow_permissions import guard_tab
+from erp_dacsinc_custom.order_flow_api import _paged_query
 
 @frappe.whitelist()
 def create_embroidery_transfer(source_item, target_item, qty, from_warehouse, wip_warehouse):
@@ -125,7 +126,7 @@ def receive_embroidery_transfer(transfer_id, to_warehouse, qty=None):
     return {"status": uet.status, "received_qty": uet.received_qty, "outstanding": flt(uet.qty) - uet.received_qty}
 
 @frappe.whitelist()
-def get_embroidery_transfers(status=None, search=None, scope=None, **kwargs):
+def get_embroidery_transfers(status=None, search=None, scope=None, page=1, page_size=100, **kwargs):
     """
     Returns the list of Uniform Embroidery Transfers, filtered by status,
     scope, and/or search query — every other tab's "Open orders" / "Created
@@ -160,15 +161,14 @@ def get_embroidery_transfers(status=None, search=None, scope=None, **kwargs):
         values["search"] = f"%{search}%"
 
     where_clause = f"WHERE {' AND '.join(conditions)}" if conditions else ""
-    
-    return frappe.db.sql(f"""
+
+    return _paged_query(f"""
         SELECT name, source_item, target_item, qty, received_qty, from_warehouse, wip_warehouse,
                to_warehouse, status, date_sent, date_received, stock_entry_sent, stock_entry_received
         FROM `tabUniform Embroidery Transfer`
         {where_clause}
         ORDER BY creation DESC
-        LIMIT 300
-    """, values, as_dict=1)
+    """, values, page, page_size)
 
 @frappe.whitelist()
 def get_transfer_receipts(transfer_id):
