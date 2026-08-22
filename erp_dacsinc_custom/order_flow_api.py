@@ -586,6 +586,16 @@ def get_sales_tracker(days=120, search=None, scope="open", stage_filter=None, me
         conditions.append("(so.name LIKE %(q)s OR so.customer_name LIKE %(q)s OR so.customer LIKE %(q)s)")
         params["q"] = f"%{search}%"
 
+    # An explicit "view as this merchandiser" pick from the tracker's own
+    # filter dropdown — distinct from is_scoped_to_own_customers below, which
+    # forces a plain Merchandiser User to their own customers regardless of
+    # this argument. Only an admin/final-approver can even see this dropdown
+    # (see update_merchandiser_visibility in order_flow.js), so the two never
+    # fight over the same condition.
+    if merchandiser:
+        conditions.append("cust.custom_merchandiser_user = %(merchandiser)s")
+        params["merchandiser"] = merchandiser
+
     # A user whose ONLY reason for seeing this tab is Merchandiser User (no
     # other tracker-granting role held) uses it to answer "where is MY order",
     # not to browse the whole company's order book — scope to the customers
@@ -603,9 +613,11 @@ def get_sales_tracker(days=120, search=None, scope="open", stage_filter=None, me
     orders = frappe.db.sql(f"""
         SELECT so.name, so.customer, so.customer_name, so.transaction_date, so.delivery_date,
                so.status, so.grand_total, so.currency, so.per_delivered, so.per_billed,
-               so.owner, so.modified, so.skip_delivery_note, so.docstatus
+               so.owner, so.modified, so.skip_delivery_note, so.docstatus,
+               cust.custom_merchandiser_user, mu.full_name AS custom_merchandiser_name
         FROM `tabSales Order` so
         LEFT JOIN `tabCustomer` cust ON cust.name = so.customer
+        LEFT JOIN `tabUser` mu ON mu.name = cust.custom_merchandiser_user
         WHERE {' AND '.join(conditions)}
         ORDER BY so.transaction_date DESC
         LIMIT 300

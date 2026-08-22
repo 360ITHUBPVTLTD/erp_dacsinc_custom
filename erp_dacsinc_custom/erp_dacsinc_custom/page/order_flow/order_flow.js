@@ -1084,12 +1084,17 @@ class OrderFlow {
         this.refresh(true);
     }
 
-    // The "All Merchandisers" filter belongs to the SO Approvals tab only — the other
-    // tabs deliberately show the full downstream picture, unscoped by merchandiser.
+    // The "All Merchandisers" filter belongs to the SO Approvals and Sales
+    // Tracker tabs — every other tab deliberately shows the full downstream
+    // picture, unscoped by merchandiser. Gated the same way as Approvals
+    // (admin / final-approver only): a plain Merchandiser User is already
+    // scoped to their own customers automatically (is_scoped_to_own_customers
+    // on the server), so a "pick a merchandiser" dropdown would be redundant
+    // for them and could only ever show their own name anyway.
     update_merchandiser_visibility() {
         const can_final = !!(this.perms && this.perms.is_final_approver);
         const is_admin = frappe.user_roles.includes("System Manager") || frappe.session.user === "Administrator";
-        const show = this.active === 'approval' && (can_final || is_admin);
+        const show = (this.active === 'approval' || this.active === 'tracker') && (can_final || is_admin);
         this.$body.find('#of-merchandiser').toggle(show);
     }
 
@@ -1172,8 +1177,9 @@ class OrderFlow {
             uniform:  'erp_dacsinc_custom.uniform_transfer_api.get_embroidery_transfers'
         }[this.active];
 
-        // merchandiser is an approvals-only filter — never narrow the other tabs with it
-        const merch = this.active === 'approval' ? (this.merchandiser_filter || null) : null;
+        // merchandiser only narrows Approvals and Tracker — every other tab
+        // stays unscoped by it (see update_merchandiser_visibility)
+        const merch = (this.active === 'approval' || this.active === 'tracker') ? (this.merchandiser_filter || null) : null;
         const args = { days: this.days, search: this.search || null, scope: this.scope, merchandiser: merch, approval_stage: this.approval_stage_filter || null };
         if (this.active === 'tracker') {
             args.stage_filter = this.stage_filter;
@@ -1951,6 +1957,10 @@ class OrderFlow {
                             <div class="of-meta" style="font-weight:500;">
                                 <a href="/app/customer/${encodeURIComponent(o.customer)}" target="_blank" style="color:inherit;">${of_esc(o.customer_name || o.customer || '')}</a>
                             </div>
+                            ${o.custom_merchandiser_user ? `
+                                <div class="of-micro" style="margin-top:2px;color:var(--of-info);" title="Merchandiser assigned to this customer">
+                                    <i class="fa fa-user"></i> ${of_esc(o.custom_merchandiser_name || o.custom_merchandiser_user)}
+                                </div>` : ''}
                         </div>
                     </div>
                 </td>

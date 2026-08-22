@@ -1134,14 +1134,32 @@ function show_sales_order_dialog(frm, data, is_subcontracted) {
             </div>
         `).join("");
 
+        // "Other" collapses two very different situations that used to look
+        // identical here: a PO with no Sales Order at all (unclaimed general
+        // stock — could still end up covering this order) versus one already
+        // earmarked for a SPECIFIC different Sales Order (spoken for, not
+        // really up for grabs). Neither is netted into "Final" above either
+        // way, but the reader needs to know which kind they're looking at
+        // before deciding whether it's worth chasing for this order.
         let other_details_html = (so.other_po_list || []).map(p => `
             <div class="po-detail-line">
-                <span style="white-space:nowrap; overflow:hidden; text-overflow:ellipsis; width:75%">${get_link("Purchase Order", p.id)} <span class="sup-text">(${p.sup || 'Stock'})</span></span>
+                <span style="white-space:nowrap; overflow:hidden; text-overflow:ellipsis; width:75%">
+                    ${get_link("Purchase Order", p.id)} <span class="sup-text">(${p.sup || 'Stock'})</span>
+                    <br><small style="color:${p.sales_order ? '#b45309' : '#059669'};">
+                        ${p.sales_order
+                            ? `Reserved for ${frappe.utils.escape_html(p.sales_order)}${p.so_customer_name ? ` (${frappe.utils.escape_html(p.so_customer_name)})` : ''}`
+                            : 'Unclaimed general stock'}
+                    </small>
+                </span>
                 <strong>${flt(p.qty).toFixed(0)}</strong>
             </div>
         `).join("");
 
         const other_sum_qty = flt(so.other_po_qty || 0);
+        const other_general_qty = (so.other_po_list || [])
+            .filter(p => !p.sales_order)
+            .reduce((s, p) => s + flt(p.qty), 0);
+        const other_reserved_qty = Math.max(0, other_sum_qty - other_general_qty);
 
         html += `
             <tr data-search-context="${`${so.sales_order} ${so.item_code} ${so.customer || ''} ${so.customer_name || ''} `.toLowerCase()}">
@@ -1189,8 +1207,9 @@ function show_sales_order_dialog(frm, data, is_subcontracted) {
                         ${linked_list || '<small class="text-muted">None</small>'}
                     </div>
                     <div class="po-box-other">
-                        <div style="font-size: 10px; font-weight:700; color: #7f8c8d; margin-bottom: 2px; display:flex; justify-content: space-between;">
-                            OTHER PO (STOCK: ${other_sum_qty.toFixed(0)}) 
+                        <div style="font-size: 10px; font-weight:700; color: #7f8c8d; margin-bottom: 2px; display:flex; justify-content: space-between;"
+                             title="Neither figure is counted toward this row's own Final need — general stock is unclaimed and could still help, reserved stock already belongs to a different Sales Order">
+                            <span>OTHER PO: ${other_general_qty.toFixed(0)} Unclaimed${other_reserved_qty > 0 ? ` &middot; ${other_reserved_qty.toFixed(0)} Reserved Elsewhere` : ''}</span>
                             <span class="toggle-details-btn">View Details</span>
                         </div>
                         <div class="other-po-list-container">
@@ -1427,7 +1446,7 @@ function show_so_selection_and_rm_purchase_dialog(frm, sales_orders) {
                         <th width="10%" class="text-right">Picked (S/D)</th>
                         <th width="12%" class="text-right">Remaining</th>
                         <th width="12%" class="text-center">Qty to Make</th>
-                        <th width="24%">RM Availability Status</th>
+                        <th width="24%" title="Per raw material: Need (this order's own qty-to-make × BOM ratio) versus what's already covered — this order's own stock/PO/MR share, plus anything genuinely unclaimed. Hover a status to see the full breakdown.">RM Availability Status</th>
                     </tr></thead>
                     <tbody>${fg_rows}</tbody>
                 </table>
@@ -1436,7 +1455,10 @@ function show_so_selection_and_rm_purchase_dialog(frm, sales_orders) {
             <!-- SECTION 2 HEADER -->
             <div class="d-flex justify-content-between align-items-center mb-2">
                 <h6 style="text-transform: capitalize; letter-spacing: 0.5px; font-size: 14px; color: black; margin:0;">2. Raw Material Requirements (Consolidated)</h6>
-                <div style="font-size: 14px; color: #666; font-style: italic;">Net Need = (Required - Stock - Pending POs - Pending MRs)</div>
+                <div style="font-size: 14px; color: #666; font-style: italic;"
+                     title="Consolidated across every Sales Order ticked in section 1 above. Untick an order there and this table recalculates immediately.">
+                    Purchase = Required &minus; Effective (hover column headers for details)
+                </div>
             </div>
             
             <!-- CALCULATED RESULTS AREA -->
@@ -1504,25 +1526,46 @@ function show_so_selection_and_rm_purchase_dialog(frm, sales_orders) {
 
     const update_inline_rm_status = ($row, fg_qty, is_checked) => {
         let so_data = sales_orders[$row.data('idx')];
-        if (!is_checked) { $row.find('.rm-prev-stat').text('Ignored').css('color', '#ccc'); return; }
+        if (!is_checked) {
+            $row.find('.rm-prev-stat').text('Ignored')
+                .attr('title', 'This Sales Order is unticked in the checkbox column, so it is not counted toward any raw material demand below.')
+                .css('color', '#ccc');
+            return;
+        }
 
         $row.find('.rm-preview-line').each(function (i) {
             let $line = $(this);
             let base_bom = parseFloat($line.data('base-qty'));
             let total_rm_req = base_bom * fg_qty;
             let rm_data = so_data.raw_materials[i];
-            let coverage = flt(rm_data.available_qty) + flt(rm_data.ordered_linked_qty) + flt(rm_data.incoming_general_qty)
-                + flt(rm_data.mr_linked_qty) + flt(rm_data.mr_general_qty);
+            let stock = flt(rm_data.available_qty);
+            let linked_po = flt(rm_data.ordered_linked_qty);
+            let general_po = flt(rm_data.incoming_general_qty);
+            let linked_mr = flt(rm_data.mr_linked_qty);
+            let general_mr = flt(rm_data.mr_general_qty);
+            let coverage = stock + linked_po + general_po + linked_mr + general_mr;
             let shortfall = total_rm_req - coverage;
 
             // The calculator: per-unit x qty-to-make = total required for
             // this line, spelled out rather than just the final number.
             $line.find('.rm-prev-calc').text(`${base_bom.toFixed(2)} x ${flt(fg_qty)} = ${total_rm_req.toFixed(2)}`);
 
+            // Spells out exactly which sources add up to "covered" — stock,
+            // this order's OWN linked PO/MR, and genuinely unclaimed
+            // (general) PO/MR. A PO or MR dedicated to a DIFFERENT Sales
+            // Order never appears here, since it isn't this order's to use.
+            const coverage_note = `Need ${total_rm_req.toFixed(2)} ${rm_data.uom}\n`
+                + `Stock: ${stock.toFixed(2)}\n`
+                + `PO for this order: ${linked_po.toFixed(2)}\n`
+                + `MR for this order: ${linked_mr.toFixed(2)}\n`
+                + `Unclaimed PO (any order): ${general_po.toFixed(2)}\n`
+                + `Unclaimed MR (any order): ${general_mr.toFixed(2)}\n`
+                + `Total covered: ${coverage.toFixed(2)}`;
+
             if (shortfall > 0.001) {
-                $line.find('.rm-prev-stat').html(`<span style="color:#d62222; font-weight:bold;">-${shortfall.toFixed(1)}</span>`);
+                $line.find('.rm-prev-stat').html(`<span style="color:#d62222; font-weight:bold;" title="${coverage_note}">Short ${shortfall.toFixed(2)}</span>`);
             } else {
-                $line.find('.rm-prev-stat').html(`<span style="color:#00994d;">OK</span>`);
+                $line.find('.rm-prev-stat').html(`<span style="color:#00994d;" title="${coverage_note}">Covered</span>`);
             }
         });
     }
@@ -1532,12 +1575,12 @@ function show_so_selection_and_rm_purchase_dialog(frm, sales_orders) {
             <table class="rm-dialog-table">
             <thead><tr>
                 <th width="20%">Raw Material</th>
-                <th width="12%" class="text-right">Required</th>
-                <th width="12%" class="text-right">Stock</th>
-                <th width="12%" class="text-right">Incoming (PO+MR)</th>
-                <th width="12%" class="text-right">Effective</th>
+                <th width="12%" class="text-right" title="Sum of every TICKED Sales Order's own qty-to-make × BOM ratio for this raw material. See the breakdown lines under the number for exactly which orders contributed.">Required</th>
+                <th width="12%" class="text-right" title="Physical stock on hand right now, across all warehouses.">Stock</th>
+                <th width="12%" class="text-right" title="Only counts: (a) Purchase Orders/Material Requests raised specifically for the Sales Order(s) ticked above, and (b) genuinely unclaimed PO/MR quantity not tied to any Sales Order. A PO or MR dedicated to a DIFFERENT, unticked Sales Order is never included here.">Incoming (PO+MR)</th>
+                <th width="12%" class="text-right" title="Stock + Incoming — everything this raw material's need can currently draw on.">Effective</th>
                 <th width="20%">Existing Ref (PO/MR)</th>
-                <th width="12%" class="text-right" style="background: #ebf8ff; border-bottom: 2px solid #5e64ff;">Purchase</th>
+                <th width="12%" class="text-right" style="background: #ebf8ff; border-bottom: 2px solid #5e64ff;" title="Required minus Effective — what's actually left to buy.">Purchase</th>
             </tr></thead>
             <tbody>`;
 
@@ -1559,11 +1602,19 @@ function show_so_selection_and_rm_purchase_dialog(frm, sales_orders) {
                 // Why the number was reduced, not just the number — same
                 // reasoning as the PO refs above, but for the Material
                 // Requests netted off via mr_linked_qty_total/general_mr_coming.
+                // Each one is labeled by who it actually belongs to — general
+                // (unclaimed) versus a specific Sales Order — since it's
+                // otherwise impossible to tell whether a reference here is
+                // actually usable for the orders ticked above or already
+                // spoken for by a different one.
                 let mr_links = (d.mr_refs || []).slice(0, 3)
                     .map(mr => `<a href="/app/material-request/${encodeURIComponent(mr.name)}" target="_blank"
                             style="font-weight:bold; text-decoration:underline; color:#6d28d9;">${mr.name}</a>
-                            ${mr.docstatus == 1 ? '' : '<span style="font-size:8px; color:#ea580c;"> (Draft)</span>'}`)
-                    .join(", ");
+                            ${mr.docstatus == 1 ? '' : '<span style="font-size:8px; color:#ea580c;"> (Draft)</span>'}
+                            <span style="font-size:8px; color:${mr.sales_order ? '#b45309' : '#059669'};">
+                                (${mr.sales_order ? `for ${mr.sales_order}` : 'unclaimed'})
+                            </span>`)
+                    .join("<br>");
                 let ref_links = [po_links, mr_links].filter(Boolean).join("<br>")
                     || '<span style="color:#cbd5e1;">—</span>';
 

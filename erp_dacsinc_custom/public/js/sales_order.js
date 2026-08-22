@@ -1336,8 +1336,19 @@ function _build_incoming_html(item, d, pair_key) {
         </div>`;
     }
     if (flt(d.total_other_po_qty) > 0) {
-        html += `<div class="so-micro" title="On Purchase Orders not reserved for this Sales Order">
-            +${flt(d.total_other_po_qty)} On Other POs
+        // "Other PO" mixes two different things that used to look identical
+        // at a glance: unclaimed general stock (no sales_order at all — could
+        // still end up covering this order) versus a PO already earmarked
+        // for a SPECIFIC different Sales Order (spoken for, not really up
+        // for grabs). The View button's modal already tells them apart per
+        // row (see other_rows in show_details_modal) — this line now does
+        // too, so the reader doesn't have to click through just to find out
+        // whether this number is worth chasing.
+        const other_list = d.other_po_list || [];
+        const other_general_qty = other_list.filter(p => !p.sales_order).reduce((s, p) => s + flt(p.pending_qty || 0), 0);
+        const other_reserved_qty = Math.max(0, flt(d.total_other_po_qty) - other_general_qty);
+        html += `<div class="so-micro" title="Neither figure counts toward this row's own need — general stock is unclaimed and could still help, reserved stock already belongs to a different Sales Order">
+            +${flt(other_general_qty)} Unclaimed${other_reserved_qty > 0 ? ` &middot; +${flt(other_reserved_qty)} Reserved Elsewhere` : ''} (Other POs)
         </div>`;
     }
     // A draft "other PO" (not yet submitted, so excluded from the count
@@ -1438,8 +1449,15 @@ function get_rm_breakdown_html(data, so_name, docstatus) {
                     ${rm_name ? `<div class="so-micro so-truncate" title="${esc(rm_name)}">${esc(rm_name)}</div>` : ''}
                 </td>
                 <td>
-                    <span class="so-val">${flt(item.rm_required_total || 0).toFixed(2)}</span>
+                    <div style="font-family:monospace; color:#888; font-size:10px;"
+                         title="This order's own finished-good shortfall (qty still to produce, after its stock/picks/MR/PO) × how much of this raw material one unit of the finished good needs.">
+                        ${flt(rm.fg_shortfall || 0).toFixed(2)} &times; ${flt(item.rm_qty_per_fg || 0).toFixed(2)}/unit =
+                    </div>
+                    <span class="so-val" title="What this row's Shortfall is actually calculated from: Stock/Pending MR/Pending PO below are subtracted from THIS number, not from the full order total shown as 'Full Order'.">${flt(item.rm_needed_for_shortfall || 0).toFixed(2)}</span>
                     <div class="so-micro">${esc(uom)}</div>
+                    ${flt(item.rm_required_total || 0).toFixed(2) !== flt(item.rm_needed_for_shortfall || 0).toFixed(2)
+                        ? `<div class="so-micro" title="The full BOM requirement if this order's entire quantity were produced from scratch — this item's own finished-good stock/picks already reduce how much new production (and therefore raw material) is actually needed right now">Full Order: ${flt(item.rm_required_total || 0).toFixed(2)}</div>`
+                        : ''}
                 </td>
                 <td>${so_qty(flt(item.rm_available_stock || 0).toFixed(2))}</td>
                 <td>${so_qty(flt(item.rm_pending_mr_total || 0).toFixed(2))}</td>
