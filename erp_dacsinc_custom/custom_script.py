@@ -4637,6 +4637,45 @@ def create_sales_invoice_for_item_with_stock(sales_order, sales_order_item, item
 
 
 @frappe.whitelist()
+def make_sales_invoice_from_multiple_delivery_notes(source_name, target_doc=None):
+    """
+    Creates a single Sales Invoice from a list of Delivery Notes.
+    source_name can be a JSON array, a comma-separated string, or a single DN name.
+    """
+    import json
+    if not source_name:
+        frappe.throw(_("No Delivery Notes specified."))
+
+    if isinstance(source_name, (list, tuple)):
+        dn_names = source_name
+    elif isinstance(source_name, str):
+        trimmed = source_name.strip()
+        if trimmed.startswith("[") and trimmed.endswith("]"):
+            try:
+                dn_names = json.loads(trimmed)
+            except Exception:
+                dn_names = [x.strip() for x in trimmed[1:-1].split(",") if x.strip()]
+        else:
+            dn_names = [x.strip() for x in trimmed.split(",") if x.strip()]
+    else:
+        dn_names = [source_name]
+
+    # Strip quotes
+    dn_names = [x.replace('"', '').replace("'", "").strip() for x in dn_names]
+
+    if not dn_names:
+        frappe.throw(_("No Delivery Notes specified."))
+
+    from erpnext.stock.doctype.delivery_note.delivery_note import make_sales_invoice
+
+    invoice = None
+    for dn in dn_names:
+        invoice = make_sales_invoice(dn, invoice)
+
+    return invoice.as_dict()
+
+
+@frappe.whitelist()
 def get_linked_sales_invoices(sales_order_name):
     """
     (Called from Sales Order JavaScript)

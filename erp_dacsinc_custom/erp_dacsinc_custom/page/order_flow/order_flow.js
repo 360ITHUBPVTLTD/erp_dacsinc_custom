@@ -774,17 +774,38 @@ class OrderFlow {
                 // away from the dashboard itself.
                 window.open(frappe.utils.get_form_link(doctype, target), '_blank');
             } else if (action === 'make_invoice' && so) {
-                frappe.model.open_mapped_doc({
-                    method: 'erpnext.selling.doctype.sales_order.sales_order.make_sales_invoice',
-                    source_name: so,
-                    freeze_message: __('Creating Sales Invoice…')
-                });
+                frappe.confirm(
+                    __('Create a Sales Invoice for Sales Order <b>{0}</b>?', [esc(so)]),
+                    () => {
+                        frappe.model.open_mapped_doc({
+                            method: 'erpnext.selling.doctype.sales_order.sales_order.make_sales_invoice',
+                            source_name: so,
+                            freeze_message: __('Creating Sales Invoice…')
+                        });
+                    }
+                );
+            } else if (action === 'make_invoice_from_dn' && target) {
+                frappe.confirm(
+                    __('Create a Sales Invoice from Delivery Note(s) <b>{0}</b>?', [esc(target)]),
+                    () => {
+                        frappe.model.open_mapped_doc({
+                            method: 'erp_dacsinc_custom.custom_script.make_sales_invoice_from_multiple_delivery_notes',
+                            source_name: target,
+                            freeze_message: __('Creating Sales Invoice from Delivery Notes…')
+                        });
+                    }
+                );
             } else if (action === 'make_purchase_invoice' && po) {
-                frappe.model.open_mapped_doc({
-                    method: 'erpnext.buying.doctype.purchase_order.purchase_order.make_purchase_invoice',
-                    source_name: po,
-                    freeze_message: __('Creating Purchase Invoice…')
-                });
+                frappe.confirm(
+                    __('Create a Purchase Invoice for Purchase Order <b>{0}</b>?', [esc(po)]),
+                    () => {
+                        frappe.model.open_mapped_doc({
+                            method: 'erpnext.buying.doctype.purchase_order.purchase_order.make_purchase_invoice',
+                            source_name: po,
+                            freeze_message: __('Creating Purchase Invoice…')
+                        });
+                    }
+                );
             } else if (action === 'make_dn_or_si' && so) {
                 // Same either-route choice the Sales Order's own "Item Stock
                 // & Action Plan" widget offers per item — reused here as-is
@@ -795,62 +816,72 @@ class OrderFlow {
                 const route_lock = btn.data('routeLock') || '';
                 const mock_frm = { doc: { name: so, customer: btn.data('customer') || '', customer_name: btn.data('customerName') || '' } };
 
-                Promise.all([
-                    frappe.call({
-                        method: 'erp_dacsinc_custom.order_flow_api.get_pick_lists_for_so',
-                        args: { sales_order: so }
-                    }),
-                    frappe.call({
-                        method: 'erp_dacsinc_custom.order_flow_api.get_draft_dn_si_for_so',
-                        args: { sales_order: so }
-                    })
-                ]).then(([pl_res, draft_res]) => {
-                    // "Open" is Pick List's own core status for "nothing
-                    // delivered yet" — there is no "Submitted" option on
-                    // this doctype (confirmed against the live status
-                    // field options: Draft/Open/Partly Delivered/
-                    // Completed/Cancelled).
-                    const pls = (pl_res.message || []).filter(x =>
-                        flt_of(x.docstatus) === 1 && ['Open', 'Partly Delivered'].includes(x.status || 'Open'));
-                    if (!pls.length) {
-                        frappe.msgprint(__('No submitted Pick List found to create a Delivery Note or Sales Invoice from.'));
-                        return;
-                    }
-                    const drafts = draft_res.message || {};
+                frappe.confirm(
+                    __('Fulfill Sales Order <b>{0}</b>?', [esc(so)]),
+                    () => {
+                        Promise.all([
+                            frappe.call({
+                                method: 'erp_dacsinc_custom.order_flow_api.get_pick_lists_for_so',
+                                args: { sales_order: so }
+                            }),
+                            frappe.call({
+                                method: 'erp_dacsinc_custom.order_flow_api.get_draft_dn_si_for_so',
+                                args: { sales_order: so }
+                            })
+                        ]).then(([pl_res, draft_res]) => {
+                            // "Open" is Pick List's own core status for "nothing
+                            // delivered yet" — there is no "Submitted" option on
+                            // this doctype (confirmed against the live status
+                            // field options: Draft/Open/Partly Delivered/
+                            // Completed/Cancelled).
+                            const pls = (pl_res.message || []).filter(x =>
+                                flt_of(x.docstatus) === 1 && ['Open', 'Partly Delivered'].includes(x.status || 'Open'));
+                            if (!pls.length) {
+                                frappe.msgprint(__('No submitted Pick List found to create a Delivery Note or Sales Invoice from.'));
+                                return;
+                            }
+                            const drafts = draft_res.message || {};
 
-                    frappe.require('/assets/erp_dacsinc_custom/js/sales_order.js', () => {
-                        if (route_lock === 'dn') {
-                            show_bulk_dn_si_modal(mock_frm, pls, 'Delivery Note', 0, drafts.draft_dns || []);
-                        } else if (route_lock === 'si') {
-                            show_bulk_dn_si_modal(mock_frm, pls, 'Sales Invoice', 0, drafts.draft_sis || []);
-                        } else {
-                            const choice = new frappe.ui.Dialog({
-                                title: __('Choose Fulfillment Route'),
-                                fields: [{
-                                    fieldtype: 'HTML',
-                                    options: `<div class="of-hint"><i class="fa fa-info-circle"></i> ${
-                                        __('This order has not committed to a route yet. A Delivery Note ships the stock and bills separately later; a Sales Invoice with Update Stock ships and bills in one document. Once you pick one, every remaining line on this order must follow the same route.')
-                                    }</div>`
-                                }],
-                                primary_action_label: __('Create Delivery Note'),
-                                primary_action: () => { choice.hide(); show_bulk_dn_si_modal(mock_frm, pls, 'Delivery Note', 0, drafts.draft_dns || []); },
-                                secondary_action_label: __('Create Sales Invoice (Update Stock)'),
-                                secondary_action: () => { choice.hide(); show_bulk_dn_si_modal(mock_frm, pls, 'Sales Invoice', 0, drafts.draft_sis || []); }
+                            frappe.require('/assets/erp_dacsinc_custom/js/sales_order.js', () => {
+                                if (route_lock === 'dn') {
+                                    show_bulk_dn_si_modal(mock_frm, pls, 'Delivery Note', 0, drafts.draft_dns || []);
+                                } else if (route_lock === 'si') {
+                                    show_bulk_dn_si_modal(mock_frm, pls, 'Sales Invoice', 0, drafts.draft_sis || []);
+                                } else {
+                                    const choice = new frappe.ui.Dialog({
+                                        title: __('Choose Fulfillment Route'),
+                                        fields: [{
+                                            fieldtype: 'HTML',
+                                            options: `<div class="of-hint"><i class="fa fa-info-circle"></i> ${
+                                                __('This order has not committed to a route yet. A Delivery Note ships the stock and bills separately later; a Sales Invoice with Update Stock ships and bills in one document. Once you pick one, every remaining line on this order must follow the same route.')
+                                            }</div>`
+                                        }],
+                                        primary_action_label: __('Create Delivery Note'),
+                                        primary_action: () => { choice.hide(); show_bulk_dn_si_modal(mock_frm, pls, 'Delivery Note', 0, drafts.draft_dns || []); },
+                                        secondary_action_label: __('Create Sales Invoice (Update Stock)'),
+                                        secondary_action: () => { choice.hide(); show_bulk_dn_si_modal(mock_frm, pls, 'Sales Invoice', 0, drafts.draft_sis || []); }
+                                    });
+                                    choice.show();
+                                }
                             });
-                            choice.show();
-                        }
-                    });
-                });
+                        });
+                    }
+                );
             } else if (action === 'make_picklist' && so) {
                 // Opens the existing Sales Order (a Pick List is created
                 // from there) — a document link, same new-tab treatment.
                 window.open(frappe.utils.get_form_link('Sales Order', so), '_blank');
             } else if (action === 'make_po_from_mr' && target) {
-                frappe.model.open_mapped_doc({
-                    method: 'erpnext.stock.doctype.material_request.material_request.make_purchase_order',
-                    source_name: target,
-                    freeze_message: __('Creating Purchase Order from Material Request…')
-                });
+                frappe.confirm(
+                    __('Create a Purchase Order from Material Request <b>{0}</b>?', [esc(target)]),
+                    () => {
+                        frappe.model.open_mapped_doc({
+                            method: 'erpnext.stock.doctype.material_request.material_request.make_purchase_order',
+                            source_name: target,
+                            freeze_message: __('Creating Purchase Order from Material Request…')
+                        });
+                    }
+                );
             } else if (action === 'make_mr' && so) {
                 // Opens the existing Sales Order (a Material Request is
                 // raised from there) — same new-tab treatment.

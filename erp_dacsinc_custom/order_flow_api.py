@@ -1008,6 +1008,9 @@ def _compute_stage_info(order):
         if delivered >= 100:
             is_ready_to_bill = True
             is_fully_picked_or_delivered = True
+        elif delivered > 0 and not subm_pls and not draft_pls:
+            is_ready_to_bill = True
+            is_fully_picked_or_delivered = False
 
     if is_ready_to_bill and billed < 100:
         if draft_invoices:
@@ -1024,15 +1027,34 @@ def _compute_stage_info(order):
                 "action_btn_class": "of-btn--warning"
             }
         else:
-            return {
-                "stage_key": "need_to_bill",
-                "stage_label": "Need to Bill" if is_fully_picked_or_delivered else "Need to Bill (Partial)",
-                "badge_class": "of-pill--need-bill" if is_fully_picked_or_delivered else "of-pill--warn",
-                "icon": "file-text-o",
-                "action_type": "make_invoice",
-                "action_label": "Create Sales Invoice" if is_fully_picked_or_delivered else "Create Sales Invoice (Partial)",
-                "action_btn_class": "of-btn--primary" if is_fully_picked_or_delivered else "of-btn--warning"
-            }
+            submitted_dns = frappe.get_all(
+                "Delivery Note Item",
+                filters={"against_sales_order": order["name"], "docstatus": 1},
+                fields=["distinct parent"]
+            )
+            if submitted_dns:
+                dns = [d.parent for d in submitted_dns]
+                return {
+                    "stage_key": "need_to_bill",
+                    "stage_label": "Need to Bill" if is_fully_picked_or_delivered else "Need to Bill (Partial)",
+                    "badge_class": "of-pill--need-bill" if is_fully_picked_or_delivered else "of-pill--warn",
+                    "icon": "file-text-o",
+                    "target_doc": ",".join(dns),
+                    "target_doctype": "Delivery Note",
+                    "action_type": "make_invoice_from_dn",
+                    "action_label": "Create Sales Invoice" if is_fully_picked_or_delivered else "Create Sales Invoice (Partial)",
+                    "action_btn_class": "of-btn--primary" if is_fully_picked_or_delivered else "of-btn--warning"
+                }
+            else:
+                return {
+                    "stage_key": "need_to_bill",
+                    "stage_label": "Need to Bill" if is_fully_picked_or_delivered else "Need to Bill (Partial)",
+                    "badge_class": "of-pill--need-bill" if is_fully_picked_or_delivered else "of-pill--warn",
+                    "icon": "file-text-o",
+                    "action_type": "make_invoice",
+                    "action_label": "Create Sales Invoice" if is_fully_picked_or_delivered else "Create Sales Invoice (Partial)",
+                    "action_btn_class": "of-btn--primary" if is_fully_picked_or_delivered else "of-btn--warning"
+                }
 
     if draft_pls:
         pl_name = draft_pls[0]

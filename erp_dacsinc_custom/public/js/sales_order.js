@@ -722,8 +722,20 @@ function generate_stock_overview_table(frm, callback) {
                 const stale_blocked = flt(d.stale_blocked_qty || 0);
 
                 if (delivered >= required && required > 0) {
-                    // Fully delivered — nothing left to do on this line.
-                    status_html = so_pill('done', 'check-circle', 'Completed');
+                    const is_fully_billed = flt(item.billed_amt) >= flt(item.amount) - 0.01;
+                    if (is_fully_billed) {
+                        // Fully delivered and fully billed — nothing left to do on this line.
+                        status_html = so_pill('done', 'check-circle', 'Completed');
+                    } else {
+                        // Fully delivered but not fully billed.
+                        status_html = so_pill('wait', 'file-text-o', 'SI Pending');
+                        const dn_subms = (d.row_dns || []).filter(x => x.docstatus === 1);
+                        if (dn_subms.length > 0) {
+                            action_parts.push(so_cmd_btn(`so_make_sales_invoice_from_dn('${js_str(dn_subms[0].parent)}')`, 'file-text-o', 'Create Sales Invoice', true));
+                        } else {
+                            action_parts.push(so_cmd_btn(`so_make_sales_invoice('${so_nm}')`, 'file-text-o', 'Create Sales Invoice', true));
+                        }
+                    }
                     if (stale_qty > 0 && stale_pl) {
                         status_html += `<div class="so-micro" style="margin-top:4px;color:var(--so-orange);">
                             Pick List still open (${stale_qty})</div>`;
@@ -1003,15 +1015,27 @@ function generate_stock_overview_table(frm, callback) {
 
             const $bulk_btn = container.find('#bulk-pick-action-btn');
             const render_create_btn = () => {
+                const dn_names = so_get_all_submitted_dn_names(frm);
                 $bulk_btn.html(`
                     <button class="so-btn so-btn--primary" id="btn-create-bulk-picklist" ${!eligible_for_picking ? 'disabled' : ''}
                             title="${eligible_for_picking ? 'Create one Pick List covering every pickable line' : 'Nothing is currently pickable on this order'}">
                         <i class="fa fa-clipboard"></i> Create Pick List${total_bulk_qty > 0 ? ` · ${Math.floor(total_bulk_qty)}` : ''}
                     </button>
+                    ${dn_names.length > 0 ? `
+                        <button class="so-btn so-btn--primary" id="btn-create-si-all-dns" style="margin-left:6px;"
+                                title="Create a single Sales Invoice from all submitted Delivery Notes">
+                            <i class="fa fa-file-text-o"></i> Create SI (All DNs)
+                        </button>
+                    ` : ''}
                 `);
                 if (eligible_for_picking) {
                     $bulk_btn.find('#btn-create-bulk-picklist').on('click', () => {
                         create_pick_list_for_bulk(frm, bulk_items, total_bulk_qty);
+                    });
+                }
+                if (dn_names.length > 0) {
+                    $bulk_btn.find('#btn-create-si-all-dns').on('click', () => {
+                        so_make_sales_invoice_from_all_dns(frm);
                     });
                 }
             };
@@ -1059,6 +1083,7 @@ function generate_stock_overview_table(frm, callback) {
                     });
                 }
 
+                const dn_names = so_get_all_submitted_dn_names(frm);
                 $bulk_btn.html(`
                     <button class="so-btn so-btn--primary" id="btn-view-picklists">
                         <i class="fa fa-clipboard"></i> Pick Lists (${existing_pls.length})
@@ -1084,6 +1109,12 @@ function generate_stock_overview_table(frm, callback) {
                             ${unique_draft_sis.size ? `<span class="so-chip" style="background:var(--so-orange); margin-left:4px;">${unique_draft_sis.size} draft</span>` : ''}
                         </button>
                     ` : ''}
+                    ${dn_names.length > 0 ? `
+                        <button class="so-btn so-btn--primary" id="btn-create-si-all-dns" style="margin-left:6px;"
+                                title="Create a single Sales Invoice from all submitted Delivery Notes">
+                            <i class="fa fa-file-text-o"></i> Create SI (All DNs)
+                        </button>
+                    ` : ''}
                 `);
                 $bulk_btn.find('#btn-view-picklists').on('click', () => show_so_picklists_modal(frm, existing_pls));
                 if (eligible_for_picking) {
@@ -1099,6 +1130,11 @@ function generate_stock_overview_table(frm, callback) {
                 if (eligible_pls.length > 0 && so_route_lock !== 'dn') {
                     $bulk_btn.find('#btn-bulk-create-si').on('click', () => {
                         show_bulk_dn_si_modal(frm, eligible_pls, 'Sales Invoice', already_processed_count, Array.from(unique_draft_sis));
+                    });
+                }
+                if (dn_names.length > 0) {
+                    $bulk_btn.find('#btn-create-si-all-dns').on('click', () => {
+                        so_make_sales_invoice_from_all_dns(frm);
                     });
                 }
                 if (callback) callback();
@@ -1926,11 +1962,16 @@ function so_make_delivery_note(pick_list_name) {
         frappe.msgprint(__('No submitted Pick List found for this line.'));
         return;
     }
-    frappe.model.open_mapped_doc({
-        method: 'erpnext.stock.doctype.pick_list.pick_list.create_delivery_note',
-        source_name: pick_list_name,
-        freeze_message: __('Creating Delivery Note…')
-    });
+    frappe.confirm(
+        __('Create a Delivery Note from Pick List <b>{0}</b>?', [esc(pick_list_name)]),
+        () => {
+            frappe.model.open_mapped_doc({
+                method: 'erpnext.stock.doctype.pick_list.pick_list.create_delivery_note',
+                source_name: pick_list_name,
+                freeze_message: __('Creating Delivery Note…')
+            });
+        }
+    );
 }
 
 /**
@@ -1976,17 +2017,22 @@ function so_prompt_dn_or_si(so_name, sales_order_item, item_code, pick_list, pic
 // The direct-billing alternative to Delivery Note: a Sales Invoice with
 // Update Stock, scoped to this one line and capped at what was picked.
 function so_make_sales_invoice_with_stock(so_name, sales_order_item, item_code, qty) {
-    frappe.call({
-        method: 'erp_dacsinc_custom.custom_script.create_sales_invoice_for_item_with_stock',
-        args: { sales_order: so_name, sales_order_item: sales_order_item, item_code: item_code, qty: qty },
-        freeze: true,
-        freeze_message: __('Building Sales Invoice…'),
-        callback: (r) => {
-            if (!r.message) return;   // server threw; Frappe has shown the reason
-            frappe.model.sync(r.message);
-            frappe.set_route('Form', r.message.doctype, r.message.name);
+    frappe.confirm(
+        __('Create a Sales Invoice (Update Stock) for {0} (Qty: {1})?', [esc(item_code), flt(qty)]),
+        () => {
+            frappe.call({
+                method: 'erp_dacsinc_custom.custom_script.create_sales_invoice_for_item_with_stock',
+                args: { sales_order: so_name, sales_order_item: sales_order_item, item_code: item_code, qty: qty },
+                freeze: true,
+                freeze_message: __('Building Sales Invoice…'),
+                callback: (r) => {
+                    if (!r.message) return;   // server threw; Frappe has shown the reason
+                    frappe.model.sync(r.message);
+                    frappe.set_route('Form', r.message.doctype, r.message.name);
+                }
+            });
         }
-    });
+    );
 }
 
 // Turn an existing Material Request into a Purchase Order, rather than raising a
@@ -1996,20 +2042,89 @@ function so_make_po_from_mr(mr_name) {
         frappe.msgprint(__('No open Material Request for this line.'));
         return;
     }
-    frappe.model.open_mapped_doc({
-        method: 'erpnext.stock.doctype.material_request.material_request.make_purchase_order',
-        source_name: mr_name,
-        freeze_message: __('Creating Purchase Order from Material Request…')
-    });
+    frappe.confirm(
+        __('Create a Purchase Order from Material Request <b>{0}</b>?', [esc(mr_name)]),
+        () => {
+            frappe.model.open_mapped_doc({
+                method: 'erpnext.stock.doctype.material_request.material_request.make_purchase_order',
+                source_name: mr_name,
+                freeze_message: __('Creating Purchase Order from Material Request…')
+            });
+        }
+    );
 }
 
 // Maps every pending line on the order — ERPNext has no per-item variant.
 function so_make_material_request(so_name) {
-    frappe.model.open_mapped_doc({
-        method: 'erpnext.selling.doctype.sales_order.sales_order.make_material_request',
-        source_name: so_name,
-        freeze_message: __('Creating Material Request…')
+    frappe.confirm(
+        __('Create a Material Request for Sales Order <b>{0}</b>?', [esc(so_name)]),
+        () => {
+            frappe.model.open_mapped_doc({
+                method: 'erpnext.selling.doctype.sales_order.sales_order.make_material_request',
+                source_name: so_name,
+                freeze_message: __('Creating Material Request…')
+            });
+        }
+    );
+}
+
+function so_make_sales_invoice(so_name) {
+    frappe.confirm(
+        __('Create a Sales Invoice for Sales Order <b>{0}</b>?', [esc(so_name)]),
+        () => {
+            frappe.model.open_mapped_doc({
+                method: 'erpnext.selling.doctype.sales_order.sales_order.make_sales_invoice',
+                source_name: so_name,
+                freeze_message: __('Creating Sales Invoice…')
+            });
+        }
+    );
+}
+
+function so_make_sales_invoice_from_dn(dn_name) {
+    frappe.confirm(
+        __('Create a Sales Invoice from Delivery Note <b>{0}</b>?', [esc(dn_name)]),
+        () => {
+            frappe.model.open_mapped_doc({
+                method: 'erpnext.stock.doctype.delivery_note.delivery_note.make_sales_invoice',
+                source_name: dn_name,
+                freeze_message: __('Creating Sales Invoice from Delivery Note…')
+            });
+        }
+    );
+}
+
+function so_get_all_submitted_dn_names(frm) {
+    if (!frm.custom_stock_data) return [];
+    let dn_names = new Set();
+    Object.values(frm.custom_stock_data).forEach(d => {
+        if (d.row_dns) {
+            d.row_dns.forEach(dn => {
+                if (dn.docstatus === 1) {
+                    dn_names.add(dn.parent);
+                }
+            });
+        }
     });
+    return Array.from(dn_names);
+}
+
+function so_make_sales_invoice_from_all_dns(frm) {
+    const dn_names = so_get_all_submitted_dn_names(frm);
+    if (!dn_names.length) {
+        frappe.msgprint(__('No submitted Delivery Notes found for this Sales Order.'));
+        return;
+    }
+    frappe.confirm(
+        __('Create a single Sales Invoice from all submitted Delivery Notes: {0}?', [esc(dn_names.join(', '))]),
+        () => {
+            frappe.model.open_mapped_doc({
+                method: 'erp_dacsinc_custom.custom_script.make_sales_invoice_from_multiple_delivery_notes',
+                source_name: dn_names.join(','),
+                freeze_message: __('Creating Sales Invoice from Delivery Notes…')
+            });
+        }
+    );
 }
 
 /**
@@ -2022,24 +2137,29 @@ function so_make_material_request(so_name) {
  * via the same custom creator the "Get Item From SO" planner uses.
  */
 function so_make_rm_material_request(so_name, item_code, qty, uom, warehouse) {
-    frappe.call({
-        method: 'erp_dacsinc_custom.custom_script.create_material_request_custom',
-        args: {
-            items: [{ item_code: item_code, qty: qty, uom: uom, warehouse: warehouse || undefined }],
-            company: cur_frm.doc.company,
-            sales_order_name: so_name
-        },
-        freeze: true,
-        freeze_message: __('Creating Material Request for {0}…', [item_code]),
-        callback: (r) => {
-            if (!r.message) return;   // server threw; Frappe has shown the reason
-            window.open(frappe.utils.get_form_link('Material Request', r.message), '_blank');
-            frappe.show_alert({
-                message: __('Material Request {0} created for {1}.', [r.message, item_code]),
-                indicator: 'green'
-            }, 7);
+    frappe.confirm(
+        __('Create a Material Request for Raw Material {0} (Qty: {1})?', [esc(item_code), flt(qty)]),
+        () => {
+            frappe.call({
+                method: 'erp_dacsinc_custom.custom_script.create_material_request_custom',
+                args: {
+                    items: [{ item_code: item_code, qty: qty, uom: uom, warehouse: warehouse || undefined }],
+                    company: cur_frm.doc.company,
+                    sales_order_name: so_name
+                },
+                freeze: true,
+                freeze_message: __('Creating Material Request for {0}…', [item_code]),
+                callback: (r) => {
+                    if (!r.message) return;   // server threw; Frappe has shown the reason
+                    window.open(frappe.utils.get_form_link('Material Request', r.message), '_blank');
+                    frappe.show_alert({
+                        message: __('Material Request {0} created for {1}.', [r.message, item_code]),
+                        indicator: 'green'
+                    }, 7);
+                }
+            });
         }
-    });
+    );
 }
 
 /**
@@ -2048,21 +2168,26 @@ function so_make_rm_material_request(so_name, item_code, qty, uom, warehouse) {
  * row, finished good in fg_item) and hands back an unsaved draft to review.
  */
 function so_make_subcontract_po(so_name, item_code, qty) {
-    frappe.call({
-        method: 'erp_dacsinc_custom.custom_script.make_subcontract_purchase_order',
-        args: { sales_order: so_name, item_code: item_code, qty: qty },
-        freeze: true,
-        freeze_message: __('Building Subcontract PO…'),
-        callback: (r) => {
-            if (!r.message) return;   // server threw; Frappe has shown the reason
-            frappe.model.sync(r.message);
-            frappe.set_route('Form', r.message.doctype, r.message.name);
-            frappe.show_alert({
-                message: __('Review the supplier and rate, then save.'),
-                indicator: 'blue'
-            }, 7);
+    frappe.confirm(
+        __('Create a Subcontracting Purchase Order for {0} (Qty: {1})?', [esc(item_code), flt(qty)]),
+        () => {
+            frappe.call({
+                method: 'erp_dacsinc_custom.custom_script.make_subcontract_purchase_order',
+                args: { sales_order: so_name, item_code: item_code, qty: qty },
+                freeze: true,
+                freeze_message: __('Building Subcontract PO…'),
+                callback: (r) => {
+                    if (!r.message) return;   // server threw; Frappe has shown the reason
+                    frappe.model.sync(r.message);
+                    frappe.set_route('Form', r.message.doctype, r.message.name);
+                    frappe.show_alert({
+                        message: __('Review the supplier and rate, then save.'),
+                        indicator: 'blue'
+                    }, 7);
+                }
+            });
         }
-    });
+    );
 }
 
 /**
@@ -2192,23 +2317,28 @@ function so_confirm_submit_pick_list(pick_list) {
  * route to the returned draft ourselves.
  */
 function so_make_purchase_order(so_name, item_code) {
-    frappe.call({
-        method: 'erpnext.selling.doctype.sales_order.sales_order.make_purchase_order',
-        args: {
-            source_name: so_name,
-            selected_items: [{ item_code: item_code }]
-        },
-        freeze: true,
-        freeze_message: __('Creating Purchase Order…'),
-        callback: (r) => {
-            if (!r.message) {
-                frappe.msgprint(__('Could not build a Purchase Order for {0}. Check that it is a purchase item with a pending quantity.', [item_code]));
-                return;
-            }
-            frappe.model.sync(r.message);
-            frappe.set_route('Form', r.message.doctype, r.message.name);
+    frappe.confirm(
+        __('Create a Purchase Order for Item {0}?', [esc(item_code)]),
+        () => {
+            frappe.call({
+                method: 'erpnext.selling.doctype.sales_order.sales_order.make_purchase_order',
+                args: {
+                    source_name: so_name,
+                    selected_items: [{ item_code: item_code }]
+                },
+                freeze: true,
+                freeze_message: __('Creating Purchase Order…'),
+                callback: (r) => {
+                    if (!r.message) {
+                        frappe.msgprint(__('Could not build a Purchase Order for {0}. Check that it is a purchase item with a pending quantity.', [item_code]));
+                        return;
+                    }
+                    frappe.model.sync(r.message);
+                    frappe.set_route('Form', r.message.doctype, r.message.name);
+                }
+            });
         }
-    });
+    );
 }
 
 /**
@@ -3057,6 +3187,9 @@ window.so_make_delivery_note = so_make_delivery_note;
 window.so_prompt_dn_or_si = so_prompt_dn_or_si;
 window.so_make_sales_invoice_with_stock = so_make_sales_invoice_with_stock;
 window.so_make_material_request = so_make_material_request;
+window.so_make_sales_invoice = so_make_sales_invoice;
+window.so_make_sales_invoice_from_dn = so_make_sales_invoice_from_dn;
+window.so_make_sales_invoice_from_all_dns = so_make_sales_invoice_from_all_dns;
 window.so_make_rm_material_request = so_make_rm_material_request;
 window.so_make_po_from_mr = so_make_po_from_mr;
 window.so_make_purchase_order = so_make_purchase_order;
