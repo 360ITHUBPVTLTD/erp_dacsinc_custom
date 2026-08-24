@@ -191,17 +191,19 @@ const render_rm_list = (materials) => {
     }
     const get_link = (doctype, name) => frappe.utils.get_form_link(doctype, name, true);
     const table_rows = materials.map(rm => {
-        const has_enough_stock = rm.available_qty >= rm.required_qty;
+        const required_qty = flt(rm.required_qty, 2);
+        const available_qty = flt(rm.available_qty, 2);
+        const has_enough_stock = available_qty >= required_qty;
         const availability_color = has_enough_stock ? 'text-success' : 'text-danger';
         const status_icon = has_enough_stock ? 'fa-check' : 'fa-times';
-        const tooltip = `Total Stock: ${rm.actual_qty} | Reserved for Others: ${rm.reserved_qty}`;
+        const tooltip = `Total Stock: ${flt(rm.actual_qty, 2)} | Reserved for Others: ${flt(rm.reserved_qty, 2)}`;
 
         return `
             <tr>
                 <td>${get_link("Item", rm.item_code)}<br><small class="text-muted">${rm.item_name}</small></td>
-                <td class="text-right">${rm.required_qty} ${rm.stock_uom}</td>
+                <td class="text-right">${required_qty} ${rm.stock_uom}</td>
                 <td class="text-right font-weight-bold ${availability_color}" title="${tooltip}">
-                    ${rm.available_qty} ${rm.stock_uom}
+                    ${available_qty} ${rm.stock_uom}
                 </td>
                 <td class="text-center">
                     <i class="fa ${status_icon} ${availability_color}"></i>
@@ -461,13 +463,16 @@ function show_po_full_piece_dashboard(frm) {
                                 <th width="110">Qty to Send</th>
                             </tr></thead>
                             <tbody>
-                                ${send_list.map(i => `
+                                ${send_list.map(i => {
+                                    const balance_avail = flt(i.balance_avail, 2);
+                                    return `
                                 <tr data-item="${i.item_code}" data-name="${frappe.utils.escape_html(i.item_name)}">
                                     <td><b>${i.item_name}</b><br><small class="text-muted">${i.item_code}</small></td>
-                                    <td class="text-right font-weight-bold">${i.balance_avail}</td>
-                                    <td class="text-right text-muted">${i.already_assigned}</td>
-                                    <td><input type="number" class="qty-field fp-qty" value="${i.balance_avail}" data-max="${i.balance_avail}" min="0"></td>
-                                </tr>`).join('')}
+                                    <td class="text-right font-weight-bold">${balance_avail}</td>
+                                    <td class="text-right text-muted">${flt(i.already_assigned, 2)}</td>
+                                    <td><input type="number" class="qty-field fp-qty" value="${balance_avail}" data-max="${balance_avail}" min="0"></td>
+                                </tr>`;
+                                }).join('')}
                             </tbody>
                         </table>
                         <div class="text-right mt-3">
@@ -660,15 +665,16 @@ function show_po_full_piece_dashboard(frm) {
 
                         let receipt_table_html = `<table class="table table-sm table-bordered"><thead><tr class="bg-light"><th>Item</th><th class="text-right">Sent</th><th class="text-right">Balance</th><th width="120">Qty to Receive</th></tr></thead><tbody>`;
                         res.message.items.forEach(i => {
-                            let balance = i.ordered_qty - (i.received_qty || 0);
+                            let ordered_qty = flt(i.ordered_qty, 2);
+                            let balance = flt(ordered_qty - flt(i.received_qty || 0, 2), 2);
                             receipt_table_html += `
                                 <tr data-row-name="${i.name}">
                                     <td>${i.item_code}</td>
-                                    <td class="text-right">${i.ordered_qty}</td>
+                                    <td class="text-right">${ordered_qty}</td>
                                     <td class="text-right font-weight-bold">${balance}</td>
                                     <td>
-                                        <input type="number" class="form-control text-right receive-qty-input" 
-                                               value="${balance}" min="0" max="${balance}" data-max="${balance}" 
+                                        <input type="number" class="form-control text-right receive-qty-input"
+                                               value="${balance}" min="0" max="${balance}" data-max="${balance}"
                                                ${balance <= 0 ? 'disabled' : ''}>
                                     </td>
                                 </tr>`;
@@ -772,13 +778,16 @@ function show_panel_process_dashboard(frm) {
                                 <th>Item Details</th><th class="text-right">Max Pending</th><th width="100">Send Qty</th>
                             </tr></thead>
                             <tbody>
-                            ${pending_list.map(i => `
+                            ${pending_list.map(i => {
+                                const pending_qty = flt(i.pending_qty, 2);
+                                return `
                                 <tr data-item="${i.item_code}" data-name="${frappe.utils.escape_html(i.item_name)}">
                                     <td class="text-center"><input type="checkbox" class="pw-new-check"></td>
                                     <td><b>${i.item_name}</b><br><small class="text-muted">${i.item_code}</small></td>
-                                    <td class="text-right">${i.pending_qty}</td>
-                                    <td><input type="number" class="form-control form-control-sm text-right pw-qty-input" value="${i.pending_qty}" data-max="${i.pending_qty}"></td>
-                                </tr>`).join('')}
+                                    <td class="text-right">${pending_qty}</td>
+                                    <td><input type="number" class="form-control form-control-sm text-right pw-qty-input" value="${pending_qty}" data-max="${pending_qty}"></td>
+                                </tr>`;
+                            }).join('')}
                             </tbody>
                         </table>
                         <div class="text-right"><button class="btn btn-danger btn-sm" id="btn-pw-start"><i class="fa fa-plus"></i> Initialize Batch</button></div>
@@ -958,8 +967,9 @@ function show_panel_process_dashboard(frm) {
                         callback: (res) => {
                             let tbl = `<table class="table table-bordered table-sm" style="font-size:12px;"><thead><tr class="bg-light"><th>Item</th><th class="text-right">Sent</th><th class="text-right">Bal</th><th width="100">Rx Qty</th></tr></thead><tbody>`;
                             res.message.items.forEach(i => {
-                                let bal = i.ordered_qty - (i.received_qty || 0);
-                                tbl += `<tr data-row="${i.name}"><td>${i.item_code}</td><td class="text-right">${i.ordered_qty}</td><td class="text-right">${bal}</td><td><input type="number" class="form-control form-control-sm i-q text-right" value="${bal}" ${bal <= 0 ? 'disabled' : ''}></td></tr>`;
+                                let ordered_qty = flt(i.ordered_qty, 2);
+                                let bal = flt(ordered_qty - flt(i.received_qty || 0, 2), 2);
+                                tbl += `<tr data-row="${i.name}"><td>${i.item_code}</td><td class="text-right">${ordered_qty}</td><td class="text-right">${bal}</td><td><input type="number" class="form-control form-control-sm i-q text-right" value="${bal}" ${bal <= 0 ? 'disabled' : ''}></td></tr>`;
                             });
                             tbl += `</tbody></table>`;
                             const rx_dlg = new frappe.ui.Dialog({
@@ -1113,7 +1123,7 @@ function show_sales_order_dialog(frm, data, is_subcontracted) {
         const sub_picks = flt(so.pick_sub || 0);
         const draft_picks = flt(so.pick_draft || 0); // <--- ADDED DRAFT DEDUCTION
         const linked_po_qty = flt(so.linked_po_qty || 0);
-        const to_buy = Math.max(0, req - linked_po_qty - sub_picks - draft_picks); // *** UPDATED MATH ***
+        const to_buy = flt(Math.max(0, req - linked_po_qty - sub_picks - draft_picks), 2); // *** UPDATED MATH ***
         // Hard block, no override: a BOM row whose raw materials aren't
         // physically in stock yet (so.rm_in_stock, computed server-side in
         // get_pending_so_with_material_stock) can't be selected here even if
@@ -1134,14 +1144,32 @@ function show_sales_order_dialog(frm, data, is_subcontracted) {
             </div>
         `).join("");
 
+        // "Other" collapses two very different situations that used to look
+        // identical here: a PO with no Sales Order at all (unclaimed general
+        // stock — could still end up covering this order) versus one already
+        // earmarked for a SPECIFIC different Sales Order (spoken for, not
+        // really up for grabs). Neither is netted into "Final" above either
+        // way, but the reader needs to know which kind they're looking at
+        // before deciding whether it's worth chasing for this order.
         let other_details_html = (so.other_po_list || []).map(p => `
             <div class="po-detail-line">
-                <span style="white-space:nowrap; overflow:hidden; text-overflow:ellipsis; width:75%">${get_link("Purchase Order", p.id)} <span class="sup-text">(${p.sup || 'Stock'})</span></span>
+                <span style="white-space:nowrap; overflow:hidden; text-overflow:ellipsis; width:75%">
+                    ${get_link("Purchase Order", p.id)} <span class="sup-text">(${p.sup || 'Stock'})</span>
+                    <br><small style="color:${p.sales_order ? '#b45309' : '#059669'};">
+                        ${p.sales_order
+                            ? `Reserved for ${frappe.utils.escape_html(p.sales_order)}${p.so_customer_name ? ` (${frappe.utils.escape_html(p.so_customer_name)})` : ''}`
+                            : 'Unclaimed general stock'}
+                    </small>
+                </span>
                 <strong>${flt(p.qty).toFixed(0)}</strong>
             </div>
         `).join("");
 
         const other_sum_qty = flt(so.other_po_qty || 0);
+        const other_general_qty = (so.other_po_list || [])
+            .filter(p => !p.sales_order)
+            .reduce((s, p) => s + flt(p.qty), 0);
+        const other_reserved_qty = Math.max(0, other_sum_qty - other_general_qty);
 
         html += `
             <tr data-search-context="${`${so.sales_order} ${so.item_code} ${so.customer || ''} ${so.customer_name || ''} `.toLowerCase()}">
@@ -1189,8 +1217,9 @@ function show_sales_order_dialog(frm, data, is_subcontracted) {
                         ${linked_list || '<small class="text-muted">None</small>'}
                     </div>
                     <div class="po-box-other">
-                        <div style="font-size: 10px; font-weight:700; color: #7f8c8d; margin-bottom: 2px; display:flex; justify-content: space-between;">
-                            OTHER PO (STOCK: ${other_sum_qty.toFixed(0)}) 
+                        <div style="font-size: 10px; font-weight:700; color: #7f8c8d; margin-bottom: 2px; display:flex; justify-content: space-between;"
+                             title="Neither figure is counted toward this row's own Final need — general stock is unclaimed and could still help, reserved stock already belongs to a different Sales Order">
+                            <span>OTHER PO: ${other_general_qty.toFixed(0)} Unclaimed${other_reserved_qty > 0 ? ` &middot; ${other_reserved_qty.toFixed(0)} Reserved Elsewhere` : ''}</span>
                             <span class="toggle-details-btn">View Details</span>
                         </div>
                         <div class="other-po-list-container">
@@ -1391,13 +1420,13 @@ function show_so_selection_and_rm_purchase_dialog(frm, sales_orders) {
                 <div style="font-size:11px; color:#999;">${get_link("Customer", so.customer)}</div>
                 <div style="font-size:11px; color:#999;">${"Customer", so.customer_name}</div>
             </td>
-            <td class="text-right text-muted">${flt(so.pending_qty)}</td>
-            <td class="text-right text-muted">${flt(so.picked_submitted)} / ${flt(so.picked_draft)}</td>
-            <td class="text-right text-highlight" style="font-size: 14px;">${flt(so.qty_awaiting_pick)} ${so.uom}</td>
+            <td class="text-right text-muted">${flt(so.pending_qty, 2)}</td>
+            <td class="text-right text-muted">${flt(so.picked_submitted, 2)} / ${flt(so.picked_draft, 2)}</td>
+            <td class="text-right text-highlight" style="font-size: 14px;">${flt(so.qty_awaiting_pick, 2)} ${so.uom}</td>
             <td class="text-center">
-                <input type="number" step="any" min="0" max="${so.qty_awaiting_pick}"
+                <input type="number" step="any" min="0" max="${flt(so.qty_awaiting_pick, 2)}"
                        class="form-control qty-input text-center fg-fulfill-input"
-                       data-max="${so.qty_awaiting_pick}" value="${flt(so.qty_awaiting_pick)}">
+                       data-max="${flt(so.qty_awaiting_pick, 2)}" value="${so.qty_awaiting_pick}">
             </td>
             <td>${rm_status_html}</td>
         </tr>`;
@@ -1427,7 +1456,7 @@ function show_so_selection_and_rm_purchase_dialog(frm, sales_orders) {
                         <th width="10%" class="text-right">Picked (S/D)</th>
                         <th width="12%" class="text-right">Remaining</th>
                         <th width="12%" class="text-center">Qty to Make</th>
-                        <th width="24%">RM Availability Status</th>
+                        <th width="24%" title="Per raw material: Need (this order's own qty-to-make × BOM ratio) versus what's already covered — this order's own stock/PO/MR share, plus anything genuinely unclaimed. Hover a status to see the full breakdown.">RM Availability Status</th>
                     </tr></thead>
                     <tbody>${fg_rows}</tbody>
                 </table>
@@ -1436,7 +1465,10 @@ function show_so_selection_and_rm_purchase_dialog(frm, sales_orders) {
             <!-- SECTION 2 HEADER -->
             <div class="d-flex justify-content-between align-items-center mb-2">
                 <h6 style="text-transform: capitalize; letter-spacing: 0.5px; font-size: 14px; color: black; margin:0;">2. Raw Material Requirements (Consolidated)</h6>
-                <div style="font-size: 14px; color: #666; font-style: italic;">Net Need = (Required - Stock - Pending POs - Pending MRs)</div>
+                <div style="font-size: 14px; color: #666; font-style: italic;"
+                     title="Consolidated across every Sales Order ticked in section 1 above. Untick an order there and this table recalculates immediately.">
+                    Purchase = Required &minus; Effective (hover column headers for details)
+                </div>
             </div>
             
             <!-- CALCULATED RESULTS AREA -->
@@ -1504,25 +1536,40 @@ function show_so_selection_and_rm_purchase_dialog(frm, sales_orders) {
 
     const update_inline_rm_status = ($row, fg_qty, is_checked) => {
         let so_data = sales_orders[$row.data('idx')];
-        if (!is_checked) { $row.find('.rm-prev-stat').text('Ignored').css('color', '#ccc'); return; }
+        if (!is_checked) {
+            $row.find('.rm-prev-stat').text('Ignored')
+                .attr('title', 'This Sales Order is unticked in the checkbox column, so it is not counted toward any raw material demand below.')
+                .css('color', '#ccc');
+            return;
+        }
 
         $row.find('.rm-preview-line').each(function (i) {
             let $line = $(this);
             let base_bom = parseFloat($line.data('base-qty'));
             let total_rm_req = base_bom * fg_qty;
             let rm_data = so_data.raw_materials[i];
-            let coverage = flt(rm_data.available_qty) + flt(rm_data.ordered_linked_qty) + flt(rm_data.incoming_general_qty)
-                + flt(rm_data.mr_linked_qty) + flt(rm_data.mr_general_qty);
+            let stock = flt(rm_data.available_qty);
+            let linked_po = flt(rm_data.ordered_linked_qty);
+            let general_po = flt(rm_data.incoming_general_qty);
+            let linked_mr = flt(rm_data.mr_linked_qty);
+            let general_mr = flt(rm_data.mr_general_qty);
+            let coverage = stock + linked_po + general_po + linked_mr + general_mr;
             let shortfall = total_rm_req - coverage;
 
-            // The calculator: per-unit x qty-to-make = total required for
-            // this line, spelled out rather than just the final number.
             $line.find('.rm-prev-calc').text(`${base_bom.toFixed(2)} x ${flt(fg_qty)} = ${total_rm_req.toFixed(2)}`);
 
+            const coverage_note = `Need ${total_rm_req.toFixed(2)} ${rm_data.uom}\n`
+                + `Stock: ${stock.toFixed(2)}\n`
+                + `PO for this order: ${linked_po.toFixed(2)}\n`
+                + `MR for this order: ${linked_mr.toFixed(2)}\n`
+                + `Unclaimed PO (any order): ${general_po.toFixed(2)}\n`
+                + `Unclaimed MR (any order): ${general_mr.toFixed(2)}\n`
+                + `Total covered: ${coverage.toFixed(2)}`;
+
             if (shortfall > 0.001) {
-                $line.find('.rm-prev-stat').html(`<span style="color:#d62222; font-weight:bold;">-${shortfall.toFixed(1)}</span>`);
+                $line.find('.rm-prev-stat').html(`<span style="color:#d62222; font-weight:bold;" title="${coverage_note}">Short ${shortfall.toFixed(2)}</span>`);
             } else {
-                $line.find('.rm-prev-stat').html(`<span style="color:#00994d;">OK</span>`);
+                $line.find('.rm-prev-stat').html(`<span style="color:#00994d;" title="${coverage_note}">Covered</span>`);
             }
         });
     }
@@ -1532,12 +1579,12 @@ function show_so_selection_and_rm_purchase_dialog(frm, sales_orders) {
             <table class="rm-dialog-table">
             <thead><tr>
                 <th width="20%">Raw Material</th>
-                <th width="12%" class="text-right">Required</th>
-                <th width="12%" class="text-right">Stock</th>
-                <th width="12%" class="text-right">Incoming (PO+MR)</th>
-                <th width="12%" class="text-right">Effective</th>
+                <th width="12%" class="text-right" title="Sum of every TICKED Sales Order's own qty-to-make × BOM ratio for this raw material. See the breakdown lines under the number for exactly which orders contributed.">Required</th>
+                <th width="12%" class="text-right" title="Physical stock on hand right now, across all warehouses.">Stock</th>
+                <th width="12%" class="text-right" title="Only counts: (a) Purchase Orders/Material Requests raised specifically for the Sales Order(s) ticked above, and (b) genuinely unclaimed PO/MR quantity not tied to any Sales Order. A PO or MR dedicated to a DIFFERENT, unticked Sales Order is never included here.">Incoming (PO+MR)</th>
+                <th width="12%" class="text-right" title="Stock + Incoming — everything this raw material's need can currently draw on.">Effective</th>
                 <th width="20%">Existing Ref (PO/MR)</th>
-                <th width="12%" class="text-right" style="background: #ebf8ff; border-bottom: 2px solid #5e64ff;">Purchase</th>
+                <th width="12%" class="text-right" style="background: #ebf8ff; border-bottom: 2px solid #5e64ff;" title="Required minus Effective — what's actually left to buy.">Purchase</th>
             </tr></thead>
             <tbody>`;
 
@@ -1549,28 +1596,22 @@ function show_so_selection_and_rm_purchase_dialog(frm, sales_orders) {
                 let effective_stock = d.available_stock + d.linked_po_qty_total + d.general_po_coming
                     + d.linked_mr_qty_total + d.general_mr_coming;
                 let purchase_rec = Math.max(0, d.required_qty - effective_stock);
-                //  let po_links = d.po_refs
-                // .slice(0, 3)
                 let safe_meta = JSON.stringify(d).replace(/'/g, "&#39;");
 
                 let po_links = (d.po_refs || []).slice(0, 3)
                     .map(po => `<a href="/app/purchase-order/${encodeURIComponent(po)}" target="_blank" style="font-weight:bold; text-decoration:underline;">${po}</a>`)
                     .join(", ");
-                // Why the number was reduced, not just the number — same
-                // reasoning as the PO refs above, but for the Material
-                // Requests netted off via mr_linked_qty_total/general_mr_coming.
                 let mr_links = (d.mr_refs || []).slice(0, 3)
                     .map(mr => `<a href="/app/material-request/${encodeURIComponent(mr.name)}" target="_blank"
                             style="font-weight:bold; text-decoration:underline; color:#6d28d9;">${mr.name}</a>
-                            ${mr.docstatus == 1 ? '' : '<span style="font-size:8px; color:#ea580c;"> (Draft)</span>'}`)
-                    .join(", ");
+                            ${mr.docstatus == 1 ? '' : '<span style="font-size:8px; color:#ea580c;"> (Draft)</span>'}
+                            <span style="font-size:8px; color:${mr.sales_order ? '#b45309' : '#059669'};">
+                                (${mr.sales_order ? `for ${mr.sales_order}` : 'unclaimed'})
+                            </span>`)
+                    .join("<br>");
                 let ref_links = [po_links, mr_links].filter(Boolean).join("<br>")
                     || '<span style="color:#cbd5e1;">—</span>';
 
-                // The calculator, spelled out per contributing line — each
-                // selected Sales Order's own qty-to-make x per-unit BOM
-                // ratio, not just the consolidated total with no way to see
-                // how it was built.
                 let calc_lines = (d.breakdown || []).map(b => {
                     let per_unit = flt(b.fg_qty) ? (flt(b.rm_qty) / flt(b.fg_qty)) : 0;
                     return `<div style="font-family:monospace; font-size:9px; color:#888;" title="${b.so} — ${b.fg}">
@@ -1592,7 +1633,6 @@ function show_so_selection_and_rm_purchase_dialog(frm, sales_orders) {
         </tr>`;
             });
         }
-        // <td style="font-size:10px;">${d.po_refs.slice(0,3).join(", ")}</td>
 
         html += "</tbody></table>";
         dialog.$wrapper.find('#rm-calc-area').html(html);
@@ -1628,11 +1668,6 @@ function show_so_selection_and_rm_purchase_dialog(frm, sales_orders) {
                 return;
             }
 
-            // This dialog is for buying raw material to stock — it must
-            // never leave the PO in subcontracted mode, since that's what
-            // makes "Finished Good" mandatory on rows that have no
-            // finished good to report (build_rm_purchase_rows deliberately
-            // never sets fg_item either).
             if (frm.doc.is_subcontracted) {
                 frm.set_value('is_subcontracted', 0);
             }
@@ -1725,129 +1760,22 @@ function show_so_selection_and_rm_purchase_dialog(frm, sales_orders) {
 function show_stock_check_dialog(frm, materials, linked_subcontracting_docs) {
     let dialog;
 
-    // Function to rebuild the HTML table inside the dialog
-    // const rebuild_table = (updated_materials) => {
-    //     let all_stock_sufficient_for_supply = true; 
-
-    //     let table_rows = updated_materials.map((item, index) => {
-    //         const required_qty = flt(item.required_qty);
-    //         const available_qty = flt(item.available_qty);
-    //         // 'qty_to_supply' will be initialized or taken from previous input
-    //         const qty_to_supply = flt(item.qty_to_supply || required_qty); 
-
-    //         // Determine icon for 'Qty to Supply' vs available
-    //         let supply_status_icon;
-    //         let supply_input_class = '';
-    //         let supply_tooltip = '';
-
-    //         if (qty_to_supply > available_qty) {
-    //             supply_status_icon = 'fa-times text-danger';
-    //             supply_input_class = 'is-invalid'; // Bootstrap class for visual error
-    //             supply_tooltip = 'Cannot supply more than available quantity.';
-    //             all_stock_sufficient_for_supply = false; 
-    //         } else if (qty_to_supply > 0) {
-    //             supply_status_icon = 'fa-check text-success';
-    //         } else {
-    //             supply_status_icon = 'fa-minus text-muted';
-    //         }
-
-    //         return `<tr>
-    //             <td>${frappe.utils.get_form_link("Item", item.item_code, true)}</td>
-    //             <td>${required_qty} ${item.uom}</td>
-    //             <td class="font-weight-bold ${available_qty < required_qty ? 'text-danger' : ''}">${available_qty} ${item.uom}</td>
-    //             <td>
-    //                 <div class="input-group" style="width: 120px;">
-    //                     <input type="number" class="form-control qty-to-supply-input ${supply_input_class}" 
-    //                           data-item-code="${item.item_code}" 
-    //                           value="${qty_to_supply}" 
-    //                           min="0" 
-    //                           max="${available_qty}" 
-    //                           step="any"
-    //                           title="${supply_tooltip}">
-    //                 </div>
-    //             </td>
-    //             <td class="text-center"><i class="fa ${supply_status_icon}"></i></td>
-    //         </tr>`;
-    //     }).join('');
-
-    //     let dialog_html = `<p>Review stock and specify quantities to supply. Adjust the "Qty to Supply" as needed.</p>
-    //         <table class="table table-bordered table-sm">
-    //             <thead class="thead-light"><tr>
-    //                 <th>Raw Material</th>
-    //                 <th>Required Qty</th>
-    //                 <th>Available Qty</th>
-    //                 <th>Qty to Supply to SCO</th>
-    //                 <th>Supply Status</th>
-    //             </tr></thead>
-    //             <tbody>${table_rows}</tbody>
-    //         </table>`;
-
-    //     if (!all_stock_sufficient_for_supply) {
-    //         dialog_html += `<div class="alert alert-warning"><b>Cannot Proceed:</b> One or more "Qty to Supply" values exceed the "Available Qty." Please adjust to proceed with transfer.</div>`;
-    //     }
-
-    //     // Update the HTML content of the dialog
-    //     dialog.fields_dict.stock_info.html(dialog_html);
-
-    //     // Add event listeners for the new input fields
-    //     $(dialog.body).find('.qty-to-supply-input').off('input').on('input', function() {
-    //         const itemCode = $(this).data('item-code');
-    //         let newSupplyQty = flt($(this).val());
-    //         const materialIndex = updated_materials.findIndex(m => m.item_code === itemCode);
-
-    //         if (materialIndex !== -1) {
-    //             const available_qty = flt(updated_materials[materialIndex].available_qty);
-
-    //             // *** NEW VALIDATION LOGIC ***
-    //             if (newSupplyQty > available_qty) {
-    //                 newSupplyQty = available_qty; // Cap at available quantity
-    //                 $(this).val(newSupplyQty); // Update input field visually
-    //                 frappe.show_alert({
-    //                     message: __("Cannot supply more than available quantity for {0}. Quantity adjusted.", [itemCode]),
-    //                     indicator: 'orange'
-    //                 }, 3);
-    //             }
-    //             if (newSupplyQty < 0) { // Also prevent negative input
-    //                 newSupplyQty = 0;
-    //                 $(this).val(newSupplyQty);
-    //             }
-    //             // *** END NEW VALIDATION LOGIC ***
-
-    //             updated_materials[materialIndex].qty_to_supply = newSupplyQty;
-    //         }
-    //         // Re-render the table to update statuses immediately
-    //         rebuild_table(updated_materials); 
-    //     });
-
-
-    //     // Re-evaluate button states
-    //     if (all_stock_sufficient_for_supply) {
-    //         dialog.get_primary_btn().prop('disabled', false);
-    //     } else {
-    //         dialog.get_primary_btn().prop('disabled', true);
-    //     }
-    //     // Material Request button is always available, unless no materials
-    //     if (updated_materials && updated_materials.length > 0) {
-    //         dialog.get_secondary_btn().show();
-    //     } else {
-    //         dialog.get_secondary_btn().hide();
-    //     }
-    // };
-
+    const qty_exceeds = (a, b) => flt(flt(a, 2) - flt(b, 2), 2) > 0;
 
     // Function to rebuild the HTML table inside the dialog
     const rebuild_table = (updated_materials) => {
         let all_stock_sufficient_for_supply = true;
 
         let table_rows = updated_materials.map((item, index) => {
-            // const required_qty = flt(item.required_qty);
             const required_qty = flt(item.required_qty, 2);
-            const available_qty = flt(item.available_qty);
-            const qty_to_supply = flt(item.qty_to_supply !== undefined ? item.qty_to_supply : required_qty);
+            const available_qty = flt(item.available_qty, 2);
+            const required_qty_disp = flt(required_qty, 2);
+            const available_qty_disp = flt(available_qty, 2);
+            const qty_to_supply = flt(item.qty_to_supply !== undefined ? item.qty_to_supply : required_qty, 2);
 
             let supply_status_icon;
             let supply_input_class = '';
-            if (qty_to_supply > available_qty) {
+            if (qty_exceeds(qty_to_supply, available_qty)) {
                 supply_status_icon = 'fa-times text-danger';
                 supply_input_class = 'is-invalid';
                 all_stock_sufficient_for_supply = false;
@@ -1859,8 +1787,8 @@ function show_stock_check_dialog(frm, materials, linked_subcontracting_docs) {
 
             return `<tr data-item-code="${item.item_code}">
                 <td>${frappe.utils.get_form_link("Item", item.item_code, true)}</td>
-                <td>${required_qty} ${item.uom}</td>
-                <td class="font-weight-bold ${available_qty < required_qty ? 'text-danger' : ''}">${available_qty} ${item.uom}</td>
+                <td>${required_qty_disp} ${item.uom}</td>
+                <td class="font-weight-bold ${qty_exceeds(required_qty, available_qty) ? 'text-danger' : ''}">${available_qty_disp} ${item.uom}</td>
                 <td>
                     <div class="input-group" style="width: 140px;">
                         <div class="input-group-prepend">
@@ -1902,7 +1830,7 @@ function show_stock_check_dialog(frm, materials, linked_subcontracting_docs) {
 
         const update_row_ui = (itemCode, newVal) => {
             const material = updated_materials.find(m => m.item_code === itemCode);
-            const available = flt(material.available_qty);
+            const available = flt(material.available_qty, 2);
             const $row = $(dialog.body).find(`tr[data-item-code="${itemCode}"]`);
             const $input = $row.find('.qty-to-supply-input');
             const $iconBox = $row.find('.status-icon');
@@ -1911,7 +1839,7 @@ function show_stock_check_dialog(frm, materials, linked_subcontracting_docs) {
             material.qty_to_supply = newVal;
 
             // Update Icon and Classes dynamically without full refresh
-            if (newVal > available) {
+            if (qty_exceeds(newVal, available)) {
                 $iconBox.html('<i class="fa fa-times text-danger"></i>');
                 $input.addClass('is-invalid');
             } else if (newVal > 0) {
@@ -1923,7 +1851,7 @@ function show_stock_check_dialog(frm, materials, linked_subcontracting_docs) {
             }
 
             // Check if primary button should be disabled
-            let any_error = updated_materials.some(m => flt(m.qty_to_supply) > flt(m.available_qty));
+            let any_error = updated_materials.some(m => qty_exceeds(m.qty_to_supply, m.available_qty));
             dialog.get_primary_btn().prop('disabled', any_error);
             $(dialog.body).find('.error-msg').toggle(any_error);
         };
@@ -1981,12 +1909,12 @@ function show_stock_check_dialog(frm, materials, linked_subcontracting_docs) {
                 const itemCode = $(this).data('item-code');
                 const suppliedQty = flt($(this).val());
                 const materialData = materials.find(m => m.item_code === itemCode);
-                const availableQty = materialData ? flt(materialData.available_qty) : 0;
+                const availableQty = materialData ? flt(materialData.available_qty, 2) : 0;
 
-                if (suppliedQty > availableQty) {
+                if (qty_exceeds(suppliedQty, availableQty)) {
                     can_proceed_with_transfer = false;
                     frappe.show_alert({
-                        message: __("Cannot transfer {0} of {1}. Only {2} is available.", [suppliedQty, itemCode, availableQty]),
+                        message: __("Cannot transfer {0} of {1}. Only {2} is available.", [flt(suppliedQty, 2), itemCode, flt(availableQty, 2)]),
                         indicator: 'red'
                     }, 5);
                     return false; // Break .each loop
@@ -2116,15 +2044,15 @@ function show_receive_items_dialog(frm, sco_name) {
                     <tbody>`;
 
             items.forEach(item => {
-                const ordered_qty = flt(item.ordered_qty);
-                const received_qty = flt(item.received_qty);
+                const ordered_qty = flt(item.ordered_qty, 2);
+                const received_qty = flt(item.received_qty, 2);
                 const display_pending = Math.floor(item.pending_qty);
 
                 // --- CALCULATION LOGIC ADDED ---
                 // This logic mirrors the backend's ceiling (round up) rule.
                 const total_allowed_exact = ordered_qty * (1 + (allow_perc / 100.0));
                 const total_allowed_rounded = Math.ceil(total_allowed_exact);
-                const max_receivable = Math.max(0, total_allowed_rounded - received_qty);
+                const max_receivable = flt(Math.max(0, total_allowed_rounded - received_qty), 2);
 
                 dialog_html += `
                     <tr data-child-id="${item.name}">
@@ -2402,8 +2330,8 @@ function render_linked_docs_html(frm, docs) {
         let h = '<div class="item-list">';
         items.forEach(i => {
             // Correct quantity display based on field existence
-            let qtyStr = i.qty ? i.qty : (i.stock_qty || 0);
-            let qtyInfo = (i.received_qty != null) ? `Ord:${i.ordered_qty || qtyStr}, Rec:${i.received_qty}` : `Qty: ${qtyStr}`;
+            let qtyStr = flt(i.qty ? i.qty : (i.stock_qty || 0), 2);
+            let qtyInfo = (i.received_qty != null) ? `Ord:${flt(i.ordered_qty, 2) || qtyStr}, Rec:${flt(i.received_qty, 2)}` : `Qty: ${qtyStr}`;
             h += `<div class="item-row"><span style="flex:1;">${i.item_code}</span><span style="color:#64748b;">${qtyInfo}</span></div>`;
         });
         return h + '</div>';
@@ -2442,13 +2370,14 @@ function show_receive_embroidery_dialog(frm, ewo_name) {
                     </thead>
                     <tbody>`;
             r.message.forEach(item => {
+                const pending_qty = flt(item.pending_qty, 2);
                 dialog_html += `
                     <tr data-child-id="${item.child_id}">
                         <td>${item.item_name} <br><small class="text-muted">${item.item_code}</small></td>
-                        <td class="text-right">${item.ordered_qty}</td>
-                        <td class="text-right text-success">${item.previously_received_qty}</td>
-                        <td class="text-right text-danger">${item.pending_qty}</td>
-                        <td><input type="number" class="form-control text-right" data-max="${item.pending_qty}" value="${item.pending_qty}"></td>
+                        <td class="text-right">${flt(item.ordered_qty, 2)}</td>
+                        <td class="text-right text-success">${flt(item.previously_received_qty, 2)}</td>
+                        <td class="text-right text-danger">${pending_qty}</td>
+                        <td><input type="number" class="form-control text-right" data-max="${pending_qty}" value="${pending_qty}"></td>
                     </tr>`;
             });
             dialog_html += `</tbody></table>`;
@@ -2537,6 +2466,11 @@ function render_smart_po_dialog(frm, raw_data) {
         grouped[key].ordered_qty += flt(d.ordered_qty);
         grouped[key].total_pending += flt(d.pending_qty);
         grouped[key].origins.push(d);
+    });
+    Object.values(grouped).forEach(g => {
+        g.total_mr_qty = flt(g.total_mr_qty, 2);
+        g.ordered_qty = flt(g.ordered_qty, 2);
+        g.total_pending = flt(g.total_pending, 2);
     });
 
     let data = Object.values(grouped);

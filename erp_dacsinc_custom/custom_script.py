@@ -2501,6 +2501,41 @@ def get_item_stock_details_bulk(item_bom_pairs, sales_order_name):
             WHERE sii.sales_order = %s AND si.docstatus < 2
         """, so_doc.name, as_dict=True)
 
+    # Bulk lookups computed once for the whole call, instead of once per
+    # pair (or, for the BOM raw-material item_name fallback, once per BOM
+    # line) — a Sales Order with many line items used to mean many repeated
+    # single-row `Item`/`BOM` fetches for facts that don't change per pair.
+    parsed_pairs = [(p.split('||', 1)[0].strip(), p.split('||', 1)[1].strip()) for p in item_bom_pairs]
+
+    all_pair_item_codes = tuple({ic for ic, _ in parsed_pairs}) or ("",)
+    item_master_map = {
+        d.name: d for d in frappe.get_all(
+            "Item", filters={"name": ["in", all_pair_item_codes]},
+            fields=["name", "stock_uom", "item_name", "is_sub_contracted_item", "default_bom"])
+    }
+
+    all_bom_nos = tuple({bk for _, bk in parsed_pairs if bk and bk != 'no_bom'})
+    bom_items_map = defaultdict(list)
+    if all_bom_nos:
+        for bi in frappe.get_all(
+            "BOM Item", filters={"parent": ["in", all_bom_nos]},
+            fields=["parent", "item_code", "item_name", "stock_qty", "qty", "uom", "stock_uom"],
+        ):
+            bom_items_map[bi.parent].append(bi)
+
+    all_rm_codes = tuple({bi.item_code for rows in bom_items_map.values() for bi in rows})
+    rm_item_name_map = {}
+    if all_rm_codes:
+        rm_item_name_map = {
+            d.name: d.item_name for d in frappe.get_all(
+                "Item", filters={"name": ["in", all_rm_codes]}, fields=["name", "item_name"])
+        }
+
+    all_pick_blockers = _get_pick_blockers(list(all_pair_item_codes)) if all_pair_item_codes != ("",) else []
+    pick_blockers_by_item = defaultdict(list)
+    for b in all_pick_blockers:
+        pick_blockers_by_item[b.item_code].append(b)
+
     results = {}
     for pair in item_bom_pairs:
         # 1. INITIALIZE ALL VARIABLES
@@ -2523,7 +2558,7 @@ def get_item_stock_details_bulk(item_bom_pairs, sales_order_name):
         required_qty = sum(flt(i.qty) for i in so_items)
         delivered_qty = sum(flt(i.delivered_qty) for i in so_items)
         warehouse = next((i.warehouse for i in so_items if i.warehouse), None)
-        stock_uom = so_items[0].stock_uom if so_items else frappe.db.get_value("Item", item_code, "stock_uom")
+        stock_uom = so_items[0].stock_uom if so_items else item_master_map.get(item_code, {}).get("stock_uom")
         so_item_names = tuple(i.name for i in so_items) or ("",)
         row_dns = [d for d in dn_items if d.sales_order_item in so_item_names]
         row_sis = [s for s in si_items if s.sales_order_item in so_item_names]
@@ -2810,7 +2845,18 @@ def get_item_stock_details_bulk(item_bom_pairs, sales_order_name):
         # on both. We retrieve all PO items for this sales_order and item_code,
         # then filter Python-side: if sales_order_item is set, match strictly on it;
         # if not set, match based on BOM.
-        raw_po_data = frappe.db.sql("""
+        # A BOM/manufactured item can only ever legitimately arrive via a
+        # Subcontract PO — a plain direct PO for it (is_subcontracted=0) is
+        # exactly the kind of erroneous order validate_and_get_items_for_po /
+        # get_pending_so_with_material_stock now refuse to create, but an
+        # older one already in the system must not count as trustworthy
+        # incoming supply here either, or "Incoming" reports stock that can
+        # never actually arrive as a manufactured good.
+        po_kind_match = (
+            "(po.is_subcontracted=1 AND poi.fg_item=%(item)s)" if bom_no
+            else "((po.is_subcontracted=0 AND poi.item_code=%(item)s) OR (po.is_subcontracted=1 AND poi.fg_item=%(item)s))"
+        )
+        raw_po_data = frappe.db.sql(f"""
             SELECT
                 po.name, po.supplier, sup.supplier_name, po.is_subcontracted,
                 po.status AS po_status, po.transaction_date AS po_date,
@@ -2823,7 +2869,7 @@ def get_item_stock_details_bulk(item_bom_pairs, sales_order_name):
             JOIN `tabPurchase Order` po ON poi.parent = po.name
             LEFT JOIN `tabSupplier` sup ON po.supplier = sup.name
             WHERE poi.sales_order = %(so)s AND po.docstatus = 1
-            AND ((po.is_subcontracted=0 AND poi.item_code=%(item)s) OR (po.is_subcontracted=1 AND poi.fg_item=%(item)s))
+            AND {po_kind_match}
         """, {"so": sales_order_name, "item": item_code}, as_dict=1)
 
         filtered_po_items = []
@@ -2863,7 +2909,7 @@ def get_item_stock_details_bulk(item_bom_pairs, sales_order_name):
         # commit nothing and are excluded from incoming_stock/total_incoming_qty.
         # Shown separately, for reference only, so a Draft PO someone already
         # raised isn't invisible while it waits to be submitted.
-        raw_draft_po_data = frappe.db.sql("""
+        raw_draft_po_data = frappe.db.sql(f"""
             SELECT
                 po.name, po.supplier, sup.supplier_name, po.is_subcontracted,
                 po.transaction_date AS po_date,
@@ -2875,7 +2921,7 @@ def get_item_stock_details_bulk(item_bom_pairs, sales_order_name):
             JOIN `tabPurchase Order` po ON poi.parent = po.name
             LEFT JOIN `tabSupplier` sup ON po.supplier = sup.name
             WHERE poi.sales_order = %(so)s AND po.docstatus = 0
-            AND ((po.is_subcontracted=0 AND poi.item_code=%(item)s) OR (po.is_subcontracted=1 AND poi.fg_item=%(item)s))
+            AND {po_kind_match}
         """, {"so": sales_order_name, "item": item_code}, as_dict=1)
 
         filtered_draft_po_items = []
@@ -2978,7 +3024,14 @@ def get_item_stock_details_bulk(item_bom_pairs, sales_order_name):
         # already literally "Draft" for those rows, so so_doc_status() on the
         # client shows the same indication it uses everywhere else. Totals
         # below stay submitted-only: a draft commits nothing.
-        other_po_data = frappe.db.sql("""
+        # Same rule as the current-SO query above: a plain direct PO
+        # (is_subcontracted=0) can never actually deliver a BOM/manufactured
+        # item, so it must not count as "Other PO" incoming supply for one —
+        # this is precisely how PUR-ORD-2026-00064 (a direct PO wrongly
+        # raised for "Item 2 with BOM" via a duplicate bom_no-less Sales
+        # Order Item row) kept showing as legitimate incoming stock here.
+        other_po_bom_gate = "AND po.is_subcontracted = 1" if bom_no else ""
+        other_po_data = frappe.db.sql(f"""
             SELECT
                 po.name, po.supplier, sup.supplier_name, poi.sales_order,
                 so.customer_name AS so_customer_name,
@@ -2994,6 +3047,7 @@ def get_item_stock_details_bulk(item_bom_pairs, sales_order_name):
                 poi.item_code = %(item)s AND po.docstatus IN (0, 1)
                 AND (poi.sales_order != %(so)s OR poi.sales_order IS NULL OR poi.sales_order = '')
                 AND (poi.qty - poi.received_qty) > 0
+                {other_po_bom_gate}
             GROUP BY po.name, po.supplier, sup.supplier_name, poi.sales_order, so.customer_name, po.status, po.docstatus
         """, {"so": sales_order_name, "item": item_code}, as_dict=1)
 
@@ -3079,9 +3133,7 @@ def get_item_stock_details_bulk(item_bom_pairs, sales_order_name):
         # 8b. Subcontracting defaults — this shop buys finished goods as job work:
         # a Purchase Order with is_subcontracted = 1, a service item on the row, and
         # the FG in fg_item. Read the pattern from history instead of hard-coding it.
-        item_meta = frappe.db.get_value(
-            "Item", item_code, ["is_sub_contracted_item", "default_bom"], as_dict=True
-        ) or {}
+        item_meta = item_master_map.get(item_code, {})
 
         sc_defaults = {}
         if item_meta.get("is_sub_contracted_item") or bom_no:
@@ -3111,7 +3163,7 @@ def get_item_stock_details_bulk(item_bom_pairs, sales_order_name):
         # 8c. Pick Lists that ERPNext still counts as holding this item's stock.
         # If any of them is stale (its Sales Order line is already delivered) it will
         # silently block every new Pick List for this item, so report it up front.
-        blockers = [b for b in _get_pick_blockers([item_code]) if flt(b.held_qty) > 0]
+        blockers = [b for b in pick_blockers_by_item.get(item_code, []) if flt(b.held_qty) > 0]
         stale_blockers = [
             {"pick_list": b.pick_list, "pick_status": b.pick_status, "held_qty": flt(b.held_qty),
              "sales_order": b.sales_order, "qty": flt(b.qty), "so_delivered": flt(b.so_delivered)}
@@ -3136,16 +3188,16 @@ def get_item_stock_details_bulk(item_bom_pairs, sales_order_name):
 
         if bom_no:
             try:
-                bom_doc = frappe.get_doc("BOM", bom_no)
-                rm_codes = [i.item_code for i in bom_doc.items]
+                bom_rm_rows = bom_items_map.get(bom_no, [])
+                rm_codes = [i.item_code for i in bom_rm_rows]
                 rm_map = {}
-                for bi in bom_doc.items:
+                for bi in bom_rm_rows:
                     rm_code = bi.item_code
                     qty_per_fg = flt(bi.stock_qty) if bi.stock_qty else flt(bi.qty)
                     rm_map[rm_code] = {
                         "rm_code": rm_code,
                         # Show the readable description next to the item ID in the UI
-                        "rm_name": bi.item_name or frappe.db.get_value("Item", rm_code, "item_name") or rm_code,
+                        "rm_name": bi.item_name or rm_item_name_map.get(rm_code) or rm_code,
                         "rm_uom": bi.uom or bi.stock_uom,
                         "rm_qty_per_fg": qty_per_fg,
                         # Two different questions, two different fields — do not let one
@@ -3218,8 +3270,19 @@ def get_item_stock_details_bulk(item_bom_pairs, sales_order_name):
 
                     for d in mr_data:
                         if d.item_code in rm_map:
-                            rm_map[d.item_code]["rm_pending_mr_total"] = max(0, flt(d.pending_mr))
-                            rm_map[d.item_code]["mr_documents"] = d.mr_list.split(",") if d.mr_list else []
+                            pending_mr = max(0, flt(d.pending_mr))
+                            rm_map[d.item_code]["rm_pending_mr_total"] = pending_mr
+                            # Only list this MR as a live reference while it still has
+                            # something outstanding — one that's already fully ordered
+                            # (pending_mr <= 0) is resolved history, not an active
+                            # request against this SO, and showing it next to
+                            # "Pending MR: 0.00" read as "there IS still a request out
+                            # there" when there wasn't one anymore. Rounded to the same
+                            # 3-decimal precision the qty fields are stored at, so a
+                            # sub-thousandth rounding remainder (e.g. requested
+                            # 0.444444, ordered 0.444) doesn't count as "still pending".
+                            if flt(pending_mr, 3) > 0:
+                                rm_map[d.item_code]["mr_documents"] = d.mr_list.split(",") if d.mr_list else []
 
                     # Draft MRs commit nothing yet (mirrors draft_purchase_orders
                     # for finished goods below) — but the "Material Request"
@@ -3279,8 +3342,16 @@ def get_item_stock_details_bulk(item_bom_pairs, sales_order_name):
                     for d in so_procurement_data:
                         rm = rm_map.get(d.item_code)
                         if rm:
-                            rm["rm_pending_so_linked_total"] = rm.get("rm_pending_so_linked_total", 0) + max(0, flt(d.pending_ordered))
-                            rm["po_documents"] = list(set(rm.get("po_documents", []) + (d.po_list.split(",") if d.po_list else [])))
+                            pending_ordered = max(0, flt(d.pending_ordered))
+                            rm["rm_pending_so_linked_total"] = rm.get("rm_pending_so_linked_total", 0) + pending_ordered
+                            # Same reasoning as the MR reference above: a PO that
+                            # already fully received this SO's allocation (pending
+                            # <= 0) is a closed request, not something still being
+                            # asked for — listing it as a reference next to
+                            # "Pending PO: 0.00" implied it was still live. Same
+                            # 3-decimal rounding as the MR check, for the same reason.
+                            if flt(pending_ordered, 3) > 0:
+                                rm["po_documents"] = list(set(rm.get("po_documents", []) + (d.po_list.split(",") if d.po_list else [])))
 
                     # Draft POs against this RM, same reference-only treatment as
                     # draft_purchase_orders for finished goods — commits nothing
@@ -3351,8 +3422,20 @@ def get_item_stock_details_bulk(item_bom_pairs, sales_order_name):
             except Exception as e:
                 frappe.log_error(f"RM Breakdown Error for {item_code}", str(e))
 
+        # Delivered is not the same thing as done: a Delivery Note only
+        # ships the goods, it never bills them — so a line fully covered by
+        # a DN still owes a Sales Invoice before it's actually finished.
+        # Sales Order Item's own billed_amt (native ERPNext, kept in sync by
+        # SI submit/cancel on both the DN-then-SI and direct SI-with-
+        # Update-Stock routes) is the one source that already answers "how
+        # much of this line has actually been invoiced" regardless of route.
+        total_line_amount = sum(flt(i.amount) for i in so_items)
+        total_billed_amt = sum(flt(i.billed_amt) for i in so_items)
+        is_fully_billed = total_line_amount <= 0 or total_billed_amt >= total_line_amount - 0.01
+
         results[pair] = {
             "item_code": item_code, "required_qty": required_qty, "delivered_qty": delivered_qty,
+            "is_fully_billed": is_fully_billed,
             "row_dns": row_dns, "row_sis": row_sis,
             "total_available_stock": total_available_stock, "received_for_so_qty": recv_for_so_qty, "general_stock_qty": general_stock_qty,
             "warehouse_stock": warehouse_stock, "completed_receipt_docs": completed_receipt_docs,
@@ -3381,7 +3464,7 @@ def get_item_stock_details_bulk(item_bom_pairs, sales_order_name):
             "rm_procurement_status": rm_procurement_status,
             "customer": so_doc.customer if so_doc else None,
             "customer_name": (so_doc.customer_name or so_doc.customer) if so_doc else None,
-            "item_name": (so_items[0].item_name if so_items else frappe.db.get_value("Item", item_code, "item_name")),
+            "item_name": (so_items[0].item_name if so_items else item_master_map.get(item_code, {}).get("item_name")),
             "warehouse": warehouse, "stock_uom": stock_uom, "fg_shortfall_for_ewO": fg_shortfall,
             "so_route_lock": so_route_lock,
 
@@ -4250,7 +4333,7 @@ def release_stock_from_picklist(picklist_name):
     except Exception as e:
         frappe.log_error(frappe.get_traceback(), "Release Stock Error")
         return {"status": "fail", "message": str(e)}
-def _calculate_pick_list_delivery_status(pl_doc):
+def _calculate_pick_list_delivery_status(pl_doc, allow_downgrade_from_completed=False):
     # ... (code to calculate total_qty and total_delivered_qty as before) ...
     total_qty = 0
     total_delivered_qty_raw = 0
@@ -4303,10 +4386,16 @@ def _calculate_pick_list_delivery_status(pl_doc):
         new_doc_status = "Completed"
 
     # If status is currently Completed, do not revert to Open/Partly Delivered (Status Lock)
-    # The hook only runs on DN submit, so it should move forward, but sometimes errors can occur.
-    # We will assume if it's Completed it stays Completed.
-    # Note: If your Pick List needs a 'Cancelled' status this is a good place to lock 'Completed'.
-    if pl_doc.status == "Completed" and new_doc_status != "Completed":
+    # — UNLESS the caller explicitly allows it. This lock exists for the
+    # SUBMIT path (DN/stock-SI submit only ever adds delivered_qty, so a
+    # lower recompute there would mean something is "slightly off" and
+    # Completed should win) — but a DN or stock-updating Sales Invoice that
+    # had pushed this Pick List to Completed can later be CANCELLED, which
+    # is exactly the case where delivered_qty legitimately goes back down
+    # and Completed must be allowed to un-stick. See
+    # update_pick_lists_on_dn_cancel / update_pick_lists_on_stock_si_cancel,
+    # the only callers that pass allow_downgrade_from_completed=True.
+    if pl_doc.status == "Completed" and new_doc_status != "Completed" and not allow_downgrade_from_completed:
         # Keep it completed, something might be slightly off with delivery quantity tracking
         new_doc_status = "Completed"
         
@@ -4317,11 +4406,13 @@ def _calculate_pick_list_delivery_status(pl_doc):
         "status": new_doc_status # THIS IS THE PRIMARY STATUS UPDATE
     }
 
-def _reconcile_pick_lists_for_sales_orders(related_sales_orders, source_doc_name):
+def _reconcile_pick_lists_for_sales_orders(related_sales_orders, source_doc_name, allow_downgrade_from_completed=False):
     """
-    Shared body behind both update_pick_lists_on_dn_submit and
-    update_pick_lists_on_stock_si_submit: recompute status/per_delivered on
-    every submitted Pick List tied to any of `related_sales_orders`.
+    Shared body behind update_pick_lists_on_dn_submit/_cancel and
+    update_pick_lists_on_stock_si_submit/_cancel: recompute status/
+    per_delivered on every submitted Pick List tied to any of
+    `related_sales_orders`. `allow_downgrade_from_completed` must only be
+    True from a *_cancel caller — see _calculate_pick_list_delivery_status.
     """
     try:
         if not related_sales_orders:
@@ -4342,7 +4433,7 @@ def _reconcile_pick_lists_for_sales_orders(related_sales_orders, source_doc_name
                 pl_doc = frappe.get_doc("Pick List", pl_name)
 
                 # Step 1: Call the new helper function to get all calculated status data
-                new_status_data = _calculate_pick_list_delivery_status(pl_doc)
+                new_status_data = _calculate_pick_list_delivery_status(pl_doc, allow_downgrade_from_completed)
 
                 # Step 2: Save the new data to the database (including 'status')
                 frappe.db.set_value("Pick List", pl_name, new_status_data)
@@ -4364,6 +4455,21 @@ def update_pick_lists_on_dn_submit(doc, method):
     _reconcile_pick_lists_for_sales_orders(related_sales_orders, doc.name)
 
 
+def update_pick_lists_on_dn_cancel(doc, method):
+    """
+    Mirror of update_pick_lists_on_dn_submit for the cancel side — a
+    Delivery Note being cancelled can take a Pick List's delivered_qty back
+    down below 100%, and without this the Pick List stayed permanently
+    "Completed" (see the downgrade lock in _calculate_pick_list_delivery_status)
+    even though nothing has actually been delivered against it any more,
+    silently blocking every future pick of that item.
+    """
+    related_sales_orders = list({
+        item.against_sales_order for item in doc.items if item.against_sales_order
+    })
+    _reconcile_pick_lists_for_sales_orders(related_sales_orders, doc.name, allow_downgrade_from_completed=True)
+
+
 def update_pick_lists_on_stock_si_submit(doc, method):
     """
     Same reconciliation as update_pick_lists_on_dn_submit, but for a Sales
@@ -4378,6 +4484,19 @@ def update_pick_lists_on_stock_si_submit(doc, method):
     _reconcile_pick_lists_for_sales_orders(related_sales_orders, doc.name)
 
 
+def update_pick_lists_on_stock_si_cancel(doc, method):
+    """
+    Mirror of update_pick_lists_on_stock_si_submit for the cancel side — see
+    update_pick_lists_on_dn_cancel's docstring for why this is needed.
+    """
+    if not doc.update_stock:
+        return
+    related_sales_orders = list({
+        item.sales_order for item in doc.items if item.sales_order
+    })
+    _reconcile_pick_lists_for_sales_orders(related_sales_orders, doc.name, allow_downgrade_from_completed=True)
+
+
 def _so_has_submitted_dn(sales_order):
     return bool(frappe.db.exists(
         "Delivery Note Item", {"against_sales_order": sales_order, "docstatus": 1}))
@@ -4389,6 +4508,61 @@ def _so_has_submitted_stock_si(sales_order):
         JOIN `tabSales Invoice` si ON si.name = sii.parent
         WHERE sii.sales_order=%s AND si.docstatus=1 AND si.update_stock=1 LIMIT 1
     """, sales_order))
+
+
+def lock_item_rate_to_sales_order_early(doc, method):
+    """
+    Cheap, early half of the rate lock — see lock_item_rate_to_sales_order
+    (registered on "validate") for why a second pass after that is also
+    required. Fixing it here first means AccountsController.validate()'s own
+    calculate_taxes_and_totals() (which runs as part of the native validate()
+    call, before any of this app's own doc_events fire) computes totals from
+    the correct rate on the common path where nothing later disturbs it.
+    """
+    _reset_item_rates_to_sales_order(doc)
+
+
+def lock_item_rate_to_sales_order(doc, method):
+    """
+    An item row that traces back to a Sales Order Item (via so_detail — the
+    same field name on both Delivery Note Item and Sales Invoice Item) must
+    ship/bill at the rate that Sales Order actually negotiated, never a rate
+    a Pricing Rule or Price List re-derives later. This app's own
+    create_dn_or_si_from_pick_lists (dashboard "Create DN/SI" actions)
+    reduces a mapped row's qty down to the picked quantity, which is exactly
+    the kind of change that can retrigger a quantity-tiered Pricing Rule to
+    a different rate than the Sales Order was actually sold at — and a
+    manual edit in the desk UI must not be able to change it either.
+
+    Registered on "validate" (in addition to the cheaper before_validate
+    pass above) because the corruption this guards against — ERPNext's own
+    AccountsController.validate() -> set_missing_item_details() ->
+    apply_pricing_rule_on_items() — runs INSIDE the native validate() method
+    itself, which always executes before any doc_events hooks for the same
+    event name (Document.hook's compose() runs the class's own bound method
+    first, then the hooks.py-registered list) — so a before_validate-only
+    fix would already be overwritten by the time this runs. Recalculates
+    totals afterward since a rate correction this late happens after
+    calculate_taxes_and_totals() already ran once against the wrong rate.
+    """
+    if _reset_item_rates_to_sales_order(doc):
+        doc.calculate_taxes_and_totals()
+
+
+def _reset_item_rates_to_sales_order(doc):
+    changed = False
+    for item in doc.items:
+        so_detail = item.get("so_detail")
+        if not so_detail:
+            continue
+        so_rate = frappe.db.get_value("Sales Order Item", so_detail, "rate")
+        if so_rate is not None and flt(item.rate) != flt(so_rate):
+            item.rate = so_rate
+            item.price_list_rate = so_rate
+            item.discount_percentage = 0
+            item.discount_amount = 0
+            changed = True
+    return changed
 
 
 def guard_so_fulfillment_route_lock(doc, method):
@@ -5183,6 +5357,51 @@ def sales_order_on_trash(doc, method):
     """Delete: Manually excludes this doc to find the next valid record."""
     lead_name = get_lead_from_so_items(doc)
     sync_lead_data(lead_name, exclude_so_name=doc.name)
+    _cancel_pick_lists_before_so_delete(doc.name)
+
+
+def _cancel_pick_lists_before_so_delete(sales_order_name):
+    """
+    A Sales Order about to be permanently deleted (normally an admin's
+    "Force Delete" override on a document Frappe would otherwise refuse to
+    remove because it's linked) can still have Pick List Items pointing at
+    it. Left alone, that dangling reference makes the Pick List itself
+    uncancellable later: ERPNext's own Pick List.on_cancel() reloads the
+    Sales Order to update its picking status, and throws "Sales Order ...
+    not found" the moment it's actually gone — confirmed from this site's own
+    Error Log (SAL-ORD-2026-00074, SAL-ORD-2026-00069), surfacing to the user
+    as a confusing 404 far later, whenever anyone next tries to cancel that
+    Pick List (directly, in bulk, or via delete_putaway_picklist on an
+    unrelated Purchase Receipt).
+
+    Cancel it now instead, while the Sales Order can still be loaded (this
+    hook runs before the delete transaction actually removes it), so nothing
+    ever attempts to cancel it again against a Sales Order that's gone.
+    Deliberately cancel-only, not delete — the Pick List stays as an audit
+    record of what was picked, just no longer live, same as any other
+    cancelled document in this system.
+    """
+    pick_list_names = frappe.db.get_all(
+        "Pick List Item",
+        filters={"sales_order": sales_order_name},
+        pluck="parent",
+        distinct=True,
+    )
+    for pl_name in set(pick_list_names):
+        docstatus = frappe.db.get_value("Pick List", pl_name, "docstatus")
+        if docstatus != 1:
+            continue
+        try:
+            pl_doc = frappe.get_doc("Pick List", pl_name)
+            pl_doc.add_comment(
+                "Info",
+                f"Auto-cancelled: Sales Order {sales_order_name} was deleted while this Pick List still referenced it."
+            )
+            pl_doc.cancel()
+        except Exception:
+            frappe.log_error(
+                title=f"Could not auto-cancel Pick List {pl_name} before deleting {sales_order_name}",
+                message=frappe.get_traceback())
 
 
 
@@ -6802,12 +7021,12 @@ def get_pending_so_with_raw_materials(selected_so_items_json=None): # MODIFIED: 
             "item_code": item_code,
             "item_name": data["item_name"],
             "uom": data["uom"],
-            "required_qty": round(data["required_qty"], 3),
+            "required_qty": round(data["required_qty"], 2),
             "available_qty": available_qty,
             # NEW fields to be sent to the client
-            "already_ordered_qty": round(already_ordered, 3), 
+            "already_ordered_qty": round(already_ordered, 2), 
             "existing_pos": ", ".join(po_details), 
-            "qty_to_purchase": round(qty_to_purchase, 3),
+            "qty_to_purchase": round(qty_to_purchase, 2),
             "sales_orders": ", ".join(sorted(list(data["sales_orders"]))),
             "customers": ", ".join(sorted(list(filter(None, data["customers"]))))
         })
@@ -7724,6 +7943,21 @@ def fetch_multi_order_requirements(exclude_mr=None):
           AND so.status NOT IN ('Completed', 'Closed', 'Cancelled')
           AND so_item.qty > so_item.delivered_qty
           AND IFNULL(so.custom_old_record_item_is_disabled, 0) = 0
+          -- Same guard as get_pending_so_with_material_stock: a known
+          -- duplicate-row data issue lets the same item_code appear twice on
+          -- one Sales Order, once correctly tagged with a BOM and once
+          -- without. The bom_no-less duplicate must never be aggregated as
+          -- its own "Individual Purchase Requirement" — it would show a
+          -- second, unrelated Ord qty for an item whose real, single
+          -- quantity is already covered by its BOM-tagged sibling row.
+          AND (
+            (so_item.bom_no IS NOT NULL AND so_item.bom_no != '')
+            OR NOT EXISTS (
+                SELECT 1 FROM `tabSales Order Item` soi_bom
+                WHERE soi_bom.parent = so_item.parent AND soi_bom.item_code = so_item.item_code
+                  AND soi_bom.bom_no IS NOT NULL AND soi_bom.bom_no != ''
+            )
+          )
     """, as_dict=True)
 
     # 2. FETCH OPEN MR SUPPLY (with Links)
@@ -7734,28 +7968,62 @@ def fetch_multi_order_requirements(exclude_mr=None):
         mr_exclude_cond = " AND parent.name != %s"
         mr_supply_args.append(exclude_mr)
 
+    # Keyed by (item_code, warehouse, sales_order) — sales_order is None for
+    # genuinely general supply (no SO tag at all), the only kind shared
+    # across every order's need. An MR raised FOR one specific Sales Order
+    # (child.sales_order set) must only ever offset THAT order's own
+    # shortage — same reasoning, same bug class, as po_supply_map below: a
+    # Material Request created for SAL-ORD-B was silently also netted
+    # against SAL-ORD-A's need for the same raw material, understating
+    # SAL-ORD-A's real shortage whenever the two happened to share a BOM
+    # component.
     mr_supply_data = frappe.db.sql(f"""
-        SELECT 
-            child.item_code, child.warehouse, child.parent as mr_id, 
+        SELECT
+            child.item_code, child.warehouse, child.sales_order, child.parent as mr_id,
             parent.status, parent.docstatus, (child.qty - child.ordered_qty) as open_qty
         FROM `tabMaterial Request Item` child
         INNER JOIN `tabMaterial Request` parent ON child.parent = parent.name
         WHERE parent.docstatus < 2 AND (child.qty - child.ordered_qty) > 0{mr_exclude_cond}
     """, mr_supply_args, as_dict=True)
 
-    # Group MR supply by Item and Warehouse
     mr_supply_map = {}
+    # (item_code, warehouse) -> combined qty/links across every SO-specific
+    # bucket, kept in sync as rows are added so the "which orders in total"
+    # lookup below (used once per raw material, not once per SO) is an O(1)
+    # dict read instead of a full scan of every MR/PO row in the system.
+    mr_supply_any_so = {}
+
+    def _add_mr_supply(item_code, warehouse, sales_order, qty, mr_name, status, docstatus):
+        key = (item_code, warehouse, sales_order or None)
+        entry = mr_supply_map.setdefault(key, {"total_qty": 0.0, "links": []})
+        entry["total_qty"] += flt(qty)
+        entry["links"].append({"name": mr_name, "status": status, "docstatus": docstatus})
+        if sales_order:
+            any_entry = mr_supply_any_so.setdefault((item_code, warehouse), {"total_qty": 0.0, "links": []})
+            any_entry["total_qty"] += flt(qty)
+            any_entry["links"].append({"name": mr_name, "status": status, "docstatus": docstatus})
+
     for d in mr_supply_data:
-        key = (d.item_code, d.warehouse)
-        if key not in mr_supply_map:
-            mr_supply_map[key] = {"total_qty": 0.0, "links": []}
-        
-        mr_supply_map[key]["total_qty"] += flt(d.open_qty)
-        mr_supply_map[key]["links"].append({
-            "name": d.mr_id,
-            "status": d.status,
-            "docstatus": d.docstatus
-        })
+        _add_mr_supply(d.item_code, d.warehouse, d.sales_order, d.open_qty, d.mr_id, d.status, d.docstatus)
+
+    def _mr_supply_for(item_code, warehouse, sales_order=None):
+        """Same contract as _po_supply_for below — see its docstring."""
+        result = {"qty": 0.0, "links": []}
+        general = mr_supply_map.get((item_code, warehouse, None))
+        if general:
+            result["qty"] += general["total_qty"]
+            result["links"] += general["links"]
+        if sales_order:
+            scoped = mr_supply_map.get((item_code, warehouse, sales_order))
+            if scoped:
+                result["qty"] += scoped["total_qty"]
+                result["links"] += scoped["links"]
+        else:
+            any_so = mr_supply_any_so.get((item_code, warehouse))
+            if any_so:
+                result["qty"] += any_so["total_qty"]
+                result["links"] += any_so["links"]
+        return result
 
     # 2b. FETCH OPEN PO SUPPLY — a Purchase Order raised directly (bypassing
     # MR entirely) also already covers part of the need. Without this,
@@ -7769,44 +8037,101 @@ def fetch_multi_order_requirements(exclude_mr=None):
     # Same {"total_qty", "links"} shape as mr_supply_map, so the dialog can
     # show WHICH Purchase Order already covers the qty being netted off —
     # not just a smaller number with no way to verify or trace it.
-    po_supply_map = {}  # (item_code, warehouse) -> {"total_qty", "links"}; warehouse=None for the subcontract-source branch, which has no warehouse to key on
+    # Keyed by (item_code, warehouse, sales_order) — sales_order is None for
+    # genuinely general supply (no SO tag at all), which is the only kind
+    # shared across every order's need. A PO/MR raised FOR one specific
+    # Sales Order must only ever offset THAT order's own shortage — without
+    # this third key, a PO covering SAL-ORD-A's need for an item was
+    # silently also treated as covering SAL-ORD-B's need for the same item
+    # in the same warehouse, understating both orders' real, separate
+    # shortages the moment they happened to want the same thing.
+    po_supply_map = {}
+    # Same O(1)-lookup index as mr_supply_any_so above, for the PO side.
+    po_supply_any_so = {}
 
-    def _add_po_supply(key, qty, po_name, docstatus, is_subcontracted):
+    def _add_po_supply(item_code, warehouse, sales_order, qty, po_name, docstatus, is_subcontracted):
+        key = (item_code, warehouse, sales_order or None)
         entry = po_supply_map.setdefault(key, {"total_qty": 0.0, "links": []})
         entry["total_qty"] += flt(qty)
         entry["links"].append({"name": po_name, "docstatus": docstatus, "is_subcontracted": is_subcontracted})
+        if sales_order:
+            any_entry = po_supply_any_so.setdefault((item_code, warehouse), {"total_qty": 0.0, "links": []})
+            any_entry["total_qty"] += flt(qty)
+            any_entry["links"].append({"name": po_name, "docstatus": docstatus, "is_subcontracted": is_subcontracted})
 
     direct_po_data = frappe.db.sql("""
-        SELECT poi.item_code, poi.warehouse, po.name as po_name, po.docstatus,
+        SELECT poi.item_code, poi.warehouse, poi.sales_order, po.name as po_name, po.docstatus,
                SUM(poi.qty - poi.received_qty) as open_qty
         FROM `tabPurchase Order Item` poi
         JOIN `tabPurchase Order` po ON po.name = poi.parent
         WHERE po.docstatus < 2 AND IFNULL(po.is_subcontracted, 0) = 0
           AND (poi.qty - poi.received_qty) > 0
-        GROUP BY poi.item_code, poi.warehouse, po.name, po.docstatus
+        GROUP BY poi.item_code, poi.warehouse, poi.sales_order, po.name, po.docstatus
     """, as_dict=True)
     for d in direct_po_data:
-        _add_po_supply((d.item_code, d.warehouse), d.open_qty, d.po_name, d.docstatus, False)
+        _add_po_supply(d.item_code, d.warehouse, d.sales_order, d.open_qty, d.po_name, d.docstatus, False)
 
     subcontract_po_data = frappe.db.sql("""
-        SELECT source.raw_material_item as item_code, po.name as po_name, po.docstatus,
+        SELECT source.raw_material_item as item_code, po.name as po_name, po.docstatus, po.is_subcontracted,
                SUM(source.order_for_rm * IF(poi.qty > 0, (poi.qty - poi.received_qty) / poi.qty, 0)) as open_qty
         FROM `tabPurchase Order Raw Material Source` source
         JOIN `tabPurchase Order Item` poi ON poi.parent = source.parent AND poi.item_code = source.raw_material_item
         JOIN `tabPurchase Order` po ON po.name = source.parent
         WHERE po.docstatus < 2
-        GROUP BY source.raw_material_item, po.name, po.docstatus
+        GROUP BY source.raw_material_item, po.name, po.docstatus, po.is_subcontracted
+        HAVING open_qty > 0
     """, as_dict=True)
     for d in subcontract_po_data:
-        _add_po_supply((d.item_code, None), d.open_qty, d.po_name, d.docstatus, True)
+        # This table's own name suggests "always a subcontract PO", but a
+        # plain direct-buy PO can carry these earmarking rows too — trust the
+        # Purchase Order's own is_subcontracted field, not the table it came
+        # from, or a fully-received direct RM purchase shows the "SC" badge
+        # and reads as "raw material for a subcontract job" when it's really
+        # just a normal purchase that already arrived. HAVING open_qty > 0
+        # above also drops any allocation that's already fully received —
+        # same "don't list what's already resolved" rule as the direct-PO
+        # and MR supply queries above, which already filter on this. No
+        # single sales_order here by design — this feeds only the RM
+        # consolidated view below, which already aggregates demand across
+        # every order that needs the raw material, not one order at a time.
+        _add_po_supply(d.item_code, None, None, d.open_qty, d.po_name, d.docstatus, bool(d.is_subcontracted))
 
-    def _po_supply_for(item_code, warehouse):
-        scoped = po_supply_map.get((item_code, warehouse), {"total_qty": 0.0, "links": []})
-        general = po_supply_map.get((item_code, None), {"total_qty": 0.0, "links": []})
-        return {
-            "qty": scoped["total_qty"] + general["total_qty"],
-            "links": scoped["links"] + general["links"],
-        }
+    def _po_supply_for(item_code, warehouse, sales_order=None, include_general=True):
+        """
+        Supply already committed toward `item_code` in `warehouse` that may
+        be netted off a shortage calculation. When `sales_order` is given
+        (the per-order "Individual Purchase Requirements" case), only that
+        order's own SO-specific POs plus — when include_general is True —
+        genuinely general (untagged) ones count; never a different order's
+        earmarked PO. When `sales_order` is omitted (the RM consolidated
+        view, which already sums demand across every pending order), every
+        SO-specific bucket is summed too, matching what qty_needed itself
+        already aggregates.
+
+        include_general=False is used for "Individual Purchase
+        Requirements": a general PO isn't committed to any one order, so two
+        different order rows both quietly counting the same untagged PO as
+        their own coverage is exactly the ambiguity that caused confusion —
+        it's surfaced as a separate reference instead (see general_po_qty /
+        general_po_links on each standard row) rather than silently reducing
+        Net Need.
+        """
+        result = {"qty": 0.0, "links": []}
+        general = po_supply_map.get((item_code, warehouse, None)) if include_general else None
+        if general:
+            result["qty"] += general["total_qty"]
+            result["links"] += general["links"]
+        if sales_order:
+            scoped = po_supply_map.get((item_code, warehouse, sales_order))
+            if scoped:
+                result["qty"] += scoped["total_qty"]
+                result["links"] += scoped["links"]
+        else:
+            any_so = po_supply_any_so.get((item_code, warehouse))
+            if any_so:
+                result["qty"] += any_so["total_qty"]
+                result["links"] += any_so["links"]
+        return result
 
     aggregated_so_data = {}
     rm_aggregation = {}
@@ -7835,45 +8160,106 @@ def fetch_multi_order_requirements(exclude_mr=None):
     # exact sales_order_item this group's lines are (falling back to bom_no
     # equality for older rows that predate that link being set) keeps the
     # two lines' figures from bleeding into each other.
+    # Bulk-fetch everything the per-row shortage math below needs, instead of
+    # running 4 separate queries (picked qty, pending MR, other-order
+    # reservations, Bin lookup) for EVERY (SO, item, warehouse) group — with
+    # many pending Sales Orders that turned into thousands of individual
+    # round-trips for one dialog open. The matching rules (so_item_names /
+    # bom_no fallback, docstatus, status exclusions) are unchanged from the
+    # per-row queries below; they're just evaluated in Python against one
+    # bulk result per table instead of a fresh SQL query per row.
+    all_item_codes = tuple({v["item_code"] for v in aggregated_so_data.values()}) or ("",)
+
+    bin_rows = frappe.db.sql("""
+        SELECT item_code, warehouse, actual_qty FROM `tabBin` WHERE item_code IN %(items)s
+    """, {"items": all_item_codes}, as_dict=True)
+    bin_map = {(r.item_code, r.warehouse): flt(r.actual_qty) for r in bin_rows}
+
+    pick_rows_all = frappe.db.sql("""
+        SELECT pli.sales_order, pli.item_code, pli.warehouse, pli.sales_order_item,
+               pli.qty, pli.picked_qty, pli.delivered_qty, pl.docstatus AS pl_docstatus,
+               pl.status AS pl_status, so2.status AS so_status
+        FROM `tabPick List Item` pli
+        INNER JOIN `tabPick List` pl ON pli.parent = pl.name
+        LEFT JOIN `tabSales Order` so2 ON so2.name = pli.sales_order
+        WHERE pli.item_code IN %(items)s AND pl.docstatus < 2
+    """, {"items": all_item_codes}, as_dict=True)
+    pick_by_item_wh = {}
+    for r in pick_rows_all:
+        pick_by_item_wh.setdefault((r.item_code, r.warehouse), []).append(r)
+
+    mr_rows_bulk_args = {"items": all_item_codes}
+    mr_rows_bulk_exclude = ""
+    if exclude_mr:
+        mr_rows_bulk_exclude = " AND parent.name != %(exclude)s"
+        mr_rows_bulk_args["exclude"] = exclude_mr
+
+    mr_rows_all = frappe.db.sql(f"""
+        SELECT child.parent as name, child.item_code, child.sales_order, child.sales_order_item,
+               child.bom_no, parent.status, parent.docstatus, child.qty, child.ordered_qty
+        FROM `tabMaterial Request Item` child
+        INNER JOIN `tabMaterial Request` parent ON child.parent = parent.name
+        WHERE child.item_code IN %(items)s AND parent.docstatus < 2
+        {mr_rows_bulk_exclude}
+    """, mr_rows_bulk_args, as_dict=True)
+    mr_rows_by_item = {}
+    for r in mr_rows_all:
+        mr_rows_by_item.setdefault(r.item_code, []).append(r)
+
     for val in aggregated_so_data.values():
-        so_item_names = tuple(val["so_item_names"]) or ("",)
+        so_item_names = set(val["so_item_names"]) or {""}
         bom_no = val["bom_no"] or ""
+        item_wh_key = (val["item_code"], val["warehouse"])
 
-        picked_qty = flt(frappe.db.sql("""
-            SELECT SUM(pli.qty) FROM `tabPick List Item` pli
-            INNER JOIN `tabPick List` pl ON pli.parent = pl.name
-            WHERE pli.sales_order = %(so)s AND pli.item_code = %(item)s AND pli.warehouse = %(wh)s
-              AND pl.docstatus < 2
-              AND (pli.sales_order_item IN %(names)s OR IFNULL(pli.sales_order_item, '') = '')
-        """, {"so": val["so_id"], "item": val["item_code"], "wh": val["warehouse"], "names": so_item_names})[0][0])
+        picked_qty = 0.0
+        # Stock already held by a Pick List for a DIFFERENT Sales Order isn't
+        # actually free for this one — same "truly available" concept
+        # get_item_stock_details_bulk already applies (picked_for_others_qty
+        # / draft_qty_for_others) via its own conflict_details query. Without
+        # this, a unit sitting in Bin but already reserved for someone else's
+        # order (submitted-but-undelivered pick, or a draft pick) understated
+        # this order's real shortage — exactly how SAL-ORD-2026-00105 showed
+        # 21 needed instead of the correct 22 while 1 unit was held in a
+        # draft Pick List for SAL-ORD-2026-00104.
+        reserved_for_others = 0.0
+        for r in pick_by_item_wh.get(item_wh_key, []):
+            if r.sales_order == val["so_id"]:
+                if (r.sales_order_item in so_item_names) or (not r.sales_order_item):
+                    picked_qty += flt(r.qty)
+            elif (r.pl_status or "") not in ("Completed", "Cancelled") \
+                    and (r.so_status or "") not in ("Closed", "Completed"):
+                if r.pl_docstatus == 1:
+                    reserved_for_others += max(flt(r.picked_qty) - flt(r.delivered_qty), 0)
+                else:
+                    reserved_for_others += flt(r.qty)
 
-        mr_rows_args = {"so": val["so_id"], "item": val["item_code"], "names": so_item_names, "bom_no": bom_no}
-        rows_exclude_cond = ""
-        if exclude_mr:
-            rows_exclude_cond = " AND parent.name != %(exclude)s"
-            mr_rows_args["exclude"] = exclude_mr
-
-        mr_rows = frappe.db.sql(f"""
-            SELECT child.parent as name, parent.status, parent.docstatus, child.qty, child.ordered_qty
-            FROM `tabMaterial Request Item` child
-            INNER JOIN `tabMaterial Request` parent ON child.parent = parent.name
-            WHERE child.sales_order = %(so)s AND child.item_code = %(item)s AND parent.docstatus < 2
-              AND (
-                child.sales_order_item IN %(names)s
-                OR (IFNULL(child.sales_order_item, '') = '' AND IFNULL(child.bom_no, '') = %(bom_no)s)
-              )
-              {rows_exclude_cond}
-        """, mr_rows_args, as_dict=True)
-
+        mr_rows = [
+            m for m in mr_rows_by_item.get(val["item_code"], [])
+            if m.sales_order == val["so_id"] and (
+                (m.sales_order_item in so_item_names)
+                or (not m.sales_order_item and (m.bom_no or "") == bom_no)
+            )
+        ]
         pending_on_mr = sum(max(flt(m.qty) - flt(m.ordered_qty), 0) for m in mr_rows)
 
         val["picked"] = picked_qty
         val["on_request_pending"] = pending_on_mr
         val["mr_links"] = [{"name": m.name, "status": m.status, "docstatus": m.docstatus} for m in mr_rows]
-        val["available"] = frappe.db.get_value(
-            "Bin", {"item_code": val["item_code"], "warehouse": val["warehouse"]}, "actual_qty") or 0.0
+        raw_available = bin_map.get(item_wh_key, 0.0)
+
+        # Also exclude THIS order's own picked_qty — a Pick List (draft or
+        # submitted-but-undelivered) never decrements Bin.actual_qty, so a
+        # unit already reserved for this exact order via `picked` is STILL
+        # sitting in raw_available too. Without this, the same physical unit
+        # got subtracted twice — once as "picked", once as "available stock"
+        # — understating the real shortage by however much was picked (here,
+        # SAL-ORD-2026-00104 showed 18 needed instead of the correct 19,
+        # matching get_item_stock_details_bulk's fg_shortfall, which only
+        # ever subtracts stock once).
+        val["available"] = max(0, raw_available - reserved_for_others - flt(picked_qty))
 
     standard_results = []
+    bom_vals_with_shortage = []
     for val in aggregated_so_data.values():
         # Available stock already covers part of the need (it should be
         # picked, not re-requested) — feeds directly into the BOM explosion
@@ -7881,61 +8267,134 @@ def fetch_multi_order_requirements(exclude_mr=None):
         # stock now correctly explodes RM demand for only what still needs
         # producing. Pending PO supply matters here too: a Purchase Order
         # raised directly for this item (bypassing MR) already covers part
-        # of it, same as on_request_pending already does for MRs.
-        po_supply = _po_supply_for(val["item_code"], val["warehouse"])
+        # of it, same as on_request_pending already does for MRs — but ONLY
+        # when it's actually earmarked for THIS order (include_general=False):
+        # a general/untagged PO isn't committed to any one order, so Net Need
+        # must not be silently reduced by it here. It's still surfaced
+        # separately (general_po_qty/general_po_links) so the user knows it
+        # exists without the dialog assuming it's theirs to use.
+        po_supply = _po_supply_for(val["item_code"], val["warehouse"], val["so_id"], include_general=False)
         val["po_pending"] = po_supply["qty"]
         val["po_links"] = po_supply["links"]
+
+        general_po = po_supply_map.get((val["item_code"], val["warehouse"], None), {"total_qty": 0.0, "links": []})
+        val["general_po_qty"] = flt(general_po["total_qty"])
+        val["general_po_links"] = general_po["links"]
+
         val["shortage"] = max(
             flt(val["order_qty"]) - flt(val["picked"]) - flt(val["on_request_pending"])
             - flt(val["available"]) - val["po_pending"], 0)
 
+        # Once stock, picks, an outstanding MR and any PO already cover this
+        # line, it needs no further action — leaving it in the list with a
+        # Net Need of 0 just clutters "Individual Purchase Requirements"
+        # with rows nobody has to do anything about.
         if not val["bom_no"]:
-            standard_results.append(val)
-        else:
             if val["shortage"] > 0:
-                bom_doc = frappe.get_doc("BOM", val["bom_no"])
-                factor = val["shortage"] / flt(bom_doc.quantity)
-                exploded = frappe.get_all("BOM Explosion Item", filters={"parent": val["bom_no"]}, fields=["item_code", "stock_qty", "stock_uom", "source_warehouse"])
-                for exp in exploded:
-                    rm_wh = exp.source_warehouse or val['warehouse']
-                    rm_key = (exp.item_code, rm_wh)
-                    if rm_key not in rm_aggregation:
-                        # Fetch consolidated supply from our map
-                        supply_info = mr_supply_map.get(rm_key, {"total_qty": 0.0, "links": []})
-                        
-                        rm_aggregation[rm_key] = {
-                            "item_code": exp.item_code, "warehouse": rm_wh, "uom": exp.stock_uom, 
-                            "available": (frappe.db.get_value("Bin", {"item_code": exp.item_code, "warehouse": rm_wh}, "actual_qty") or 0.0), 
-                            "qty_needed": 0.0, "linked_orders": [], 
-                            "open_supply_qty": supply_info["total_qty"],
-                            "mr_links": supply_info["links"] # THE REQUESTED FIELD
-                        }
-                    # Per-1-finished-good ratio, normalized by the BOM's own
-                    # reference quantity (not just the raw BOM Explosion Item
-                    # row, which is only "per unit" when bom_doc.quantity
-                    # happens to be 1) — exposed so the dialog can show the
-                    # calculator (qty-to-make x per-unit = total), not just
-                    # the already-computed total with no way to verify it.
-                    bom_qty_per_unit = flt(exp.stock_qty) / flt(bom_doc.quantity) if flt(bom_doc.quantity) else 0
-                    contribution = flt(exp.stock_qty) * factor
-                    rm_aggregation[rm_key]["qty_needed"] += contribution
+                standard_results.append(val)
+        elif val["shortage"] > 0:
+            bom_vals_with_shortage.append(val)
 
-                    # Each linked order's own share of the need, not just its
-                    # name — a Material Request built from this RM row needs a
-                    # per-order qty to split into properly-referenced lines
-                    # (see process_submission in material_request.js), since a
-                    # single sales_order field can't cover a many-orders-to-one
-                    # RM row.
-                    linked = rm_aggregation[rm_key]["linked_orders"]
-                    existing_link = next((o for o in linked if o["name"] == val["so_id"]), None)
-                    if existing_link:
-                        existing_link["qty"] += contribution
-                    else:
-                        linked.append({
-                            "name": val["so_id"], "customer_name": val["customer_name"], "qty": contribution,
-                            "fg_item_code": val["item_code"], "fg_qty": val["shortage"],
-                            "bom_qty_per_unit": bom_qty_per_unit,
-                        })
+    # Bulk-fetch BOM reference qty + exploded RM lines for every BOM that
+    # actually needs producing, instead of one frappe.get_doc/get_all pair
+    # per Sales Order row — many rows across many orders often share the
+    # same handful of BOMs, so this turns O(pending SO rows) fetches into
+    # O(distinct BOMs). RM Bin availability is batched the same way: every
+    # distinct (item_code, warehouse) an exploded line can land in is looked
+    # up once, not once per first SO row that happens to reach it.
+    bom_nos_needed = tuple({v["bom_no"] for v in bom_vals_with_shortage}) or ("",)
+    bom_qty_map = {
+        b.name: flt(b.quantity) for b in frappe.get_all(
+            "BOM", filters={"name": ["in", bom_nos_needed]}, fields=["name", "quantity"])
+    }
+    bom_explosion_map = {}
+    for exp in frappe.get_all(
+        "BOM Explosion Item", filters={"parent": ["in", bom_nos_needed]},
+        fields=["parent", "item_code", "stock_qty", "stock_uom", "source_warehouse"],
+    ):
+        bom_explosion_map.setdefault(exp.parent, []).append(exp)
+
+    rm_bin_keys = set()
+    for val in bom_vals_with_shortage:
+        for exp in bom_explosion_map.get(val["bom_no"], []):
+            rm_bin_keys.add((exp.item_code, exp.source_warehouse or val["warehouse"]))
+    rm_bin_item_codes = tuple({k[0] for k in rm_bin_keys}) or ("",)
+    rm_bin_rows = frappe.db.sql("""
+        SELECT item_code, warehouse, actual_qty FROM `tabBin` WHERE item_code IN %(items)s
+    """, {"items": rm_bin_item_codes}, as_dict=True)
+    rm_bin_map = {(r.item_code, r.warehouse): flt(r.actual_qty) for r in rm_bin_rows}
+
+    for val in bom_vals_with_shortage:
+        bom_qty = flt(bom_qty_map.get(val["bom_no"]))
+        factor = val["shortage"] / bom_qty
+        exploded = bom_explosion_map.get(val["bom_no"], [])
+        for exp in exploded:
+            rm_wh = exp.source_warehouse or val['warehouse']
+            rm_key = (exp.item_code, rm_wh)
+            if rm_key not in rm_aggregation:
+                # open_supply_qty/mr_links (and po_supply_qty/po_links
+                # below) are filled in the final pass once every
+                # linked order for this RM is known — they now depend
+                # on WHICH orders are involved (see _mr_supply_for /
+                # _po_supply_for), not just the raw item+warehouse.
+                rm_aggregation[rm_key] = {
+                    "item_code": exp.item_code, "warehouse": rm_wh, "uom": exp.stock_uom,
+                    "available": rm_bin_map.get(rm_key, 0.0),
+                    "qty_needed": 0.0, "linked_orders": [],
+                    "open_supply_qty": 0.0, "mr_links": [],
+                }
+            # Per-1-finished-good ratio, normalized by the BOM's own
+            # reference quantity (not just the raw BOM Explosion Item
+            # row, which is only "per unit" when the BOM's quantity
+            # happens to be 1) — exposed so the dialog can show the
+            # calculator (qty-to-make x per-unit = total), not just
+            # the already-computed total with no way to verify it.
+            bom_qty_per_unit = flt(exp.stock_qty) / bom_qty if bom_qty else 0
+            contribution = flt(exp.stock_qty) * factor
+            rm_aggregation[rm_key]["qty_needed"] += contribution
+
+            # Each linked order's own share of the need, not just its
+            # name — a Material Request built from this RM row needs a
+            # per-order qty to split into properly-referenced lines
+            # (see process_submission in material_request.js), since a
+            # single sales_order field can't cover a many-orders-to-one
+            # RM row.
+            linked = rm_aggregation[rm_key]["linked_orders"]
+            existing_link = next((o for o in linked if o["name"] == val["so_id"]), None)
+            if existing_link:
+                existing_link["qty"] += contribution
+                existing_link["fg_order_qty"] = flt(existing_link.get("fg_order_qty")) + flt(val["order_qty"])
+                existing_link["fg_covered"] = flt(existing_link.get("fg_covered")) + max(0, flt(val["order_qty"]) - flt(val["shortage"]))
+            else:
+                # This exact order's OWN tagged MR/PO supply for this
+                # raw material (general/untagged supply is handled
+                # separately at the RM row level, see the final pass
+                # below) — lets the dialog recompute Pending MR/PO
+                # live as orders are ticked/unticked, instead of a
+                # fixed aggregate that silently used one order's
+                # dedicated supply to cover a DIFFERENT, unrelated
+                # order the moment that other order was unticked.
+                so_mr = _mr_supply_for(exp.item_code, rm_wh, val["so_id"])
+                so_po = _po_supply_for(exp.item_code, rm_wh, val["so_id"])
+                general_mr_here = mr_supply_map.get((exp.item_code, rm_wh, None), {"total_qty": 0.0})
+                general_po_here = po_supply_map.get((exp.item_code, rm_wh, None), {"total_qty": 0.0})
+                linked.append({
+                    "name": val["so_id"], "customer_name": val["customer_name"], "qty": contribution,
+                    "fg_item_code": val["item_code"], "fg_qty": val["shortage"],
+                    # Raw ordered qty and how much of it is already
+                    # covered (stock/picks/MR/PO on the finished good
+                    # itself) — without these the dialog only ever
+                    # showed the already-netted fg_qty with no way to
+                    # see why it was lower than what was actually
+                    # ordered, which read as a wrong/missing amount
+                    # rather than the FG's own coverage already
+                    # reducing how much still needs producing.
+                    "fg_order_qty": val["order_qty"],
+                    "fg_covered": max(0, flt(val["order_qty"]) - flt(val["shortage"])),
+                    "bom_qty_per_unit": bom_qty_per_unit,
+                    "so_mr_qty": max(0, flt(so_mr["qty"]) - flt(general_mr_here["total_qty"])),
+                    "so_po_qty": max(0, flt(so_po["qty"]) - flt(general_po_here["total_qty"])),
+                })
 
     for rm_key, rm in rm_aggregation.items():
         # What's already on hand, plus any pending PO (raised directly,
@@ -7943,9 +8402,24 @@ def fetch_multi_order_requirements(exclude_mr=None):
         # anything new gets requested — the stock and PO legs were missing
         # entirely, so the dialog kept proposing the FULL need even after
         # stock covered some of it, or a PO was already placed for it.
+        # These aggregate figures (every linked order's own supply, plus
+        # anything general) match the default "every order ticked" state;
+        # general_mr_qty/general_po_qty are exposed too so the client can
+        # recompute live as orders are unticked — see so_mr_qty/so_po_qty on
+        # each linked order above.
+        mr_supply = _mr_supply_for(rm_key[0], rm_key[1])
+        rm["open_supply_qty"] = mr_supply["qty"]
+        rm["mr_links"] = mr_supply["links"]
+
         po_supply = _po_supply_for(rm_key[0], rm_key[1])
         rm["po_supply_qty"] = po_supply["qty"]
         rm["po_links"] = po_supply["links"]
+
+        general_mr = mr_supply_map.get((rm_key[0], rm_key[1], None), {"total_qty": 0.0})
+        general_po = po_supply_map.get((rm_key[0], rm_key[1], None), {"total_qty": 0.0})
+        rm["general_mr_qty"] = flt(general_mr["total_qty"])
+        rm["general_po_qty"] = flt(general_po["total_qty"])
+
         rm["final_shortage"] = max(
             rm["qty_needed"] - flt(rm["available"]) - rm["open_supply_qty"] - rm["po_supply_qty"], 0)
 
@@ -8633,13 +9107,25 @@ def create_dn_or_si_from_pick_lists(sales_order, pick_lists, doctype):
         ).format(sales_order))
 
     if doctype == "Sales Invoice":
-        # Check if there is any submitted Delivery Note for this Sales Order
+        # Only take the "invoice against the Delivery Note" shortcut when a
+        # submitted DN was actually raised FROM these specific Pick Lists —
+        # matched via against_pick_list (set on the DN's own item rows when
+        # it's built, above). An SO can carry OTHER, unrelated Delivery
+        # Notes for different items/lines; matching by "any submitted DN
+        # anywhere on this Sales Order" (as this used to) pulled that
+        # unrelated DN's full item list into the invoice regardless of what
+        # THIS Pick List actually covers — silently invoicing far more than
+        # what was just picked. Scoping to against_pick_list keeps the
+        # original intent (an item that already shipped via DN gets
+        # invoiced against that DN, not re-priced from scratch) without
+        # leaking in whatever else the Sales Order happens to have shipped.
         submitted_dns = frappe.db.sql("""
             SELECT DISTINCT dn.name
             FROM `tabDelivery Note Item` dni
             JOIN `tabDelivery Note` dn ON dn.name = dni.parent
-            WHERE dni.against_sales_order = %s AND dn.docstatus = 1
-        """, sales_order, as_dict=True)
+            WHERE dni.against_sales_order = %(so)s AND dn.docstatus = 1
+              AND dni.against_pick_list IN %(pls)s
+        """, {"so": sales_order, "pls": tuple(pick_lists)}, as_dict=True)
 
         if submitted_dns:
             # Already on the DN route — invoice against the Delivery Note
