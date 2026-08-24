@@ -1196,10 +1196,12 @@ function _wire_row_toggle_and_search(container, tbody) {
 
     const apply_filter = () => {
         const term = ($search.val() || '').trim().toLowerCase();
+        const words = term ? term.split(/\s+/) : [];
         let shown = 0;
 
         $rows.each(function () {
-            const match = !term || (this._so_search || '').indexOf(term) !== -1;
+            const search_text = (this._so_search || '').toLowerCase();
+            const match = !term || words.every(word => search_text.indexOf(word) !== -1);
             const $row = $(this);
             $row.toggle(match);
             if (match) shown++;
