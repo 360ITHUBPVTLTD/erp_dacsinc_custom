@@ -621,8 +621,10 @@ def _get_tracker_rows(days=120, search=None, scope="open", merchandiser=None, ap
         params["me"] = frappe.session.user
 
     if search:
-        conditions.append("(so.name LIKE %(q)s OR so.customer_name LIKE %(q)s OR so.customer LIKE %(q)s)")
-        params["q"] = f"%{search}%"
+        for idx, word in enumerate(search.strip().split()):
+            param_key = f"q_{idx}"
+            conditions.append(f"(so.name LIKE %({param_key})s OR so.customer_name LIKE %({param_key})s OR so.customer LIKE %({param_key})s)")
+            params[param_key] = f"%{word}%"
 
     # An explicit "view as this merchandiser" pick from the tracker's own
     # filter dropdown — distinct from is_scoped_to_own_customers below, which
@@ -1318,9 +1320,11 @@ def get_activity(days=21, limit=80, merchandiser=None, scope="open", search=None
     if scope == "open":
         so_conditions.append("so2.status NOT IN ('Closed', 'Completed', 'Cancelled')")
     if search:
-        so_conditions.append(
-            "(so2.name LIKE %(q)s OR so2.customer_name LIKE %(q)s OR so2.customer LIKE %(q)s)")
-        params["q"] = f"%{search}%"
+        for idx, word in enumerate(search.strip().split()):
+            param_key = f"q_{idx}"
+            so_conditions.append(
+                f"(so2.name LIKE %({param_key})s OR so2.customer_name LIKE %({param_key})s OR so2.customer LIKE %({param_key})s)")
+            params[param_key] = f"%{word}%"
 
     conditions.append(f"""(
         ev.sales_order IS NULL
@@ -1443,10 +1447,12 @@ def get_purchase_flow(days=120, search=None, scope="open", merchandiser=None,
         params["me"] = frappe.session.user
 
     if search:
-        conditions.append("""(po.name LIKE %(q)s OR po.supplier LIKE %(q)s
-                              OR sup.supplier_name LIKE %(q)s OR poi.sales_order LIKE %(q)s
-                              OR poi.item_code LIKE %(q)s)""")
-        params["q"] = f"%{search}%"
+        for idx, word in enumerate(search.strip().split()):
+            param_key = f"q_{idx}"
+            conditions.append(f"""(po.name LIKE %({param_key})s OR po.supplier LIKE %({param_key})s
+                                  OR sup.supplier_name LIKE %({param_key})s OR poi.sales_order LIKE %({param_key})s
+                                  OR poi.item_code LIKE %({param_key})s)""")
+            params[param_key] = f"%{word}%"
 
 
     purchase_orders = _paged_query(f"""
@@ -1502,7 +1508,10 @@ def get_purchase_flow(days=120, search=None, scope="open", merchandiser=None,
     elif scope == "mine":
         mr_conditions.append("mr.owner = %(me)s")
     if search:
-        mr_conditions.append("(mr.name LIKE %(q)s OR mri.sales_order LIKE %(q)s OR mri.item_code LIKE %(q)s)")
+        for idx, word in enumerate(search.strip().split()):
+            param_key = f"q_{idx}"
+            mr_conditions.append(f"(mr.name LIKE %({param_key})s OR mri.sales_order LIKE %({param_key})s OR mri.item_code LIKE %({param_key})s)")
+            params[param_key] = f"%{word}%"
 
 
     pr_conditions = ["pr.docstatus < 2", "pr.posting_date >= %(from_date)s", "IFNULL(pr.is_subcontracted, 0) = 0", _NOT_DISABLED_SO]
@@ -1516,8 +1525,11 @@ def get_purchase_flow(days=120, search=None, scope="open", merchandiser=None,
         pr_conditions.append("pr.owner = %(me)s")
         scr_conditions.append("scr.owner = %(me)s")
     if search:
-        pr_conditions.append("(pr.name LIKE %(q)s OR pr.supplier LIKE %(q)s OR sup.supplier_name LIKE %(q)s)")
-        scr_conditions.append("(scr.name LIKE %(q)s OR scr.supplier LIKE %(q)s OR sup.supplier_name LIKE %(q)s)")
+        for idx, word in enumerate(search.strip().split()):
+            param_key = f"q_{idx}"
+            pr_conditions.append(f"(pr.name LIKE %({param_key})s OR pr.supplier LIKE %({param_key})s OR sup.supplier_name LIKE %({param_key})s)")
+            scr_conditions.append(f"(scr.name LIKE %({param_key})s OR scr.supplier LIKE %({param_key})s OR sup.supplier_name LIKE %({param_key})s)")
+            params[param_key] = f"%{word}%"
 
 
     receipts = _paged_query(f"""
@@ -1665,10 +1677,12 @@ def get_jobwork_flow(days=180, search=None, scope="open", merchandiser=None,
         params["me"] = frappe.session.user
 
     if search:
-        conditions.append("""(po.name LIKE %(q)s OR po.supplier LIKE %(q)s
-                              OR sup.supplier_name LIKE %(q)s OR poi.sales_order LIKE %(q)s
-                              OR poi.item_code LIKE %(q)s)""")
-        params["q"] = f"%{search}%"
+        for idx, word in enumerate(search.strip().split()):
+            param_key = f"q_{idx}"
+            conditions.append(f"""(po.name LIKE %({param_key})s OR po.supplier LIKE %({param_key})s
+                                  OR sup.supplier_name LIKE %({param_key})s OR poi.sales_order LIKE %({param_key})s
+                                  OR poi.item_code LIKE %({param_key})s)""")
+            params[param_key] = f"%{word}%"
 
 
     purchase_orders = _paged_query(f"""
@@ -1710,10 +1724,13 @@ def get_jobwork_flow(days=180, search=None, scope="open", merchandiser=None,
         ewo_conditions.append("ewo.owner = %(me)s")
         
     if search:
-        pr_conditions.append("(pr.name LIKE %(q)s OR pr.supplier LIKE %(q)s OR sup.supplier_name LIKE %(q)s)")
-        scr_conditions.append("(scr.name LIKE %(q)s OR scr.supplier LIKE %(q)s OR sup.supplier_name LIKE %(q)s)")
-        ewo_conditions.append("""(ewo.name LIKE %(q)s OR ewo.purchase_order LIKE %(q)s
-                                  OR fp.supplier_name LIKE %(q)s OR pn.supplier_name LIKE %(q)s)""")
+        for idx, word in enumerate(search.strip().split()):
+            param_key = f"q_{idx}"
+            pr_conditions.append(f"(pr.name LIKE %({param_key})s OR pr.supplier LIKE %({param_key})s OR sup.supplier_name LIKE %({param_key})s)")
+            scr_conditions.append(f"(scr.name LIKE %({param_key})s OR scr.supplier LIKE %({param_key})s OR sup.supplier_name LIKE %({param_key})s)")
+            ewo_conditions.append(f"""(ewo.name LIKE %({param_key})s OR ewo.purchase_order LIKE %({param_key})s
+                                      OR fp.supplier_name LIKE %({param_key})s OR pn.supplier_name LIKE %({param_key})s)""")
+            params[param_key] = f"%{word}%"
 
 
     receipts = _paged_query(f"""
@@ -1942,9 +1959,11 @@ def get_accounts_flow(days=120, search=None, scope="open", merchandiser=None,
         si_conditions.append("si.owner = %(me)s")
         params["me"] = frappe.session.user
     if search:
-        si_conditions.append("""(si.name LIKE %(q)s OR si.customer LIKE %(q)s
-                                 OR cust.customer_name LIKE %(q)s OR sii.sales_order LIKE %(q)s)""")
-        params["q"] = f"%{search}%"
+        for idx, word in enumerate(search.strip().split()):
+            param_key = f"q_{idx}"
+            si_conditions.append(f"""(si.name LIKE %({param_key})s OR si.customer LIKE %({param_key})s
+                                     OR cust.customer_name LIKE %({param_key})s OR sii.sales_order LIKE %({param_key})s)""")
+            params[param_key] = f"%{word}%"
 
 
     sales_invoices = _paged_query(f"""
@@ -1986,9 +2005,11 @@ def get_accounts_flow(days=120, search=None, scope="open", merchandiser=None,
         pi_conditions.append("pi.owner = %(me)s")
         pi_params["me"] = frappe.session.user
     if search:
-        pi_conditions.append("""(pi.name LIKE %(q)s OR pi.supplier LIKE %(q)s
-                                 OR sup.supplier_name LIKE %(q)s OR poi.sales_order LIKE %(q)s)""")
-        pi_params["q"] = f"%{search}%"
+        for idx, word in enumerate(search.strip().split()):
+            param_key = f"q_{idx}"
+            pi_conditions.append(f"""(pi.name LIKE %({param_key})s OR pi.supplier LIKE %({param_key})s
+                                     OR sup.supplier_name LIKE %({param_key})s OR poi.sales_order LIKE %({param_key})s)""")
+            pi_params[param_key] = f"%{word}%"
 
 
     def _purchase_invoice_sql(jobber_flag):
@@ -2261,8 +2282,10 @@ def get_stock_tracker(search=None, warehouse=None, page=1, page_size=100):
     conditions = ["i.disabled = 0", "i.is_stock_item = 1"]
     params = {}
     if search:
-        conditions.append("(i.item_code LIKE %(q)s OR i.item_name LIKE %(q)s)")
-        params["q"] = f"%{search}%"
+        for idx, word in enumerate(search.strip().split()):
+            param_key = f"q_{idx}"
+            conditions.append(f"(i.item_code LIKE %({param_key})s OR i.item_name LIKE %({param_key})s)")
+            params[param_key] = f"%{word}%"
 
     paged_items = _paged_query(f"""
         SELECT i.item_code, i.item_name, i.stock_uom
@@ -2483,13 +2506,15 @@ def get_pending_approvals(search=None, merchandiser=None, approval_stage=None, p
             params["me"] = frappe.session.user
         
     if search:
-        conditions.append("""(
-            so.name LIKE %(q)s 
-            OR so.customer_name LIKE %(q)s 
-            OR so.customer LIKE %(q)s 
-            OR EXISTS(SELECT 1 FROM `tabSales Order Item` WHERE parent = so.name AND (item_code LIKE %(q)s OR item_name LIKE %(q)s))
-        )""")
-        params["q"] = f"%{search}%"
+        for idx, word in enumerate(search.strip().split()):
+            param_key = f"q_{idx}"
+            conditions.append(f"""(
+                so.name LIKE %({param_key})s 
+                OR so.customer_name LIKE %({param_key})s 
+                OR so.customer LIKE %({param_key})s 
+                OR EXISTS(SELECT 1 FROM `tabSales Order Item` WHERE parent = so.name AND (item_code LIKE %({param_key})s OR item_name LIKE %({param_key})s))
+            )""")
+            params[param_key] = f"%{word}%"
         
     paged = _paged_query(f"""
         SELECT so.name, so.customer, so.customer_name, so.transaction_date, so.delivery_date,

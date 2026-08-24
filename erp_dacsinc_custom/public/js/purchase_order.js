@@ -1719,15 +1719,17 @@ function show_so_selection_and_rm_purchase_dialog(frm, sales_orders) {
 
     // 1. Search Functionality
     dialog.$wrapper.on('keyup', '#so-list-search', function () {
-        let val = $(this).val().toLowerCase();
+        let val = ($(this).val() || '').trim().toLowerCase();
+        let words = val ? val.split(/\s+/) : [];
 
         dialog.$wrapper.find('.rm-so-row').each(function () {
             let $row = $(this);
             // We search against the prepared 'data-search' attribute
             // which contains SO Name + Item Name/Code + Customer
-            let text = $row.data('search');
+            let text = ($row.data('search') || '').toLowerCase();
 
-            if (text.indexOf(val) !== -1) {
+            let match = !val || words.every(word => text.indexOf(word) !== -1);
+            if (match) {
                 $row.show();
             } else {
                 $row.hide();
