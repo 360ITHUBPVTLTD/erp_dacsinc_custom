@@ -220,8 +220,8 @@ function render_fulfillment_dialog(frm, data) {
                 </div>` : ''}
             </td>
             <td class="p-2">${format_mr_po_links(row.item_code, row.mr_links, row.po_links)}</td>
-            <td class="text-center p-2"><div style="font-weight:800;">${row.available}</div><small style="color:#94a3b8;">${row.uom}</small></td>
-            <td class="p-2 text-center" style="background:#fffbeb;"><input type="number" min="0" class="form-control form-control-sm text-center qty-std font-weight-bold" style="color:#dc2626; border:0; background:transparent;" value="${row.shortage}"></td>
+            <td class="text-center p-2"><div style="font-weight:800;">${(Number(row.available) || 0).toFixed(2)}</div><small style="color:#94a3b8;">${row.uom}</small></td>
+            <td class="p-2 text-center" style="background:#fffbeb;"><input type="number" min="0" class="form-control form-control-sm text-center qty-std font-weight-bold" style="color:#dc2626; border:0; background:transparent;" value="${(Number(row.shortage) || 0).toFixed(2)}"></td>
         </tr>`;
     });
     h_std += `</tbody></table></div>`;
@@ -265,7 +265,7 @@ function render_fulfillment_dialog(frm, data) {
             <td class="text-center p-2"><input type="checkbox" class="chk-rm" data-idx="${i}" ${rm.final_shortage <= 0 ? 'disabled' : ''}></td>
             <td class="p-2">
                 <b style="color:#111827;">${link('Item', rm.item_code)}</b><br>
-                <small style="color:#059669; font-weight:700;" title="Shared across every order that needs this material — not reserved for any one of them. Requesting or consuming it here reduces what's left for all of them, not just the ones checked below.">Stock: ${rm.available}</small>
+                <small style="color:#059669; font-weight:700;" title="Shared across every order that needs this material — not reserved for any one of them. Requesting or consuming it here reduces what's left for all of them, not just the ones checked below.">Stock: ${(Number(rm.available) || 0).toFixed(2)}</small>
             </td>
             <td class="p-2">
                 <div class="rm-orders-summary" style="font-size:9px; font-weight:800; color:#475569; margin-bottom:3px;"

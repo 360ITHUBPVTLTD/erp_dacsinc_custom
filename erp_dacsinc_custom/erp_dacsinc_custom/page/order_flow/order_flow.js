@@ -71,8 +71,10 @@ const OF_TAB_FILTERS = {
     jobwork:  { doctypes: ['Purchase Order', 'Job Work (Subcontract)', 'Embroidery Work Order', 'Subcontracting Receipt'] },
     // Lists customer invoices, supplier bills and jobber bills.
     accounts: { doctypes: ['Sales Invoice', 'Purchase Invoice'] },
-    // Lists Sales Orders that have shipped (Delivery Note) but still need billing.
-    billing:  { doctypes: ['Delivery Note', 'Sales Invoice'] },
+    // Lists Sales Orders with a submitted Pick List still waiting on a
+    // Delivery Note or Sales Invoice — Pick List submission is what puts an
+    // order in this queue, DN/SI creation is what takes it out.
+    billing:  { doctypes: ['Pick List', 'Delivery Note', 'Sales Invoice'] },
     // A live inventory report, not a document feed — no notification stream,
     // so this never matches a real event doctype.
     stock:    { doctypes: ['__no_notifications__'] },
@@ -97,7 +99,7 @@ const OF_TABS = [
     { key: 'purchase', label: 'Purchase Flow',        icon: 'fa-shopping-cart' },
     { key: 'jobwork',  label: 'Job Work',             icon: 'fa-cogs' },
     { key: 'stock',    label: 'Stock Tracker',        icon: 'fa-cubes' },
-    { key: 'billing',  label: 'Accounts',             icon: 'fa-money' },
+    { key: 'billing',  label: 'Pending DN/SI',         icon: 'fa-truck' },
     { key: 'accounts', label: 'Finance',              icon: 'fa-calculator' },
     { key: 'uniform',  label: 'Embroidery Transfers', icon: 'fa-random' }
 ];
@@ -340,6 +342,23 @@ class OrderFlow {
                     </select>
                     <span class="of-spacer"></span>
                     <span class="of-count" id="of-count"></span>
+
+                    <!-- One place to start any of the documents this dashboard
+                         tracks, from any tab — instead of hunting down the
+                         right list view first just to click its own "New". -->
+                    <div class="of-create-dropdown" id="of-create-dropdown">
+                        <button class="of-btn of-btn--primary" id="of-btn-create" title="Create a new document" style="margin-left: 8px;">
+                            <i class="fa fa-plus"></i> Create <i class="fa fa-caret-down" style="margin-left:3px;"></i>
+                        </button>
+                        <div class="of-create-menu of-hidden" id="of-create-menu">
+                            <a href="/app/material-request/new" target="_blank"><i class="fa fa-file-text-o"></i> Material Request</a>
+                            <a href="/app/purchase-order/new" target="_blank"><i class="fa fa-shopping-cart"></i> Purchase Order</a>
+                            <a href="/app/purchase-receipt/new" target="_blank"><i class="fa fa-inbox"></i> Purchase Receipt</a>
+                            <a href="/app/sales-invoice/new" target="_blank"><i class="fa fa-money"></i> Sales Invoice</a>
+                            <a href="/app/purchase-invoice/new" target="_blank"><i class="fa fa-credit-card"></i> Purchase Invoice</a>
+                        </div>
+                    </div>
+
                     <button class="of-btn" id="of-btn-refresh" title="Force reload dashboard data" style="margin-left: 8px;">
                         <i class="fa fa-refresh"></i> Refresh
                     </button>
@@ -412,7 +431,7 @@ class OrderFlow {
                 this.pur_subtab = sub;
                 this.$body.find('#of-panel-purchase .of-subtab').removeClass('is-active')
                     .filter(`[data-subtab="${sub}"]`).addClass('is-active');
-                ['mr', 'po', 'receipt'].forEach(s => {
+                ['mr', 'po', 'receipt', 'bill'].forEach(s => {
                     this.$body.find(`#of-pur-sec-${s}`).toggleClass('of-hidden', s !== sub);
                 });
             } else if (parent_tab === 'jobwork') {
@@ -614,6 +633,23 @@ class OrderFlow {
             this.refresh(true);
         });
 
+        // "Create" dropdown — toggle on its own button, close on an outside
+        // click or a menu item's own click (the link still opens in a new
+        // tab either way; this just keeps the menu from staying open on the
+        // dashboard behind it).
+        this.$body.on('click', '#of-btn-create', (e) => {
+            e.stopPropagation();
+            this.$body.find('#of-create-menu').toggleClass('of-hidden');
+        });
+        this.$body.on('click', '#of-create-menu a', () => {
+            this.$body.find('#of-create-menu').addClass('of-hidden');
+        });
+        $(document).on('click.of-create-dropdown', (e) => {
+            if (!$(e.target).closest('#of-create-dropdown').length) {
+                this.$body.find('#of-create-menu').addClass('of-hidden');
+            }
+        });
+
         // Activity Notification Full Row Clickable Toggle (Sync all tabs)
         this.$body.on('click', '.of-toggle-stream-header', () => {
             this.stream_collapsed = !this.stream_collapsed;
@@ -711,7 +747,7 @@ class OrderFlow {
             item.addClass('is-selected');
 
             if (so) {
-                const $row = this.$body.find(`tr[data-so="${so}"]`);
+                const $row = this.$body.find(`#of-panel-${this.active} tr[data-so="${so}"]`);
                 if ($row.length) {
                     $('.of-table tr').removeClass('is-highlighted');
                     $row.addClass('is-highlighted');
@@ -1414,8 +1450,8 @@ class OrderFlow {
         const m = (data && data.metrics) || {};
 
         this.$body.find('#of-summary-billing').html(of_stat_strip([
-            { label: __('Orders Needing Billing'), value: m.count || 0, tone: 'gold', hint: 'Delivered Sales Orders not yet fully billed' },
-            { label: __('Amount Still to Bill'), value: of_money(m.total_to_bill || 0), tone: 'red', hint: 'Remaining un-invoiced value across these orders' },
+            { label: __('Orders Pending DN/SI'), value: m.count || 0, tone: 'gold', hint: 'Sales Orders with a submitted Pick List, waiting on a Delivery Note or Sales Invoice' },
+            { label: __('Order Value Pending'), value: of_money(m.pending_value || 0), tone: 'red', hint: 'Grand total still to be delivered/billed across these orders' },
         ]));
     }
 
@@ -1621,8 +1657,8 @@ class OrderFlow {
     }
 
     toggle_so_details(so_name, $btn) {
-        const $row = this.$body.find(`tr[data-so="${so_name}"]`);
-        let $details_row = this.$body.find(`#of-so-details-${so_name}`);
+        const $row = $btn.closest('tr.of-row-main');
+        let $details_row = $row.next('.of-so-details-row');
 
         if (!$details_row.length) {
             // Reused across several tables (Tracker, Approval, Accounts) with
@@ -1630,7 +1666,7 @@ class OrderFlow {
             // rather than a fixed number.
             const colspan = $row.find('td').length || 8;
             $details_row = $(`
-                <tr id="of-so-details-${so_name}" class="of-so-details-row of-hidden" style="display:none;">
+                <tr class="of-so-details-row of-hidden" style="display:none;">
                     <td colspan="${colspan}" style="padding:15px; background:var(--subtle-fg); text-align:left;">
                         <div class="of-so-items-container" data-so="${so_name}" style="background:var(--card-bg); padding:10px; border-radius:8px; border:1px solid var(--border-color);">
                             <div class="of-empty"><i class="fa fa-spinner fa-spin"></i> Loading stock details…</div>
@@ -1724,7 +1760,7 @@ class OrderFlow {
                     method: 'erp_dacsinc_custom.order_flow_api.get_document_items',
                     args: { doctype, docname }
                 }).then(r => {
-                    $panel.html(this.doc_items_table_html(r.message || []));
+                    $panel.html(this.doc_items_table_html(r.message || [], doctype));
                 });
             }
         } else {
@@ -1733,20 +1769,21 @@ class OrderFlow {
         }
     }
 
-    doc_items_table_html(rows) {
+    doc_items_table_html(rows, doctype) {
         if (!rows.length) {
             return `<div class="of-empty">${__('No items found.')}</div>`;
         }
+        const is_mr = doctype === 'Material Request';
         const line = it => `<tr>
             <td>${of_esc(it.item_code)}${it.item_name && it.item_name !== it.item_code ? `<div class="of-micro text-muted">${of_esc(it.item_name)}</div>` : ''}</td>
-            <td>${flt_of(it.qty)}</td>
+            <td>${of_round2(it.qty)}</td>
             <td>${of_esc(it.uom || '')}</td>
-            <td>${it.rate != null ? of_money(it.rate) : '—'}</td>
+            ${is_mr ? '' : `<td>${it.rate != null ? of_money(it.rate) : '—'}</td>`}
             <td>${of_esc(it.warehouse || '')}</td>
             <td>${it.role ? `<span class="of-chip">${of_esc(it.role)}</span>` : ''}</td>
         </tr>`;
         return `<div class="of-scroll"><table class="of-table">
-            <thead><tr><th>Item</th><th>Qty</th><th>UOM</th><th>Rate</th><th>Warehouse</th><th></th></tr></thead>
+            <thead><tr><th>Item</th><th>Qty</th><th>UOM</th>${is_mr ? '' : '<th>Rate</th>'}<th>Warehouse</th><th></th></tr></thead>
             <tbody>${rows.map(line).join('')}</tbody>
         </table></div>`;
     }
@@ -1793,9 +1830,9 @@ class OrderFlow {
             return `<div class="of-empty">${__('No items found.')}</div>`;
         }
         const line = it => {
-            const sent = flt_of(it.ordered_qty);
-            const received = flt_of(it.received_qty);
-            const pending = sent - received;
+            const sent = of_round2(it.ordered_qty);
+            const received = of_round2(it.received_qty);
+            const pending = of_round2(sent - received);
             return `<tr>
                 <td>${of_esc(it.item_code)}</td>
                 <td>${sent}</td>
@@ -1841,7 +1878,7 @@ class OrderFlow {
                         <thead><tr><th>Date</th><th>Qty Received</th><th>Warehouse</th><th>Stock Entry</th></tr></thead>
                         <tbody>${rows.map(rc => `<tr>
                             <td>${of_date(rc.date)}</td>
-                            <td>${flt_of(rc.qty)}</td>
+                            <td>${of_round2(rc.qty)}</td>
                             <td>${of_esc(rc.to_warehouse || '')}</td>
                             <td>${rc.stock_entry
                                 ? `<a href="/app/stock-entry/${encodeURIComponent(rc.stock_entry)}" target="_blank">${of_esc(rc.stock_entry)}</a>`
@@ -2727,10 +2764,10 @@ class OrderFlow {
             let tbl = `<div class="of-scroll"><table class="table table-bordered table-sm" style="font-size:12px;">
                 <thead><tr class="bg-light"><th>${__('Item')}</th><th class="text-right">${__('Sent')}</th><th class="text-right">${__('Balance')}</th><th width="120">${__('Receive Qty')}</th></tr></thead><tbody>`;
             items.forEach(i => {
-                const bal = flt_of(i.ordered_qty) - flt_of(i.received_qty);
+                const bal = of_round2(flt_of(i.ordered_qty) - flt_of(i.received_qty));
                 tbl += `<tr data-row="${i.name}">
                     <td>${of_esc(i.item_code)}</td>
-                    <td class="text-right">${flt_of(i.ordered_qty)}</td>
+                    <td class="text-right">${of_round2(i.ordered_qty)}</td>
                     <td class="text-right font-weight-bold">${bal}</td>
                     <td><input type="number" class="form-control form-control-sm of-ewo-qty-in text-right" value="${bal}" min="0" max="${bal}" ${bal <= 0 ? 'disabled' : ''}></td>
                 </tr>`;
@@ -2803,10 +2840,10 @@ class OrderFlow {
             let tbl = `<div class="of-scroll"><table class="table table-sm table-bordered">
                 <thead><tr class="bg-light"><th>${__('Item')}</th><th class="text-right">${__('Sent')}</th><th class="text-right">${__('Balance')}</th><th width="120">${__('Qty to Receive')}</th></tr></thead><tbody>`;
             items.forEach(i => {
-                const bal = flt_of(i.ordered_qty) - flt_of(i.received_qty);
+                const bal = of_round2(flt_of(i.ordered_qty) - flt_of(i.received_qty));
                 tbl += `<tr data-row-name="${i.name}">
                     <td>${of_esc(i.item_code)}</td>
-                    <td class="text-right">${flt_of(i.ordered_qty)}</td>
+                    <td class="text-right">${of_round2(i.ordered_qty)}</td>
                     <td class="text-right font-weight-bold">${bal}</td>
                     <td><input type="number" class="form-control text-right of-ewo-fp-qty-in" value="${bal}" min="0" max="${bal}" data-max="${bal}" ${bal <= 0 ? 'disabled' : ''}></td>
                 </tr>`;
@@ -3064,9 +3101,9 @@ class OrderFlow {
         );
 
         const rows = items.map(it => {
-            const net = flt_of(it.net_available);
+            const net = of_round2(it.net_available);
             const pick_cell = (qty, kind, label) => {
-                qty = flt_of(qty);
+                qty = of_round2(qty);
                 if (!qty) return '0';
                 return `<a href="#" class="of-reserve-link" data-item="${of_esc(it.item_code)}" data-warehouse="${of_esc(this.stock_warehouse_filter || '')}"
                             data-kind="${kind}" data-label="${of_esc(label)}">${qty}</a>`;
@@ -3075,7 +3112,7 @@ class OrderFlow {
                 <td><i class="fa fa-caret-right of-stock-wh-toggle" data-item="${of_esc(it.item_code)}" style="cursor:pointer;margin-right:4px;color:var(--text-light);"></i>
                     <a href="/app/item/${encodeURIComponent(it.item_code)}" target="_blank" style="font-weight:700;">${of_esc(it.item_code)}</a>
                     ${it.item_name && it.item_name !== it.item_code ? `<div class="of-micro text-muted">${of_esc(it.item_name)}</div>` : ''}</td>
-                <td>${flt_of(it.total_available_stock)} ${of_esc(it.stock_uom || '')}</td>
+                <td>${of_round2(it.total_available_stock)} ${of_esc(it.stock_uom || '')}</td>
                 <td>${pick_cell(it.picked_draft_qty, 'pick_draft', `Picked (Draft) — ${of_esc(it.item_code)}` + (this.stock_warehouse_filter ? ` at ${of_esc(this.stock_warehouse_filter)}` : ''))}</td>
                 <td>${pick_cell(it.picked_submitted_qty, 'pick_submitted', `Picked (Submitted) — ${of_esc(it.item_code)}` + (this.stock_warehouse_filter ? ` at ${of_esc(this.stock_warehouse_filter)}` : ''))}</td>
                 <td style="font-weight:700; color:${net <= 0 ? 'var(--of-red)' : 'var(--of-green)'};">${net}</td>
@@ -3105,7 +3142,7 @@ class OrderFlow {
             // to see what's actually behind it — make it a link into
             // show_reservation_details_modal whenever it's non-zero.
             const reserve_cell = (warehouse, qty, kind, label) => {
-                qty = flt_of(qty);
+                qty = of_round2(qty);
                 if (!qty) return '0';
                 return `<a href="#" class="of-reserve-link" data-item="${of_esc(item_code)}" data-warehouse="${of_esc(warehouse)}"
                             data-kind="${kind}" data-label="${of_esc(label)}">${qty}</a>`;
@@ -3116,7 +3153,7 @@ class OrderFlow {
                     <th>Reserved for Production</th><th>Reserved for Subcontract</th></tr></thead>
                 <tbody>${wh_rows.map(w => `<tr>
                     <td>${of_esc(w.warehouse)}</td>
-                    <td>${flt_of(w.actual_qty)}</td>
+                    <td>${of_round2(w.actual_qty)}</td>
                     <td>${reserve_cell(w.warehouse, w.reserved_qty, 'reserved', `Reserved for ${of_esc(item_code)} at ${of_esc(w.warehouse)} — Sales Orders`)}</td>
                     <td>${reserve_cell(w.warehouse, w.reserved_qty_for_production, 'production', `Reserved for Production — ${of_esc(item_code)} at ${of_esc(w.warehouse)} — Work Orders`)}</td>
                     <td>${reserve_cell(w.warehouse, w.reserved_qty_for_sub_contract, 'subcontract', `Reserved for Subcontract — ${of_esc(item_code)} at ${of_esc(w.warehouse)} — Purchase / Subcontracting Orders`)}</td>
@@ -3164,9 +3201,9 @@ class OrderFlow {
                     <tbody>${rows.map(x => `<tr>
                         <td><a href="/app/sales-order/${encodeURIComponent(x.name)}" target="_blank">${of_esc(x.name)}</a></td>
                         <td>${of_esc(x.customer_name || '')}</td>
-                        <td>${flt_of(x.qty)}</td>
-                        <td>${flt_of(x.delivered_qty)}</td>
-                        <td style="font-weight:700;">${flt_of(x.outstanding_qty)}</td>
+                        <td>${of_round2(x.qty)}</td>
+                        <td>${of_round2(x.delivered_qty)}</td>
+                        <td style="font-weight:700;">${of_round2(x.outstanding_qty)}</td>
                     </tr>`).join('')}</tbody>
                 </table>`;
             } else if (kind === 'production') {
@@ -3175,9 +3212,9 @@ class OrderFlow {
                     <tbody>${rows.map(x => `<tr>
                         <td><a href="/app/work-order/${encodeURIComponent(x.name)}" target="_blank">${of_esc(x.name)}</a></td>
                         <td>${of_esc(x.status)}</td>
-                        <td>${flt_of(x.required_qty)}</td>
-                        <td>${flt_of(x.transferred_qty)}</td>
-                        <td style="font-weight:700;">${flt_of(x.outstanding_qty)}</td>
+                        <td>${of_round2(x.required_qty)}</td>
+                        <td>${of_round2(x.transferred_qty)}</td>
+                        <td style="font-weight:700;">${of_round2(x.outstanding_qty)}</td>
                     </tr>`).join('')}</tbody>
                 </table>`;
             } else if (kind === 'pick_draft' || kind === 'pick_submitted') {
@@ -3188,7 +3225,7 @@ class OrderFlow {
                         <td>${of_esc(x.warehouse || '')}</td>
                         <td>${x.sales_order ? `<a href="/app/sales-order/${encodeURIComponent(x.sales_order)}" target="_blank">${of_esc(x.sales_order)}</a>
                             ${x.customer_name ? `<div class="of-micro text-muted">${of_esc(x.customer_name)}</div>` : ''}` : ''}</td>
-                        <td style="font-weight:700;">${flt_of(x.qty)}</td>
+                        <td style="font-weight:700;">${of_round2(x.qty)}</td>
                     </tr>`).join('')}</tbody>
                 </table>`;
             } else {
@@ -3198,7 +3235,7 @@ class OrderFlow {
                         <td><a href="/app/${of_route(x.doctype)}/${encodeURIComponent(x.name)}" target="_blank">${of_esc(x.name)}</a>
                             <div class="of-micro text-muted">${of_esc(x.doctype)}</div></td>
                         <td>${of_esc(x.supplier_name || x.supplier || '')}</td>
-                        <td>${flt_of(x.qty)}</td>
+                        <td>${of_round2(x.qty)}</td>
                     </tr>`).join('')}</tbody>
                 </table>`;
             }
@@ -3234,25 +3271,44 @@ class OrderFlow {
         const orders = orders_env.rows || [];
 
         this.$body.find('#of-count').text(
-            orders_env.total ? __('{0} order(s) need billing', [orders_env.total]) : ''
+            orders_env.total ? __('{0} order(s) pending DN/SI', [orders_env.total]) : ''
         );
 
-        const rows = orders.map(o => `<tr data-so="${of_esc(o.name)}" class="of-row-main">
-            <td><i class="fa fa-caret-right of-so-toggle" data-so="${of_esc(o.name)}" style="cursor:pointer; width:12px; font-size:14px; color:var(--text-light);"></i>
-                <a href="/app/sales-order/${encodeURIComponent(o.name)}" target="_blank" style="font-weight:700;">${of_esc(o.name)}</a></td>
-            <td style="text-align:left;">
-                <a href="/app/customer/${encodeURIComponent(o.customer)}" target="_blank" style="font-weight:600;">${of_esc(o.customer_name || o.customer || '')}</a>
-            </td>
-            <td class="of-meta">${of_date(o.transaction_date)}</td>
-            <td style="font-weight:700;">${of_money(o.grand_total, o.currency)}</td>
-            <td>${flt_of(o.per_delivered).toFixed(0)}%</td>
-            <td>${flt_of(o.per_billed).toFixed(0)}%</td>
-            <td>
-                <button class="of-btn of-btn--primary of-action-btn" data-action="make_invoice" data-so="${of_esc(o.name)}">
-                    <i class="fa fa-file-text-o"></i> ${__('Create Sales Invoice')}
-                </button>
-            </td>
-        </tr>`).join('');
+        // Same stage object the Sales Tracker itself renders its action
+        // button from (o.stage — see tracker_html) — every row here is a
+        // Tracker row already filtered server-side to stage_key
+        // 'ready_to_deliver', so reusing it means this button can never
+        // offer an action that disagrees with what the Tracker itself
+        // would show for the same order.
+        const rows = orders.map(o => {
+            const st = o.stage || {};
+            const action_html = (st.action_type && st.action_type !== 'none')
+                ? `<button class="of-btn ${st.action_btn_class || 'of-btn--primary'} of-action-btn"
+                        data-action="${st.action_type}"
+                        data-target="${st.target_doc || ''}"
+                        data-doctype="${st.target_doctype || ''}"
+                        data-so="${of_esc(o.name)}"
+                        data-customer="${of_esc(o.customer || '')}"
+                        data-customer-name="${of_esc(o.customer_name || '')}"
+                        data-route-lock="${of_esc(st.route_lock || '')}">
+                    <i class="fa fa-${st.icon || 'arrow-right'}"></i> ${of_esc(st.action_label || 'Act')}
+                </button>`
+                : `<span class="of-micro" style="color:var(--of-green);font-weight:600;"><i class="fa fa-check-circle"></i> ${__('Done')}</span>`;
+
+            return `<tr data-so="${of_esc(o.name)}" class="of-row-main">
+                <td><i class="fa fa-caret-right of-so-toggle" data-so="${of_esc(o.name)}" style="cursor:pointer; width:12px; font-size:14px; color:var(--text-light);"></i>
+                    <a href="/app/sales-order/${encodeURIComponent(o.name)}" target="_blank" style="font-weight:700;">${of_esc(o.name)}</a></td>
+                <td style="text-align:left;">
+                    <a href="/app/customer/${encodeURIComponent(o.customer)}" target="_blank" style="font-weight:600;">${of_esc(o.customer_name || o.customer || '')}</a>
+                </td>
+                <td class="of-meta">${of_date(o.transaction_date)}</td>
+                <td style="font-weight:700;">${of_money(o.grand_total, o.currency)}</td>
+                <td>${flt_of(o.per_delivered).toFixed(0)}%</td>
+                <td>${flt_of(o.per_billed).toFixed(0)}%</td>
+                <td><span class="of-pill ${st.badge_class || 'of-pill--wait'}">${of_esc(st.stage_label || '')}</span></td>
+                <td>${action_html}</td>
+            </tr>`;
+        }).join('');
 
         return `
             <!-- Live Activity Notifications -->
@@ -3261,11 +3317,11 @@ class OrderFlow {
             <!-- Top Summary Cards -->
             <div class="of-summary" id="of-summary-billing"></div>
 
-            ${of_card('Sales Orders Needing Billing', 'money', `
+            ${of_card('Sales Orders Pending DN / SI', 'truck', `
                 <table class="of-table">
                     <thead><tr><th style="min-width:160px;">Sales Order</th><th style="min-width:160px;">Customer</th>
-                        <th>Order Date</th><th>Grand Total</th><th>Delivered %</th><th>Billed %</th><th>Action</th></tr></thead>
-                    <tbody>${rows || of_empty_row(7)}</tbody>
+                        <th>Order Date</th><th>Grand Total</th><th>Delivered %</th><th>Billed %</th><th>Stage</th><th>Action</th></tr></thead>
+                    <tbody>${rows || of_empty_row(8)}</tbody>
                 </table>`, null, of_pagination_html('billing', null, orders_env))}
         `;
     }
@@ -3935,9 +3991,9 @@ class OrderFlow {
         );
 
         const rows_html = transfers.map(t => {
-            const total = flt_of(t.qty);
-            const received = flt_of(t.received_qty);
-            const outstanding = Math.max(0, total - received);
+            const total = of_round2(t.qty);
+            const received = of_round2(t.received_qty);
+            const outstanding = of_round2(Math.max(0, total - received));
             const pct = total > 0 ? Math.round((received / total) * 100) : 0;
 
             // Four real states, not two — a transfer received in two batches
@@ -4154,12 +4210,12 @@ class OrderFlow {
                 const html = `
                     <div style="margin-top: 10px; padding: 12px; font-size: 12px; line-height: 1.6; border: 1px solid #d1ecf1; border-radius: 4px; background-color: #f8f9fa; color: #0c5460;">
                         <strong style="font-size: 13px;">Stock Details for ${frappe.utils.escape_html(source)}:</strong><br>
-                        • Actual Physical Qty: <b>${d.actual_qty}</b><br>
-                        • Reserved for Sales: <b>${d.reserved_qty}</b><br>
-                        • Reserved for Production: <b>${d.reserved_qty_for_production}</b><br>
-                        • Reserved for Subcontract: <b>${d.reserved_qty_for_sub_contract}</b><br>
+                        • Actual Physical Qty: <b>${of_round2(d.actual_qty)}</b><br>
+                        • Reserved for Sales: <b>${of_round2(d.reserved_qty)}</b><br>
+                        • Reserved for Production: <b>${of_round2(d.reserved_qty_for_production)}</b><br>
+                        • Reserved for Subcontract: <b>${of_round2(d.reserved_qty_for_sub_contract)}</b><br>
                         <div style="border-top: 1px dashed #bee5eb; margin: 8px 0; padding-top: 8px;">
-                            <span style="color: #28a745; font-weight: 700; font-size: 13px;">✔ Fully Available (Unreserved): ${d.net_available}</span>
+                            <span style="color: #28a745; font-weight: 700; font-size: 13px;">✔ Fully Available (Unreserved): ${of_round2(d.net_available)}</span>
                         </div>
                     </div>
                 `;
@@ -4203,6 +4259,16 @@ function of_esc(v) {
 }
 
 function of_num(v) { return flt_of(v) || 0; }
+
+// A quantity built from a SQL SUM/subtraction chain routinely carries float
+// residue (e.g. 79.999999998, 0.001999998000002279) that has no business
+// being shown to a user — every on-screen quantity is capped at 2 decimals,
+// not padded with trailing zeros (Math.round keeps "20" as 20, not
+// "20.00"). This only touches DISPLAY; nothing computed from flt_of/of_num
+// gets rounded early, so it can never compound into a calculation error.
+function of_round2(v) {
+    return Math.round((flt_of(v) + Number.EPSILON) * 100) / 100;
+}
 
 /**
  * One reusable pagination bar for every tab's (sub-)list — Prev/Next, a
@@ -4259,7 +4325,7 @@ function of_pagination_html(tab, sublist, state) {
 }
 
 function of_qty(v, tone) {
-    const n = flt_of(v);
+    const n = of_round2(v);
     const cls = n ? (tone ? `of-val of-val--${tone}` : 'of-val') : 'of-val of-val--zero';
     return `<div class="${cls}">${n}</div>`;
 }

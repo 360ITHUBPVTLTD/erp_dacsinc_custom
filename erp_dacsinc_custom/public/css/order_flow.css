@@ -496,6 +496,51 @@
     color: var(--text-muted);
 }
 
+/* ── "Create" dropdown (toolbar) ─────────────────────────────── */
+.of-create-dropdown {
+    position: relative;
+    display: inline-block;
+}
+
+.of-create-menu {
+    position: absolute;
+    top: 100%;
+    right: 0;
+    margin-top: 4px;
+    min-width: 200px;
+    background: var(--card-bg);
+    border: 1px solid var(--border-color);
+    border-radius: 8px;
+    box-shadow: 0 6px 18px rgba(0, 0, 0, 0.14);
+    padding: 5px;
+    z-index: 50;
+}
+
+.of-create-menu a {
+    display: flex;
+    align-items: center;
+    gap: 9px;
+    padding: 8px 10px;
+    font-size: 12px;
+    font-weight: 500;
+    color: var(--text-color);
+    text-decoration: none;
+    border-radius: 5px;
+    white-space: nowrap;
+}
+
+.of-create-menu a:hover {
+    background: var(--fg-hover-color, var(--subtle-fg));
+    color: var(--of-blue);
+}
+
+.of-create-menu a i {
+    width: 14px;
+    text-align: center;
+    color: var(--text-muted);
+    flex: none;
+}
+
 /* ── Stage Filter Bar ────────────────────────────────────────── */
 .of-stage-bar {
     display: flex;
@@ -1185,7 +1230,16 @@
 
     .of-toolbar .of-search,
     .of-toolbar .of-select,
+    .of-toolbar .of-create-dropdown,
+    .of-toolbar #of-btn-create,
     .of-toolbar #of-btn-refresh {
+        width: 100%;
+        box-sizing: border-box;
+    }
+
+    .of-create-menu {
+        left: 0;
+        right: 0;
         width: 100%;
         box-sizing: border-box;
     }

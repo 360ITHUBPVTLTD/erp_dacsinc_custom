@@ -2104,62 +2104,51 @@ def get_draft_dn_si_for_so(sales_order):
 
 
 # --------------------------------------------------------------------------
-# Tab — Accounts (Sales Orders with a Delivery Note that still need billing)
+# Tab — Pending DN/SI (Sales Orders with a submitted Pick List still
+# waiting on a Delivery Note or Sales Invoice)
 # --------------------------------------------------------------------------
 
 @frappe.whitelist()
 def get_billing_flow(days=120, search=None, scope="open", page=1, page_size=100):
     """
-    Sales Orders that have shipped (a submitted Delivery Note exists) but are
-    not yet fully billed — the queue this tab exists to clear.
+    Sales Orders still short of fully billed once picking has started — the
+    Sales Tracker's own "Ready for Delivery" stage (a submitted Pick List,
+    fully or partially, with no DN/SI yet) AND its "Need to Bill" stage (a
+    Delivery Note already went out, but no Sales Invoice against it yet).
+
+    Both come from the SAME single computation Sales Tracker's own
+    stage_filter uses (_get_tracker_rows/_compute_stage_info) rather than an
+    independent SQL definition, so this tab can never disagree with what the
+    Tracker calls an order's stage. The two stages are combined on purpose:
+    creating a Delivery Note is not the end of the job — the order is not
+    actually done until a Sales Invoice exists too — so an order must stay
+    visible here through both steps, not just the pre-DN one, or it reads as
+    "handled" the moment a DN exists even though billing hasn't happened.
     """
     _guard()
     _guard_tab("billing")
-    conditions = ["so.docstatus = 1", "so.per_billed < 100", "so.transaction_date >= %(from_date)s", _NOT_DISABLED_SO]
-    params = {"from_date": _from_date(days)}
+    full = _get_tracker_rows(days=days, search=search, scope=scope)
+    rows = [o for o in full["rows"] if o.get("stage", {}).get("stage_key") in ("ready_to_deliver", "need_to_bill")]
 
-    if scope == "open":
-        conditions.append("so.status NOT IN ('Closed', 'Cancelled')")
-    elif scope == "mine":
-        conditions.append("so.owner = %(me)s")
-        params["me"] = frappe.session.user
+    total = len(rows)
+    page = max(1, cint(page))
+    page_size = cint(page_size) or 100
+    start = (page - 1) * page_size
 
-    if search:
-        conditions.append("(so.name LIKE %(q)s OR so.customer_name LIKE %(q)s OR so.customer LIKE %(q)s)")
-        params["q"] = f"%{search}%"
-
-    conditions.append("""EXISTS (
-        SELECT 1 FROM `tabDelivery Note Item` dni
-        JOIN `tabDelivery Note` dn ON dn.name = dni.parent
-        WHERE dni.against_sales_order = so.name AND dn.docstatus = 1
-    )""")
-
-    orders = _paged_query(f"""
-        SELECT so.name, so.customer, so.customer_name, so.transaction_date, so.grand_total,
-               so.currency, so.per_delivered, so.per_billed, so.status, so.owner
-        FROM `tabSales Order` so
-        WHERE {' AND '.join(conditions)}
-        ORDER BY so.transaction_date DESC
-    """, params, page, page_size)
-
-    # True totals over every matching order, not just the displayed page —
-    # the old `len(orders)`/`sum(... for o in orders)` were computed from
-    # the already-LIMIT-300'd list, so both silently understated reality
-    # past 300 matching orders.
-    agg = frappe.db.sql(f"""
-        SELECT COUNT(*) AS cnt, SUM(x.grand_total * (100 - x.per_billed) / 100) AS to_bill
-        FROM (
-            SELECT so.name, so.grand_total, so.per_billed
-            FROM `tabSales Order` so
-            WHERE {' AND '.join(conditions)}
-        ) x
-    """, params, as_dict=1)[0]
+    # Total order value still sitting in this queue, across every matching
+    # order — not just the displayed page.
+    pending_value = sum(flt(o.get("grand_total")) * (100 - flt(o.get("per_billed"))) / 100 for o in rows)
 
     return {
-        "orders": orders,
+        "orders": {
+            "rows": rows[start:start + page_size],
+            "total": total,
+            "page": page,
+            "page_size": page_size,
+        },
         "metrics": {
-            "count": cint(agg.cnt),
-            "total_to_bill": flt(agg.to_bill),
+            "count": total,
+            "pending_value": flt(pending_value),
         }
     }
 

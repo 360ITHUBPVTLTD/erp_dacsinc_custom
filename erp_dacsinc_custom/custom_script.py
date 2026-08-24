@@ -3422,8 +3422,20 @@ def get_item_stock_details_bulk(item_bom_pairs, sales_order_name):
             except Exception as e:
                 frappe.log_error(f"RM Breakdown Error for {item_code}", str(e))
 
+        # Delivered is not the same thing as done: a Delivery Note only
+        # ships the goods, it never bills them — so a line fully covered by
+        # a DN still owes a Sales Invoice before it's actually finished.
+        # Sales Order Item's own billed_amt (native ERPNext, kept in sync by
+        # SI submit/cancel on both the DN-then-SI and direct SI-with-
+        # Update-Stock routes) is the one source that already answers "how
+        # much of this line has actually been invoiced" regardless of route.
+        total_line_amount = sum(flt(i.amount) for i in so_items)
+        total_billed_amt = sum(flt(i.billed_amt) for i in so_items)
+        is_fully_billed = total_line_amount <= 0 or total_billed_amt >= total_line_amount - 0.01
+
         results[pair] = {
             "item_code": item_code, "required_qty": required_qty, "delivered_qty": delivered_qty,
+            "is_fully_billed": is_fully_billed,
             "row_dns": row_dns, "row_sis": row_sis,
             "total_available_stock": total_available_stock, "received_for_so_qty": recv_for_so_qty, "general_stock_qty": general_stock_qty,
             "warehouse_stock": warehouse_stock, "completed_receipt_docs": completed_receipt_docs,
@@ -4321,7 +4333,7 @@ def release_stock_from_picklist(picklist_name):
     except Exception as e:
         frappe.log_error(frappe.get_traceback(), "Release Stock Error")
         return {"status": "fail", "message": str(e)}
-def _calculate_pick_list_delivery_status(pl_doc):
+def _calculate_pick_list_delivery_status(pl_doc, allow_downgrade_from_completed=False):
     # ... (code to calculate total_qty and total_delivered_qty as before) ...
     total_qty = 0
     total_delivered_qty_raw = 0
@@ -4374,10 +4386,16 @@ def _calculate_pick_list_delivery_status(pl_doc):
         new_doc_status = "Completed"
 
     # If status is currently Completed, do not revert to Open/Partly Delivered (Status Lock)
-    # The hook only runs on DN submit, so it should move forward, but sometimes errors can occur.
-    # We will assume if it's Completed it stays Completed.
-    # Note: If your Pick List needs a 'Cancelled' status this is a good place to lock 'Completed'.
-    if pl_doc.status == "Completed" and new_doc_status != "Completed":
+    # — UNLESS the caller explicitly allows it. This lock exists for the
+    # SUBMIT path (DN/stock-SI submit only ever adds delivered_qty, so a
+    # lower recompute there would mean something is "slightly off" and
+    # Completed should win) — but a DN or stock-updating Sales Invoice that
+    # had pushed this Pick List to Completed can later be CANCELLED, which
+    # is exactly the case where delivered_qty legitimately goes back down
+    # and Completed must be allowed to un-stick. See
+    # update_pick_lists_on_dn_cancel / update_pick_lists_on_stock_si_cancel,
+    # the only callers that pass allow_downgrade_from_completed=True.
+    if pl_doc.status == "Completed" and new_doc_status != "Completed" and not allow_downgrade_from_completed:
         # Keep it completed, something might be slightly off with delivery quantity tracking
         new_doc_status = "Completed"
         
@@ -4388,11 +4406,13 @@ def _calculate_pick_list_delivery_status(pl_doc):
         "status": new_doc_status # THIS IS THE PRIMARY STATUS UPDATE
     }
 
-def _reconcile_pick_lists_for_sales_orders(related_sales_orders, source_doc_name):
+def _reconcile_pick_lists_for_sales_orders(related_sales_orders, source_doc_name, allow_downgrade_from_completed=False):
     """
-    Shared body behind both update_pick_lists_on_dn_submit and
-    update_pick_lists_on_stock_si_submit: recompute status/per_delivered on
-    every submitted Pick List tied to any of `related_sales_orders`.
+    Shared body behind update_pick_lists_on_dn_submit/_cancel and
+    update_pick_lists_on_stock_si_submit/_cancel: recompute status/
+    per_delivered on every submitted Pick List tied to any of
+    `related_sales_orders`. `allow_downgrade_from_completed` must only be
+    True from a *_cancel caller — see _calculate_pick_list_delivery_status.
     """
     try:
         if not related_sales_orders:
@@ -4413,7 +4433,7 @@ def _reconcile_pick_lists_for_sales_orders(related_sales_orders, source_doc_name
                 pl_doc = frappe.get_doc("Pick List", pl_name)
 
                 # Step 1: Call the new helper function to get all calculated status data
-                new_status_data = _calculate_pick_list_delivery_status(pl_doc)
+                new_status_data = _calculate_pick_list_delivery_status(pl_doc, allow_downgrade_from_completed)
 
                 # Step 2: Save the new data to the database (including 'status')
                 frappe.db.set_value("Pick List", pl_name, new_status_data)
@@ -4435,6 +4455,21 @@ def update_pick_lists_on_dn_submit(doc, method):
     _reconcile_pick_lists_for_sales_orders(related_sales_orders, doc.name)
 
 
+def update_pick_lists_on_dn_cancel(doc, method):
+    """
+    Mirror of update_pick_lists_on_dn_submit for the cancel side — a
+    Delivery Note being cancelled can take a Pick List's delivered_qty back
+    down below 100%, and without this the Pick List stayed permanently
+    "Completed" (see the downgrade lock in _calculate_pick_list_delivery_status)
+    even though nothing has actually been delivered against it any more,
+    silently blocking every future pick of that item.
+    """
+    related_sales_orders = list({
+        item.against_sales_order for item in doc.items if item.against_sales_order
+    })
+    _reconcile_pick_lists_for_sales_orders(related_sales_orders, doc.name, allow_downgrade_from_completed=True)
+
+
 def update_pick_lists_on_stock_si_submit(doc, method):
     """
     Same reconciliation as update_pick_lists_on_dn_submit, but for a Sales
@@ -4449,6 +4484,19 @@ def update_pick_lists_on_stock_si_submit(doc, method):
     _reconcile_pick_lists_for_sales_orders(related_sales_orders, doc.name)
 
 
+def update_pick_lists_on_stock_si_cancel(doc, method):
+    """
+    Mirror of update_pick_lists_on_stock_si_submit for the cancel side — see
+    update_pick_lists_on_dn_cancel's docstring for why this is needed.
+    """
+    if not doc.update_stock:
+        return
+    related_sales_orders = list({
+        item.sales_order for item in doc.items if item.sales_order
+    })
+    _reconcile_pick_lists_for_sales_orders(related_sales_orders, doc.name, allow_downgrade_from_completed=True)
+
+
 def _so_has_submitted_dn(sales_order):
     return bool(frappe.db.exists(
         "Delivery Note Item", {"against_sales_order": sales_order, "docstatus": 1}))
@@ -4460,6 +4508,61 @@ def _so_has_submitted_stock_si(sales_order):
         JOIN `tabSales Invoice` si ON si.name = sii.parent
         WHERE sii.sales_order=%s AND si.docstatus=1 AND si.update_stock=1 LIMIT 1
     """, sales_order))
+
+
+def lock_item_rate_to_sales_order_early(doc, method):
+    """
+    Cheap, early half of the rate lock — see lock_item_rate_to_sales_order
+    (registered on "validate") for why a second pass after that is also
+    required. Fixing it here first means AccountsController.validate()'s own
+    calculate_taxes_and_totals() (which runs as part of the native validate()
+    call, before any of this app's own doc_events fire) computes totals from
+    the correct rate on the common path where nothing later disturbs it.
+    """
+    _reset_item_rates_to_sales_order(doc)
+
+
+def lock_item_rate_to_sales_order(doc, method):
+    """
+    An item row that traces back to a Sales Order Item (via so_detail — the
+    same field name on both Delivery Note Item and Sales Invoice Item) must
+    ship/bill at the rate that Sales Order actually negotiated, never a rate
+    a Pricing Rule or Price List re-derives later. This app's own
+    create_dn_or_si_from_pick_lists (dashboard "Create DN/SI" actions)
+    reduces a mapped row's qty down to the picked quantity, which is exactly
+    the kind of change that can retrigger a quantity-tiered Pricing Rule to
+    a different rate than the Sales Order was actually sold at — and a
+    manual edit in the desk UI must not be able to change it either.
+
+    Registered on "validate" (in addition to the cheaper before_validate
+    pass above) because the corruption this guards against — ERPNext's own
+    AccountsController.validate() -> set_missing_item_details() ->
+    apply_pricing_rule_on_items() — runs INSIDE the native validate() method
+    itself, which always executes before any doc_events hooks for the same
+    event name (Document.hook's compose() runs the class's own bound method
+    first, then the hooks.py-registered list) — so a before_validate-only
+    fix would already be overwritten by the time this runs. Recalculates
+    totals afterward since a rate correction this late happens after
+    calculate_taxes_and_totals() already ran once against the wrong rate.
+    """
+    if _reset_item_rates_to_sales_order(doc):
+        doc.calculate_taxes_and_totals()
+
+
+def _reset_item_rates_to_sales_order(doc):
+    changed = False
+    for item in doc.items:
+        so_detail = item.get("so_detail")
+        if not so_detail:
+            continue
+        so_rate = frappe.db.get_value("Sales Order Item", so_detail, "rate")
+        if so_rate is not None and flt(item.rate) != flt(so_rate):
+            item.rate = so_rate
+            item.price_list_rate = so_rate
+            item.discount_percentage = 0
+            item.discount_amount = 0
+            changed = True
+    return changed
 
 
 def guard_so_fulfillment_route_lock(doc, method):
@@ -6918,12 +7021,12 @@ def get_pending_so_with_raw_materials(selected_so_items_json=None): # MODIFIED: 
             "item_code": item_code,
             "item_name": data["item_name"],
             "uom": data["uom"],
-            "required_qty": round(data["required_qty"], 3),
+            "required_qty": round(data["required_qty"], 2),
             "available_qty": available_qty,
             # NEW fields to be sent to the client
-            "already_ordered_qty": round(already_ordered, 3), 
+            "already_ordered_qty": round(already_ordered, 2), 
             "existing_pos": ", ".join(po_details), 
-            "qty_to_purchase": round(qty_to_purchase, 3),
+            "qty_to_purchase": round(qty_to_purchase, 2),
             "sales_orders": ", ".join(sorted(list(data["sales_orders"]))),
             "customers": ", ".join(sorted(list(filter(None, data["customers"]))))
         })
@@ -9004,13 +9107,25 @@ def create_dn_or_si_from_pick_lists(sales_order, pick_lists, doctype):
         ).format(sales_order))
 
     if doctype == "Sales Invoice":
-        # Check if there is any submitted Delivery Note for this Sales Order
+        # Only take the "invoice against the Delivery Note" shortcut when a
+        # submitted DN was actually raised FROM these specific Pick Lists —
+        # matched via against_pick_list (set on the DN's own item rows when
+        # it's built, above). An SO can carry OTHER, unrelated Delivery
+        # Notes for different items/lines; matching by "any submitted DN
+        # anywhere on this Sales Order" (as this used to) pulled that
+        # unrelated DN's full item list into the invoice regardless of what
+        # THIS Pick List actually covers — silently invoicing far more than
+        # what was just picked. Scoping to against_pick_list keeps the
+        # original intent (an item that already shipped via DN gets
+        # invoiced against that DN, not re-priced from scratch) without
+        # leaking in whatever else the Sales Order happens to have shipped.
         submitted_dns = frappe.db.sql("""
             SELECT DISTINCT dn.name
             FROM `tabDelivery Note Item` dni
             JOIN `tabDelivery Note` dn ON dn.name = dni.parent
-            WHERE dni.against_sales_order = %s AND dn.docstatus = 1
-        """, sales_order, as_dict=True)
+            WHERE dni.against_sales_order = %(so)s AND dn.docstatus = 1
+              AND dni.against_pick_list IN %(pls)s
+        """, {"so": sales_order, "pls": tuple(pick_lists)}, as_dict=True)
 
         if submitted_dns:
             # Already on the DN route — invoice against the Delivery Note

@@ -2437,29 +2437,33 @@ def get_required_raw_materials_for_po(purchase_order_name):
     results = []
     for rm_code, req_qty in rm_requirements.items():
         item_details = frappe.db.get_value("Item", rm_code, ["item_name", "stock_uom"], as_dict=1)
-        
+
         # CHANGED: Query filtered by the specific Warehouse
-        stock_data = frappe.db.get_value("Bin", 
-            filters={"item_code": rm_code, "warehouse": target_warehouse}, 
-            fieldname=["actual_qty", "reserved_qty"], 
+        stock_data = frappe.db.get_value("Bin",
+            filters={"item_code": rm_code, "warehouse": target_warehouse},
+            fieldname="actual_qty",
             as_dict=True
         )
 
-        # Handle cases where the item might not have a Bin record in that warehouse yet
-        actual_qty = flt(stock_data.actual_qty) if stock_data else 0.0
-        reserved_qty = flt(stock_data.reserved_qty) if stock_data else 0.0
-
-        # Calculate "Real" available stock in that warehouse
-        available_qty = max(actual_qty - reserved_qty, 0)
+        # Handle cases where the item might not have a Bin record in that warehouse yet.
+        # Rounded to the same 3-decimal precision stock qty fields are stored
+        # at — Bin.actual_qty is a running total of many stock ledger
+        # additions/subtractions and routinely carries float residue (e.g.
+        # 83.999999999999994), which printed as "83.999" and made a
+        # perfectly sufficient 84-unit stock read as short by a thousandth
+        # of a unit. required_qty gets the same treatment so the two are
+        # never compared at mismatched precision.
+        available_qty = flt(flt(stock_data.actual_qty) if stock_data else 0.0, 2)
+        required_qty = flt(req_qty, 2)
 
         results.append({
             "item_code": rm_code,
             "item_name": item_details.item_name,
             "uom": item_details.stock_uom,
-            "required_qty": req_qty,
-            "available_qty": actual_qty  # User mentioned "Real Stock", usually means Actual
+            "required_qty": required_qty,
+            "available_qty": available_qty,
         })
-        
+
     return sorted(results, key=lambda x: x['item_name'])
 
 
@@ -2553,17 +2557,41 @@ def create_subcontracting_docs(purchase_order_name, updated_materials_for_supply
         supply_quantities = {
             item['item_code']: flt(item['qty_to_supply']) for item in json.loads(updated_materials_for_supply)
         }
-        
-        # Adjust quantities in the stock entry items
+
+        # make_rm_stock_entry adds ONE Stock Entry row per Subcontracting
+        # Order Supplied Item row, and a single raw material can legitimately
+        # have several of those — one per SCO Item row that consumes it (a
+        # finished good split across multiple SCO lines, or several finished
+        # goods on this PO sharing the same raw material). The dialog shows
+        # only one combined "Qty to Supply" per raw material, so that single
+        # figure is a TOTAL across every matching row here, not a per-row
+        # value. Setting every matching row to that same total (as this used
+        # to) silently multiplied the real transfer by however many rows the
+        # item had — e.g. entering 84 with the item split across 2 rows
+        # attempted to transfer 168, which is exactly what turned a
+        # perfectly sufficient stock balance into ERPNext's own "Insufficient
+        # Stock" rejection at submit time. Distributing proportionally to
+        # each row's own original (BOM-derived) share keeps the total exactly
+        # equal to what the user asked for.
+        rows_by_item = defaultdict(list)
         for item in ste_doc.items:
-            if item.item_code in supply_quantities:
-                item.qty = supply_quantities[item.item_code]
-                item.t_warehouse = subcontractor_warehouse # Transfer to subcontractor's warehouse
-            else:
-                # If an item is somehow not in the updated_materials_for_supply, 
-                # you might want to remove it or set its qty to 0
-                item.qty = 0 
-                item.t_warehouse = subcontractor_warehouse # Still transfer to subcontractor
+            rows_by_item[item.item_code].append(item)
+
+        for item_code, rows in rows_by_item.items():
+            target_total = supply_quantities.get(item_code, 0)
+            original_total = sum(flt(row.qty) for row in rows)
+
+            for row in rows:
+                row.t_warehouse = subcontractor_warehouse  # Transfer to subcontractor's warehouse
+                if not target_total:
+                    row.qty = 0
+                elif original_total > 0:
+                    row.qty = flt(row.qty) * target_total / original_total
+                else:
+                    # No BOM-derived share to prorate by (shouldn't normally
+                    # happen) — split the requested total evenly instead of
+                    # applying it in full to every row.
+                    row.qty = target_total / len(rows)
     else:
         # If no updated_materials_for_supply, default all to 0 or original SCO quantities
         # Depending on desired default behavior. For this, we'll set to 0.
@@ -2609,13 +2637,19 @@ def create_material_request_for_shortage(purchase_order_name, materials_for_mr_c
 
     for item_data in materials_data:
         # These quantities are the initial 'required_qty' and 'available_qty'
-        # passed from the client for MR calculation.
-        required_qty = flt(item_data['required_qty'])
-        available_qty = flt(item_data['available_qty']) # This should be the current available stock
+        # passed from the client for MR calculation. Rounded to 3 decimals
+        # (matching get_required_raw_materials_for_po) before subtracting —
+        # Bin.actual_qty routinely carries float residue from historical
+        # stock-ledger arithmetic (e.g. 83.999999999999994 for a physical
+        # 84), and comparing that raw against a required_qty that already
+        # came out clean produced a phantom "shortage" of a millionth of a
+        # unit, raising a Material Request for essentially nothing.
+        required_qty = flt(item_data['required_qty'], 2)
+        available_qty = flt(item_data['available_qty'], 2)  # This should be the current available stock
 
         # Calculate shortage
-        shortage = required_qty - available_qty
-        
+        shortage = flt(required_qty - available_qty, 2)
+
         if shortage > 0:
             shortage_items.append({
                 "item_code": item_data['item_code'],
