@@ -767,6 +767,73 @@ class OrderFlow {
             const so = btn.data('so');
             const po = btn.data('po');
 
+            // Every "Create X" action opens an unsaved mapped draft — a bare
+            // "Create a Sales Invoice for SO-123?" text confirm gave no way
+            // to see which items or how much of each were actually about to
+            // be created before it happened. This maps the doc FIRST (still
+            // nothing saved), then shows exactly what it contains — item,
+            // qty, warehouse — and only opens it once the user reviews and
+            // confirms; cancelling discards it having changed nothing.
+            const preview_and_open_mapped_doc = (opts) => {
+                return frappe.call({
+                    type: "POST",
+                    method: "frappe.model.mapper.make_mapped_doc",
+                    args: {
+                        method: opts.method,
+                        source_name: opts.source_name,
+                        selected_children: opts.selected_children || null,
+                        args: opts.args || null
+                    },
+                    freeze: true,
+                    freeze_message: opts.freeze_message || __("Mapping Document..."),
+                    callback: function(r) {
+                        if (r.exc || !r.message) return;
+                        // frappe.model.sync returns an ARRAY of every doc it synced into
+                        // the client-side cache (the mapped doc plus any of its children)
+                        // — the mapped doc itself is always the first one. It mutates
+                        // r.message in place too, but indexing the return value is the
+                        // documented/safe way to get it.
+                        const doc = frappe.model.sync(r.message)[0];
+                        const items = doc.items || [];
+                        if (!items.length) {
+                            frappe.msgprint(__('Nothing to create — every line is already fully processed.'));
+                            return;
+                        }
+                        const has_wh = items.some(it => !!it.warehouse);
+                        const rows = items.map(it => `
+                            <tr>
+                                <td>${of_esc(it.item_code)}${it.item_name && it.item_name !== it.item_code
+                                    ? `<div class="of-micro text-muted">${of_esc(it.item_name)}</div>` : ''}</td>
+                                <td class="text-right">${of_round2(it.qty)} ${of_esc(it.uom || it.stock_uom || '')}</td>
+                                ${has_wh ? `<td>${of_esc(it.warehouse || '')}</td>` : ''}
+                            </tr>`).join('');
+
+                        const dialog = new frappe.ui.Dialog({
+                            title: opts.preview_title || __('Review before creating'),
+                            fields: [{ fieldtype: 'HTML', fieldname: 'preview' }],
+                            primary_action_label: opts.confirm_label || __('Create'),
+                            primary_action: () => {
+                                dialog.hide();
+                                frappe.set_route('Form', doc.doctype, doc.name);
+                            },
+                            secondary_action_label: __('Cancel'),
+                            secondary_action: () => dialog.hide()
+                        });
+                        dialog.fields_dict.preview.$wrapper.html(`
+                            <div class="doc-preview-wrap"><table class="doc-preview-table">
+                                <thead><tr>
+                                    <th>${__('Item')}</th><th class="text-right">${__('Qty')}</th>${has_wh ? `<th>${__('Warehouse')}</th>` : ''}
+                                </tr></thead>
+                                <tbody>${rows}</tbody>
+                            </table></div>
+                            <p class="doc-preview-hint">${
+                                __('This opens as a draft, not yet saved — you can still review or edit it before submitting.')
+                            }</p>`);
+                        dialog.show();
+                    }
+                });
+            };
+
             if (action === 'open_doc' && target && doctype) {
                 // Opens an EXISTING document (the Next Action button for most
                 // tracker stages) — a document link like any other on this
@@ -774,38 +841,60 @@ class OrderFlow {
                 // away from the dashboard itself.
                 window.open(frappe.utils.get_form_link(doctype, target), '_blank');
             } else if (action === 'make_invoice' && so) {
-                frappe.confirm(
-                    __('Create a Sales Invoice for Sales Order <b>{0}</b>?', [esc(so)]),
-                    () => {
-                        frappe.model.open_mapped_doc({
+                const mock_frm = { doc: { name: so, customer: btn.data('customer') || '', customer_name: btn.data('customerName') || '' } };
+                frappe.call({
+                    method: 'erp_dacsinc_custom.order_flow_api.get_pick_lists_for_so',
+                    args: { sales_order: so }
+                }).then(pl_res => {
+                    const pls = (pl_res.message || []).filter(x =>
+                        flt_of(x.docstatus) === 1 && ['Open', 'Partly Delivered'].includes(x.status || 'Open'));
+                    if (pls.length) {
+                        // A Pick List is what actually reserved this stock — the
+                        // Sales Invoice must be built from ITS picked qty (see
+                        // create_dn_or_si_from_pick_lists), never the Sales Order
+                        // line's own full qty, or a line only partly picked (5 of
+                        // 10, say) would bill — and try to deduct stock — for all
+                        // 10. show_bulk_dn_si_modal already previews exactly what
+                        // will be created, so it doubles as the confirmation here.
+                        frappe.call({
+                            method: 'erp_dacsinc_custom.order_flow_api.get_draft_dn_si_for_so',
+                            args: { sales_order: so }
+                        }).then(draft_res => {
+                            const drafts = draft_res.message || {};
+                            frappe.require('/assets/erp_dacsinc_custom/js/sales_order.js', () => {
+                                show_bulk_dn_si_modal(mock_frm, pls, 'Sales Invoice', 0, drafts.draft_sis || []);
+                            });
+                        });
+                    } else {
+                        // No Pick List reservation involved for this order right
+                        // now — stock already moved via a direct Delivery Note/
+                        // Sales Invoice earlier, so the plain mapper's own
+                        // billed-qty accounting is correct as-is.
+                        preview_and_open_mapped_doc({
                             method: 'erpnext.selling.doctype.sales_order.sales_order.make_sales_invoice',
                             source_name: so,
-                            freeze_message: __('Creating Sales Invoice…')
+                            freeze_message: __('Creating Sales Invoice…'),
+                            preview_title: __('Review Sales Invoice'),
+                            confirm_label: __('Create Sales Invoice')
                         });
                     }
-                );
+                });
             } else if (action === 'make_invoice_from_dn' && target) {
-                frappe.confirm(
-                    __('Create a Sales Invoice from Delivery Note(s) <b>{0}</b>?', [esc(target)]),
-                    () => {
-                        frappe.model.open_mapped_doc({
-                            method: 'erp_dacsinc_custom.custom_script.make_sales_invoice_from_multiple_delivery_notes',
-                            source_name: target,
-                            freeze_message: __('Creating Sales Invoice from Delivery Notes…')
-                        });
-                    }
-                );
+                preview_and_open_mapped_doc({
+                    method: 'erp_dacsinc_custom.custom_script.make_sales_invoice_from_multiple_delivery_notes',
+                    source_name: target,
+                    freeze_message: __('Creating Sales Invoice from Delivery Notes…'),
+                    preview_title: __('Review Sales Invoice — from Delivery Note(s)'),
+                    confirm_label: __('Create Sales Invoice')
+                });
             } else if (action === 'make_purchase_invoice' && po) {
-                frappe.confirm(
-                    __('Create a Purchase Invoice for Purchase Order <b>{0}</b>?', [esc(po)]),
-                    () => {
-                        frappe.model.open_mapped_doc({
-                            method: 'erpnext.buying.doctype.purchase_order.purchase_order.make_purchase_invoice',
-                            source_name: po,
-                            freeze_message: __('Creating Purchase Invoice…')
-                        });
-                    }
-                );
+                preview_and_open_mapped_doc({
+                    method: 'erpnext.buying.doctype.purchase_order.purchase_order.make_purchase_invoice',
+                    source_name: po,
+                    freeze_message: __('Creating Purchase Invoice…'),
+                    preview_title: __('Review Purchase Invoice'),
+                    confirm_label: __('Create Purchase Invoice')
+                });
             } else if (action === 'make_dn_or_si' && so) {
                 // Same either-route choice the Sales Order's own "Item Stock
                 // & Action Plan" widget offers per item — reused here as-is
@@ -872,16 +961,13 @@ class OrderFlow {
                 // from there) — a document link, same new-tab treatment.
                 window.open(frappe.utils.get_form_link('Sales Order', so), '_blank');
             } else if (action === 'make_po_from_mr' && target) {
-                frappe.confirm(
-                    __('Create a Purchase Order from Material Request <b>{0}</b>?', [esc(target)]),
-                    () => {
-                        frappe.model.open_mapped_doc({
-                            method: 'erpnext.stock.doctype.material_request.material_request.make_purchase_order',
-                            source_name: target,
-                            freeze_message: __('Creating Purchase Order from Material Request…')
-                        });
-                    }
-                );
+                preview_and_open_mapped_doc({
+                    method: 'erpnext.stock.doctype.material_request.material_request.make_purchase_order',
+                    source_name: target,
+                    freeze_message: __('Creating Purchase Order from Material Request…'),
+                    preview_title: __('Review Purchase Order — from Material Request'),
+                    confirm_label: __('Create Purchase Order')
+                });
             } else if (action === 'make_mr' && so) {
                 // Opens the existing Sales Order (a Material Request is
                 // raised from there) — same new-tab treatment.
@@ -4134,16 +4220,38 @@ class OrderFlow {
                     get_query: () => ({ filters: { is_stock_item: 1, disabled: 0 } }),
                     onchange: function() {
                         const source = this.get_value();
-                        if (source && source === dialog.get_value('target_item')) {
-                            frappe.msgprint(__('Source Item (Plain) and Target Item (Embroidered) cannot be the same item.'));
-                            this.set_value('');
-                            return;
+                        if (dialog.get_value('transfer_to_same_item')) {
+                            dialog.set_value('target_item', source);
+                        } else {
+                            if (source && source === dialog.get_value('target_item')) {
+                                frappe.msgprint(__('Source Item (Plain) and Target Item (Embroidered) cannot be the same item.'));
+                                this.set_value('');
+                                return;
+                            }
                         }
                         const warehouse = dialog.get_value('from_warehouse');
                         if (source && warehouse) {
                             fetch_stock_details(source, warehouse);
                         } else {
                             dialog.fields_dict.stock_details_html.$wrapper.html('');
+                        }
+                    }
+                },
+                {
+                    fieldtype: 'Check',
+                    fieldname: 'transfer_to_same_item',
+                    label: __('Transfer to Same Item'),
+                    default: 0,
+                    onchange: function() {
+                        const checked = this.get_value();
+                        if (checked) {
+                            const source = dialog.get_value('source_item');
+                            if (source) {
+                                dialog.set_value('target_item', source);
+                            }
+                            dialog.set_df_property('target_item', 'read_only', 1);
+                        } else {
+                            dialog.set_df_property('target_item', 'read_only', 0);
                         }
                     }
                 },
@@ -4180,7 +4288,7 @@ class OrderFlow {
                     get_query: () => ({ filters: { is_stock_item: 1, disabled: 0 } }),
                     onchange: function() {
                         const target = this.get_value();
-                        if (target && target === dialog.get_value('source_item')) {
+                        if (!dialog.get_value('transfer_to_same_item') && target && target === dialog.get_value('source_item')) {
                             frappe.msgprint(__('Source Item (Plain) and Target Item (Embroidered) cannot be the same item.'));
                             this.set_value('');
                         }
@@ -4205,7 +4313,7 @@ class OrderFlow {
             ],
             primary_action_label: __('Send to Embroidery'),
             primary_action: (values) => {
-                if (values.source_item === values.target_item) {
+                if (!values.transfer_to_same_item && values.source_item === values.target_item) {
                     frappe.msgprint(__('Source Item (Plain) and Target Item (Embroidered) cannot be the same item.'));
                     return;
                 }

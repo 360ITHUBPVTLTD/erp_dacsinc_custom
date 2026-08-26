@@ -2730,9 +2730,18 @@ def get_item_stock_details_bulk(item_bom_pairs, sales_order_name):
         else:
             current_picks = list(raw_picks)
 
-        # Calculate Pick Lists for other rows of the same Sales Order and item code
+        # Calculate Pick Lists for other rows of the same Sales Order and item code.
+        # Only the UNDELIVERED remainder of a submitted sibling pick still competes
+        # for physical stock — once it's gone out on a DN/SI, that stock has already
+        # left the warehouse (and total_available_stock below already reflects that),
+        # so counting the full picked_qty here double-subtracted stock that was never
+        # actually still on hand, making an item with real spare stock read as
+        # "Out of Stock" once a sibling BOM/no-BOM line for the same item had already
+        # been fully delivered.
         other_picks_this_so = [p for p in raw_picks if p not in current_picks]
-        picked_submitted_other_rows = sum(flt(p.picked_qty) for p in other_picks_this_so if p.docstatus == 1)
+        picked_submitted_other_rows = sum(
+            max(0, flt(p.picked_qty) - flt(p.delivered_qty)) for p in other_picks_this_so if p.docstatus == 1
+        )
         picked_draft_other_rows = sum(flt(p.qty) for p in other_picks_this_so if p.docstatus == 0)
 
         total_hist_recv = sum(flt(r.received_qty) for r in completed_receipt_docs)
@@ -4671,6 +4680,52 @@ def make_sales_invoice_from_multiple_delivery_notes(source_name, target_doc=None
     invoice = None
     for dn in dn_names:
         invoice = make_sales_invoice(dn, invoice)
+
+    return invoice.as_dict()
+
+
+@frappe.whitelist()
+def make_sales_invoice_from_dn_items(dn_item_names):
+    """
+    (Called from the Sales Order stock widget's per-LINE "Create Sales
+    Invoice" action — see so_make_sales_invoice_from_dn in sales_order.js)
+
+    Creates a Sales Invoice covering ONLY the given Delivery Note Item
+    row(s) — never every other item that happens to share the same
+    Delivery Note. The per-line button knows which Sales Order Item it
+    belongs to and looks up the matching Delivery Note Item row(s) for
+    just that line (d.row_dns, already scoped server-side by so_detail),
+    but erpnext.stock.doctype.delivery_note.delivery_note.make_sales_invoice
+    maps a WHOLE Delivery Note when called through the generic
+    frappe.model.mapper.make_mapped_doc wrapper (it never forwards the
+    `args` kwarg its own `filtered_children` filter depends on) — so a
+    click on one line's button silently invoiced every other item the
+    Delivery Note happened to also carry. Calling the mapper directly with
+    `args={"filtered_children": [...]}` per source Delivery Note is what
+    actually restricts it; looping (and accumulating into one invoice, same
+    as make_sales_invoice_from_multiple_delivery_notes above) covers the
+    case where one line was delivered across more than one Delivery Note.
+    """
+    if isinstance(dn_item_names, str):
+        dn_item_names = json.loads(dn_item_names)
+    if not dn_item_names:
+        frappe.throw(_("No Delivery Note line specified."))
+
+    rows = frappe.db.sql("""
+        SELECT name, parent FROM `tabDelivery Note Item` WHERE name IN %(names)s
+    """, {"names": tuple(dn_item_names)}, as_dict=True)
+    if not rows:
+        frappe.throw(_("Delivery Note line(s) not found."))
+
+    item_names_by_dn = defaultdict(list)
+    for r in rows:
+        item_names_by_dn[r.parent].append(r.name)
+
+    from erpnext.stock.doctype.delivery_note.delivery_note import make_sales_invoice
+
+    invoice = None
+    for dn_name, item_names in item_names_by_dn.items():
+        invoice = make_sales_invoice(dn_name, invoice, args={"filtered_children": item_names})
 
     return invoice.as_dict()
 
@@ -7982,21 +8037,6 @@ def fetch_multi_order_requirements(exclude_mr=None):
           AND so.status NOT IN ('Completed', 'Closed', 'Cancelled')
           AND so_item.qty > so_item.delivered_qty
           AND IFNULL(so.custom_old_record_item_is_disabled, 0) = 0
-          -- Same guard as get_pending_so_with_material_stock: a known
-          -- duplicate-row data issue lets the same item_code appear twice on
-          -- one Sales Order, once correctly tagged with a BOM and once
-          -- without. The bom_no-less duplicate must never be aggregated as
-          -- its own "Individual Purchase Requirement" — it would show a
-          -- second, unrelated Ord qty for an item whose real, single
-          -- quantity is already covered by its BOM-tagged sibling row.
-          AND (
-            (so_item.bom_no IS NOT NULL AND so_item.bom_no != '')
-            OR NOT EXISTS (
-                SELECT 1 FROM `tabSales Order Item` soi_bom
-                WHERE soi_bom.parent = so_item.parent AND soi_bom.item_code = so_item.item_code
-                  AND soi_bom.bom_no IS NOT NULL AND soi_bom.bom_no != ''
-            )
-          )
     """, as_dict=True)
 
     # 2. FETCH OPEN MR SUPPLY (with Links)

@@ -20,8 +20,32 @@ frappe.ui.form.on('Material Request', {
         // Subcontracted Purchase Order button
         if (frm.doc.custom_is_subcontracted == 1 && frm.doc.docstatus === 1) {
             frm.add_custom_button(__('Subcontracted Purchase Order'), function () {
+                // What's about to go onto the Purchase Order — shown alongside
+                // the Supplier prompt rather than a bare "Create?" text, since
+                // the mapped PO itself clears item_code for display (it can't
+                // be saved with one set) and so has nothing useful to preview
+                // after the fact.
+                const item_rows = (frm.doc.items || []).map(i => `
+                    <tr>
+                        <td>${frappe.utils.escape_html(i.item_code || '')}${i.item_name && i.item_name !== i.item_code
+                            ? `<div style="font-size:11px;color:var(--text-muted);">${frappe.utils.escape_html(i.item_name)}</div>` : ''}</td>
+                        <td style="text-align:right;">${flt(i.qty)} ${frappe.utils.escape_html(i.uom || i.stock_uom || '')}</td>
+                    </tr>`).join('');
+                const items_preview = `
+                    <div style="max-height:220px; overflow-y:auto; border:1px solid var(--border-color); border-radius:6px; margin-bottom:12px;">
+                        <table class="table table-bordered table-sm" style="margin:0;">
+                            <thead><tr><th>${__('Item')}</th><th style="text-align:right;">${__('Qty')}</th></tr></thead>
+                            <tbody>${item_rows || `<tr><td colspan="2">${__('No items')}</td></tr>`}</tbody>
+                        </table>
+                    </div>`;
+
                 // Prompt to ask Supplier
                 frappe.prompt([
+                    {
+                        fieldname: 'items_preview',
+                        fieldtype: 'HTML',
+                        options: items_preview
+                    },
                     {
                         fieldname: 'supplier',
                         fieldtype: 'Link',

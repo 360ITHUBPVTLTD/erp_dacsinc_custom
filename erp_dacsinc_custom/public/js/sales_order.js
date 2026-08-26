@@ -233,6 +233,39 @@ function inject_so_styles() {
            its Pick List siblings so it never reads as just another row. */
         .so-table tr.is-highlighted td { background: rgba(52, 152, 219, 0.12); }
         .so-table .so-num { text-align: right; }   /* totals rows only */
+
+        /* ── "About to create" preview table (so_show_mapped_doc_preview) ──
+           Deliberately independent of --so-blue etc. above: those are scoped
+           to .so-card/.so-modal, but this table renders inside a plain
+           frappe.ui.Dialog with neither class, so the variables (and the
+           header background/border built from them) silently resolved to
+           nothing there — a blue-bordered box with invisible white-on-
+           nothing header text. Literal colours for the header accent side-
+           step that entirely; everything else still follows the active
+           theme via Frappe's own global tokens. */
+        .doc-preview-wrap {
+            border: 1px solid #b9c1c8; border-radius: 8px;
+            overflow: hidden; max-height: 320px; overflow-y: auto;
+        }
+        [data-theme="dark"] .doc-preview-wrap { border-color: #4a5560; }
+        .doc-preview-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+        .doc-preview-table thead th {
+            position: sticky; top: 0;
+            background: #3498db; color: #fff;
+            font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: .03em;
+            text-align: left; padding: 9px 12px; white-space: nowrap;
+        }
+        .doc-preview-table thead th.text-right { text-align: right; }
+        .doc-preview-table tbody td {
+            padding: 9px 12px; border-top: 1px solid #d1d8dd;
+            color: var(--text-color); vertical-align: middle;
+        }
+        [data-theme="dark"] .doc-preview-table tbody td { border-top: 1px solid #434c56; }
+        .doc-preview-table tbody tr:first-child td { border-top: none; }
+        .doc-preview-table tbody tr:hover td { background: var(--subtle-fg); }
+        .doc-preview-table tbody td.text-right { text-align: right; font-weight: 600; font-variant-numeric: tabular-nums; }
+        .doc-preview-item-name { font-size: 11px; color: var(--text-muted); margin-top: 2px; }
+        .doc-preview-hint { font-size: 12px; color: var(--text-muted); margin: 10px 2px 0; }
         /* An open RM detail row belongs to the row above — drop the divider between
            them. A collapsed row keeps its border so the grid stays intact. */
         .so-table--rows tbody tr.so-row-main.is-open td { border-bottom-color: transparent; }
@@ -731,7 +764,7 @@ function generate_stock_overview_table(frm, callback) {
                         status_html = so_pill('wait', 'file-text-o', 'SI Pending');
                         const dn_subms = (d.row_dns || []).filter(x => x.docstatus === 1);
                         if (dn_subms.length > 0) {
-                            action_parts.push(so_cmd_btn(`so_make_sales_invoice_from_dn('${js_str(dn_subms[0].parent)}')`, 'file-text-o', 'Create Sales Invoice', true));
+                            action_parts.push(so_cmd_btn(`so_make_sales_invoice_from_dn('${js_str(pair_key)}')`, 'file-text-o', 'Create Sales Invoice', true));
                         } else {
                             action_parts.push(so_cmd_btn(`so_make_sales_invoice('${so_nm}')`, 'file-text-o', 'Create Sales Invoice', true));
                         }
@@ -1933,6 +1966,8 @@ function so_open_pick_list_draft(so_name, line_items) {
             }
 
             frappe.model.sync(r.message);
+            // Unsaved draft — only exists in this tab's client-side cache, so a
+            // new browser tab has nothing to fetch and would render blank.
             frappe.set_route('Form', r.message.doctype, r.message.name);
             frappe.show_alert({
                 message: __('Check the quantities, then save and submit.'),
@@ -1956,22 +1991,94 @@ function so_open_doc(doctype, name) {
     window.open(frappe.utils.get_form_link(doctype, name), '_blank');
 }
 
+// Maps the requested doc (nothing saved yet), then shows exactly what it
+// contains — item, qty, warehouse — before opening it, so "Create X?" is
+// never just a bare text guess at what's about to happen. Cancelling
+// discards the mapped draft having changed nothing.
+function so_open_mapped_doc(opts) {
+    return frappe.call({
+        type: "POST",
+        method: "frappe.model.mapper.make_mapped_doc",
+        args: {
+            method: opts.method,
+            source_name: opts.source_name,
+            selected_children: opts.selected_children || null,
+            args: opts.args || null
+        },
+        freeze: true,
+        freeze_message: opts.freeze_message || __("Mapping Document..."),
+        callback: function(r) {
+            if (r.exc || !r.message) return;
+            // frappe.model.sync returns an ARRAY of every doc it synced into
+            // the client-side cache (the mapped doc plus any children) — the
+            // mapped doc itself is always the first one.
+            const doc = frappe.model.sync(r.message)[0];
+            so_show_mapped_doc_preview(doc, opts);
+        }
+    });
+}
+
+function so_show_mapped_doc_preview(doc, opts) {
+    inject_so_styles();
+    opts = opts || {};
+    const items = doc.items || [];
+    if (!items.length) {
+        frappe.msgprint(__('Nothing to create — every line is already fully processed.'));
+        return;
+    }
+    const has_wh = items.some(it => !!it.warehouse);
+    const rows = items.map(it => `
+        <tr>
+            <td>${esc(it.item_code || '')}${it.item_name && it.item_name !== it.item_code
+                ? `<div class="doc-preview-item-name">${esc(it.item_name)}</div>` : ''}</td>
+            <td class="text-right">${flt(it.qty, 2)} ${esc(it.uom || it.stock_uom || '')}</td>
+            ${has_wh ? `<td>${esc(it.warehouse || '')}</td>` : ''}
+        </tr>`).join('');
+
+    const dialog = new frappe.ui.Dialog({
+        title: opts.preview_title || __('Review before creating'),
+        fields: [{ fieldtype: 'HTML', fieldname: 'preview' }],
+        primary_action_label: opts.confirm_label || __('Create'),
+        primary_action: () => {
+            dialog.hide();
+            // The mapped doc is unsaved — it exists only in THIS tab's
+            // client-side cache, which a new browser tab has no access to
+            // (and there's nothing to fetch from the server for a doc that
+            // was never inserted), so opening it in a new tab rendered a
+            // blank form. Navigating in the same tab (frappe.set_route,
+            // same as every other "Create mapped doc" action across
+            // Frappe/ERPNext) is what actually opens it pre-filled.
+            frappe.set_route('Form', doc.doctype, doc.name);
+        },
+        secondary_action_label: __('Cancel'),
+        secondary_action: () => dialog.hide()
+    });
+    dialog.fields_dict.preview.$wrapper.html(`
+        <div class="doc-preview-wrap"><table class="doc-preview-table">
+            <thead><tr>
+                <th>${__('Item')}</th><th class="text-right">${__('Qty')}</th>${has_wh ? `<th>${__('Warehouse')}</th>` : ''}
+            </tr></thead>
+            <tbody>${rows}</tbody>
+        </table></div>
+        <p class="doc-preview-hint">${
+            __('This opens as a draft, not yet saved — you can still review or edit it before submitting.')
+        }</p>`);
+    dialog.show();
+}
+
 // Delivery Note is mapped from the Pick List, not the Sales Order.
 function so_make_delivery_note(pick_list_name) {
     if (!pick_list_name) {
         frappe.msgprint(__('No submitted Pick List found for this line.'));
         return;
     }
-    frappe.confirm(
-        __('Create a Delivery Note from Pick List <b>{0}</b>?', [esc(pick_list_name)]),
-        () => {
-            frappe.model.open_mapped_doc({
-                method: 'erpnext.stock.doctype.pick_list.pick_list.create_delivery_note',
-                source_name: pick_list_name,
-                freeze_message: __('Creating Delivery Note…')
-            });
-        }
-    );
+    so_open_mapped_doc({
+        method: 'erpnext.stock.doctype.pick_list.pick_list.create_delivery_note',
+        source_name: pick_list_name,
+        freeze_message: __('Creating Delivery Note…'),
+        preview_title: __('Review Delivery Note'),
+        confirm_label: __('Create Delivery Note')
+    });
 }
 
 /**
@@ -2028,6 +2135,8 @@ function so_make_sales_invoice_with_stock(so_name, sales_order_item, item_code, 
                 callback: (r) => {
                     if (!r.message) return;   // server threw; Frappe has shown the reason
                     frappe.model.sync(r.message);
+                    // Unsaved draft — a new tab has no access to this tab's
+                    // client-side cache and would render blank.
                     frappe.set_route('Form', r.message.doctype, r.message.name);
                 }
             });
@@ -2042,56 +2151,67 @@ function so_make_po_from_mr(mr_name) {
         frappe.msgprint(__('No open Material Request for this line.'));
         return;
     }
-    frappe.confirm(
-        __('Create a Purchase Order from Material Request <b>{0}</b>?', [esc(mr_name)]),
-        () => {
-            frappe.model.open_mapped_doc({
-                method: 'erpnext.stock.doctype.material_request.material_request.make_purchase_order',
-                source_name: mr_name,
-                freeze_message: __('Creating Purchase Order from Material Request…')
-            });
-        }
-    );
+    so_open_mapped_doc({
+        method: 'erpnext.stock.doctype.material_request.material_request.make_purchase_order',
+        source_name: mr_name,
+        freeze_message: __('Creating Purchase Order from Material Request…'),
+        preview_title: __('Review Purchase Order — from Material Request'),
+        confirm_label: __('Create Purchase Order')
+    });
 }
 
 // Maps every pending line on the order — ERPNext has no per-item variant.
 function so_make_material_request(so_name) {
-    frappe.confirm(
-        __('Create a Material Request for Sales Order <b>{0}</b>?', [esc(so_name)]),
-        () => {
-            frappe.model.open_mapped_doc({
-                method: 'erpnext.selling.doctype.sales_order.sales_order.make_material_request',
-                source_name: so_name,
-                freeze_message: __('Creating Material Request…')
-            });
-        }
-    );
+    so_open_mapped_doc({
+        method: 'erpnext.selling.doctype.sales_order.sales_order.make_material_request',
+        source_name: so_name,
+        freeze_message: __('Creating Material Request…'),
+        preview_title: __('Review Material Request'),
+        confirm_label: __('Create Material Request')
+    });
 }
 
 function so_make_sales_invoice(so_name) {
-    frappe.confirm(
-        __('Create a Sales Invoice for Sales Order <b>{0}</b>?', [esc(so_name)]),
-        () => {
-            frappe.model.open_mapped_doc({
-                method: 'erpnext.selling.doctype.sales_order.sales_order.make_sales_invoice',
-                source_name: so_name,
-                freeze_message: __('Creating Sales Invoice…')
-            });
-        }
-    );
+    so_open_mapped_doc({
+        method: 'erpnext.selling.doctype.sales_order.sales_order.make_sales_invoice',
+        source_name: so_name,
+        freeze_message: __('Creating Sales Invoice…'),
+        preview_title: __('Review Sales Invoice'),
+        confirm_label: __('Create Sales Invoice')
+    });
 }
 
-function so_make_sales_invoice_from_dn(dn_name) {
-    frappe.confirm(
-        __('Create a Sales Invoice from Delivery Note <b>{0}</b>?', [esc(dn_name)]),
-        () => {
-            frappe.model.open_mapped_doc({
-                method: 'erpnext.stock.doctype.delivery_note.delivery_note.make_sales_invoice',
-                source_name: dn_name,
-                freeze_message: __('Creating Sales Invoice from Delivery Note…')
+// Invoices ONLY this one line's Delivery Note row(s) — never the rest of
+// whatever Delivery Note(s) it happens to share with other lines. The
+// generic ERPNext DN -> SI mapper has no per-item filter when called
+// through the shared mapped-doc endpoint (see
+// make_sales_invoice_from_dn_items on the server for why), so this calls
+// the custom, item-scoped endpoint directly instead of so_open_mapped_doc.
+function so_make_sales_invoice_from_dn(pair_key) {
+    const d = get_cached_stock_row(pair_key);
+    const dn_item_names = ((d && d.row_dns) || [])
+        .filter(x => x.docstatus === 1)
+        .map(x => x.name);
+
+    if (!dn_item_names.length) {
+        frappe.msgprint(__('No submitted Delivery Note found for this line.'));
+        return;
+    }
+
+    frappe.call({
+        method: 'erp_dacsinc_custom.custom_script.make_sales_invoice_from_dn_items',
+        args: { dn_item_names: dn_item_names },
+        freeze: true,
+        freeze_message: __('Creating Sales Invoice from Delivery Note…'),
+        callback: (r) => {
+            if (!r.message) return;
+            const doc = frappe.model.sync(r.message)[0];
+            so_show_mapped_doc_preview(doc, {
+                preview_title: __('Review Sales Invoice — from Delivery Note'),
+                confirm_label: __('Create Sales Invoice')
             });
         }
-    );
+    });
 }
 
 function so_get_all_submitted_dn_names(frm) {
@@ -2115,16 +2235,13 @@ function so_make_sales_invoice_from_all_dns(frm) {
         frappe.msgprint(__('No submitted Delivery Notes found for this Sales Order.'));
         return;
     }
-    frappe.confirm(
-        __('Create a single Sales Invoice from all submitted Delivery Notes: {0}?', [esc(dn_names.join(', '))]),
-        () => {
-            frappe.model.open_mapped_doc({
-                method: 'erp_dacsinc_custom.custom_script.make_sales_invoice_from_multiple_delivery_notes',
-                source_name: dn_names.join(','),
-                freeze_message: __('Creating Sales Invoice from Delivery Notes…')
-            });
-        }
-    );
+    so_open_mapped_doc({
+        method: 'erp_dacsinc_custom.custom_script.make_sales_invoice_from_multiple_delivery_notes',
+        source_name: dn_names.join(','),
+        freeze_message: __('Creating Sales Invoice from Delivery Notes…'),
+        preview_title: __('Review Sales Invoice — from Delivery Note(s)'),
+        confirm_label: __('Create Sales Invoice')
+    });
 }
 
 /**
@@ -2179,6 +2296,8 @@ function so_make_subcontract_po(so_name, item_code, qty) {
                 callback: (r) => {
                     if (!r.message) return;   // server threw; Frappe has shown the reason
                     frappe.model.sync(r.message);
+                    // Unsaved draft — a new tab has no access to this tab's
+                    // client-side cache and would render blank.
                     frappe.set_route('Form', r.message.doctype, r.message.name);
                     frappe.show_alert({
                         message: __('Review the supplier and rate, then save.'),
@@ -2317,28 +2436,26 @@ function so_confirm_submit_pick_list(pick_list) {
  * route to the returned draft ourselves.
  */
 function so_make_purchase_order(so_name, item_code) {
-    frappe.confirm(
-        __('Create a Purchase Order for Item {0}?', [esc(item_code)]),
-        () => {
-            frappe.call({
-                method: 'erpnext.selling.doctype.sales_order.sales_order.make_purchase_order',
-                args: {
-                    source_name: so_name,
-                    selected_items: [{ item_code: item_code }]
-                },
-                freeze: true,
-                freeze_message: __('Creating Purchase Order…'),
-                callback: (r) => {
-                    if (!r.message) {
-                        frappe.msgprint(__('Could not build a Purchase Order for {0}. Check that it is a purchase item with a pending quantity.', [item_code]));
-                        return;
-                    }
-                    frappe.model.sync(r.message);
-                    frappe.set_route('Form', r.message.doctype, r.message.name);
-                }
+    frappe.call({
+        method: 'erpnext.selling.doctype.sales_order.sales_order.make_purchase_order',
+        args: {
+            source_name: so_name,
+            selected_items: [{ item_code: item_code }]
+        },
+        freeze: true,
+        freeze_message: __('Creating Purchase Order…'),
+        callback: (r) => {
+            if (!r.message) {
+                frappe.msgprint(__('Could not build a Purchase Order for {0}. Check that it is a purchase item with a pending quantity.', [item_code]));
+                return;
+            }
+            const doc = frappe.model.sync(r.message)[0];
+            so_show_mapped_doc_preview(doc, {
+                preview_title: __('Review Purchase Order'),
+                confirm_label: __('Create Purchase Order')
             });
         }
-    );
+    });
 }
 
 /**
@@ -3157,6 +3274,8 @@ function show_bulk_dn_si_modal(frm, submitted_pls, doctype, already_processed_co
                         callback: (r) => {
                             if (!r.message) return;
                             frappe.model.sync(r.message);
+                            // Unsaved draft — a new tab has no access to this tab's
+                            // client-side cache and would render blank.
                             frappe.set_route('Form', r.message.doctype, r.message.name);
                         }
                     });

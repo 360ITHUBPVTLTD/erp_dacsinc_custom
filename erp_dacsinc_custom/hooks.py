@@ -33,7 +33,7 @@ app_include_js = [
 
 app_include_css = [
     "/assets/erp_dacsinc_custom/style.css?v=1.0.4",
-    "/assets/erp_dacsinc_custom/css/order_flow.css?v=1.0.6"
+    "/assets/erp_dacsinc_custom/css/order_flow.css?v=1.0.8"
 ]
 
 # include js, css files in header of web template

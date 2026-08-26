@@ -1260,19 +1260,15 @@ def get_pending_so_with_material_stock(is_subcontracted=False):
     if is_subcontracted:
         condition = "AND soi.bom_no IS NOT NULL AND soi.bom_no != ''"
     else:
-        # Hard block, no override: a BOM/manufactured item must never be
-        # offered as a plain buy-out, even when THIS row's own bom_no is
-        # blank — a known duplicate-row data issue lets the exact same
-        # item_code appear twice on one Sales Order, once correctly tagged
-        # with a BOM and once without. Excluding by sibling row, not just
-        # this row's own bom_no, closes that gap: if ANY row for this
-        # (parent, item_code) has a BOM, none of them are plain-buy items.
-        condition = """AND (soi.bom_no IS NULL OR soi.bom_no = '')
-            AND NOT EXISTS (
-                SELECT 1 FROM `tabSales Order Item` soi_bom
-                WHERE soi_bom.parent = soi.parent AND soi_bom.item_code = soi.item_code
-                  AND soi_bom.bom_no IS NOT NULL AND soi_bom.bom_no != ''
-            )"""
+        # A single item_code can carry more than one Sales Order Item row on
+        # the same order — one line built against a BOM, another line for the
+        # same item bought as-is — and each row's OWN bom_no is what decides
+        # which path it belongs to, never a sibling row's. Previously any row
+        # was excluded from the plain-buy fetch if ANY other row for the same
+        # (parent, item_code) had a BOM, which hid a genuinely non-BOM row
+        # from Purchase/Material Request planning whenever a BOM-tagged
+        # sibling row existed for the same item.
+        condition = "AND (soi.bom_no IS NULL OR soi.bom_no = '')"
 
     # --- 1. Fetch Sales Order Lines ---
     pending_orders = frappe.db.sql(f"""
@@ -1312,16 +1308,41 @@ def get_pending_so_with_material_stock(is_subcontracted=False):
     """, {"items": items}, as_dict=True)
 
     # --- 3. FETCH ALL PICK LIST DATA IN ONE GO ---
+    # Row-level detail, not a pre-summed total — a single (Sales Order, item)
+    # pool used to be handed out to sibling lines by a running tracker below,
+    # which silently credited a bom-tagged line's own already-DELIVERED pick
+    # to a completely different, non-BOM line for the same item on the same
+    # order (exposed once such a non-BOM line stopped being excluded from
+    # this dialog entirely — see get_pending_so_with_material_stock's BOM
+    # condition above). sales_order_item/picked_qty/delivered_qty let each
+    # pending row claim only its OWN pick, and only the still-undelivered
+    # remainder of it — once delivered, that stock has already left the
+    # warehouse and is no longer available to offset anything.
     pick_data_raw = frappe.db.sql("""
-        SELECT pli.sales_order, pli.item_code, SUM(pli.qty) as total_qty, pl.docstatus 
+        SELECT pli.sales_order, pli.item_code, pli.sales_order_item,
+               pli.qty, pli.picked_qty, IFNULL(pli.delivered_qty, 0) AS delivered_qty,
+               pl.docstatus, pl.status AS pl_status
         FROM `tabPick List Item` pli JOIN `tabPick List` pl ON pl.name = pli.parent
         WHERE pli.item_code IN %s AND pl.docstatus != 2
-        GROUP BY pli.sales_order, pli.item_code, pl.docstatus
     """, (items,), as_dict=True)
 
-    pick_bank = defaultdict(float)
     for p in pick_data_raw:
-        pick_bank[(p.sales_order, p.item_code, p.docstatus)] = flt(p.total_qty)
+        if p.pl_status == "Completed":
+            p.delivered_qty = p.picked_qty
+
+    pick_rows_by_so_item = defaultdict(list)
+    for p in pick_data_raw:
+        pick_rows_by_so_item[(p.sales_order, p.item_code)].append(p)
+
+    # The same item_code can appear on more than one line of the same Sales
+    # Order (one line built against a BOM, another bought as-is) — only when
+    # that's genuinely the case is a pick scoped down to its own
+    # sales_order_item; a single-line item still claims the whole (SO, item)
+    # pool, so a Pick List whose sales_order_item link happens to be missing
+    # (an older/manually-created pick) is never silently dropped.
+    rows_per_so_item = defaultdict(set)
+    for r in pending_orders:
+        rows_per_so_item[(r.sales_order, r.item_code)].add(r.so_row_name)
 
     # Indexed once by item_code so the per-row "this SO's POs" / "other SOs'
     # POs" split below scans only the (typically small) list of POs for THAT
@@ -1335,28 +1356,30 @@ def get_pending_so_with_material_stock(is_subcontracted=False):
     final_rows = []
 
     so_linked_po_tracker = defaultdict(float)
-    so_pick_sub_tracker = defaultdict(float)
-    so_pick_draft_tracker = defaultdict(float)
     rm_bom_cache = {}
 
     for row in pending_orders:
         it, so = row.item_code, row.sales_order
         req = flt(row.qty) - flt(row.delivered_qty)
-        
+
         # --- A. PICKS LOGIC ---
-        total_sub_avail = pick_bank.get((so, it, 1), 0.0)
-        already_used_sub = so_pick_sub_tracker[(so, it)]
-        pick_sub_for_this_row = min(req, max(0, total_sub_avail - already_used_sub))
+        all_picks = pick_rows_by_so_item.get((so, it), [])
+        if len(rows_per_so_item[(so, it)]) > 1:
+            scoped_picks = [p for p in all_picks if not p.sales_order_item or p.sales_order_item == row.so_row_name]
+        else:
+            scoped_picks = all_picks
+
+        pick_sub_for_this_row = min(req, sum(
+            max(0, flt(p.picked_qty) - flt(p.delivered_qty)) for p in scoped_picks if p.docstatus == 1
+        ))
         row["pick_sub"] = pick_sub_for_this_row
-        so_pick_sub_tracker[(so, it)] += pick_sub_for_this_row
 
         rem_after_sub = max(0, req - pick_sub_for_this_row)
-        total_draft_avail = pick_bank.get((so, it, 0), 0.0)
-        already_used_draft = so_pick_draft_tracker[(so, it)]
-        pick_draft_for_this_row = min(rem_after_sub, max(0, total_draft_avail - already_used_draft))
+        pick_draft_for_this_row = min(rem_after_sub, sum(
+            flt(p.qty) for p in scoped_picks if p.docstatus == 0
+        ))
         row["pick_draft"] = pick_draft_for_this_row
-        so_pick_draft_tracker[(so, it)] += pick_draft_for_this_row
-        
+
         rem_after_all_picks = max(0, req - pick_sub_for_this_row - pick_draft_for_this_row)
 
         # --- B. DISTRIBUTE LINKED POs ---
@@ -2415,23 +2438,29 @@ def get_required_raw_materials_for_po(purchase_order_name):
     # Target warehouse specified by the user
     target_warehouse = "VV Puram - IND"
 
-    fg_requirements = defaultdict(float)
-    for item in po.items:
-        if item.fg_item and item.fg_item_qty > 0:
-            fg_requirements[item.fg_item] += flt(item.fg_item_qty)
-    
-    if not fg_requirements:
+    # Explode RM demand per PO Item row, not per fg_item code — the same
+    # Finished Good can appear on this PO more than once against DIFFERENT
+    # BOMs (an item can have several BOMs; whichever one was actually chosen
+    # on the source Sales Order Item row is what this PO Item's own `bom`
+    # field was stamped with — see validate_and_get_items_for_po). Grouping
+    # by fg_item first and resolving one BOM per group would silently use
+    # only one of those BOMs — usually the Item's current default — for
+    # every row, ignoring whichever BOM the other row(s) actually chose.
+    if not any(item.fg_item and flt(item.fg_item_qty) > 0 for item in po.items):
         return []
 
     rm_requirements = defaultdict(float)
-    for fg_item_code, total_fg_qty in fg_requirements.items():
-        default_bom = frappe.db.get_value("Item", fg_item_code, "default_bom")
-        if not default_bom:
-            frappe.throw(_("Please set a default BOM for Finished Good: {0}").format(fg_item_code))
-        
-        bom_items = frappe.get_all("BOM Item", filters={"parent": default_bom}, fields=["item_code", "qty"])
+    for item in po.items:
+        if not (item.fg_item and flt(item.fg_item_qty) > 0):
+            continue
+
+        bom_name = item.bom or frappe.db.get_value("Item", item.fg_item, "default_bom")
+        if not bom_name:
+            frappe.throw(_("Please set a BOM for Finished Good: {0}").format(item.fg_item))
+
+        bom_items = frappe.get_all("BOM Item", filters={"parent": bom_name}, fields=["item_code", "qty"])
         for bom_item in bom_items:
-            required_qty = flt(bom_item.qty) * flt(total_fg_qty)
+            required_qty = flt(bom_item.qty) * flt(item.fg_item_qty)
             rm_requirements[bom_item.item_code] += required_qty
             
     results = []
