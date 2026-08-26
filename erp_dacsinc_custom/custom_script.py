@@ -2564,13 +2564,20 @@ def get_item_stock_details_bulk(item_bom_pairs, sales_order_name):
         row_sis = [s for s in si_items if s.sales_order_item in so_item_names]
         
         # 3. Physical Stock (tabBin)
+        # "Available Stock" — and everything it feeds (fg_shortfall, the RM
+        # Pipeline's "Needed"/Coverage/Status) — counts only the main stock
+        # warehouse: stock sitting in other locations (POS counters, other
+        # stores) isn't actually available to fulfill or produce this order.
+        # warehouse_stock itself still carries every warehouse, unfiltered,
+        # so the UI's "View" breakdown can keep showing where else it sits.
+        main_warehouse = "VV Puram - IND"
         warehouse_stock = frappe.db.sql("""
-            SELECT warehouse, actual_qty 
-            FROM `tabBin` 
+            SELECT warehouse, actual_qty
+            FROM `tabBin`
             WHERE item_code = %s AND actual_qty > 0
             ORDER BY actual_qty DESC
         """, item_code, as_dict=1)
-        total_available_stock = sum(flt(w.actual_qty) for w in warehouse_stock)
+        total_available_stock = sum(flt(w.actual_qty) for w in warehouse_stock if w.warehouse == main_warehouse)
 
         # 4. Receipt History
         # ------------- MODIFICATION STARTS HERE (Receipt History) ------------------
@@ -3226,6 +3233,7 @@ def get_item_stock_details_bulk(item_bom_pairs, sales_order_name):
                         #   ship — exactly the wrong signal.
                         "rm_needed_for_shortfall": fg_shortfall * qty_per_fg,
                         "rm_required_total": required_qty * qty_per_fg, "rm_available_stock": 0,
+                        "rm_stock_breakdown": [],
                         "rm_pending_so_linked_total": 0, "rm_pending_mr_total": 0,
                         "rm_shortfall_total": 0,
                         "po_documents": [], "mr_documents": []
@@ -3257,10 +3265,18 @@ def get_item_stock_details_bulk(item_bom_pairs, sales_order_name):
                 #     rm_procurement_status["rm_items_status"].append(rm)
                 # ... (previous code in the bom_no block)
                 if rm_codes:
-                    # 1. Physical Stock (Bin)
-                    stock_data = frappe.db.sql("""SELECT item_code, SUM(actual_qty) as qty FROM `tabBin` WHERE item_code IN %s AND actual_qty > 0 GROUP BY item_code""", (tuple(rm_codes),), as_dict=1)
+                    # 1. Physical Stock (Bin) — same main-warehouse scoping as
+                    # the FG stock above (see main_warehouse note there); the
+                    # unfiltered per-warehouse rows are kept as rm_stock_breakdown
+                    # so the UI can still show where else an RM sits.
+                    stock_data = frappe.db.sql("""SELECT item_code, SUM(actual_qty) as qty FROM `tabBin` WHERE item_code IN %s AND actual_qty > 0 AND warehouse = %s GROUP BY item_code""", (tuple(rm_codes), main_warehouse), as_dict=1)
                     for s in stock_data:
                         if s.item_code in rm_map: rm_map[s.item_code]["rm_available_stock"] = flt(s.qty)
+
+                    all_wh_stock_data = frappe.db.sql("""SELECT item_code, warehouse, actual_qty FROM `tabBin` WHERE item_code IN %s AND actual_qty > 0 ORDER BY actual_qty DESC""", (tuple(rm_codes),), as_dict=1)
+                    for s in all_wh_stock_data:
+                        if s.item_code in rm_map:
+                            rm_map[s.item_code]["rm_stock_breakdown"].append({"warehouse": s.warehouse, "actual_qty": flt(s.actual_qty)})
                     
                     # 2. Material Requests (MR) linked to this SO
                     mr_data = frappe.db.sql("""
@@ -4026,13 +4042,13 @@ def create_pick_list_for_items(sales_order, items=None):
 def check_bom_raw_materials_in_stock(bom_no, qty_needed, bom_cache=None):
     """
     True only if every raw material in `bom_no` has enough qty physically in
-    tabBin (actual_qty, summed across warehouses — the same measure already
-    used as rm_available_stock in get_item_stock_details_bulk) to cover
-    `qty_needed` units of the finished good. A pending Material Request or
-    Purchase Order for the shortfall does NOT count as fulfilled here — only
-    stock actually on hand right now. This is the one place the "physically
-    in stock" rule lives; every PO-creation guard for a BOM item reuses it so
-    the same Sales Order Item reads the same way everywhere.
+    tabBin at the main stock warehouse (VV Puram - IND — same scoping, and
+    the same measure, as rm_available_stock in get_item_stock_details_bulk)
+    to cover `qty_needed` units of the finished good. A pending Material
+    Request or Purchase Order for the shortfall does NOT count as fulfilled
+    here — only stock actually on hand right now. This is the one place the
+    "physically in stock" rule lives; every PO-creation guard for a BOM item
+    reuses it so the same Sales Order Item reads the same way everywhere.
 
     Returns (is_fulfilled, shortages) where shortages is a list of
     {"item_code", "item_name", "uom", "required_qty", "available_qty"} for
@@ -4062,8 +4078,8 @@ def check_bom_raw_materials_in_stock(bom_no, qty_needed, bom_cache=None):
         if rm_codes:
             for s in frappe.db.sql("""
                 SELECT item_code, SUM(actual_qty) as qty FROM `tabBin`
-                WHERE item_code IN %s AND actual_qty > 0 GROUP BY item_code
-            """, (tuple(rm_codes),), as_dict=1):
+                WHERE item_code IN %s AND actual_qty > 0 AND warehouse = %s GROUP BY item_code
+            """, (tuple(rm_codes), "VV Puram - IND"), as_dict=1):
                 stock_map[s.item_code] = flt(s.qty)
 
         rm_lines = []

@@ -214,14 +214,31 @@ def validate_and_get_items_for_po(selected_items, is_subcontracted=0):
 
         sales_order = entry.get("salesOrder")
         item_code = entry.get("itemCode") or entry.get("item_code")
+        so_row_name = entry.get("soRowName")
 
         # ── Basic SO item validation ──
-        so_item = frappe.db.get_value(
-            "Sales Order Item",
-            {"parent": sales_order, "item_code": item_code},
-            ["name", "qty", "delivered_qty"],
-            as_dict=True,
-        )
+        # The same item_code can legitimately appear twice on one Sales
+        # Order — once with a BOM, once without (a known, intentional data
+        # pattern for this business, not an error). Filtering by (parent,
+        # item_code) alone can't tell those two rows apart and may silently
+        # grab either one; so_row_name (the exact Sales Order Item name,
+        # sent by the dialog that already knows which specific row the user
+        # ticked) removes that ambiguity. Falls back to the old lookup only
+        # for any other caller that doesn't have a row name to give us.
+        if so_row_name:
+            so_item = frappe.db.get_value(
+                "Sales Order Item",
+                {"name": so_row_name, "parent": sales_order, "item_code": item_code},
+                ["name", "qty", "delivered_qty", "bom_no"],
+                as_dict=True,
+            )
+        else:
+            so_item = frappe.db.get_value(
+                "Sales Order Item",
+                {"parent": sales_order, "item_code": item_code},
+                ["name", "qty", "delivered_qty", "bom_no"],
+                as_dict=True,
+            )
 
         if not so_item:
             rejected_items.append({
@@ -296,18 +313,32 @@ def validate_and_get_items_for_po(selected_items, is_subcontracted=0):
 
         # ── Normal procurement path ───────────────────────────────────
         else:
-            # Hard block, no override: this dialog's own row is already
-            # excluded when a sibling row has a bom_no (see
-            # get_pending_so_with_material_stock), but re-check here too so
-            # a bypassed/stale row (or a direct API call) still can't slip a
-            # BOM/manufactured item through as a plain buy-out — it must go
-            # out as a Subcontract PO instead.
-            has_bom_sibling = frappe.db.sql("""
-                SELECT 1 FROM `tabSales Order Item`
-                WHERE parent=%s AND item_code=%s AND bom_no IS NOT NULL AND bom_no != ''
-                LIMIT 1
-            """, (sales_order, item_code))
-            if has_bom_sibling:
+            # Hard block, no override: get_pending_so_with_material_stock
+            # already excludes any row whose OWN bom_no is set from this
+            # dialog, but re-check here too so a bypassed/stale row (or a
+            # direct API call) still can't slip a BOM/manufactured item
+            # through as a plain buy-out.
+            #
+            # Scoped to THIS row's own bom_no (so_item was fetched by exact
+            # so_row_name above, when the caller sent one) rather than "does
+            # ANY sibling row for this item_code carry a BOM" — the same
+            # item_code can legitimately appear twice on one Sales Order,
+            # once with a BOM and once without, and the old sibling-wide
+            # check rejected the genuinely non-BOM row just because its
+            # BOM'd sibling existed elsewhere on the same order.
+            if so_row_name:
+                row_has_bom = bool(so_item.bom_no)
+            else:
+                # No exact row to check against — fall back to the older,
+                # more conservative sibling check rather than risk letting
+                # a BOM item through when we can't tell which row this is.
+                row_has_bom = bool(frappe.db.sql("""
+                    SELECT 1 FROM `tabSales Order Item`
+                    WHERE parent=%s AND item_code=%s AND bom_no IS NOT NULL AND bom_no != ''
+                    LIMIT 1
+                """, (sales_order, item_code)))
+
+            if row_has_bom:
                 rejected_items.append({
                     "sales_order": sales_order,
                     "item_name": entry.get("itemName", item_code),
@@ -1451,11 +1482,14 @@ def get_pending_so_with_material_stock(is_subcontracted=False):
     # each, instead of one Bin lookup and one Pick List query per unique
     # item — with many distinct items across many pending orders this was a
     # pair of round-trips per item instead of a pair for the whole dialog.
+    # "Available" is scoped to the main stock warehouse (VV Puram - IND) —
+    # stock sitting in other warehouses (POS counters, other stores) isn't
+    # actually available for fulfillment/procurement decisions here.
     summary_items = tuple(item_summaries.keys()) or ("",)
     summary_bin_rows = frappe.db.sql("""
         SELECT item_code, SUM(actual_qty) as actual_qty FROM `tabBin`
-        WHERE item_code IN %s GROUP BY item_code
-    """, (summary_items,), as_dict=True)
+        WHERE item_code IN %s AND warehouse = %s GROUP BY item_code
+    """, (summary_items, "VV Puram - IND"), as_dict=True)
     summary_avail_map = {r.item_code: flt(r.actual_qty) for r in summary_bin_rows}
 
     summary_pick_rows = frappe.db.sql("""
@@ -1488,7 +1522,8 @@ def get_item_details_for_po(item_code, uom=None):
     if not item_code: return {}
     details = frappe.db.get_value(
         "Item", item_code,
-        ["purchase_uom", "stock_uom", "description", "item_name", "last_purchase_rate", "valuation_rate"],
+        ["purchase_uom", "stock_uom", "description", "item_name", "last_purchase_rate",
+         "valuation_rate", "gst_hsn_code"],
         as_dict=True,
     )
     if not details: return {}
@@ -1500,14 +1535,50 @@ def get_item_details_for_po(item_code, uom=None):
         factor = 1.0
     else:
         factor = flt(frappe.db.get_value("UOM Conversion Detail", {"parent": item_code, "uom": uom}, "conversion_factor")) or 1.0
+
     # A grid row added by script (rather than typed in by hand) never runs
-    # ERPNext's own item_code trigger, so nothing populates rate on its own —
-    # falling back through last purchase rate, then valuation, keeps the row
-    # from landing on a bare 0 that a human would never actually save.
-    rate = flt(details.last_purchase_rate) or flt(details.valuation_rate) or 0
+    # ERPNext's own item_code trigger, so nothing populates rate on its own.
+    # The correct source is the system's standard Buying Price List (Buying
+    # Settings) — same lookup a human typing this item_code into a PO row
+    # gets via ERPNext's own get_item_details — not an arbitrary historical
+    # last_purchase_rate, which can reflect a one-off or outdated purchase.
+    # Only fall back to last purchase rate / valuation rate when the Buying
+    # Price List genuinely has nothing usable for this item (no row, or a
+    # blank/zero entry) — same reasoning as before, a script-added row
+    # should never land on a bare, unexplained 0.
+    from erpnext.stock.get_item_details import get_item_price
+    from frappe.utils import nowdate
+
+    buying_price_list = frappe.db.get_single_value("Buying Settings", "buying_price_list")
+    price_list_rate = 0
+    if buying_price_list:
+        # ignore_party=True: this helper has no customer/supplier context to
+        # offer, so go straight for the general (party-less) Item Price row
+        # rather than get_price_list_rate_for's default path, which — with
+        # no `qty` passed — silently drops even a matching general-price row.
+        price_rows = get_item_price(
+            frappe._dict({
+                "price_list": buying_price_list,
+                "uom": uom,
+                "transaction_date": nowdate(),
+            }),
+            item_code,
+            ignore_party=True,
+        )
+        if price_rows:
+            row_rate, row_uom = flt(price_rows[0][1]), price_rows[0][2]
+            price_list_rate = row_rate if row_uom == uom else row_rate * factor
+
+    rate = price_list_rate or flt(details.last_purchase_rate) or flt(details.valuation_rate) or 0
     return {
         "uom": uom, "stock_uom": details.stock_uom, "description": details.description,
         "item_name": details.item_name, "conversion_factor": factor, "rate": rate,
+        "price_list_rate": price_list_rate,
+        # gst_hsn_code is a fetch_from field (item_code.gst_hsn_code) — that
+        # copy only ever fires from the actual Link field's UI control, never
+        # from a script-added row (frm.add_child / frappe.model.set_value),
+        # so a script-added row must carry it explicitly or it stays blank.
+        "gst_hsn_code": details.gst_hsn_code,
     }
 
 
@@ -1547,6 +1618,8 @@ def build_rm_purchase_rows(rows):
             "conversion_factor": flt(details.get("conversion_factor")) or 1.0,
             "rate": rate,
             "amount": rate * qty,
+            "price_list_rate": flt(details.get("price_list_rate")),
+            "gst_hsn_code": details.get("gst_hsn_code"),
             "schedule_date": nowdate(),
         })
 
@@ -1844,13 +1917,16 @@ def get_pending_so_with_raw_materials_summary():
     if all_material_codes:
         # A. Get Physical Actual Stock (In Bin)
         # -------------------------------------
+        # Scoped to the main stock warehouse (VV Puram - IND) — stock in
+        # other warehouses (POS counters, other stores) isn't actually
+        # available for fulfillment/procurement decisions here.
         bin_data = frappe.db.sql("""
             SELECT b.item_code, SUM(COALESCE(b.actual_qty, 0) - COALESCE(b.reserved_qty, 0)) as free_qty
-            FROM `tabBin` b 
+            FROM `tabBin` b
             JOIN `tabWarehouse` w ON b.warehouse = w.name
-            WHERE b.item_code IN %s AND w.company = %s 
+            WHERE b.item_code IN %s AND w.company = %s AND b.warehouse = %s
             GROUP BY b.item_code
-        """, (all_material_codes, company), as_dict=True)
+        """, (all_material_codes, company, "VV Puram - IND"), as_dict=True)
         stock_map = {r['item_code']: max(0, flt(r['free_qty'])) for r in bin_data}
 
         # B. Get Pending (Unreceived) Purchase Orders
@@ -2297,10 +2373,19 @@ def receive_panel_items(name, items_data, notes=""):
             for doc_item in doc.items:
                 if doc_item.name == row_input['name']:
                     # Add to existing. NOTE: Front end handles logic to send the DELTA (current input), not total.
-                    # Or simpler: Front end calculates total. 
+                    # Or simpler: Front end calculates total.
                     # Let's assume input is "Qty receiving NOW".
-                    
-                    doc_item.received_qty = (doc_item.received_qty or 0) + current_input_qty
+                    new_received_qty = (doc_item.received_qty or 0) + current_input_qty
+
+                    # Mirrors create_full_piece_receipt's own bound check —
+                    # without it, a partial receipt here can silently push
+                    # received_qty past ordered_qty with no error and no
+                    # way to undo it.
+                    if new_received_qty > doc_item.ordered_qty:
+                        frappe.throw(_("Cannot receive {0}. Max allowed is {1} for {2}").format(
+                            new_received_qty, doc_item.ordered_qty, doc_item.item_code))
+
+                    doc_item.received_qty = new_received_qty
                     updated_any = True
     
     if updated_any:
@@ -2701,33 +2786,6 @@ def create_material_request_for_shortage(purchase_order_name, materials_for_mr_c
 
     return {"mr_name": mr.name}
 
-@frappe.whitelist()
-def get_pending_sco_items(sco_name):
-    """
-    Gets items from a Subcontracting Order that are pending to be received.
-    """
-    sco = frappe.get_doc("Subcontracting Order", sco_name)
-    pending_items = []
-    for item in sco.items:
-        pending_qty = flt(item.qty) - flt(item.received_qty)
-        if pending_qty > 0:
-            pending_items.append({
-                "name": item.name, # Child Doc ID is important
-                "item_code": item.item_code,
-                "item_name": item.item_name,
-                "ordered_qty": item.qty,
-                "received_qty": item.received_qty,
-                "pending_qty": pending_qty,
-                
-                # --- THIS IS THE FIX ---
-                # The correct field name is 'stock_uom' not 'uom'
-                "uom": item.stock_uom
-            })
-    return pending_items
-
-
-
-
 # @frappe.whitelist()
 # def create_receipt_documents(sco_name, items_to_receive):
 #     """
@@ -2788,14 +2846,43 @@ def get_pending_sco_items(sco_name):
 
 
 
+def _get_extra_collected_qty_map(po_name):
+    """Extra FG already collected beyond the normal SCR flow, via the
+    over-collection side-channel in create_receipt_documents (a Stock Entry
+    tagged custom_extra_fg_collect_from_jobbers=1 / custom_reference_id=PO).
+    That Stock Entry never touches Subcontracting Order Item.received_qty
+    (only a submitted Subcontracting Receipt does, through core ERPNext), so
+    anything enforcing the over-collection % cap must add this back in or
+    the cap resets every round, letting repeated "extra" receipts blow past
+    it indefinitely. Scoped to the PO (matching the side-channel's own
+    tagging) rather than the SCO, since one PO can have more than one SCO.
+    """
+    if not po_name:
+        return {}
+    rows = frappe.db.sql("""
+        SELECT sed.item_code, SUM(sed.qty) AS qty
+        FROM `tabStock Entry Detail` sed
+        INNER JOIN `tabStock Entry` se ON se.name = sed.parent
+        WHERE se.docstatus = 1
+          AND se.custom_extra_fg_collect_from_jobbers = 1
+          AND se.custom_reference_id = %s
+        GROUP BY sed.item_code
+    """, (po_name,), as_dict=True)
+    return {r.item_code: flt(r.qty) for r in rows}
+
+
 @frappe.whitelist()
 def get_pending_sco_items(sco_name):
     perc = frappe.get_single("Admin Settings").allow_over_collecting_of_fg or 0.0
     sco = frappe.get_doc("Subcontracting Order", sco_name)
+    extra_collected = _get_extra_collected_qty_map(sco.purchase_order)
     items = []
     for item in sco.items:
         ordered_qty = flt(item.qty)
-        received_qty = flt(item.received_qty)
+        # Effective received qty = normal SCR receipts (the DB field) + any
+        # extra already collected via the Stock Entry side-channel, which
+        # the DB field itself never reflects. See _get_extra_collected_qty_map.
+        received_qty = flt(item.received_qty) + extra_collected.get(item.item_code, 0)
         allowed_max = ordered_qty * (1 + perc / 100)
         if received_qty >= allowed_max:
             continue
@@ -2983,11 +3070,12 @@ def check_over_collection_limit(sco_name, items_to_receive_json):
     perc = flt(getattr(settings, 'allow_over_collecting_of_fg', 0.0))
     
     sco = frappe.get_doc("Subcontracting Order", sco_name)
-    
+    extra_collected = _get_extra_collected_qty_map(sco.purchase_order)
+
     over_items = []
     blocked_items = []
     has_extra = False
-    block_action = False 
+    block_action = False
 
     for req in items_to_receive:
         child_name = req.get("name")
@@ -2997,13 +3085,20 @@ def check_over_collection_limit(sco_name, items_to_receive_json):
         if not sco_item: continue
 
         ordered_qty = flt(sco_item.qty)
+        # Core received_qty (DB field, updated only by a submitted SCR) is
+        # what determines whether THIS request is "normal" vs "extra" — it
+        # must match get_qty_split's own boundary in create_receipt_documents.
+        # The % cap itself, though, has to include extras already collected
+        # via the Stock Entry side-channel (see _get_extra_collected_qty_map),
+        # or repeated "extra" receipts can blow past the cap every round.
         received_qty = flt(sco_item.received_qty)
-        
+        total_received_qty = received_qty + extra_collected.get(sco_item.item_code, 0)
+
         # Rounding Logic: Ceiling
         exact_max = ordered_qty * (1 + (perc / 100.0))
         rounded_max = math.ceil(exact_max)
-        
-        max_allowed_remaining = max(0, rounded_max - received_qty)
+
+        max_allowed_remaining = max(0, rounded_max - total_received_qty)
         pending_qty = max(0, ordered_qty - received_qty)
         extra_qty = requested_qty - pending_qty
 
@@ -5494,7 +5589,10 @@ def get_mr_suggestions_for_po():
             child.sales_order,
             so.customer_name AS customer_name,
             (child.qty - child.ordered_qty) AS pending_qty,
-            (SELECT actual_qty FROM `tabBin` WHERE item_code = child.item_code AND warehouse = child.warehouse) as available_qty
+            -- Pinned to the main stock warehouse (VV Puram - IND), not
+            -- child.warehouse — the MR line's own warehouse isn't reliably
+            -- the one "available stock" should be measured against here.
+            (SELECT actual_qty FROM `tabBin` WHERE item_code = child.item_code AND warehouse = 'VV Puram - IND') as available_qty
         FROM `tabMaterial Request Item` child
         INNER JOIN `tabMaterial Request` parent ON child.parent = parent.name
         LEFT JOIN `tabSales Order` so ON child.sales_order = so.name

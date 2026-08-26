@@ -969,7 +969,7 @@ function show_panel_process_dashboard(frm) {
                             res.message.items.forEach(i => {
                                 let ordered_qty = flt(i.ordered_qty, 2);
                                 let bal = flt(ordered_qty - flt(i.received_qty || 0, 2), 2);
-                                tbl += `<tr data-row="${i.name}"><td>${i.item_code}</td><td class="text-right">${ordered_qty}</td><td class="text-right">${bal}</td><td><input type="number" class="form-control form-control-sm i-q text-right" value="${bal}" ${bal <= 0 ? 'disabled' : ''}></td></tr>`;
+                                tbl += `<tr data-row="${i.name}"><td>${i.item_code}</td><td class="text-right">${ordered_qty}</td><td class="text-right">${bal}</td><td><input type="number" class="form-control form-control-sm i-q text-right" value="${bal}" min="0" max="${bal}" data-max="${bal}" ${bal <= 0 ? 'disabled' : ''}></td></tr>`;
                             });
                             tbl += `</tbody></table>`;
                             const rx_dlg = new frappe.ui.Dialog({
@@ -977,10 +977,25 @@ function show_panel_process_dashboard(frm) {
                                 fields: [{ fieldtype: 'HTML', options: tbl }, { label: 'Note', fieldname: 'n', fieldtype: 'Small Text' }],
                                 primary_action: (v) => {
                                     let dt = [];
+                                    let has_error = false;
                                     rx_dlg.$wrapper.find('tbody tr').each(function () {
-                                        let q = parseFloat($(this).find('.i-q').val()) || 0;
+                                        let $input = $(this).find('.i-q');
+                                        let q = parseFloat($input.val()) || 0;
+                                        let max = parseFloat($input.data('max'));
+
+                                        if (q < 0 || q > max) {
+                                            has_error = true;
+                                            $input.addClass('is-invalid');
+                                        } else {
+                                            $input.removeClass('is-invalid');
+                                        }
+
                                         if (q > 0) dt.push({ name: $(this).data('row'), qty: q });
                                     });
+                                    if (has_error) {
+                                        frappe.msgprint(__('Please fix the quantities in red — they exceed the balance available to receive.'));
+                                        return;
+                                    }
                                     if (!dt.length) return;
                                     frappe.call({
                                         method: "erp_dacsinc_custom.purchase_order.receive_panel_items",
@@ -1175,7 +1190,7 @@ function show_sales_order_dialog(frm, data, is_subcontracted) {
             <tr data-search-context="${`${so.sales_order} ${so.item_code} ${so.customer || ''} ${so.customer_name || ''} `.toLowerCase()}">
                 <td class="text-center align-middle">
                     <input type="checkbox" class="row-selector" 
-                    data-so="${so.sales_order}" data-item="${so.item_code}" data-max="${to_buy}" data-bom="${so.bom || ''}" 
+                    data-so="${so.sales_order}" data-item="${so.item_code}" data-max="${to_buy}" data-bom="${so.bom || ''}" data-so-row="${so.so_row_name || ''}"
                     ${isDisabled ? 'disabled' : ''} style="transform: scale(1.2);">
                 </td>
                 <td>
@@ -1252,6 +1267,8 @@ function show_sales_order_dialog(frm, data, is_subcontracted) {
                     selected_rows.push({
                         salesOrder: $(this).data("so"),       // consistent casing
                         itemCode: $(this).data("item"),
+                        soRowName: $(this).data("so-row") || "", // exact Sales Order Item row — disambiguates
+                                                                  // a BOM/non-BOM duplicate pair for the same item_code
                         pendingQty: qty,                      // match backend expectation
                         bom_no: $(this).data("bom") || "", // or bom
                         itemName: $row.find(".item-code-main").text().trim() // optional but helpful for rejection messages
@@ -1296,6 +1313,15 @@ function show_sales_order_dialog(frm, data, is_subcontracted) {
                     });
 
                     frm.refresh_field("items");
+
+                    // Rows added via add_child never run ERPNext's own
+                    // qty/rate change triggers, so base_rate/base_amount
+                    // (mandatory core fields, derived from rate/amount ×
+                    // conversion_rate) are never populated — Save then
+                    // fails with "Missing Fields: Rate (INR), Amount (INR)"
+                    // even though rate/amount visibly show a value.
+                    frm.cscript.calculate_taxes_and_totals();
+
                     frappe.show_alert({ message: __("{0} item(s) added", [r.message.valid_items.length]), indicator: "green" });
                 }
             });
@@ -1706,6 +1732,16 @@ function show_so_selection_and_rm_purchase_dialog(frm, sales_orders) {
 
                     frm.refresh_field("items");
                     if (has_breakdown) frm.refresh_field("custom_rm_source_breakdown");
+
+                    // Rows added via add_child never run ERPNext's own
+                    // qty/rate change triggers, so base_rate/base_amount
+                    // (and the grand total) are never derived from the
+                    // rate/amount we just set — both stay blank, and
+                    // base_rate/base_amount are mandatory core fields, so
+                    // Save fails with "Missing Fields: Rate (INR), Amount
+                    // (INR)" even though rate/amount visibly show a value.
+                    frm.cscript.calculate_taxes_and_totals();
+
                     dialog.hide();
                 }
             });
@@ -2129,33 +2165,6 @@ function show_receive_items_dialog(frm, sco_name) {
                 }
             });
             dialog.show();
-        }
-    });
-}
-
-function call_create_receipts(sco_name, items_to_receive, dialog) {
-    frappe.call({
-        method: "erp_dacsinc_custom.purchase_order.create_receipt_documents",
-        args: {
-            sco_name: sco_name,
-            items_to_receive: JSON.stringify(items_to_receive)
-        },
-        freeze: true,
-        freeze_message: __("Creating Purchase Receipts"),
-        callback: function (r) {
-            if (r.message && r.message.pr_name && r.message.scr_name) {
-                dialog.hide();
-
-                frappe.show_alert({
-                    message: __("Successfully Created:<br>• {0} (Subcon Receipt)<br>• {1} (Purchase Receipt)",
-                        [r.message.scr_name, r.message.pr_name]),
-                    indicator: 'green'
-                }, 7);
-
-                frm.refresh_field("custom_purchase_order_html");
-                frm.refresh();
-                render_linked_docs_html(frm, linked_subcontracting_docs)
-            }
         }
     });
 }
@@ -2613,17 +2622,41 @@ function submit_to_po(d, frm, data) {
 
     if (to_add.length === 0) return frappe.msgprint("Please select rows to process.");
 
-    frm.clear_table('items');
-    to_add.forEach(l => {
-        let child = frm.add_child('items');
-        frappe.model.set_value(child.doctype, child.name, 'item_code', l.item_code);
-        frappe.model.set_value(child.doctype, child.name, 'qty', l.qty);
-        frappe.model.set_value(child.doctype, child.name, 'warehouse', l.warehouse);
-        frappe.model.set_value(child.doctype, child.name, 'material_request', l.material_request);
-        frappe.model.set_value(child.doctype, child.name, 'material_request_item', l.material_request_item);
-        frappe.model.set_value(child.doctype, child.name, 'sales_order', l.sales_order);
-        frappe.model.set_value(child.doctype, child.name, 'description', l.description);
+    // A row built purely from add_child + frappe.model.set_value never runs
+    // ERPNext's own item_code trigger — no rate, no price_list_rate, no
+    // gst_hsn_code (that's a fetch_from field, and fetch_from only ever
+    // copies through the Link field's own UI control, never a scripted
+    // set_value). build_rm_purchase_rows is the same server-side fetch the
+    // other "fetch item" dialogs now use — call it here too so every row
+    // gets a real rate/price list rate/HSN code, then layer this dialog's
+    // own MR-tracing fields (warehouse, material_request, sales_order,
+    // Source Trace description) on top. Indices line up 1:1 with to_add
+    // since every entry here already has item_code and qty > 0 — nothing
+    // for build_rm_purchase_rows to skip.
+    frappe.call({
+        method: 'erp_dacsinc_custom.purchase_order.build_rm_purchase_rows',
+        args: { rows: JSON.stringify(to_add.map(l => ({ item_code: l.item_code, qty: l.qty, uom: l.uom }))) },
+        freeze: true,
+        freeze_message: __('Fetching item details…'),
+        callback: (r) => {
+            const built_rows = r.message || [];
+            if (!built_rows.length) {
+                frappe.msgprint(__('No valid rows to add.'));
+                return;
+            }
+            frm.clear_table('items');
+            built_rows.forEach((built, i) => {
+                const source = to_add[i] || {};
+                const row = frm.add_child('items', built);
+                row.warehouse = source.warehouse;
+                row.material_request = source.material_request;
+                row.material_request_item = source.material_request_item;
+                row.sales_order = source.sales_order;
+                row.description = source.description;
+            });
+            frm.refresh_field('items');
+            frm.cscript.calculate_taxes_and_totals();
+            d.hide();
+        }
     });
-    frm.refresh_field('items');
-    d.hide();
 }

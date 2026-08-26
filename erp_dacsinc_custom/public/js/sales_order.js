@@ -997,7 +997,7 @@ function generate_stock_overview_table(frm, callback) {
                 // The item name repeats the code in this dataset — only show it when it adds something.
                 const item_name = item.item_name || d.item_name || '';
                 const show_name = item_name && item_name !== item.item_code;
-                const rm_row_html = get_rm_breakdown_html(d, frm.doc.name, frm.doc.docstatus);
+                const rm_row_html = get_rm_breakdown_html(d, frm.doc.name, frm.doc.docstatus, pair_key);
 
                 // Rows with a Raw Material pipeline collapse by default; clicking
                 // anywhere on the row opens it.
@@ -1458,7 +1458,7 @@ function _build_incoming_html(item, d, pair_key) {
 //  SECTION 4: RM BREAKDOWN HTML
 // ================================================================
 
-function get_rm_breakdown_html(data, so_name, docstatus) {
+function get_rm_breakdown_html(data, so_name, docstatus, pair_key) {
     if (!data.is_bom_item) return '';
     const submitted = (docstatus === 1);
 
@@ -1530,7 +1530,15 @@ function get_rm_breakdown_html(data, so_name, docstatus) {
                         ? `<div class="so-micro" title="The full BOM requirement if this order's entire quantity were produced from scratch — this item's own finished-good stock/picks already reduce how much new production (and therefore raw material) is actually needed right now">Full Order: ${flt(item.rm_required_total || 0).toFixed(2)}</div>`
                         : ''}
                 </td>
-                <td>${so_qty(flt(item.rm_available_stock || 0).toFixed(2))}</td>
+                <td>
+                    ${so_qty(flt(item.rm_available_stock || 0).toFixed(2))}
+                    <div class="so-micro" title="Counted at VV Puram - IND only">at VV Puram - IND</div>
+                    ${(item.rm_stock_breakdown || []).length > 1 || ((item.rm_stock_breakdown || [])[0] || {}).warehouse !== 'VV Puram - IND'
+                        ? `<button class="so-btn so-btn--view" style="margin-top:2px;"
+                               onclick="show_details_modal('${js_str(pair_key)}','rm_stock_details','${js_str(item.rm_code)}')">
+                               <i class="fa fa-eye"></i> View</button>`
+                        : ''}
+                </td>
                 <td>${so_qty(flt(item.rm_pending_mr_total || 0).toFixed(2))}</td>
                 <td>${so_qty(flt(item.rm_pending_so_linked_total || 0).toFixed(2))}</td>
                 <td class="so-meta" style="max-width:180px; word-break:break-word;">
@@ -2497,9 +2505,10 @@ function create_pick_list_for_bulk(frm, items, total_qty) {
 /**
  * Generic detail modal — called from inline onclick buttons.
  * pair_key: the "ITEM_CODE||BOM" key of the cached row (a bare item_code also works).
- * type: 'stock_details' | 'incoming_docs' | 'picked'
+ * type: 'stock_details' | 'incoming_docs' | 'picked' | 'rm_stock_details'
+ * extra: for 'rm_stock_details', the raw material's item_code within this row's rm_items_status.
  */
-function show_details_modal(pair_key, type) {
+function show_details_modal(pair_key, type, extra) {
     const d = get_cached_stock_row(pair_key);
     if (!d) {
         frappe.msgprint(__('Stock data not loaded yet. Please refresh the table.'));
@@ -2832,6 +2841,30 @@ function show_details_modal(pair_key, type) {
                 ? `<p class="so-hint"><i class="fa fa-pencil"></i>
                  Edit a draft quantity above and hit Submit — no need to open the Pick List.</p>`
                 : '');
+
+    } else if (type === 'rm_stock_details') {
+        const rm_item = ((d.rm_procurement_status || {}).rm_items_status || []).find(r => r.rm_code === extra);
+        if (!rm_item) {
+            frappe.msgprint(__('Raw material stock data not loaded yet. Please refresh the table.'));
+            return;
+        }
+        const rm_heading = `${rm_item.rm_code}${rm_item.rm_name && rm_item.rm_name !== rm_item.rm_code ? ` — ${rm_item.rm_name}` : ''}`;
+        title = `Stock Details — ${rm_heading}`;
+
+        const wh_rows = (rm_item.rm_stock_breakdown || []).map(w => `
+            <tr>
+                <td>${link_id_name('Warehouse', w.warehouse)}</td>
+                <td>${so_qty(w.actual_qty, flt(w.actual_qty) > 0 ? 'pos' : null)}</td>
+            </tr>`).join('');
+
+        body_html = so_stats([
+            { label: 'Counted (VV Puram - IND)', value: flt(rm_item.rm_available_stock || 0), unit: rm_item.rm_uom }
+        ])
+            + so_section('Warehouse stock (all locations)', `
+            <table class="so-table">
+                <thead><tr><th>Warehouse</th><th>Qty</th></tr></thead>
+                <tbody>${wh_rows}</tbody>
+            </table>`, wh_rows, 'Only the VV Puram - IND row above counts toward this order\'s Raw Material calculations.');
     }
 
     so_open_modal(title, body_html);
