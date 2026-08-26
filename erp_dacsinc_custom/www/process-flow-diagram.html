@@ -1,0 +1,436 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Workflow Diagram — Dacsinc</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Newsreader:ital,wght@0,400;0,500;0,600;0,700;1,400;1,500&family=IBM+Plex+Mono:wght@400;500;600&display=swap">
+<style>
+  :root {
+    --ink: #211d1b;
+    --ink-soft: #4a4540;
+    --paper: #f1eee7;
+    --surface: #fbfaf7;
+    --line: #cfc8ba;
+    --line-soft: #e2ddd0;
+    --indigo: #2e3f6b;
+    --clay: #a9622f;
+    --pine: #3b5a4c;
+    --shadow: rgba(33, 29, 27, 0.08);
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --ink: #ece7de; --ink-soft: #b9b2a4; --paper: #1b1815; --surface: #242019;
+      --line: #4a423a; --line-soft: #332e27; --indigo: #8fa3d9; --clay: #d99a68;
+      --pine: #8bb39f; --shadow: rgba(0, 0, 0, 0.4);
+    }
+  }
+  :root[data-theme="dark"] {
+    --ink: #ece7de; --ink-soft: #b9b2a4; --paper: #1b1815; --surface: #242019;
+    --line: #4a423a; --line-soft: #332e27; --indigo: #8fa3d9; --clay: #d99a68;
+    --pine: #8bb39f; --shadow: rgba(0, 0, 0, 0.4);
+  }
+
+  * { box-sizing: border-box; }
+  html { background: var(--paper); }
+  body {
+    margin: 0; background: var(--paper); color: var(--ink);
+    font-family: "Newsreader", Georgia, serif;
+    font-size: 17px; line-height: 1.6; -webkit-font-smoothing: antialiased;
+  }
+  .mono { font-family: "IBM Plex Mono", "SF Mono", Consolas, monospace; }
+  a { color: var(--indigo); }
+
+  .topbar {
+    position: sticky; top: 0; z-index: 20;
+    display: flex; align-items: center; gap: 14px;
+    padding: 12px 24px; background: var(--paper);
+    border-bottom: 1px solid var(--line-soft);
+    font-family: "IBM Plex Mono", monospace; font-size: 12.5px; letter-spacing: .02em;
+  }
+  .topbar__mark { font-weight: 600; white-space: nowrap; }
+  .topbar__mark span { color: var(--clay); }
+  .topbar .back { margin-left: auto; }
+  .topbar .back a {
+    text-decoration: none; padding: 6px 12px; border-radius: 4px;
+    border: 1px solid var(--line); color: var(--ink-soft);
+  }
+  .topbar .back a:hover { background: var(--surface); color: var(--ink); }
+
+  .page { max-width: 1300px; margin: 0 auto; padding: 0 24px 90px; }
+
+  header.masthead { padding: 40px 0 24px; }
+  .eyebrow {
+    font-family: "IBM Plex Mono", monospace; font-size: 12px; letter-spacing: .09em;
+    text-transform: uppercase; color: var(--clay); margin: 0 0 12px;
+  }
+  h1.title {
+    font-size: clamp(1.9rem, 3.6vw, 2.5rem); font-weight: 600; line-height: 1.14;
+    margin: 0 0 14px; text-wrap: balance; max-width: 780px;
+  }
+  h1.title em { font-style: italic; color: var(--indigo); }
+  p.lede { color: var(--ink-soft); font-size: 1.08em; max-width: 720px; margin: 0 0 24px; }
+
+  .legend {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+    gap: 10px 20px;
+    background: var(--surface);
+    border: 1px solid var(--line-soft);
+    border-radius: 6px;
+    padding: 14px 20px;
+    margin: 0 0 28px;
+  }
+  .legend__item {
+    display: flex; align-items: center; gap: 9px;
+    font-family: "IBM Plex Mono", monospace; font-size: 11.5px; color: var(--ink-soft);
+  }
+  .legend__swatch { width: 14px; height: 14px; border-radius: 3px; flex: none; border: 1.4px solid; }
+  .sw-step { background: #fbfaf7; border-color: #b9b2a4; }
+  .sw-decision { background: transparent; border-color: #b8863b; transform: rotate(45deg); width: 10px; height: 10px; }
+  .sw-done { background: #e2ebe6; border-color: #4b7355; }
+  .sw-dead { background: #f2e5d9; border-color: #9c3f35; }
+  .sw-wait { background: #f6ebd3; border-color: #b8863b; }
+  .sw-crm { background: #e7eaf2; border-color: #2e3f6b; }
+  .sw-sales { background: #e2ebe6; border-color: #3b5a4c; }
+  .sw-purch { background: #f2e5d9; border-color: #a9622f; }
+
+  figure.plate {
+    margin: 0; background: #fbfaf7; border: 1.5px solid #cfc8ba; border-radius: 6px;
+    box-shadow: 0 1px 0 var(--shadow), 0 10px 26px -16px var(--shadow);
+    overflow: hidden;
+  }
+  .plate__label {
+    display: flex; justify-content: space-between; align-items: center;
+    padding: 10px 18px; border-bottom: 1px solid #e2ddd0;
+    font-family: "IBM Plex Mono", monospace; font-size: 11px; letter-spacing: .04em;
+    text-transform: uppercase; color: #4a4540; background: #f1eee7;
+  }
+  .plate__label b { color: #211d1b; font-weight: 600; }
+  .plate__body { padding: 26px 22px 20px; overflow-x: auto; color: #211d1b; }
+  .plate__body .mermaid { display: flex; justify-content: center; }
+  figcaption.plate__caption {
+    padding: 13px 18px 17px; border-top: 1px solid #e2ddd0; background: #f1eee7;
+    font-family: "Newsreader", serif; font-size: 14.5px; font-style: italic; color: #4a4540;
+  }
+
+  .loading { padding: 60px 20px; text-align: center; color: var(--ink-soft); font-family: "IBM Plex Mono", monospace; font-size: 13px; }
+
+  .downloads {
+    display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+    margin: 22px 0 10px;
+  }
+  .downloads__label {
+    font-family: "IBM Plex Mono", monospace; font-size: 12.5px; color: var(--ink-soft);
+  }
+  .btn-download {
+    font-family: "IBM Plex Mono", monospace; font-size: 12.5px; font-weight: 600;
+    letter-spacing: .02em; padding: 8px 16px; border-radius: 5px; cursor: pointer;
+    border: 1px solid var(--indigo); background: var(--indigo); color: #fbfaf7;
+  }
+  .btn-download:hover { opacity: .88; }
+  .btn-download--ghost { background: transparent; color: var(--indigo); }
+  .btn-download--ghost:hover { background: var(--indigo); color: #fbfaf7; opacity: 1; }
+
+  @media (max-width: 640px) {
+    .plate__body { padding: 18px 10px; }
+  }
+</style>
+</head>
+<body>
+
+<div class="topbar">
+  <span class="topbar__mark">WORKFLOW<span> · </span>DIAGRAM</span>
+  <span class="back"><a href="/process-flow">← Roles &amp; process reference</a></span>
+</div>
+
+<div class="page">
+
+  <header class="masthead">
+    <p class="eyebrow">erp_dacsinc_custom — order lifecycle</p>
+    <h1 class="title">The full order flow, one diagram: <em>CRM</em> to <em>Delivery</em> and beyond.</h1>
+    <p class="lede">Every box is a real stage, every arrow a real action, and every stage names who is responsible for it — the same roles as the process reference, laid out as one continuous flow for a client walkthrough.</p>
+  </header>
+
+  <div class="legend">
+    <div class="legend__item"><span class="legend__swatch sw-step"></span>process step</div>
+    <div class="legend__item"><span class="legend__swatch sw-decision"></span>decision point</div>
+    <div class="legend__item"><span class="legend__swatch sw-done"></span>complete</div>
+    <div class="legend__item"><span class="legend__swatch sw-dead"></span>rejected / lost</div>
+    <div class="legend__item"><span class="legend__swatch sw-wait"></span>waiting / outstanding</div>
+    <div class="legend__item"><span class="legend__swatch sw-crm"></span>CRM</div>
+    <div class="legend__item"><span class="legend__swatch sw-sales"></span>Sales</div>
+    <div class="legend__item"><span class="legend__swatch sw-purch"></span>Purchase</div>
+  </div>
+
+  <figure class="plate">
+    <div class="plate__label"><span><b>Full workflow</b> — CRM → Sales → Purchase → Sales</span><span>with role on every stage</span></div>
+    <div class="plate__body">
+      <div id="diagram-loading" class="loading">Rendering diagram…</div>
+      <pre class="mermaid" id="diagram-src" style="display:none">
+%%{init: {"flowchart":{"htmlLabels":false,"curve":"basis","rankSpacing":48,"nodeSpacing":30},"theme":"base","themeVariables":{"fontFamily":"IBM Plex Mono","fontSize":"14px","primaryColor":"#fbfaf7","primaryBorderColor":"#b9b2a4","primaryTextColor":"#211d1b","lineColor":"#211d1b","background":"#fbfaf7"}}}%%
+flowchart TD
+    classDef dead fill:#f2e5d9,stroke:#9c3f35,color:#4a201a
+    classDef done fill:#e2ebe6,stroke:#4b7355,color:#1c3327
+    classDef wait fill:#f6ebd3,stroke:#b8863b,color:#4a3813
+    classDef emph stroke-width:3px
+
+    subgraph CRM["CRM"]
+        L1["Lead Created<br/>— Marketing Team"]
+        L2["Schedule Follow-up<br/>— Marketing Team"]
+        L3{"Outcome?"}
+        LD1["Lost Enquiry"]:::dead
+        Q1["Create Quotation<br/>— Marketing / Inside Sales"]
+        Q2["Submit Quotation<br/>— Marketing / Inside Sales"]
+        L4["Lead → Pipeline"]
+        L5{"Outcome?"}
+        LD2["Lost Pipeline"]:::dead
+        M1["Move to Order<br/>— Marketing / Inside Sales"]
+        L6["Lead → Order · WON"]
+        C1{"Quotation<br/>on file?"}
+        C2["Convert to<br/>Business Contact"]
+        C3["Create Customer"]
+
+        L1 --> L2 --> L3
+        L3 -->|"Mark Lost"| LD1
+        L3 -->|"Ready to quote"| Q1
+        Q1 --> Q2 --> L4 --> L5
+        L5 -->|"Mark Lost"| LD2
+        L5 -->|"Deal won"| M1 --> L6
+        L6 --> C1
+        C1 -->|"No"| C2
+        C1 -->|"Yes"| C3
+    end
+
+    SO0["Create Sales Order<br/>— Merchandiser / Marketing / Inside Sales"]
+    L6 -->|"Create Sales Order"| SO0
+
+    subgraph SALES["SALES"]
+        D1["Draft"]
+        P1["Pending Merchandiser<br/>Approval"]
+        P2["Pending Final<br/>Approval"]
+        A1["Approved"]:::done
+        R1["Rejected"]:::dead
+        PL0["Pick List Drafted<br/>— automatic, one per line"]
+        ST1{"Stock?"}
+        RD["Ready to Pick"]
+        PS["Partial Stock"]
+        OOS["Out of Stock"]
+        PICK["Set Pick Qty<br/>— Merchandiser / Packing Executive"]
+        SUB["Submit Pick List<br/>— Merchandiser / Packing Executive"]
+        RL{"Route chosen<br/>for this order?"}
+        DNR["Delivery Note<br/>route"]
+        SIR["Direct-billing<br/>route"]
+        DN1["Create Delivery Note<br/>— Accounts / Inward Team"]:::emph
+        DN2["Submit Delivery Note<br/>— Accounts / Inward Team"]:::emph
+        SI1["Create Sales Invoice<br/>from DN — Accounts Team"]
+        SI2["Create Sales Invoice<br/>+ Update Stock — Accounts Team"]
+        SUBM["Submit Invoice<br/>— Accounts Team"]
+        PAID{"Paid?"}
+        DONE["Complete"]:::done
+        OUT["Outstanding"]:::wait
+        REOPEN["Pick List<br/>Reopens"]:::wait
+
+        D1 -->|"Submit for Approval<br/>— Merchandiser"| P1
+        D1 -->|"Reject"| R1
+        P1 -->|"Approve<br/>— Merchandiser"| P2
+        P1 -->|"Reject<br/>— Merchandiser"| R1
+        P2 -->|"Final Approve<br/>— Anuj Sir"| A1
+        P2 -->|"Reject<br/>— Anuj Sir"| R1
+        R1 -->|"Resubmit<br/>— Merchandiser"| P1
+        A1 --> PL0 --> ST1
+        ST1 -->|"Full"| RD
+        ST1 -->|"Partial,<br/>e.g. 5 of 10"| PS
+        ST1 -->|"None"| OOS
+        RD --> PICK
+        PS --> PICK
+        PICK -->|"Submit"| SUB --> RL
+        RL -->|"Choose DN"| DNR
+        RL -->|"Choose SI"| SIR
+        DNR -->|"Create"| DN1
+        DN1 -->|"Submit"| DN2
+        DN2 -->|"Create Invoice"| SI1
+        SIR -->|"Create"| SI2
+        SI1 --> SUBM
+        SI2 --> SUBM
+        SUBM -->|"Submit"| PAID
+        PAID -->|"Yes"| DONE
+        PAID -->|"Not yet"| OUT
+        SUBM -.->|"Cancel"| REOPEN
+        REOPEN -.-> SUB
+    end
+
+    SO0 --> D1
+    OOS -->|"Needs a<br/>purchase"| MRQ0
+
+    subgraph PURCHASE["PURCHASE"]
+        MRQ0{"This row<br/>has a BOM?"}
+        MR1["Create Material Request<br/>— Merchandiser / Production"]
+        PO1["Create PO — direct<br/>— Purchase Team"]
+        POA1["Approve PO<br/>— Purchase Manager / Anuj Sir"]
+        PR1["GRN / Purchase Receipt<br/>— Inward Team"]
+        BOMR{"In-house, or<br/>subcontract?"}
+        MR2["Create Material Request<br/>— RM — Merchandiser / Production"]
+        PO2["Create PO — RM<br/>— Purchase Team"]
+        POA2["Approve PO<br/>— Purchase Manager / Anuj Sir"]
+        PR2["GRN / Purchase Receipt<br/>— Inward Team"]
+        SPO["Create Subcontracting PO<br/>— Production Team"]
+        CHECK["Check RM Stock<br/>— Production Team"]
+        ENOUGH{"Enough<br/>RM?"}
+        MR3["Create Material Request<br/>— shortfall"]
+        SCO["Subcontracting Issue<br/>— Production Team"]
+        KIND{"Embroidery<br/>route?"}
+        P1e["Embroidery Issue<br/>— Panel — Production Team"]
+        P2e["Send to<br/>Panel Jobber"]
+        P3e["Embroidery Receipt<br/>— Inward Team"]
+        P4e["Close Job"]:::done
+        F1e["Embroidery Issue<br/>— Full Piece — Production Team"]
+        F2e["Embroidery Receipt<br/>— Inward Team"]:::done
+        U1e["Stock Transfer Out<br/>— Inward Team"]
+        U2e["Stock Transfer Back<br/>— Inward Team"]:::done
+        SCR["Subcontracting Receipt<br/>— Inward Team"]
+        BACK1["Stock<br/>Available"]:::done
+        PI["Create Purchase Invoice<br/>— Accounts Team"]
+        PAY{"Paid?"}
+        PDONE["Complete"]:::done
+        POUT["Outstanding"]:::wait
+
+        MRQ0 -->|"No"| MR1 --> PO1 --> POA1 --> PR1 --> BACK1
+        MRQ0 -->|"Yes,<br/>row's own BOM"| BOMR
+        BOMR -->|"In-house"| MR2 --> PO2 --> POA2 --> PR2 --> BACK1
+        BOMR -->|"Subcontract"| SPO --> CHECK --> ENOUGH
+        ENOUGH -->|"Short"| MR3
+        MR3 -.->|"Received"| CHECK
+        ENOUGH -->|"Enough"| SCO --> KIND
+        KIND -->|"Panel"| P1e --> P2e --> P3e --> P4e --> SCR
+        KIND -->|"Full piece"| F1e --> F2e --> SCR
+        KIND -->|"Plain transfer"| U1e --> U2e --> SCR
+        SCR --> BACK1
+        PO1 --> PI
+        PO2 --> PI
+        SPO --> PI
+        PI -->|"Submit<br/>— Accounts Team"| PAY
+        PAY -->|"Yes"| PDONE
+        PAY -->|"Not yet"| POUT
+    end
+
+    BACK1 -->|"Stock received —<br/>back to picking"| SUB
+
+    style CRM fill:#e7eaf2,stroke:#2e3f6b,color:#1b2440
+    style SALES fill:#e2ebe6,stroke:#3b5a4c,color:#1c2e26
+    style PURCHASE fill:#f2e5d9,stroke:#a9622f,color:#4a2e17
+      </pre>
+    </div>
+    <figcaption class="plate__caption">Delivery Note and its Submit step are outlined in bold — the point in this flow a client's own order physically ships. Billing and payment continue past it because the order isn't finished until it's paid, but shipping is the milestone that matters most to explain first.</figcaption>
+  </figure>
+
+  <div class="downloads" id="downloads" hidden>
+    <span class="downloads__label">Download this diagram —</span>
+    <button type="button" id="download-png" class="btn-download">PNG image</button>
+    <button type="button" id="download-svg" class="btn-download btn-download--ghost">SVG (vector)</button>
+  </div>
+
+</div>
+
+<script type="module">
+  import mermaid from "https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs";
+
+  mermaid.initialize({
+    startOnLoad: false,
+    securityLevel: "loose",
+    theme: "base",
+    themeVariables: {
+      fontFamily: "IBM Plex Mono",
+      fontSize: "14px",
+      primaryColor: "#fbfaf7",
+      primaryBorderColor: "#b9b2a4",
+      primaryTextColor: "#211d1b",
+      lineColor: "#211d1b",
+      background: "#fbfaf7"
+    },
+    flowchart: { htmlLabels: false, curve: "basis", rankSpacing: 48, nodeSpacing: 30 }
+  });
+
+  var src = document.getElementById("diagram-src");
+  var loading = document.getElementById("diagram-loading");
+  var code = src.textContent;
+
+  mermaid.render("workflow-svg", code).then(function (result) {
+    src.outerHTML = result.svg;
+    loading.style.display = "none";
+    setupDownloads();
+  }).catch(function (err) {
+    loading.textContent = "Could not render the diagram — the diagram library may not have loaded (no internet access?). Reload the page to retry.";
+    console.error(err);
+  });
+
+  function getSvgString() {
+    var svgEl = document.getElementById("workflow-svg");
+    var svgStr = new XMLSerializer().serializeToString(svgEl);
+    if (!/xmlns=/.test(svgStr)) {
+      svgStr = svgStr.replace("<svg", '<svg xmlns="http://www.w3.org/2000/svg"');
+    }
+    return { svgEl: svgEl, svgStr: svgStr };
+  }
+
+  function triggerDownload(blob, filename) {
+    var url = URL.createObjectURL(blob);
+    var a = document.createElement("a");
+    a.href = url;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    setTimeout(function () { URL.revokeObjectURL(url); }, 1000);
+  }
+
+  function setupDownloads() {
+    document.getElementById("downloads").hidden = false;
+
+    document.getElementById("download-svg").addEventListener("click", function () {
+      var svgStr = getSvgString().svgStr;
+      triggerDownload(new Blob([svgStr], { type: "image/svg+xml;charset=utf-8" }), "dacsinc-workflow-diagram.svg");
+    });
+
+    document.getElementById("download-png").addEventListener("click", function () {
+      var parts = getSvgString();
+      var box = parts.svgEl.viewBox && parts.svgEl.viewBox.baseVal;
+      var w = (box && box.width) || parts.svgEl.clientWidth || 1600;
+      var h = (box && box.height) || parts.svgEl.clientHeight || 900;
+      var scale = 2;
+
+      // A blob: URL image source taints the canvas it's drawn onto in some
+      // browsers (the "Tainted canvases may not be exported" error on
+      // toBlob/toDataURL) — a data: URI carries the SVG inline instead of
+      // as a fetchable resource, which these browsers treat as safe to read
+      // back out of the canvas.
+      var svgData = "data:image/svg+xml;charset=utf-8," + encodeURIComponent(parts.svgStr);
+      var img = new Image();
+      img.onload = function () {
+        var canvas = document.createElement("canvas");
+        canvas.width = w * scale;
+        canvas.height = h * scale;
+        var ctx = canvas.getContext("2d");
+        ctx.fillStyle = "#fbfaf7";
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
+        ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+        canvas.toBlob(function (blob) {
+          if (!blob) {
+            alert("Could not generate the PNG — try the SVG download instead.");
+            return;
+          }
+          triggerDownload(blob, "dacsinc-workflow-diagram.png");
+        });
+      };
+      img.onerror = function (e) {
+        console.error("PNG export failed", e);
+        alert("Could not generate the PNG — try the SVG download instead.");
+      };
+      img.src = svgData;
+    });
+  }
+</script>
+
+</body>
+</html>

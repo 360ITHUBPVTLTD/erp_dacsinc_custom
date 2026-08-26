@@ -929,6 +929,88 @@
     text-decoration: underline;
 }
 
+/* ── "About to create" preview table (order_flow.js's
+   preview_and_open_mapped_doc) ──────────────────────────────────
+   Deliberately independent of --of-blue etc. above: those are scoped to
+   .of-page, but this table renders inside a plain frappe.ui.Dialog which
+   sits outside .of-page in the DOM, so the variables (and the header
+   background/border built from them) silently resolved to nothing there —
+   a blue-bordered box with invisible white-on-nothing header text. Literal
+   colours for the header accent side-step that entirely; everything else
+   still follows the active theme via Frappe's own global tokens. */
+.doc-preview-wrap {
+    border: 1px solid #b9c1c8;
+    border-radius: 8px;
+    overflow: hidden;
+    max-height: 320px;
+    overflow-y: auto;
+}
+
+[data-theme="dark"] .doc-preview-wrap {
+    border-color: #4a5560;
+}
+
+.doc-preview-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 13px;
+}
+
+.doc-preview-table thead th {
+    position: sticky;
+    top: 0;
+    background: #3498db;
+    color: #fff;
+    font-size: 11px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: .03em;
+    text-align: left;
+    padding: 9px 12px;
+    white-space: nowrap;
+}
+
+.doc-preview-table thead th.text-right {
+    text-align: right;
+}
+
+.doc-preview-table tbody td {
+    padding: 9px 12px;
+    border-top: 1px solid #d1d8dd;
+    color: var(--text-color);
+    vertical-align: middle;
+}
+
+[data-theme="dark"] .doc-preview-table tbody td {
+    border-top: 1px solid #434c56;
+}
+
+.doc-preview-table tbody tr:first-child td {
+    border-top: none;
+}
+
+.doc-preview-table tbody tr:hover td {
+    background: var(--subtle-fg);
+}
+
+.doc-preview-table tbody td.text-right {
+    text-align: right;
+    font-weight: 600;
+    font-variant-numeric: tabular-nums;
+}
+
+.doc-preview-item-name {
+    font-size: 11px;
+    color: var(--text-muted);
+    margin-top: 2px;
+}
+
+.doc-preview-hint {
+    font-size: 12px;
+    color: var(--text-muted);
+    margin: 10px 2px 0;
+}
+
 .of-val {
     font-weight: 700;
     font-variant-numeric: tabular-nums;
