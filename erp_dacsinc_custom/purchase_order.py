@@ -1490,7 +1490,10 @@ def get_pending_so_with_material_stock(is_subcontracted=False):
         SELECT item_code, SUM(actual_qty) as actual_qty FROM `tabBin`
         WHERE item_code IN %s AND warehouse = %s GROUP BY item_code
     """, (summary_items, "VV Puram - IND"), as_dict=True)
-    summary_avail_map = {r.item_code: flt(r.actual_qty) for r in summary_bin_rows}
+    # Rounded to 2dp — same reasoning as get_pending_so_with_raw_materials_summary's
+    # stock_map: a raw UOM-conversion remainder must not survive into this
+    # dialog's qty-need math as a fake fractional shortage.
+    summary_avail_map = {r.item_code: flt(r.actual_qty, 2) for r in summary_bin_rows}
 
     summary_pick_rows = frappe.db.sql("""
         SELECT pli.item_code, SUM(pli.qty) as q, pl.docstatus
@@ -1540,12 +1543,7 @@ def get_item_details_for_po(item_code, uom=None):
     # ERPNext's own item_code trigger, so nothing populates rate on its own.
     # The correct source is the system's standard Buying Price List (Buying
     # Settings) — same lookup a human typing this item_code into a PO row
-    # gets via ERPNext's own get_item_details — not an arbitrary historical
-    # last_purchase_rate, which can reflect a one-off or outdated purchase.
-    # Only fall back to last purchase rate / valuation rate when the Buying
-    # Price List genuinely has nothing usable for this item (no row, or a
-    # blank/zero entry) — same reasoning as before, a script-added row
-    # should never land on a bare, unexplained 0.
+    # gets via ERPNext's own get_item_details.
     from erpnext.stock.get_item_details import get_item_price
     from frappe.utils import nowdate
 
@@ -1569,7 +1567,19 @@ def get_item_details_for_po(item_code, uom=None):
             row_rate, row_uom = flt(price_rows[0][1]), price_rows[0][2]
             price_list_rate = row_rate if row_uom == uom else row_rate * factor
 
-    rate = price_list_rate or flt(details.last_purchase_rate) or flt(details.valuation_rate) or 0
+    # Mirrors erpnext.stock.get_item_details.get_price_list_rate exactly:
+    # when the price list has nothing, ERPNext's own native item_code
+    # handler falls back to last_purchase_rate — UNLESS Buying Settings'
+    # "disable_last_purchase_rate" is checked, in which case it deliberately
+    # leaves rate at 0 rather than substitute a stale historical price. This
+    # system has that setting checked, so a script-added row must land on
+    # the exact same 0 a human typing the item code would see — silently
+    # falling back anyway (the previous behavior here) contradicted this
+    # system's own configured standard. No valuation_rate fallback either:
+    # ERPNext's own buying rate resolution doesn't have one.
+    rate = price_list_rate
+    if not rate and not frappe.db.get_single_value("Buying Settings", "disable_last_purchase_rate"):
+        rate = flt(details.last_purchase_rate)
     return {
         "uom": uom, "stock_uom": details.stock_uom, "description": details.description,
         "item_name": details.item_name, "conversion_factor": factor, "rate": rate,
@@ -1927,7 +1937,12 @@ def get_pending_so_with_raw_materials_summary():
             WHERE b.item_code IN %s AND w.company = %s AND b.warehouse = %s
             GROUP BY b.item_code
         """, (all_material_codes, company, "VV Puram - IND"), as_dict=True)
-        stock_map = {r['item_code']: max(0, flt(r['free_qty'])) for r in bin_data}
+        # Rounded to the same 2dp this whole dialog displays stock at — a raw
+        # UOM-conversion remainder (0.999 instead of 1.000) otherwise survives
+        # into the Purchase calc even though "Stock" reads as a clean 1.00,
+        # so "Required 7.00 − Stock 1.00" quietly computes as 6.001 instead
+        # of the 6.00 the displayed numbers promise.
+        stock_map = {r['item_code']: max(0, flt(r['free_qty'], 2)) for r in bin_data}
 
         # B. Get Pending (Unreceived) Purchase Orders
         #    NOTE: We calculate `qty - received_qty` to avoid double counting received goods 
@@ -1947,7 +1962,7 @@ def get_pending_so_with_raw_materials_summary():
                   AND (poi.qty - COALESCE(poi.received_qty, 0)) > 0
                 GROUP BY poi.item_code
             """, (rm_tuple, company), as_dict=True)
-            incoming_po_map = {r['item_code']: flt(r['net_pending']) for r in incoming_data}
+            incoming_po_map = {r['item_code']: flt(r['net_pending'], 2) for r in incoming_data}
 
             # 2. Linked SO Quantity (Via Custom Table `Purchase Order Raw Material Source`)
             #    We approximate pending link by joining PO Status. 
@@ -1970,7 +1985,7 @@ def get_pending_so_with_raw_materials_summary():
             """, (rm_tuple,), as_dict=1)
             
             for row in linked_data:
-                so_linked_po_map[(row['source_sales_order'], row['raw_material_item'])] = flt(row['net_linked_pending'])
+                so_linked_po_map[(row['source_sales_order'], row['raw_material_item'])] = flt(row['net_linked_pending'], 2)
 
             # 3. Existing PO Links (String for UI)
             po_refs = frappe.db.sql("""
@@ -1998,10 +2013,10 @@ def get_pending_so_with_raw_materials_summary():
                 GROUP BY mri.item_code, mri.sales_order, mr.name, mr.docstatus
             """, (rm_tuple,), as_dict=True)
             for row in mr_pending_data:
-                mr_pending_map[row.item_code] = mr_pending_map.get(row.item_code, 0.0) + flt(row.pending_qty)
+                mr_pending_map[row.item_code] = flt(mr_pending_map.get(row.item_code, 0.0) + flt(row.pending_qty), 2)
                 if row.sales_order:
-                    so_linked_mr_map[(row.sales_order, row.item_code)] = (
-                        so_linked_mr_map.get((row.sales_order, row.item_code), 0.0) + flt(row.pending_qty))
+                    so_linked_mr_map[(row.sales_order, row.item_code)] = flt(
+                        so_linked_mr_map.get((row.sales_order, row.item_code), 0.0) + flt(row.pending_qty), 2)
                 # Traceable "why is this already covered" reference — same
                 # spirit as existing_po_refs, so the dialog can show WHICH
                 # Material Request already covers part of the need, not just
@@ -2671,6 +2686,27 @@ def create_subcontracting_docs(purchase_order_name, updated_materials_for_supply
         supply_quantities = {
             item['item_code']: flt(item['qty_to_supply']) for item in json.loads(updated_materials_for_supply)
         }
+
+        # Clamp each requested qty to what's actually on the shelf right now.
+        # get_required_raw_materials_for_po rounds "Available Qty" to 2dp for
+        # display, so a real ledger balance like 13.999 (routine UOM-conversion
+        # residue, not a real shortage) reads there as a clean "14" — the user
+        # then types 14, and without this clamp that exact figure goes straight
+        # into the Stock Entry, which ERPNext's own submit-time stock check
+        # correctly rejects as "0.001 units short" since only 13.999 truly
+        # exist. Capping to the real balance moves everything that's actually
+        # there instead of failing over a thousandth of a unit no one can act on.
+        item_codes = list(supply_quantities.keys())
+        if item_codes:
+            real_stock_rows = frappe.db.sql("""
+                SELECT item_code, actual_qty FROM `tabBin`
+                WHERE item_code IN %s AND warehouse = %s
+            """, (tuple(item_codes), target_warehouse), as_dict=1)
+            real_stock_map = {r.item_code: flt(r.actual_qty) for r in real_stock_rows}
+            for item_code in list(supply_quantities.keys()):
+                real_avail = real_stock_map.get(item_code, 0)
+                if supply_quantities[item_code] > real_avail:
+                    supply_quantities[item_code] = max(0, real_avail)
 
         # make_rm_stock_entry adds ONE Stock Entry row per Subcontracting
         # Order Supplied Item row, and a single raw material can legitimately

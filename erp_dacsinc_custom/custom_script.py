@@ -2577,7 +2577,11 @@ def get_item_stock_details_bulk(item_bom_pairs, sales_order_name):
             WHERE item_code = %s AND actual_qty > 0
             ORDER BY actual_qty DESC
         """, item_code, as_dict=1)
-        total_available_stock = sum(flt(w.actual_qty) for w in warehouse_stock if w.warehouse == main_warehouse)
+        # Rounded to 2dp — the precision this figure is displayed at — so a
+        # raw UOM-conversion remainder (e.g. 2.999 instead of a physical
+        # 3.000) doesn't silently survive into fg_shortfall and read as a
+        # fractional-unit shortage that isn't really there.
+        total_available_stock = flt(sum(flt(w.actual_qty) for w in warehouse_stock if w.warehouse == main_warehouse), 2)
 
         # 4. Receipt History
         # ------------- MODIFICATION STARTS HERE (Receipt History) ------------------
@@ -3271,7 +3275,10 @@ def get_item_stock_details_bulk(item_bom_pairs, sales_order_name):
                     # so the UI can still show where else an RM sits.
                     stock_data = frappe.db.sql("""SELECT item_code, SUM(actual_qty) as qty FROM `tabBin` WHERE item_code IN %s AND actual_qty > 0 AND warehouse = %s GROUP BY item_code""", (tuple(rm_codes), main_warehouse), as_dict=1)
                     for s in stock_data:
-                        if s.item_code in rm_map: rm_map[s.item_code]["rm_available_stock"] = flt(s.qty)
+                        # Rounded to 2dp for the same reason as total_available_stock
+                        # above — a raw conversion remainder (13.999 against a
+                        # needed 14.0) must not read as a real shortfall.
+                        if s.item_code in rm_map: rm_map[s.item_code]["rm_available_stock"] = flt(s.qty, 2)
 
                     all_wh_stock_data = frappe.db.sql("""SELECT item_code, warehouse, actual_qty FROM `tabBin` WHERE item_code IN %s AND actual_qty > 0 ORDER BY actual_qty DESC""", (tuple(rm_codes),), as_dict=1)
                     for s in all_wh_stock_data:
@@ -3357,7 +3364,7 @@ def get_item_stock_details_bulk(item_bom_pairs, sales_order_name):
                             SUM(poi.qty - poi.received_qty) as pending_ordered,
                             GROUP_CONCAT(DISTINCT source.parent) as po_list
                         FROM `tabPurchase Order Raw Material Source` source
-                        JOIN `tabPurchase Order Item` poi ON poi.parent = source.parent
+                        JOIN `tabPurchase Order Item` poi ON poi.parent = source.parent AND poi.item_code = source.raw_material_item
                         WHERE source.source_sales_order = %(so)s
                           AND source.raw_material_item IN %(items)s
                           AND poi.docstatus = 1
@@ -3392,7 +3399,7 @@ def get_item_stock_details_bulk(item_bom_pairs, sales_order_name):
 
                         SELECT source.raw_material_item as item_code, GROUP_CONCAT(DISTINCT source.parent) as po_list
                         FROM `tabPurchase Order Raw Material Source` source
-                        JOIN `tabPurchase Order Item` poi ON poi.parent = source.parent
+                        JOIN `tabPurchase Order Item` poi ON poi.parent = source.parent AND poi.item_code = source.raw_material_item
                         WHERE source.source_sales_order = %(so)s AND source.raw_material_item IN %(items)s
                           AND poi.docstatus = 0
                         GROUP BY source.raw_material_item
@@ -3415,7 +3422,18 @@ def get_item_stock_details_bulk(item_bom_pairs, sales_order_name):
                     # flag "Shortage" on an order that is already fulfilled and about to
                     # ship — the exact wrong signal a real case surfaced.
                     coverage = rm["rm_available_stock"] + rm["rm_pending_so_linked_total"] + rm.get("rm_pending_mr_total", 0)
-                    shortfall = max(0, rm["rm_needed_for_shortfall"] - coverage)
+                    # Compare at the same 2-decimal precision the table itself
+                    # displays (Needed/Stock/Shortfall are all shown rounded
+                    # to 2dp). A raw floating-point remainder — e.g. 13.999 in
+                    # stock against a needed 14.0, a UOM conversion artifact
+                    # rather than a genuine gram of missing material — used to
+                    # read as a real "Shortage"/"Requested" even though the
+                    # displayed numbers show an exact match and a 0.00
+                    # shortfall right next to it.
+                    needed_r = flt(rm["rm_needed_for_shortfall"], 2)
+                    coverage_r = flt(coverage, 2)
+                    available_r = flt(rm["rm_available_stock"], 2)
+                    shortfall = max(0, needed_r - coverage_r)
                     rm["rm_shortfall_total"] = shortfall
                     # "Covered" must mean stock actually in hand, not "a PO/MR
                     # was raised for it". A pending MR/PO still legitimately
@@ -3425,7 +3443,7 @@ def get_item_stock_details_bulk(item_bom_pairs, sales_order_name):
                     # MR just raised for the full need immediately flipped
                     # this to "Covered" with zero stock on hand. "Requested"
                     # is the honest middle state.
-                    if rm["rm_needed_for_shortfall"] <= 0:
+                    if needed_r <= 0:
                         # Nothing is being drawn on this RM right now (e.g. the
                         # finished good already has enough stock, so fg_shortfall
                         # is 0) — 0 needed is trivially "covered" by any stock
@@ -3434,7 +3452,7 @@ def get_item_stock_details_bulk(item_bom_pairs, sales_order_name):
                         rm["status"] = "Not Required"
                     elif shortfall > 0:
                         rm["status"] = "Shortage"
-                    elif rm["rm_available_stock"] >= rm["rm_needed_for_shortfall"]:
+                    elif available_r >= needed_r:
                         rm["status"] = "Covered"
                     else:
                         rm["status"] = "Requested"
@@ -4099,7 +4117,12 @@ def check_bom_raw_materials_in_stock(bom_no, qty_needed, bom_cache=None):
         required_qty = flt(rm["qty_per_fg"]) * qty_needed
         if required_qty <= 0:
             continue
-        if flt(rm["available_qty"]) < required_qty:
+        # Round to the same 2dp the RM Pipeline widget displays before
+        # comparing — otherwise a UOM-conversion remainder (13.999 in stock
+        # against a required 14.0) blocks the Subcontract PO here even when
+        # the widget's own numbers, and this same check re-run on the exact
+        # 2dp-rounded figures, agree it's fully covered.
+        if flt(rm["available_qty"], 2) < flt(required_qty, 2):
             shortages.append({
                 "item_code": rm["item_code"], "item_name": rm["item_name"], "uom": rm["uom"],
                 "required_qty": required_qty, "available_qty": flt(rm["available_qty"]),

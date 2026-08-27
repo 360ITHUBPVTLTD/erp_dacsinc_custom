@@ -3062,7 +3062,14 @@ function so_cmd_btn(onclick, icon, label, primary) {
 // failed, or a BOM with no lines) fails open — nothing to block on.
 function so_rm_physically_in_stock(d) {
     const rm_items = ((d.rm_procurement_status || {}).rm_items_status) || [];
-    return rm_items.every(rm => flt(rm.rm_available_stock) >= flt(rm.rm_needed_for_shortfall) - 0.0001);
+    // Compare at the same 2-decimal precision the RM Pipeline table itself
+    // displays (Stock / Needed / Shortfall are all shown rounded to 2dp) —
+    // a raw floating-point remainder like 13.999 vs a needed 14.0 (a UOM
+    // conversion artifact, not a genuine shortage) used to read as "RM Not
+    // in Stock" here while the table right below it showed a matching
+    // Stock figure and a 0.00 Shortfall — two supposedly-agreeing checks
+    // visibly disagreeing over a thousandth of a unit.
+    return rm_items.every(rm => flt(rm.rm_available_stock, 2) >= flt(rm.rm_needed_for_shortfall, 2));
 }
 
 /**
