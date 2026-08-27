@@ -63,10 +63,11 @@ def _tab_field(tab):
 # a tuple (not a single name) so a future "give this person everything but
 # don't make them a System Manager" role can be added in one place.
 #
-# "Super Admin" is deliberately a plain desk role, not System Manager — it
-# grants full Order Flow visibility without also granting System Manager's
-# much broader powers (doctype customization, user management, etc.).
-ADMIN_ROLES = ("System Manager", "Super Admin")
+# "Super Admin" and "Admin" are deliberately plain desk roles, not System
+# Manager — they grant full Order Flow visibility without also granting
+# System Manager's much broader powers (doctype customization, user
+# management, etc.). See erp_dacsinc_custom.role_permission_matrix.
+ADMIN_ROLES = ("System Manager", "Super Admin", "Admin")
 
 # Bridges the Sales Order Workflow's "Pending Final Approval" transition
 # (Frappe workflow transitions are gated by a Role, never by a list of

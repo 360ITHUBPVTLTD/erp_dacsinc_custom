@@ -1,0 +1,343 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Roles &amp; Permissions — Dacsinc</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Newsreader:ital,wght@0,400;0,500;0,600;0,700;1,400;1,500&family=IBM+Plex+Mono:wght@400;500;600&display=swap">
+<style>
+  :root {
+    --ink: #211d1b;
+    --ink-soft: #4a4540;
+    --paper: #f1eee7;
+    --surface: #fbfaf7;
+    --line: #cfc8ba;
+    --line-soft: #e2ddd0;
+    --indigo: #2e3f6b;
+    --indigo-soft: #e7eaf2;
+    --clay: #a9622f;
+    --clay-soft: #f2e5d9;
+    --pine: #3b5a4c;
+    --pine-soft: #e2ebe6;
+    --gold: #b8863b;
+    --shadow: rgba(33, 29, 27, 0.08);
+  }
+
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --ink: #ece7de; --ink-soft: #b9b2a4; --paper: #1b1815; --surface: #242019;
+      --line: #4a423a; --line-soft: #332e27; --indigo: #8fa3d9; --indigo-soft: #262b3c;
+      --clay: #d99a68; --clay-soft: #362a1f; --pine: #8bb39f; --pine-soft: #1f2b25;
+      --gold: #d9ad6b; --shadow: rgba(0, 0, 0, 0.4);
+    }
+  }
+  :root[data-theme="dark"] {
+    --ink: #ece7de; --ink-soft: #b9b2a4; --paper: #1b1815; --surface: #242019;
+    --line: #4a423a; --line-soft: #332e27; --indigo: #8fa3d9; --indigo-soft: #262b3c;
+    --clay: #d99a68; --clay-soft: #362a1f; --pine: #8bb39f; --pine-soft: #1f2b25;
+    --gold: #d9ad6b; --shadow: rgba(0, 0, 0, 0.4);
+  }
+
+  * { box-sizing: border-box; }
+  html { background: var(--paper); }
+  body {
+    margin: 0; background: var(--paper); color: var(--ink);
+    font-family: "Newsreader", Georgia, "Iowan Old Style", serif;
+    font-size: 17px; line-height: 1.6; -webkit-font-smoothing: antialiased;
+  }
+  .mono { font-family: "IBM Plex Mono", "SF Mono", Consolas, monospace; }
+  a { color: var(--indigo); }
+
+  .topbar {
+    position: sticky; top: 0; z-index: 30;
+    display: flex; align-items: center; gap: 14px;
+    padding: 12px 24px; background: var(--paper);
+    border-bottom: 1px solid var(--line-soft);
+    font-family: "IBM Plex Mono", monospace; font-size: 12.5px; letter-spacing: .02em;
+  }
+  .topbar__mark { font-weight: 600; white-space: nowrap; }
+  .topbar__mark span { color: var(--clay); }
+  .topbar .tag { color: var(--ink-soft); }
+  .topbar nav { display: flex; gap: 6px; margin-left: auto; }
+  .topbar nav a {
+    padding: 5px 10px; border-radius: 3px; text-decoration: none;
+    color: var(--ink-soft); border: 1px solid transparent;
+  }
+  .topbar nav a:hover { border-color: var(--line); background: var(--surface); color: var(--ink); }
+
+  .page { max-width: 1000px; margin: 0 auto; padding: 0 24px 100px; }
+  .prose { max-width: 700px; }
+  .prose p { color: var(--ink-soft); }
+  .prose p.lede { color: var(--ink); font-size: 1.12em; }
+
+  header.masthead { padding: 48px 0 28px; border-bottom: 1px solid var(--line-soft); margin-bottom: 34px; }
+  .eyebrow {
+    font-family: "IBM Plex Mono", monospace; font-size: 12px; letter-spacing: .09em;
+    text-transform: uppercase; color: var(--clay); margin: 0 0 14px;
+  }
+  h1.title {
+    font-size: clamp(2rem, 4vw, 2.7rem); font-weight: 600; line-height: 1.12;
+    margin: 0 0 16px; text-wrap: balance; max-width: 700px;
+  }
+  h1.title em { font-style: italic; color: var(--indigo); }
+
+  section.block { margin-bottom: 44px; }
+  section.block h2 {
+    font-family: "Newsreader", serif; font-size: 1.5rem; font-weight: 600;
+    margin: 0 0 6px; color: var(--ink);
+  }
+  section.block .block-intro { color: var(--ink-soft); font-size: 15px; margin: 0 0 20px; max-width: 660px; }
+
+  .table-wrap { overflow-x: auto; border: 1px solid var(--line-soft); border-radius: 8px; background: var(--surface); }
+  table.ref-table { width: 100%; border-collapse: collapse; font-size: 13.5px; }
+  table.ref-table th, table.ref-table td {
+    text-align: left; padding: 10px 14px; border-bottom: 1px solid var(--line-soft);
+    vertical-align: top;
+  }
+  table.ref-table tr:last-child td { border-bottom: none; }
+  table.ref-table th {
+    font-family: "IBM Plex Mono", monospace; font-size: 11px; text-transform: uppercase;
+    letter-spacing: .04em; color: var(--ink-soft); font-weight: 600; background: var(--paper);
+  }
+  table.ref-table td.name { font-weight: 600; color: var(--ink); white-space: nowrap; }
+  table.ref-table td.muted { color: var(--ink-soft); }
+  .pill {
+    display: inline-block; font-family: "IBM Plex Mono", monospace; font-size: 10px;
+    font-weight: 600; letter-spacing: .03em; padding: 2px 8px; border-radius: 20px;
+    border: 1.2px solid var(--accent); color: var(--accent); white-space: nowrap;
+  }
+  .pill--new { --accent: var(--pine); }
+  .pill--existing { --accent: var(--indigo); }
+  .pill--admin { --accent: var(--clay); }
+  .roles-inline { display: flex; flex-wrap: wrap; gap: 5px; }
+  .role-chip {
+    font-family: "IBM Plex Mono", monospace; font-size: 10.5px; font-weight: 500;
+    letter-spacing: .01em; padding: 2px 8px; border-radius: 5px;
+    background: var(--paper); border: 1px solid var(--line-soft); color: var(--ink-soft);
+    white-space: nowrap;
+  }
+  .role-chip.is-headline { color: var(--ink); font-weight: 600; border-color: var(--line); }
+
+  .note {
+    margin: 0 0 20px; padding: 12px 16px; border-radius: 6px;
+    background: var(--indigo-soft); border: 1px solid var(--line-soft);
+    font-size: 14px; color: var(--ink-soft); line-height: 1.55;
+  }
+  .note b.mono { color: var(--ink); font-weight: 600; }
+
+  @media (max-width: 640px) {
+    .topbar nav { display: none; }
+  }
+
+  @media print {
+    :root, :root[data-theme="dark"] {
+      --ink: #211d1b; --ink-soft: #4a4540; --paper: #ffffff; --surface: #fbfaf7;
+      --line: #cfc8ba; --line-soft: #e2ddd0;
+    }
+    .topbar { display: none; }
+    body { font-size: 12.5px; }
+    .page { max-width: 100%; padding: 0 8px 20px; }
+    a { color: var(--ink); text-decoration: none; }
+  }
+</style>
+</head>
+<body>
+
+<div class="topbar">
+  <span class="topbar__mark">PROCESS<span> · </span>FLOW</span>
+  <nav>
+    <a href="/process-flow">Process flow</a>
+    <a href="/process-flow-diagram" target="_blank" rel="noopener">Workflow diagram ↗</a>
+  </nav>
+  <span class="tag">Dacsinc</span>
+</div>
+
+<div class="page">
+
+  <header class="masthead">
+    <p class="eyebrow">internal reference — access control</p>
+    <h1 class="title">Which <em>role</em>, and which <em>profile</em>, for a new hire.</h1>
+    <div class="prose">
+      <p class="lede">Every role behind the stage matrix on the <a href="/process-flow">process flow page</a>, and the Role Profile to actually assign when you create a user — so the two pages read together.</p>
+    </div>
+  </header>
+
+  <section class="block" id="roles">
+    <h2>Roles</h2>
+    <p class="block-intro">What each role can actually do. <span class="pill pill--new">new</span> roles were created specifically for this matrix; <span class="pill pill--existing">existing</span> roles were already in use and are reused as-is — nothing about them changed.</p>
+    <div class="table-wrap">
+      <table class="ref-table">
+        <thead><tr><th>Role</th><th>Status</th><th>Stages it covers</th><th>What it can do</th></tr></thead>
+        <tbody>
+          <tr>
+            <td class="name">Marketing Team</td>
+            <td><span class="pill pill--new">new</span></td>
+            <td class="muted">Lead, Quotation</td>
+            <td class="muted">Create/edit Leads; create, edit, and submit Quotations.</td>
+          </tr>
+          <tr>
+            <td class="name">Inside Sales</td>
+            <td><span class="pill pill--new">new</span></td>
+            <td class="muted">Quotation</td>
+            <td class="muted">Create, edit, and submit Quotations.</td>
+          </tr>
+          <tr>
+            <td class="name">Merchandiser User</td>
+            <td><span class="pill pill--existing">existing</span></td>
+            <td class="muted">Sales Order creation &amp; approval, Material Request, Picklist</td>
+            <td class="muted">Create/edit Sales Orders and move them through the approval workflow up to Final Approval; raise Material Requests; create and submit Pick Lists. Scoped to their own customers' orders only (see <span class="mono">Customer.custom_merchandiser_user</span>).</td>
+          </tr>
+          <tr>
+            <td class="name">Production Team</td>
+            <td><span class="pill pill--new">new</span></td>
+            <td class="muted">Material Request, Subcontracting PO/Issue, Embroidery Issue</td>
+            <td class="muted">Raise Material Requests; create and submit Subcontracting Orders and the Stock Entries that issue material to a jobber; create and submit embroidery work (Uniform Embroidery Transfer, Embroidery Work Order).</td>
+          </tr>
+          <tr>
+            <td class="name">Purchase Team</td>
+            <td><span class="pill pill--new">new</span></td>
+            <td class="muted">Purchase Order creation</td>
+            <td class="muted">Create and edit Purchase Orders. Cannot submit — approval stays with Purchase Manager.</td>
+          </tr>
+          <tr>
+            <td class="name">Purchase Manager</td>
+            <td><span class="pill pill--existing">existing</span></td>
+            <td class="muted">Purchase Order approval</td>
+            <td class="muted">Standard ERPNext role — already has full Purchase Order access including submit. No changes made.</td>
+          </tr>
+          <tr>
+            <td class="name">Inward Team</td>
+            <td><span class="pill pill--new">new</span></td>
+            <td class="muted">GRN/PR, Subcontracting Receipt, Embroidery Receipt, Delivery Note, Stock Transfer</td>
+            <td class="muted">Create and submit Purchase Receipts and Subcontracting Receipts; log embroidery work received back against the same Uniform Embroidery Transfer record Production Team issued; create and submit Delivery Notes; create and submit Stock Entries (covers Stock Transfer).</td>
+          </tr>
+          <tr>
+            <td class="name">Accounts Team</td>
+            <td><span class="pill pill--new">new</span></td>
+            <td class="muted">Purchase Invoice, Delivery Note, Sales Invoice</td>
+            <td class="muted">Create and submit Purchase Invoices, Delivery Notes, and Sales Invoices.</td>
+          </tr>
+          <tr>
+            <td class="name">Junior Merchandiser</td>
+            <td><span class="pill pill--existing">existing</span></td>
+            <td class="muted">Picklist Approval/Submission ("Packing Executive")</td>
+            <td class="muted">This is what the process flow calls "Packing Executive" — same role, business-friendly name. Create and submit Pick Lists.</td>
+          </tr>
+          <tr>
+            <td class="name">Admin</td>
+            <td><span class="pill pill--admin">admin</span></td>
+            <td class="muted">Everything above</td>
+            <td class="muted">Full read/write/create/submit/cancel/delete on every business doctype in the matrix. Not System Manager — no access to Users, Roles, System Settings, or DocType customization.</td>
+          </tr>
+          <tr>
+            <td class="name">Super Admin</td>
+            <td><span class="pill pill--admin">admin</span></td>
+            <td class="muted">Everything above + Order Flow dashboard</td>
+            <td class="muted">Same full business access as Admin, plus it always sees every tab on the Order Flow dashboard regardless of tab configuration.</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <section class="block" id="profiles">
+    <h2>Role Profiles — what to assign a new user</h2>
+    <p class="block-intro">A Role Profile is the one-click bundle you pick on <span class="mono">User &gt; Role Profile</span> when creating someone new. Pick the row matching their job title; you never need to hand-pick individual roles.</p>
+    <div class="note">Anyone hired for one of these jobs should get <b class="mono">Role Profile</b> set to the matching name below — not individual roles added by hand. If their role profile ever needs another permission, add it to the profile (or to <span class="mono">role_permission_matrix.py</span> if it's a matrix-wide change), not to the individual user.</div>
+    <div class="table-wrap">
+      <table class="ref-table">
+        <thead><tr><th>Role Profile</th><th>Assign to</th><th>Roles included</th></tr></thead>
+        <tbody>
+          <tr>
+            <td class="name">Marketing Team</td>
+            <td class="muted">Marketing Team member</td>
+            <td><div class="roles-inline"><span class="role-chip">Employee</span><span class="role-chip">Employee Self Service</span><span class="role-chip is-headline">Marketing Team</span></div></td>
+          </tr>
+          <tr>
+            <td class="name">Inside Sales</td>
+            <td class="muted">Inside Sales member</td>
+            <td><div class="roles-inline"><span class="role-chip">Employee</span><span class="role-chip">Employee Self Service</span><span class="role-chip is-headline">Inside Sales</span></div></td>
+          </tr>
+          <tr>
+            <td class="name">Merchandiser</td>
+            <td class="muted">Merchandiser</td>
+            <td><div class="roles-inline"><span class="role-chip">Employee</span><span class="role-chip">Employee Self Service</span><span class="role-chip is-headline">Merchandiser User</span></div></td>
+          </tr>
+          <tr>
+            <td class="name">Production Team</td>
+            <td class="muted">Production Team member</td>
+            <td><div class="roles-inline"><span class="role-chip">Employee</span><span class="role-chip">Employee Self Service</span><span class="role-chip">Item Manager</span><span class="role-chip">Stock User</span><span class="role-chip is-headline">Production Team</span></div></td>
+          </tr>
+          <tr>
+            <td class="name">Purchase Team</td>
+            <td class="muted">Purchase Team member</td>
+            <td><div class="roles-inline"><span class="role-chip">Employee</span><span class="role-chip">Employee Self Service</span><span class="role-chip">Item Manager</span><span class="role-chip is-headline">Purchase Team</span></div></td>
+          </tr>
+          <tr>
+            <td class="name">Inward Team</td>
+            <td class="muted">Inward Team member</td>
+            <td><div class="roles-inline"><span class="role-chip">Employee</span><span class="role-chip">Employee Self Service</span><span class="role-chip">Item Manager</span><span class="role-chip">Stock User</span><span class="role-chip is-headline">Inward Team</span></div></td>
+          </tr>
+          <tr>
+            <td class="name">Accounts Team</td>
+            <td class="muted">Accounts Team member</td>
+            <td><div class="roles-inline"><span class="role-chip">Employee</span><span class="role-chip">Employee Self Service</span><span class="role-chip is-headline">Accounts Team</span></div></td>
+          </tr>
+          <tr>
+            <td class="name">Packing Executive</td>
+            <td class="muted">Packing Executive / Junior Merchandiser</td>
+            <td><div class="roles-inline"><span class="role-chip">Employee</span><span class="role-chip">Employee Self Service</span><span class="role-chip">Item Manager</span><span class="role-chip">Purchase User</span><span class="role-chip">Sales User</span><span class="role-chip">Stock User</span><span class="role-chip is-headline">Junior Merchandiser</span></div></td>
+          </tr>
+          <tr>
+            <td class="name">Super Admin</td>
+            <td class="muted">Full business access, minimal bundle</td>
+            <td><div class="roles-inline"><span class="role-chip">Employee</span><span class="role-chip">Employee Self Service</span><span class="role-chip is-headline">Super Admin</span></div></td>
+          </tr>
+          <tr>
+            <td class="name">POS Manager</td>
+            <td class="muted">Store/counter manager — full POS access</td>
+            <td><div class="roles-inline"><span class="role-chip">Employee</span><span class="role-chip">Employee Self Service</span><span class="role-chip is-headline">POS Admin</span></div></td>
+          </tr>
+          <tr>
+            <td class="name">Admin</td>
+            <td class="muted">Anuj Sir and other senior admins — existing profile, unchanged</td>
+            <td class="muted">The pre-existing 30+ role bundle (Admin, Super Admin, and every legacy operational role). Left exactly as it was.</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <section class="block" id="live-panel">
+    <h2>Managing this live</h2>
+    <div class="note">This page is the reference. To actually assign Role Profiles, create users, reset passwords, or edit profile details, use <b class="mono">Roles &amp; Permissions</b> in the desk (<span class="mono">/app/roles-and-permissions</span>) — a live, editable panel restricted to System Manager / Admin / Super Admin. A user can be given <em>several</em> Role Profiles there at once (e.g. Merchandiser + POS User), which isn't possible on the standard User form.</div>
+    <div class="note">Passwords are never visible to anyone, at any permission level — Frappe only ever stores a one-way hash. A <b class="mono">System Manager</b> can set a new password directly; <b class="mono">Admin</b> / <b class="mono">Super Admin</b> can only send the user a reset-link email instead.</div>
+  </section>
+
+  <section class="block" id="test-accounts">
+    <h2>Test accounts</h2>
+    <p class="block-intro">One login per new role, for manually checking what each role can actually do in the desk. Shared password below — change it before handing these out beyond this check, and disable or delete any you no longer need from the live panel.</p>
+    <div class="table-wrap">
+      <table class="ref-table">
+        <thead><tr><th>Role Profile</th><th>Login</th><th>Password</th></tr></thead>
+        <tbody>
+          <tr><td class="name">Marketing Team</td><td class="mono">test.marketing-team@dacsinc.local</td><td class="mono" rowspan="10" style="vertical-align:middle;">Test@12345</td></tr>
+          <tr><td class="name">Inside Sales</td><td class="mono">test.inside-sales@dacsinc.local</td></tr>
+          <tr><td class="name">Merchandiser</td><td class="mono">test.merchandiser@dacsinc.local</td></tr>
+          <tr><td class="name">Production Team</td><td class="mono">test.production-team@dacsinc.local</td></tr>
+          <tr><td class="name">Purchase Team</td><td class="mono">test.purchase-team@dacsinc.local</td></tr>
+          <tr><td class="name">Inward Team</td><td class="mono">test.inward-team@dacsinc.local</td></tr>
+          <tr><td class="name">Accounts Team</td><td class="mono">test.accounts-team@dacsinc.local</td></tr>
+          <tr><td class="name">Packing Executive</td><td class="mono">test.packing-executive@dacsinc.local</td></tr>
+          <tr><td class="name">Super Admin</td><td class="mono">test.super-admin@dacsinc.local</td></tr>
+          <tr><td class="name">POS Manager</td><td class="mono">test.pos-manager@dacsinc.local</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+</div>
+
+</body>
+</html>

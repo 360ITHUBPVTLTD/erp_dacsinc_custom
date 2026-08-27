@@ -927,9 +927,16 @@ def get_sales_tracker(days=120, search=None, scope="open", stage_filter=None, me
     page = max(1, cint(page))
     page_size = cint(page_size) or 100
     start = (page - 1) * page_size
+    page_rows = rows[start:start + page_size]
+
+    # Bulk-fetched only for the page actually being returned, not the full
+    # (possibly thousands-long, pre-pagination) `rows` list above.
+    contact_map = _get_primary_contact_names_map([o.get("customer") for o in page_rows])
+    for o in page_rows:
+        o["contact_person_name"] = contact_map.get(o.get("customer"), "")
 
     return {
-        "rows": rows[start:start + page_size],
+        "rows": page_rows,
         "total": total,
         "page": page,
         "page_size": page_size,
@@ -2076,6 +2083,12 @@ def get_accounts_flow(days=120, search=None, scope="open", merchandiser=None,
     supplier_agg = _purchase_invoice_agg(0)
     jobber_agg = _purchase_invoice_agg(1)
 
+    # Only Sales Invoices are tied to a Customer (supplier/jobber invoices
+    # show a Supplier instead), so only that page needs a contact lookup.
+    contact_map = _get_primary_contact_names_map([r.customer for r in sales_invoices["rows"]])
+    for r in sales_invoices["rows"]:
+        r["contact_person_name"] = contact_map.get(r.customer, "")
+
     return {
         "sales_invoices": sales_invoices,
         "supplier_invoices": supplier_invoices,
@@ -2177,6 +2190,11 @@ def get_billing_flow(days=120, search=None, scope="open", page=1, page_size=100)
     page = max(1, cint(page))
     page_size = cint(page_size) or 100
     start = (page - 1) * page_size
+    page_rows = rows[start:start + page_size]
+
+    contact_map = _get_primary_contact_names_map([o.get("customer") for o in page_rows])
+    for o in page_rows:
+        o["contact_person_name"] = contact_map.get(o.get("customer"), "")
 
     # Total order value still sitting in this queue, across every matching
     # order — not just the displayed page.
@@ -2184,7 +2202,7 @@ def get_billing_flow(days=120, search=None, scope="open", page=1, page_size=100)
 
     return {
         "orders": {
-            "rows": rows[start:start + page_size],
+            "rows": page_rows,
             "total": total,
             "page": page,
             "page_size": page_size,
@@ -2497,6 +2515,45 @@ def get_approval_permissions():
     return get_order_flow_permissions()
 
 
+def _get_primary_contact_names_map(customers):
+    """Bulk-fetch each customer's primary contact's first name, keyed by
+    customer — one query for a whole page of rows instead of a Contact
+    fetch per row. Used everywhere a dashboard shows a customer name, so
+    the merchandiser/approver can see at a glance who to actually call.
+
+    Falls back to any Contact linked via Dynamic Link when
+    customer_primary_contact itself isn't set — same fallback
+    verify_customer_details uses for the same reason: a customer that has
+    a contact on file but never got it marked "primary" shouldn't just
+    show nothing.
+    """
+    customers = list({c for c in customers if c})
+    if not customers:
+        return {}
+
+    rows = frappe.db.sql("""
+        SELECT cust.name AS customer, con.first_name AS contact_first_name
+        FROM `tabCustomer` cust
+        JOIN `tabContact` con ON con.name = cust.customer_primary_contact
+        WHERE cust.name IN %(customers)s
+    """, {"customers": tuple(customers)}, as_dict=1)
+    contact_map = {r.customer: r.contact_first_name for r in rows if r.contact_first_name}
+
+    missing = [c for c in customers if c not in contact_map]
+    if missing:
+        fallback_rows = frappe.db.sql("""
+            SELECT dl.link_name AS customer, con.first_name AS contact_first_name
+            FROM `tabDynamic Link` dl
+            JOIN `tabContact` con ON con.name = dl.parent
+            WHERE dl.link_doctype = 'Customer' AND dl.link_name IN %(customers)s AND dl.parenttype = 'Contact'
+        """, {"customers": tuple(missing)}, as_dict=1)
+        for r in fallback_rows:
+            if r.contact_first_name:
+                contact_map.setdefault(r.customer, r.contact_first_name)
+
+    return contact_map
+
+
 @frappe.whitelist()
 def get_pending_approvals(search=None, merchandiser=None, approval_stage=None, page=1, page_size=100):
     _guard()
@@ -2566,6 +2623,8 @@ def get_pending_approvals(search=None, merchandiser=None, approval_stage=None, p
         ):
             items_by_so[it.parent].append(it)
 
+    contact_map = _get_primary_contact_names_map([o.customer for o in orders])
+
     for o in orders:
         items_formatted = []
         for it in items_by_so.get(o.name, []):
@@ -2576,6 +2635,7 @@ def get_pending_approvals(search=None, merchandiser=None, approval_stage=None, p
                 qty_str = str(qty_val)
             items_formatted.append(f"{it.item_name} ({qty_str})")
         o["items_list"] = ", ".join(items_formatted)
+        o["contact_person_name"] = contact_map.get(o.customer, "")
 
     return paged
 
@@ -2590,23 +2650,22 @@ def verify_customer_details(sales_order):
     address = customer.customer_primary_address
     if not address:
         address = frappe.db.get_value("Dynamic Link", {"parenttype": "Address", "link_doctype": "Customer", "link_name": customer_name}, "parent")
-        
+
     contact = customer.customer_primary_contact
     if not contact:
         contact = frappe.db.get_value("Dynamic Link", {"parenttype": "Contact", "link_doctype": "Customer", "link_name": customer_name}, "parent")
-    
-    address_details = {}
-    if address:
-        addr_doc = frappe.get_cached_doc("Address", address)
-        address_details = {
-            "address_line1": addr_doc.address_line1 or "",
-            "address_line2": addr_doc.address_line2 or "",
-            "city": addr_doc.city or "",
-            "state": addr_doc.state or "",
-            "country": addr_doc.country or "India",
-            "pincode": addr_doc.pincode or ""
-        }
-        
+
+    # Defaults for the dialog's Billing/Shipping Address pickers: whatever
+    # this SO already has set wins (a merchandiser may have already picked a
+    # specific address for this order); only fall back to the Customer's
+    # primary address when the SO has never had one set at all.
+    default_billing_address = so.customer_address or address or ""
+    default_shipping_address = so.shipping_address_name or so.customer_address or address or ""
+
+    from frappe.contacts.doctype.address.address import get_address_display
+    billing_address_display = get_address_display(default_billing_address) if default_billing_address else ""
+    shipping_address_display = get_address_display(default_shipping_address) if default_shipping_address else ""
+
     contact_details = {}
     if contact:
         cont_doc = frappe.get_cached_doc("Contact", contact)
@@ -2625,11 +2684,15 @@ def verify_customer_details(sales_order):
     
     return {
         "customer": customer_name,
+        "customer_display_name": customer.customer_name or customer_name,
         "gstin": customer.gstin or "",
         "tax_category": customer.tax_category or "",
         "customer_primary_address": address or "",
         "customer_primary_contact": contact or "",
-        "address_details": address_details,
+        "billing_address": default_billing_address,
+        "shipping_address": default_shipping_address,
+        "billing_address_display": billing_address_display or "",
+        "shipping_address_display": shipping_address_display or "",
         "contact_details": contact_details,
         "workflow_state": so.workflow_state,
         "skip_delivery_note": so.skip_delivery_note or 0,
@@ -2756,53 +2819,27 @@ def reject_sales_orders(sales_orders, comment):
 
 
 @frappe.whitelist()
-def save_and_approve_sales_order(sales_order, gstin=None, tax_category=None, address_data=None, contact_data=None, skip_delivery_note=None):
+def save_and_approve_sales_order(sales_order, gstin=None, tax_category=None, billing_address=None, shipping_address=None, contact_data=None, skip_delivery_note=None):
     _guard()
     so = frappe.get_doc("Sales Order", sales_order)
     customer_name = so.customer
-    
+
     customer = frappe.get_doc("Customer", customer_name)
     if gstin is not None:
         customer.gstin = gstin
     if tax_category is not None:
         customer.tax_category = tax_category
-        
+
     customer.save(ignore_permissions=True)
-    
-    addr_name = None
-    if address_data:
-        address_dict = frappe.parse_json(address_data)
-        if address_dict.get("address_line1"):
-            primary_address = customer.customer_primary_address
-            if not primary_address:
-                primary_address = frappe.db.get_value("Dynamic Link", {"parenttype": "Address", "link_doctype": "Customer", "link_name": customer_name}, "parent")
-            
-            if primary_address:
-                addr = frappe.get_doc("Address", primary_address)
-            else:
-                addr = frappe.new_doc("Address")
-                addr.address_title = customer.customer_name
-                addr.address_type = "Billing"
-                addr.is_primary_address = 1
-                addr.append("links", {
-                    "link_doctype": "Customer",
-                    "link_name": customer_name
-                })
-            
-            addr.address_line1 = address_dict.get("address_line1")
-            addr.address_line2 = address_dict.get("address_line2")
-            addr.city = address_dict.get("city")
-            addr.state = address_dict.get("state")
-            addr.country = address_dict.get("country") or "India"
-            addr.pincode = address_dict.get("pincode")
-            if gstin is not None:
-                addr.gstin = gstin
-            addr.save(ignore_permissions=True)
-            addr_name = addr.name
-            
-            if not customer.customer_primary_address:
-                customer.db_set("customer_primary_address", addr_name)
-                
+
+    # billing_address / shipping_address are Address doc names picked from
+    # this Customer's existing addresses (or a brand-new one created via the
+    # Link field's own "Create a New Address" option) — deliberately scoped
+    # to THIS Sales Order alone. Earlier this used to write into the
+    # Customer's own customer_primary_address, so picking or adding an
+    # address for one order silently changed the default for every other
+    # order against the same customer too.
+
     cont_name = None
     if contact_data:
         contact_dict = frappe.parse_json(contact_data)
@@ -2846,8 +2883,10 @@ def save_and_approve_sales_order(sales_order, gstin=None, tax_category=None, add
             if not customer.customer_primary_contact:
                 customer.db_set("customer_primary_contact", cont_name)
                 
-    if addr_name:
-        so.customer_address = addr_name
+    if billing_address:
+        so.customer_address = billing_address
+    if shipping_address:
+        so.shipping_address_name = shipping_address
     if cont_name:
         so.contact_person = cont_name
     if gstin is not None:

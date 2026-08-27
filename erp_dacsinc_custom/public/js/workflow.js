@@ -188,16 +188,23 @@ class WorkflowOverride extends frappe.ui.form.States {
                                             return;
                                         }
                                         
-                                        const address_details = res.address_details || {};
                                         const contact_details = res.contact_details || {};
-                                        
+                                        const address_query = () => ({
+                                            query: 'frappe.contacts.doctype.address.address.address_query',
+                                            filters: { link_doctype: 'Customer', link_name: res.customer }
+                                        });
+                                        const customer_link_html = `<a href="${frappe.utils.get_form_link('Customer', res.customer)}" target="_blank">${wf_esc(res.customer_display_name || res.customer)} (${wf_esc(res.customer)})</a>`;
+                                        const customer_label_html = contact_details.first_name
+                                            ? `${customer_link_html} <span style="color:var(--text-muted);">(${wf_esc(contact_details.first_name)})</span>`
+                                            : customer_link_html;
+
                                          const fields = [
                                             {
                                                 fieldtype: 'HTML',
                                                 fieldname: 'notice',
                                                 options: `
                                                     <div class="alert alert-warning" style="margin-bottom: 15px;">
-                                                        <i class="fa fa-warning"></i> ${__('Customer {0} details. Fill or correct them below to save to master, or enter a comment to bypass.', [`<b>${res.customer}</b>`])}
+                                                        <i class="fa fa-warning"></i> ${__('Customer {0} details. Fill or correct them below to save to master, or enter a comment to skip.', [`<b>${customer_label_html}</b>`])}
                                                     </div>
                                                 `
                                             },
@@ -223,47 +230,44 @@ class WorkflowOverride extends frappe.ui.form.States {
                                             },
                                             {
                                                 fieldtype: 'Section Break',
-                                                label: __('Primary Address Details')
+                                                label: __('Billing & Shipping Address')
                                             },
                                             {
-                                                fieldtype: 'Data',
-                                                fieldname: 'address_line1',
-                                                label: __('Address Line 1'),
-                                                default: address_details.address_line1 || ''
+                                                fieldtype: 'Link',
+                                                options: 'Address',
+                                                fieldname: 'billing_address',
+                                                label: __('Billing Address'),
+                                                default: res.billing_address || '',
+                                                description: __('Pick one of this customer\'s existing addresses, or use "Create a New Address" — applies to this Sales Order only.'),
+                                                get_query: address_query,
+                                                onchange: () => wf_refresh_address_preview(dialog, 'billing_address', 'billing_address_display')
                                             },
                                             {
-                                                fieldtype: 'Data',
-                                                fieldname: 'address_line2',
-                                                label: __('Address Line 2'),
-                                                default: address_details.address_line2 || ''
-                                            },
-                                            {
-                                                fieldtype: 'Data',
-                                                fieldname: 'city',
-                                                label: __('City'),
-                                                default: address_details.city || ''
+                                                fieldtype: 'Small Text',
+                                                fieldname: 'billing_address_display',
+                                                label: __('Address Preview'),
+                                                read_only: 1,
+                                                default: res.billing_address_display || ''
                                             },
                                             {
                                                 fieldtype: 'Column Break'
                                             },
                                             {
-                                                fieldtype: 'Data',
-                                                fieldname: 'state',
-                                                label: __('State'),
-                                                default: address_details.state || ''
-                                            },
-                                            {
                                                 fieldtype: 'Link',
-                                                options: 'Country',
-                                                fieldname: 'country',
-                                                label: __('Country'),
-                                                default: address_details.country || 'India'
+                                                options: 'Address',
+                                                fieldname: 'shipping_address',
+                                                label: __('Shipping Address'),
+                                                default: res.shipping_address || '',
+                                                description: __('Pick one of this customer\'s existing addresses, or use "Create a New Address" — applies to this Sales Order only.'),
+                                                get_query: address_query,
+                                                onchange: () => wf_refresh_address_preview(dialog, 'shipping_address', 'shipping_address_display')
                                             },
                                             {
-                                                fieldtype: 'Data',
-                                                fieldname: 'pincode',
-                                                label: __('Pincode'),
-                                                default: address_details.pincode || ''
+                                                fieldtype: 'Small Text',
+                                                fieldname: 'shipping_address_display',
+                                                label: __('Address Preview'),
+                                                read_only: 1,
+                                                default: res.shipping_address_display || ''
                                             },
                                             {
                                                 fieldtype: 'Section Break',
@@ -292,13 +296,13 @@ class WorkflowOverride extends frappe.ui.form.States {
                                             },
                                             {
                                                 fieldtype: 'Section Break',
-                                                label: __('Bypass Option')
+                                                label: __('Skip Verification')
                                             },
                                             {
                                                 fieldtype: 'Small Text',
-                                                fieldname: 'bypass_comment',
+                                                fieldname: 'skip_comment',
                                                 label: __('Or Approve with Comment (Will notify in dashboard)'),
-                                                placeholder: __('Enter comment if you wish to bypass validations...')
+                                                placeholder: __('Enter comment if you wish to skip validations...')
                                             }
                                         ];
 
@@ -317,8 +321,9 @@ class WorkflowOverride extends frappe.ui.form.States {
                                         
                                          const dialog = new frappe.ui.Dialog({
                                              title: __('Verify Customer Details'),
+                                             size: 'large',
                                              fields: fields,
-                                             primary_action_label: __('Save Details & Approve'),
+                                             primary_action_label: __('Update Customer & Approve SO'),
                                              primary_action: (values) => {
                                                  const btn_primary = dialog.get_primary_btn();
                                                  const btn_secondary = dialog.get_secondary_btn();
@@ -330,12 +335,12 @@ class WorkflowOverride extends frappe.ui.form.States {
                                                      if (btn_secondary) btn_secondary.attr("disabled", false).removeClass("disabled");
                                                  };
 
-                                                 if (values.bypass_comment && values.bypass_comment.trim()) {
+                                                 if (values.skip_comment && values.skip_comment.trim()) {
                                                      frappe.call({
                                                          method: 'erp_dacsinc_custom.order_flow_api.approve_sales_order_with_comment',
                                                          args: {
                                                              sales_order: me.frm.doc.name,
-                                                             comment: values.bypass_comment,
+                                                             comment: values.skip_comment,
                                                              skip_delivery_note: values.skip_delivery_note
                                                          },
                                                          error: enable_buttons
@@ -347,17 +352,6 @@ class WorkflowOverride extends frappe.ui.form.States {
                                                      return;
                                                  }
                                                  
-                                                 let address_data = null;
-                                                 if (values.address_line1) {
-                                                     address_data = JSON.stringify({
-                                                         address_line1: values.address_line1,
-                                                         address_line2: values.address_line2,
-                                                         city: values.city,
-                                                         state: values.state,
-                                                         country: values.country,
-                                                         pincode: values.pincode
-                                                     });
-                                                 }
                                                  let contact_data = null;
                                                  if (values.contact_first_name) {
                                                      contact_data = JSON.stringify({
@@ -366,14 +360,15 @@ class WorkflowOverride extends frappe.ui.form.States {
                                                          email: values.contact_email
                                                      });
                                                  }
-                                                 
+
                                                  frappe.call({
                                                      method: 'erp_dacsinc_custom.order_flow_api.save_and_approve_sales_order',
                                                      args: {
                                                          sales_order: me.frm.doc.name,
                                                          gstin: values.gstin || null,
                                                          tax_category: values.tax_category || null,
-                                                         address_data: address_data,
+                                                         billing_address: values.billing_address || null,
+                                                         shipping_address: values.shipping_address || null,
                                                          contact_data: contact_data,
                                                          skip_delivery_note: values.skip_delivery_note
                                                      },
@@ -384,11 +379,11 @@ class WorkflowOverride extends frappe.ui.form.States {
                                                      me.frm.reload_doc();
                                                  });
                                              },
-                                             secondary_action_label: __('Bypass & Approve'),
+                                             secondary_action_label: __('Skip & Approve'),
                                              secondary_action: () => {
                                                  const values = dialog.get_values();
-                                                 if (!values || !values.bypass_comment || !values.bypass_comment.trim()) {
-                                                     frappe.msgprint(__('Please enter a bypass comment in the field below first.'));
+                                                 if (!values || !values.skip_comment || !values.skip_comment.trim()) {
+                                                     frappe.msgprint(__('Please enter a comment in the field below first.'));
                                                      return;
                                                  }
                                                  const btn_primary = dialog.get_primary_btn();
@@ -405,7 +400,7 @@ class WorkflowOverride extends frappe.ui.form.States {
                                                      method: 'erp_dacsinc_custom.order_flow_api.approve_sales_order_with_comment',
                                                      args: {
                                                          sales_order: me.frm.doc.name,
-                                                         comment: values.bypass_comment,
+                                                         comment: values.skip_comment,
                                                          skip_delivery_note: values.skip_delivery_note
                                                      },
                                                      error: enable_buttons
@@ -416,7 +411,8 @@ class WorkflowOverride extends frappe.ui.form.States {
                                                  });
                                              }
                                          });
-                                        
+
+                                        wf_enable_new_address_customer_prefill(dialog, res.customer);
                                         dialog.show();
                                     });
                                 } else {
@@ -473,3 +469,56 @@ class WorkflowOverride extends frappe.ui.form.States {
 
 
 frappe.ui.form.States = WorkflowOverride;
+
+// Same formatted-address preview shown beneath Sales Order's own address
+// Link fields — kept in sync with the order_flow.js dashboard's equivalent
+// (of_refresh_address_preview), duplicated here under a wf_ prefix since
+// both files load together on the desk. Uses set_value (not raw HTML) so
+// the preview renders inside the same read-only "boxed" control Sales
+// Order itself uses for address_display.
+function wf_refresh_address_preview(dialog, link_fieldname, preview_fieldname) {
+    const address_name = dialog.get_value(link_fieldname);
+    if (!address_name) {
+        dialog.set_value(preview_fieldname, '');
+        return;
+    }
+    frappe.xcall('frappe.contacts.doctype.address.address.get_address_display', { address_dict: address_name })
+        .then(address_display => {
+            dialog.set_value(preview_fieldname, address_display || '');
+        });
+}
+
+function wf_esc(v) {
+    if (v === undefined || v === null) return '';
+    return String(v).replace(/&/g, '&amp;').replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+}
+
+// Same scoped make_quick_entry patch as order_flow.js's
+// of_enable_new_address_customer_prefill — see that function's comment for
+// why cur_frm-based guessing can't be relied on here either (the Sales
+// Order form IS the cur_frm at this point, but without this override its
+// own doctype/name would be guessed instead of the Customer).
+function wf_enable_new_address_customer_prefill(dialog, customer_name) {
+    const original_make_quick_entry = frappe.ui.form.make_quick_entry;
+    frappe.ui.form.make_quick_entry = function (doctype, after_insert, init_callback, doc, force) {
+        if (doctype !== 'Address') {
+            return original_make_quick_entry(doctype, after_insert, init_callback, doc, force);
+        }
+        const wrapped_init_callback = (qe_dialog) => {
+            if (init_callback) init_callback(qe_dialog);
+            qe_dialog.set_value('link_doctype', 'Customer').then(() => {
+                return qe_dialog.set_value('link_name', customer_name);
+            }).then(() => {
+                qe_dialog.set_df_property('link_doctype', 'read_only', 1);
+                qe_dialog.set_df_property('link_name', 'read_only', 1);
+            });
+        };
+        return original_make_quick_entry(doctype, after_insert, wrapped_init_callback, doc, force);
+    };
+    const existing_onhide = dialog.onhide;
+    dialog.onhide = () => {
+        frappe.ui.form.make_quick_entry = original_make_quick_entry;
+        existing_onhide && existing_onhide();
+    };
+}

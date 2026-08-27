@@ -231,6 +231,37 @@ const render_rm_list = (materials) => {
 }
 
 // ----------------------------------------------------------------------------------
+// --- QTY ROUNDING (suggested purchase/production quantities) ---
+// A suggested qty computed from a BOM/UOM ratio (e.g. 10 x 1.4) routinely
+// lands on something like 13.999999999999998 — a floating-point artifact of
+// the multiplication, not a genuine fractional requirement. Left as-is this
+// reads as a confusing, oddly-precise number, and rounding it down (or
+// truncating) risks buying/producing one unit short. Every suggested qty in
+// these dialogs rounds UP to the next whole unit — "enough to cover the
+// requirement" always wins over "exactly the requirement" — and shows the
+// exact figure it came from whenever rounding actually changed the number,
+// so the jump to a round number is never silently unexplained.
+// ----------------------------------------------------------------------------------
+function qty_round_up(exact_qty) {
+    const exact = flt(exact_qty);
+    // 1e-6 guard: a value that's already whole up to float noise (e.g.
+    // 13.999999999999998, or 14.000000000000002) must round to that whole
+    // number, not overshoot to the next one.
+    const rounded = Math.ceil(exact - 1e-6);
+    return { rounded, exact, was_rounded: Math.abs(rounded - exact) > 1e-6 };
+}
+
+function qty_round_indicator(exact_qty, opts) {
+    const { was_rounded, exact } = qty_round_up(exact_qty);
+    if (!was_rounded) return '';
+    const label = (opts && opts.label) || 'Rounded up from';
+    return `<div class="qty-round-note" style="font-size:10px; color:#b45309; margin-top:2px; white-space:nowrap;"
+                 title="Exact requirement: ${exact}. Rounded up so nothing is bought or produced short.">
+                <i class="fa fa-arrow-up"></i> ${label} ${exact.toFixed(3).replace(/0+$/, '').replace(/\.$/, '')}
+            </div>`;
+}
+
+// ----------------------------------------------------------------------------------
 // --- CLIENT SCRIPT HOOKS (Controller) ---
 // ----------------------------------------------------------------------------------
 
@@ -969,7 +1000,7 @@ function show_panel_process_dashboard(frm) {
                             res.message.items.forEach(i => {
                                 let ordered_qty = flt(i.ordered_qty, 2);
                                 let bal = flt(ordered_qty - flt(i.received_qty || 0, 2), 2);
-                                tbl += `<tr data-row="${i.name}"><td>${i.item_code}</td><td class="text-right">${ordered_qty}</td><td class="text-right">${bal}</td><td><input type="number" class="form-control form-control-sm i-q text-right" value="${bal}" ${bal <= 0 ? 'disabled' : ''}></td></tr>`;
+                                tbl += `<tr data-row="${i.name}"><td>${i.item_code}</td><td class="text-right">${ordered_qty}</td><td class="text-right">${bal}</td><td><input type="number" class="form-control form-control-sm i-q text-right" value="${bal}" min="0" max="${bal}" data-max="${bal}" ${bal <= 0 ? 'disabled' : ''}></td></tr>`;
                             });
                             tbl += `</tbody></table>`;
                             const rx_dlg = new frappe.ui.Dialog({
@@ -977,10 +1008,25 @@ function show_panel_process_dashboard(frm) {
                                 fields: [{ fieldtype: 'HTML', options: tbl }, { label: 'Note', fieldname: 'n', fieldtype: 'Small Text' }],
                                 primary_action: (v) => {
                                     let dt = [];
+                                    let has_error = false;
                                     rx_dlg.$wrapper.find('tbody tr').each(function () {
-                                        let q = parseFloat($(this).find('.i-q').val()) || 0;
+                                        let $input = $(this).find('.i-q');
+                                        let q = parseFloat($input.val()) || 0;
+                                        let max = parseFloat($input.data('max'));
+
+                                        if (q < 0 || q > max) {
+                                            has_error = true;
+                                            $input.addClass('is-invalid');
+                                        } else {
+                                            $input.removeClass('is-invalid');
+                                        }
+
                                         if (q > 0) dt.push({ name: $(this).data('row'), qty: q });
                                     });
+                                    if (has_error) {
+                                        frappe.msgprint(__('Please fix the quantities in red — they exceed the balance available to receive.'));
+                                        return;
+                                    }
                                     if (!dt.length) return;
                                     frappe.call({
                                         method: "erp_dacsinc_custom.purchase_order.receive_panel_items",
@@ -1123,7 +1169,8 @@ function show_sales_order_dialog(frm, data, is_subcontracted) {
         const sub_picks = flt(so.pick_sub || 0);
         const draft_picks = flt(so.pick_draft || 0); // <--- ADDED DRAFT DEDUCTION
         const linked_po_qty = flt(so.linked_po_qty || 0);
-        const to_buy = flt(Math.max(0, req - linked_po_qty - sub_picks - draft_picks), 2); // *** UPDATED MATH ***
+        const to_buy_exact = flt(Math.max(0, req - linked_po_qty - sub_picks - draft_picks), 2); // *** UPDATED MATH ***
+        const to_buy = qty_round_up(to_buy_exact).rounded; // round up so this SO's need is never bought short
         // Hard block, no override: a BOM row whose raw materials aren't
         // physically in stock yet (so.rm_in_stock, computed server-side in
         // get_pending_so_with_material_stock) can't be selected here even if
@@ -1175,7 +1222,7 @@ function show_sales_order_dialog(frm, data, is_subcontracted) {
             <tr data-search-context="${`${so.sales_order} ${so.item_code} ${so.customer || ''} ${so.customer_name || ''} `.toLowerCase()}">
                 <td class="text-center align-middle">
                     <input type="checkbox" class="row-selector" 
-                    data-so="${so.sales_order}" data-item="${so.item_code}" data-max="${to_buy}" data-bom="${so.bom || ''}" 
+                    data-so="${so.sales_order}" data-item="${so.item_code}" data-max="${to_buy}" data-bom="${so.bom || ''}" data-so-row="${so.so_row_name || ''}"
                     ${isDisabled ? 'disabled' : ''} style="transform: scale(1.2);">
                 </td>
                 <td>
@@ -1228,7 +1275,8 @@ function show_sales_order_dialog(frm, data, is_subcontracted) {
                     </div>
                 </td>
                 <td class="text-right">
-                    <input type="number" class="form-control qty-input-main" value="${to_buy}" max="${to_buy}" ${isDisabled ? 'disabled' : ''}>
+                    <input type="number" step="1" class="form-control qty-input-main" value="${to_buy}" max="${to_buy}" ${isDisabled ? 'disabled' : ''}>
+                    ${qty_round_indicator(to_buy_exact)}
                 </td>
             </tr>`;
     });
@@ -1252,6 +1300,8 @@ function show_sales_order_dialog(frm, data, is_subcontracted) {
                     selected_rows.push({
                         salesOrder: $(this).data("so"),       // consistent casing
                         itemCode: $(this).data("item"),
+                        soRowName: $(this).data("so-row") || "", // exact Sales Order Item row — disambiguates
+                                                                  // a BOM/non-BOM duplicate pair for the same item_code
                         pendingQty: qty,                      // match backend expectation
                         bom_no: $(this).data("bom") || "", // or bom
                         itemName: $row.find(".item-code-main").text().trim() // optional but helpful for rejection messages
@@ -1296,6 +1346,15 @@ function show_sales_order_dialog(frm, data, is_subcontracted) {
                     });
 
                     frm.refresh_field("items");
+
+                    // Rows added via add_child never run ERPNext's own
+                    // qty/rate change triggers, so base_rate/base_amount
+                    // (mandatory core fields, derived from rate/amount ×
+                    // conversion_rate) are never populated — Save then
+                    // fails with "Missing Fields: Rate (INR), Amount (INR)"
+                    // even though rate/amount visibly show a value.
+                    frm.cscript.calculate_taxes_and_totals();
+
                     frappe.show_alert({ message: __("{0} item(s) added", [r.message.valid_items.length]), indicator: "green" });
                 }
             });
@@ -1424,9 +1483,10 @@ function show_so_selection_and_rm_purchase_dialog(frm, sales_orders) {
             <td class="text-right text-muted">${flt(so.picked_submitted, 2)} / ${flt(so.picked_draft, 2)}</td>
             <td class="text-right text-highlight" style="font-size: 14px;">${flt(so.qty_awaiting_pick, 2)} ${so.uom}</td>
             <td class="text-center">
-                <input type="number" step="any" min="0" max="${flt(so.qty_awaiting_pick, 2)}"
+                <input type="number" step="1" min="0" max="${qty_round_up(so.qty_awaiting_pick).rounded}"
                        class="form-control qty-input text-center fg-fulfill-input"
-                       data-max="${flt(so.qty_awaiting_pick, 2)}" value="${so.qty_awaiting_pick}">
+                       data-max="${qty_round_up(so.qty_awaiting_pick).rounded}" value="${qty_round_up(so.qty_awaiting_pick).rounded}">
+                ${qty_round_indicator(so.qty_awaiting_pick)}
             </td>
             <td>${rm_status_html}</td>
         </tr>`;
@@ -1595,7 +1655,8 @@ function show_so_selection_and_rm_purchase_dialog(frm, sales_orders) {
                 let d = rms[code];
                 let effective_stock = d.available_stock + d.linked_po_qty_total + d.general_po_coming
                     + d.linked_mr_qty_total + d.general_mr_coming;
-                let purchase_rec = Math.max(0, d.required_qty - effective_stock);
+                let purchase_rec_exact = Math.max(0, d.required_qty - effective_stock);
+                let purchase_rec = qty_round_up(purchase_rec_exact).rounded;
                 let safe_meta = JSON.stringify(d).replace(/'/g, "&#39;");
 
                 let po_links = (d.po_refs || []).slice(0, 3)
@@ -1626,9 +1687,10 @@ function show_so_selection_and_rm_purchase_dialog(frm, sales_orders) {
             <td class="text-right text-dark">${effective_stock.toFixed(2)}</td>
             <td style="font-size:10px;">${ref_links}</td>
             <td class="text-right">
-                <input type="number" class="form-control qty-input final-buy-input text-right" 
+                <input type="number" step="1" class="form-control qty-input final-buy-input text-right"
                     style="${purchase_rec > 0 ? 'color:#d62222; background:#fff5f5;' : 'color:#999;'}"
-                    value="${purchase_rec.toFixed(2)}">
+                    value="${purchase_rec}">
+                ${qty_round_indicator(purchase_rec_exact, { label: 'Rounded up from' })}
             </td>
         </tr>`;
             });
@@ -1706,6 +1768,16 @@ function show_so_selection_and_rm_purchase_dialog(frm, sales_orders) {
 
                     frm.refresh_field("items");
                     if (has_breakdown) frm.refresh_field("custom_rm_source_breakdown");
+
+                    // Rows added via add_child never run ERPNext's own
+                    // qty/rate change triggers, so base_rate/base_amount
+                    // (and the grand total) are never derived from the
+                    // rate/amount we just set — both stay blank, and
+                    // base_rate/base_amount are mandatory core fields, so
+                    // Save fails with "Missing Fields: Rate (INR), Amount
+                    // (INR)" even though rate/amount visibly show a value.
+                    frm.cscript.calculate_taxes_and_totals();
+
                     dialog.hide();
                 }
             });
@@ -2133,33 +2205,6 @@ function show_receive_items_dialog(frm, sco_name) {
     });
 }
 
-function call_create_receipts(sco_name, items_to_receive, dialog) {
-    frappe.call({
-        method: "erp_dacsinc_custom.purchase_order.create_receipt_documents",
-        args: {
-            sco_name: sco_name,
-            items_to_receive: JSON.stringify(items_to_receive)
-        },
-        freeze: true,
-        freeze_message: __("Creating Purchase Receipts"),
-        callback: function (r) {
-            if (r.message && r.message.pr_name && r.message.scr_name) {
-                dialog.hide();
-
-                frappe.show_alert({
-                    message: __("Successfully Created:<br>• {0} (Subcon Receipt)<br>• {1} (Purchase Receipt)",
-                        [r.message.scr_name, r.message.pr_name]),
-                    indicator: 'green'
-                }, 7);
-
-                frm.refresh_field("custom_purchase_order_html");
-                frm.refresh();
-                render_linked_docs_html(frm, linked_subcontracting_docs)
-            }
-        }
-    });
-}
-
 function render_linked_docs_html(frm, docs) {
     const wrapper = frm.fields_dict.custom_purchase_order_html.$wrapper;
     wrapper.empty();
@@ -2562,10 +2607,13 @@ function render_smart_po_dialog(frm, raw_data) {
                     <div class="sum-card">
                         <div class="sum-line" style="color:#64748b;"><span>Original:</span><span>${row.total_mr_qty}</span></div>
                         <div class="sum-line" style="color:#ef4444; border-bottom: 1px solid #ebedef; padding-bottom: 3px;"><span>Previous:</span><span>-${row.ordered_qty}</span></div>
-                        <div class="sum-line" style="color:#3b82f6; padding-top:3px; font-size:11px;"><span>Net Due:</span><span>${row.total_pending}</span></div>
+                        <div class="sum-line" style="color:#3b82f6; padding-top:3px; font-size:11px;"><span>Net Due:</span><span>${qty_round_up(row.total_pending).rounded}</span></div>
                     </div>
                 </td>
-                <td class="text-right"><input type="number" min="0" class="qty-inp row-qty" data-key="${row.item_code}" value="${row.total_pending}"></td>
+                <td class="text-right">
+                    <input type="number" step="1" min="0" class="qty-inp row-qty" data-key="${row.item_code}" value="${qty_round_up(row.total_pending).rounded}">
+                    ${qty_round_indicator(row.total_pending)}
+                </td>
             </tr>`;
         });
 
@@ -2613,17 +2661,41 @@ function submit_to_po(d, frm, data) {
 
     if (to_add.length === 0) return frappe.msgprint("Please select rows to process.");
 
-    frm.clear_table('items');
-    to_add.forEach(l => {
-        let child = frm.add_child('items');
-        frappe.model.set_value(child.doctype, child.name, 'item_code', l.item_code);
-        frappe.model.set_value(child.doctype, child.name, 'qty', l.qty);
-        frappe.model.set_value(child.doctype, child.name, 'warehouse', l.warehouse);
-        frappe.model.set_value(child.doctype, child.name, 'material_request', l.material_request);
-        frappe.model.set_value(child.doctype, child.name, 'material_request_item', l.material_request_item);
-        frappe.model.set_value(child.doctype, child.name, 'sales_order', l.sales_order);
-        frappe.model.set_value(child.doctype, child.name, 'description', l.description);
+    // A row built purely from add_child + frappe.model.set_value never runs
+    // ERPNext's own item_code trigger — no rate, no price_list_rate, no
+    // gst_hsn_code (that's a fetch_from field, and fetch_from only ever
+    // copies through the Link field's own UI control, never a scripted
+    // set_value). build_rm_purchase_rows is the same server-side fetch the
+    // other "fetch item" dialogs now use — call it here too so every row
+    // gets a real rate/price list rate/HSN code, then layer this dialog's
+    // own MR-tracing fields (warehouse, material_request, sales_order,
+    // Source Trace description) on top. Indices line up 1:1 with to_add
+    // since every entry here already has item_code and qty > 0 — nothing
+    // for build_rm_purchase_rows to skip.
+    frappe.call({
+        method: 'erp_dacsinc_custom.purchase_order.build_rm_purchase_rows',
+        args: { rows: JSON.stringify(to_add.map(l => ({ item_code: l.item_code, qty: l.qty, uom: l.uom }))) },
+        freeze: true,
+        freeze_message: __('Fetching item details…'),
+        callback: (r) => {
+            const built_rows = r.message || [];
+            if (!built_rows.length) {
+                frappe.msgprint(__('No valid rows to add.'));
+                return;
+            }
+            frm.clear_table('items');
+            built_rows.forEach((built, i) => {
+                const source = to_add[i] || {};
+                const row = frm.add_child('items', built);
+                row.warehouse = source.warehouse;
+                row.material_request = source.material_request;
+                row.material_request_item = source.material_request_item;
+                row.sales_order = source.sales_order;
+                row.description = source.description;
+            });
+            frm.refresh_field('items');
+            frm.cscript.calculate_taxes_and_totals();
+            d.hide();
+        }
     });
-    frm.refresh_field('items');
-    d.hide();
 }

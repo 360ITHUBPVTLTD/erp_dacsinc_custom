@@ -27,7 +27,7 @@ app_license = "mit"
 # include js, css files in header of desk.html
 # app_include_css = "/assets/erp_dacsinc_custom/css/erp_dacsinc_custom.css"
 app_include_js = [
-    "/assets/erp_dacsinc_custom/js/workflow.js?v=1.0.4",
+    "/assets/erp_dacsinc_custom/js/workflow.js?v=1.0.5",
     "/assets/erp_dacsinc_custom/js/toogle.js?v=1.0.4"
 ]
 
@@ -164,6 +164,10 @@ has_permission = {
 # Hook on document methods and events
 
 doc_events = {
+    "User": {
+        "before_validate": "erp_dacsinc_custom.erp_dacsinc_custom.doctype.user_access_profile.user_access_profile.guard_role_profile_name",
+        "on_update": "erp_dacsinc_custom.erp_dacsinc_custom.doctype.user_access_profile.user_access_profile.resync_after_user_save",
+    },
     "Item": {
         "before_save": "erp_dacsinc_custom.custom_script.item_before_save",
         "after_insert": "erp_dacsinc_custom.custom_script.item_after_insert",

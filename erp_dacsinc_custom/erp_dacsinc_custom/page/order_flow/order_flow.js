@@ -315,7 +315,7 @@ class OrderFlow {
                         <option value="">All Approval Stages</option>
                         <option value="Draft">Draft</option>
                         <option value="Pending Merchandiser Approval">Pending Merchandiser Approval</option>
-                        <option value="Pending Final Approval">Pending Final Approval</option>
+                        <option value="Pending Final Approval">Pending Final SO Approval</option>
                         <option value="Approved">Approved</option>
                         <option value="Rejected">Rejected</option>
                     </select>
@@ -1068,7 +1068,7 @@ class OrderFlow {
                     if (missing_details_sos.length > 0) {
                         frappe.msgprint({
                             title: __('Missing Customer Details'),
-                            message: __('The following Sales Orders cannot be approved in bulk because their Customer profiles are missing GSTIN, Tax Category, Primary Address, or Primary Contact. Please approve them individually to add or bypass details:<br><br><b>{0}</b>', [missing_details_sos.join(', ')])
+                            message: __('The following Sales Orders cannot be approved in bulk because their Customer profiles are missing GSTIN, Tax Category, Primary Address, or Primary Contact. Please approve them individually to add or skip details:<br><br><b>{0}</b>', [missing_details_sos.join(', ')])
                         });
                         return;
                     }
@@ -2191,7 +2191,7 @@ class OrderFlow {
                             ${o.is_overdue ? '<span class="of-chip of-chip--bad" style="margin-left:4px;">Overdue</span>' : ''}
                             ${o.skip_delivery_note ? '<span class="of-chip" style="margin-left:4px; background:#e83e8c; color:#fff; font-size:9px; padding:2px 5px; border-radius:3px; font-weight:700;">Direct Bill</span>' : ''}
                             <div class="of-meta" style="font-weight:500;">
-                                <a href="/app/customer/${encodeURIComponent(o.customer)}" target="_blank" style="color:inherit;">${of_esc(o.customer_name || o.customer || '')}</a>
+                                <a href="/app/customer/${encodeURIComponent(o.customer)}" target="_blank" style="color:inherit;">${of_customer_display(o.customer_name || o.customer, o.contact_person_name)}</a>
                             </div>
                             ${o.custom_merchandiser_user ? `
                                 <div class="of-micro" style="margin-top:2px;color:var(--of-info);" title="Merchandiser assigned to this customer">
@@ -3416,7 +3416,7 @@ class OrderFlow {
                 <td><i class="fa fa-caret-right of-so-toggle" data-so="${of_esc(o.name)}" style="cursor:pointer; width:12px; font-size:14px; color:var(--text-light);"></i>
                     <a href="/app/sales-order/${encodeURIComponent(o.name)}" target="_blank" style="font-weight:700;">${of_esc(o.name)}</a></td>
                 <td style="text-align:left;">
-                    <a href="/app/customer/${encodeURIComponent(o.customer)}" target="_blank" style="font-weight:600;">${of_esc(o.customer_name || o.customer || '')}</a>
+                    <a href="/app/customer/${encodeURIComponent(o.customer)}" target="_blank" style="font-weight:600;">${of_customer_display(o.customer_name || o.customer, o.contact_person_name)}</a>
                 </td>
                 <td class="of-meta">${of_date(o.transaction_date)}</td>
                 <td style="font-weight:700;">${of_money(o.grand_total, o.currency)}</td>
@@ -3469,7 +3469,7 @@ class OrderFlow {
                 <td><i class="fa fa-caret-right of-doc-items-toggle" data-doctype="Sales Invoice" data-docname="${of_esc(s.name)}" style="cursor:pointer;margin-right:4px;color:var(--text-light);"></i>
                     <a href="/app/sales-invoice/${encodeURIComponent(s.name)}" target="_blank" style="font-weight:700;">${of_esc(s.name)}</a></td>
                 <td style="text-align:left;">
-                    <a href="/app/customer/${encodeURIComponent(s.customer)}" target="_blank" style="font-weight:600;">${of_esc(s.customer_name || s.customer || '')}</a>
+                    <a href="/app/customer/${encodeURIComponent(s.customer)}" target="_blank" style="font-weight:600;">${of_customer_display(s.customer_name || s.customer, s.contact_person_name)}</a>
                     <div class="of-micro text-muted">${of_esc(s.customer || '')}</div>
                 </td>
                 <td>${of_so_links(s.sales_orders)}
@@ -3723,7 +3723,7 @@ class OrderFlow {
                     <i class="fa fa-caret-right of-so-toggle" data-so="${o.name}" style="cursor:pointer; width:12px; font-size:14px; color:var(--text-light);"></i>
                     <a href="/app/sales-order/${encodeURIComponent(o.name)}" target="_blank" style="font-weight:700;">${of_esc(o.name)}</a>
                     <div class="of-meta" style="font-weight:500;">
-                        <a href="/app/customer/${encodeURIComponent(o.customer)}" target="_blank" style="color:inherit;">${of_esc(o.customer_name || o.customer || '')}</a>
+                        <a href="/app/customer/${encodeURIComponent(o.customer)}" target="_blank" style="color:inherit;">${of_customer_display(o.customer_name || o.customer, o.contact_person_name)}</a>
                     </div>
                     ${o.custom_merchandiser_user ? `
                     <div class="of-micro text-muted" style="margin-top: 3px; font-weight: 500;">
@@ -3783,11 +3783,11 @@ class OrderFlow {
                     <i class="fa fa-user" style="color:var(--of-blue);"></i> ${can_final ? '1. Merchandiser Queue (Track)' : '1. Pending Approval'} (${my_approvals.length})
                 </button>
                 <button class="of-subtab ${sub === 'unassigned' ? 'is-active' : ''}" data-subtab="unassigned">
-                    <i class="fa fa-users" style="color:var(--of-yellow);"></i> 2. Unassigned Orders (${unassigned_approvals.length})
+                    <i class="fa fa-users" style="color:var(--of-yellow);"></i> 2. Merchandiser Unassigned Orders (${unassigned_approvals.length})
                 </button>
                 ${can_final ? `
                 <button class="of-subtab ${sub === 'final' ? 'is-active' : ''}" data-subtab="final">
-                    <i class="fa fa-check-circle" style="color:var(--of-green);"></i> 3. Pending Final Approval (${final_approvals.length})
+                    <i class="fa fa-check-circle" style="color:var(--of-green);"></i> 3. Pending Final SO Approval (${final_approvals.length})
                 </button>` : ''}
             </div>
 
@@ -3797,8 +3797,8 @@ class OrderFlow {
                     <div>
                         <i class="fa fa-check-square-o"></i> ${
                             sub === 'merchandiser' ? (can_final ? __('Merchandiser Queue (Track)') : __('Pending Approval')) :
-                            sub === 'unassigned' ? __('Unassigned Orders (Approve & Claim)') :
-                            __('Pending Final Approval')
+                            sub === 'unassigned' ? __('Merchandiser Unassigned Orders (Approve & Claim)') :
+                            __('Pending Final SO Approval')
                         }
                     </div>
                     <div style="display: flex; gap: 10px;">
@@ -3867,16 +3867,23 @@ class OrderFlow {
     }
 
     show_verification_dialog(so, res) {
-        const address_details = res.address_details || {};
         const contact_details = res.contact_details || {};
-        
+        const address_query = () => ({
+            query: 'frappe.contacts.doctype.address.address.address_query',
+            filters: { link_doctype: 'Customer', link_name: res.customer }
+        });
+        const customer_link_html = `<a href="${frappe.utils.get_form_link('Customer', res.customer)}" target="_blank">${of_esc(res.customer_display_name || res.customer)} (${of_esc(res.customer)})</a>`;
+        const customer_label_html = contact_details.first_name
+            ? `${customer_link_html} <span style="color:var(--text-muted);">(${of_esc(contact_details.first_name)})</span>`
+            : customer_link_html;
+
         const fields = [
             {
                 fieldtype: 'HTML',
                 fieldname: 'notice',
                 options: `
                     <div class="alert alert-warning" style="margin-bottom: 15px;">
-                        <i class="fa fa-warning"></i> ${__('Customer {0} details. Fill or correct them below to save to master, or enter a comment to bypass.', [`<b>${res.customer}</b>`])}
+                        <i class="fa fa-warning"></i> ${__('Customer {0} details. Fill or correct them below to save to master, or enter a comment to skip.', [`<b>${customer_label_html}</b>`])}
                     </div>
                 `
             },
@@ -3902,47 +3909,44 @@ class OrderFlow {
             },
             {
                 fieldtype: 'Section Break',
-                label: __('Primary Address Details')
+                label: __('Billing & Shipping Address')
             },
             {
-                fieldtype: 'Data',
-                fieldname: 'address_line1',
-                label: __('Address Line 1'),
-                default: address_details.address_line1 || ''
+                fieldtype: 'Link',
+                options: 'Address',
+                fieldname: 'billing_address',
+                label: __('Billing Address'),
+                default: res.billing_address || '',
+                description: __('Pick one of this customer\'s existing addresses, or use "Create a New Address" — applies to this Sales Order only.'),
+                get_query: address_query,
+                onchange: () => of_refresh_address_preview(dialog, 'billing_address', 'billing_address_display')
             },
             {
-                fieldtype: 'Data',
-                fieldname: 'address_line2',
-                label: __('Address Line 2'),
-                default: address_details.address_line2 || ''
-            },
-            {
-                fieldtype: 'Data',
-                fieldname: 'city',
-                label: __('City'),
-                default: address_details.city || ''
+                fieldtype: 'Small Text',
+                fieldname: 'billing_address_display',
+                label: __('Address Preview'),
+                read_only: 1,
+                default: res.billing_address_display || ''
             },
             {
                 fieldtype: 'Column Break'
             },
             {
-                fieldtype: 'Data',
-                fieldname: 'state',
-                label: __('State'),
-                default: address_details.state || ''
-            },
-            {
                 fieldtype: 'Link',
-                options: 'Country',
-                fieldname: 'country',
-                label: __('Country'),
-                default: address_details.country || 'India'
+                options: 'Address',
+                fieldname: 'shipping_address',
+                label: __('Shipping Address'),
+                default: res.shipping_address || '',
+                description: __('Pick one of this customer\'s existing addresses, or use "Create a New Address" — applies to this Sales Order only.'),
+                get_query: address_query,
+                onchange: () => of_refresh_address_preview(dialog, 'shipping_address', 'shipping_address_display')
             },
             {
-                fieldtype: 'Data',
-                fieldname: 'pincode',
-                label: __('Pincode'),
-                default: address_details.pincode || ''
+                fieldtype: 'Small Text',
+                fieldname: 'shipping_address_display',
+                label: __('Address Preview'),
+                read_only: 1,
+                default: res.shipping_address_display || ''
             },
             {
                 fieldtype: 'Section Break',
@@ -3971,13 +3975,13 @@ class OrderFlow {
             },
             {
                 fieldtype: 'Section Break',
-                label: __('Bypass Option')
+                label: __('Skip Verification')
             },
             {
                 fieldtype: 'Small Text',
-                fieldname: 'bypass_comment',
+                fieldname: 'skip_comment',
                 label: __('Or Approve with Comment (Will notify in dashboard)'),
-                placeholder: __('Enter comment if you wish to bypass validations...')
+                placeholder: __('Enter comment if you wish to skip validations...')
             }
         ];
 
@@ -3996,8 +4000,9 @@ class OrderFlow {
 
         const dialog = new frappe.ui.Dialog({
             title: __('Verify Customer Details - {0}', [so]),
+            size: 'large',
             fields: fields,
-            primary_action_label: __('Save Details & Approve'),
+            primary_action_label: __('Update Customer & Approve SO'),
             primary_action: (values) => {
                 const btn_primary = dialog.get_primary_btn();
                 const btn_secondary = dialog.get_secondary_btn();
@@ -4009,12 +4014,12 @@ class OrderFlow {
                     if (btn_secondary) btn_secondary.attr("disabled", false).removeClass("disabled");
                 };
 
-                if (values.bypass_comment && values.bypass_comment.trim()) {
+                if (values.skip_comment && values.skip_comment.trim()) {
                     frappe.call({
                         method: 'erp_dacsinc_custom.order_flow_api.approve_sales_order_with_comment',
                         args: {
                             sales_order: so,
-                            comment: values.bypass_comment,
+                            comment: values.skip_comment,
                             skip_delivery_note: values.skip_delivery_note
                         },
                         error: enable_buttons
@@ -4026,18 +4031,6 @@ class OrderFlow {
                     return;
                 }
                 
-                let address_data = null;
-                if (values.address_line1) {
-                    address_data = JSON.stringify({
-                        address_line1: values.address_line1,
-                        address_line2: values.address_line2,
-                        city: values.city,
-                        state: values.state,
-                        country: values.country,
-                        pincode: values.pincode
-                    });
-                }
-                
                 let contact_data = null;
                 if (values.contact_first_name) {
                     contact_data = JSON.stringify({
@@ -4046,14 +4039,15 @@ class OrderFlow {
                         email: values.contact_email
                     });
                 }
-                
+
                 frappe.call({
                     method: 'erp_dacsinc_custom.order_flow_api.save_and_approve_sales_order',
                     args: {
                         sales_order: so,
                         gstin: values.gstin || null,
                         tax_category: values.tax_category || null,
-                        address_data: address_data,
+                        billing_address: values.billing_address || null,
+                        shipping_address: values.shipping_address || null,
                         contact_data: contact_data,
                         skip_delivery_note: values.skip_delivery_note
                     },
@@ -4064,11 +4058,11 @@ class OrderFlow {
                     this.refresh(true);
                 });
             },
-            secondary_action_label: __('Bypass & Approve'),
+            secondary_action_label: __('Skip & Approve'),
             secondary_action: () => {
                 const values = dialog.get_values();
-                if (!values || !values.bypass_comment || !values.bypass_comment.trim()) {
-                    frappe.msgprint(__('Please enter a bypass comment in the field below first.'));
+                if (!values || !values.skip_comment || !values.skip_comment.trim()) {
+                    frappe.msgprint(__('Please enter a comment in the field below first.'));
                     return;
                 }
                 const btn_primary = dialog.get_primary_btn();
@@ -4085,7 +4079,7 @@ class OrderFlow {
                     method: 'erp_dacsinc_custom.order_flow_api.approve_sales_order_with_comment',
                     args: {
                         sales_order: so,
-                        comment: values.bypass_comment,
+                        comment: values.skip_comment,
                         skip_delivery_note: values.skip_delivery_note
                     },
                     error: enable_buttons
@@ -4097,6 +4091,7 @@ class OrderFlow {
             }
         });
 
+        of_enable_new_address_customer_prefill(dialog, res.customer);
         dialog.show();
     }
 
@@ -4395,6 +4390,66 @@ function of_esc(v) {
     if (v === undefined || v === null) return '';
     return String(v).replace(/&/g, '&amp;').replace(/</g, '&lt;')
         .replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+}
+
+// Every dashboard table shows a customer name; this appends that customer's
+// primary contact person in small text so whoever's looking doesn't have to
+// open the Customer record just to know who to call. Silently renders just
+// the customer name when no contact is on file yet, rather than an empty
+// "()".
+function of_customer_display(customer_name, contact_person_name) {
+    const name_html = of_esc(customer_name || '');
+    if (!contact_person_name) return name_html;
+    return `${name_html} <span class="of-micro" style="color:var(--text-muted);">(${of_esc(contact_person_name)})</span>`;
+}
+
+// Keeps the address preview in sync whenever the Billing/Shipping Address
+// Link field changes — including right after "Create a New Address" resolves,
+// since that also fires the Link control's onchange with the new address name.
+// Uses set_value (not raw HTML) so the preview renders inside the same
+// read-only "boxed" control Sales Order itself uses for address_display.
+function of_refresh_address_preview(dialog, link_fieldname, preview_fieldname) {
+    const address_name = dialog.get_value(link_fieldname);
+    if (!address_name) {
+        dialog.set_value(preview_fieldname, '');
+        return;
+    }
+    frappe.xcall('frappe.contacts.doctype.address.address.get_address_display', { address_dict: address_name })
+        .then(address_display => {
+            dialog.set_value(preview_fieldname, address_display || '');
+        });
+}
+
+// "Create a New Address" from the Billing/Shipping Address Link field opens
+// india_compliance's generic Address quick-entry, which only self-fills its
+// own Link Document Type / Link Name fields by guessing off `cur_frm` — and
+// there is no cur_frm here, this dialog lives on the Order Flow page, not a
+// document form. So for as long as this dialog is open, intercept the next
+// Address quick-entry(ies) and prefill+lock them to this SO's customer
+// ourselves; restore the real make_quick_entry the moment the dialog closes
+// so nothing about unrelated Address creation elsewhere is ever touched.
+function of_enable_new_address_customer_prefill(dialog, customer_name) {
+    const original_make_quick_entry = frappe.ui.form.make_quick_entry;
+    frappe.ui.form.make_quick_entry = function (doctype, after_insert, init_callback, doc, force) {
+        if (doctype !== 'Address') {
+            return original_make_quick_entry(doctype, after_insert, init_callback, doc, force);
+        }
+        const wrapped_init_callback = (qe_dialog) => {
+            if (init_callback) init_callback(qe_dialog);
+            qe_dialog.set_value('link_doctype', 'Customer').then(() => {
+                return qe_dialog.set_value('link_name', customer_name);
+            }).then(() => {
+                qe_dialog.set_df_property('link_doctype', 'read_only', 1);
+                qe_dialog.set_df_property('link_name', 'read_only', 1);
+            });
+        };
+        return original_make_quick_entry(doctype, after_insert, wrapped_init_callback, doc, force);
+    };
+    const existing_onhide = dialog.onhide;
+    dialog.onhide = () => {
+        frappe.ui.form.make_quick_entry = original_make_quick_entry;
+        existing_onhide && existing_onhide();
+    };
 }
 
 function of_num(v) { return flt_of(v) || 0; }
