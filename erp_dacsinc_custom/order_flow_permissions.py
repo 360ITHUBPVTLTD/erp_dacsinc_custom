@@ -300,6 +300,13 @@ def sync_order_flow_page_roles(doc=None, method=None):
         page_roles.update(LEGACY_PAGE_ROLES)
     for roles in tab_roles.values():
         page_roles.update(roles)
+
+    # Union with all roles that have read access to any tab's primary doctypes
+    all_doctypes = []
+    for dts in TAB_DOCTYPES.values():
+        all_doctypes.extend(dts)
+    page_roles.update(get_roles_with_read_access(all_doctypes))
+
     page_roles.update(ADMIN_ROLES)
 
     # Drop roles that no longer exist, so a renamed/deleted Role can't leave
@@ -412,3 +419,53 @@ def sync_sales_order_final_approver_role(doc=None, method=None):
     if changed:
         frappe.db.commit()
         frappe.clear_cache()
+
+
+def get_roles_with_read_access(doctypes):
+    """
+    Get all roles that have read access to at least one of the specified doctypes
+    by checking both Custom DocPerm and standard DocPerm rows.
+    """
+    roles = set()
+    for dt in doctypes:
+        if not frappe.db.exists("DocType", dt):
+            continue
+        # Check Custom DocPerm
+        custom_roles = frappe.get_all("Custom DocPerm", filters={"parent": dt, "read": 1}, pluck="role")
+        roles.update(custom_roles)
+        # Check standard DocPerm (stored in DocType.permissions)
+        meta = frappe.get_meta(dt)
+        for p in meta.permissions:
+            if p.read:
+                roles.add(p.role)
+    return sorted(roles)
+
+
+def sync_admin_settings_tab_roles():
+    """
+    Automatically clear and rebuild the allowed roles list in Admin Settings
+    for each tab based on the roles that have read access to the tab's main doctypes.
+    """
+    settings = frappe.get_doc("Admin Settings")
+    changed = False
+
+    for tab, doctypes in TAB_DOCTYPES.items():
+        fieldname = f"of_tab_{tab}_roles"
+        if not settings.meta.has_field(fieldname):
+            continue
+
+        roles = get_roles_with_read_access(doctypes)
+        # Exclude system-internal roles
+        roles = [r for r in roles if r not in ("Guest", "Administrator")]
+
+        # Re-set child table
+        settings.set(fieldname, [])
+        for role in sorted(roles):
+            settings.append(fieldname, {"role": role})
+        changed = True
+
+    if changed:
+        settings.flags.ignore_permissions = True
+        settings.save(ignore_permissions=True)
+        frappe.db.commit()
+        frappe.clear_document_cache("Admin Settings", "Admin Settings")
