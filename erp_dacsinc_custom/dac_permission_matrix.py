@@ -553,25 +553,30 @@ def sync_workspace_roles():
     """
     Restrict dashboard Workspaces to their target business roles idempotently.
     """
+    ADMIN_ROLES = ["System Manager", "Super Admin", "Admin"]
+
     WORKSPACE_ROLES = {
-        "HR Workspace": ["HR Manager", "HR User", "System Manager"],
-        "Employee Workspace": ["Employee", "System Manager"],
-        "POS": ["POS User", "POS Store Manager", "POS Admin", "System Manager"],
-        "POS Admin": ["POS Admin", "System Manager"],
-        "Accounts Team": ["Accounts Executive", "Accounts Manager", "Accounts Team", "Finance Collection Executive", "Finance Executive", "System Manager"],
-        "DAC Accounts": ["Accounts Executive", "Accounts Manager", "Accounts Team", "Finance Collection Executive", "Finance Executive", "System Manager"],
-        "CRM Dashboard": ["DAC CRM", "DAC CRM Head", "System Manager"],
-        "Operation Team": ["Operation Manager Corporate", "Store Operation Manager", "Accounts User", "Accounts Manager", "Sales Manager", "System Manager"],
-        "Accounting": ["Accounts Executive", "Accounts Manager", "Accounts Team", "Finance Collection Executive", "Finance Executive", "System Manager"],
+        "HR Workspace": ["HR Manager", "HR User"] + ADMIN_ROLES,
+        "Employee Workspace": ["Employee"] + ADMIN_ROLES,
+        "POS": ["POS User", "POS Store Manager", "POS Admin"] + ADMIN_ROLES,
+        "POS Admin": ["POS Admin"] + ADMIN_ROLES,
+        "Accounts Team": ["Accounts Executive", "Accounts Manager", "Accounts Team", "Finance Collection Executive", "Finance Executive"] + ADMIN_ROLES,
+        "DAC Accounts": ["Accounts Executive", "Accounts Manager", "Accounts Team", "Finance Collection Executive", "Finance Executive"] + ADMIN_ROLES,
+        "CRM Dashboard": ["DAC CRM", "DAC CRM Head"] + ADMIN_ROLES,
+        "Operation Team": ["Operation Manager Corporate", "Store Operation Manager", "Accounts User", "Accounts Manager", "Sales Manager"] + ADMIN_ROLES,
+        "Accounting": ["Accounts Executive", "Accounts Manager", "Accounts Team", "Finance Collection Executive", "Finance Executive"] + ADMIN_ROLES,
     }
 
     for ws_name, roles in WORKSPACE_ROLES.items():
         if not frappe.db.exists("Workspace", ws_name):
             continue
         doc = frappe.get_doc("Workspace", ws_name)
+        doc.public = 1
+        doc.is_hidden = 0
         doc.set("roles", [{"role": r} for r in roles if frappe.db.exists("Role", r)])
         doc.flags.ignore_permissions = True
         doc.save(ignore_permissions=True)
 
     frappe.db.commit()
+
 
