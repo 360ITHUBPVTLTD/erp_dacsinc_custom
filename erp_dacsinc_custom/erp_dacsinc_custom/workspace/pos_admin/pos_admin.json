@@ -1,0 +1,90 @@
+{
+ "charts": [],
+ "content": "[{\"id\":\"wtW_ZXvs3H\",\"type\":\"header\",\"data\":{\"text\":\"<span class=\\\"h4\\\">POS Admin</span>\",\"col\":12}},{\"id\":\"Yj4kbIbi1L\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"POS Profile\",\"col\":3}},{\"id\":\"CSaDOV6xFg\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Open POS\",\"col\":3}},{\"id\":\"phYRHBz6wJ\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"POS Closing Entry\",\"col\":3}},{\"id\":\"LvNFecSjOO\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"POS Opening Entry\",\"col\":3}},{\"id\":\"Lb1emiVZnv\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"POS Invoice\",\"col\":3}},{\"id\":\"KI474gPq8F\",\"type\":\"header\",\"data\":{\"text\":\"<span class=\\\"h4\\\"><b>Report</b></span>\",\"col\":12}},{\"id\":\"VQSZj0l5QF\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"POS Register\",\"col\":3}}]",
+ "creation": "2026-02-15 16:44:44.350736",
+ "custom_blocks": [],
+ "docstatus": 0,
+ "doctype": "Workspace",
+ "for_user": "",
+ "hide_custom": 0,
+ "idx": 0,
+ "indicator_color": "green",
+ "is_hidden": 0,
+ "label": "POS Admin",
+ "links": [],
+ "modified": "2026-08-28 20:21:52.301862",
+ "modified_by": "Administrator",
+ "module": "Erp Dacsinc Custom",
+ "name": "POS Admin",
+ "number_cards": [],
+ "owner": "Administrator",
+ "parent_page": "",
+ "public": 1,
+ "quick_lists": [],
+ "roles": [
+  {
+   "role": "POS Admin"
+  },
+  {
+   "role": "System Manager"
+  },
+  {
+   "role": "Super Admin"
+  },
+  {
+   "role": "Admin"
+  }
+ ],
+ "sequence_id": 39.0,
+ "shortcuts": [
+  {
+   "color": "Grey",
+   "doc_view": "List",
+   "label": "Open POS",
+   "link_to": "point-of-sale",
+   "type": "Page",
+   "url": "http://192.168.1.22:8000/app/point-of-sale"
+  },
+  {
+   "color": "Grey",
+   "doc_view": "List",
+   "label": "POS Register",
+   "link_to": "POS Register",
+   "report_ref_doctype": "POS Invoice",
+   "type": "Report"
+  },
+  {
+   "color": "Grey",
+   "doc_view": "List",
+   "label": "POS Profile",
+   "link_to": "POS Profile",
+   "stats_filter": "[]",
+   "type": "DocType"
+  },
+  {
+   "color": "Grey",
+   "doc_view": "List",
+   "label": "POS Invoice",
+   "link_to": "POS Invoice",
+   "stats_filter": "[]",
+   "type": "DocType"
+  },
+  {
+   "color": "Grey",
+   "doc_view": "List",
+   "label": "POS Closing Entry",
+   "link_to": "POS Closing Entry",
+   "stats_filter": "[]",
+   "type": "DocType"
+  },
+  {
+   "color": "Grey",
+   "doc_view": "List",
+   "label": "POS Opening Entry",
+   "link_to": "POS Opening Entry",
+   "stats_filter": "[]",
+   "type": "DocType"
+  }
+ ],
+ "title": "POS Admin"
+}

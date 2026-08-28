@@ -11,7 +11,9 @@
  "owner": "Administrator",
  "page_name": "roles-and-permissions",
  "roles": [
-  {"role": "System Manager"}
+  {"role": "System Manager"},
+  {"role": "Super Admin"},
+  {"role": "Admin"}
  ],
  "script": null,
  "standard": "Yes",
