@@ -50,7 +50,7 @@ app_include_css = [
 # include js in page
 # page_js = {"page" : "public/js/file.js"}
 
-# include js in doctype views
+# include js in doctype views  
 doctype_js = {
 	"Lead": "public/js/lead.js",
 	"Sales Order": "public/js/sales_order.js",
