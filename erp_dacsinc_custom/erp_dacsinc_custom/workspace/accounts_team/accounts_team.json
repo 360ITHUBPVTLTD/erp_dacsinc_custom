@@ -1,0 +1,341 @@
+{
+ "charts": [],
+ "content": "[{\"id\":\"v2I0JH4-P5\",\"type\":\"header\",\"data\":{\"text\":\"<span class=\\\"h4\\\">Accounts Team</span>\",\"col\":12}},{\"id\":\"Ap4wMnwc3h\",\"type\":\"header\",\"data\":{\"text\":\"<span class=\\\"h4\\\"><b>Sales Accounting</b></span>\",\"col\":12}},{\"id\":\"_u3a09g85j\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Quotation\",\"col\":3}},{\"id\":\"TovIqpWOaF\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Sales Order\",\"col\":3}},{\"id\":\"GKaltuXqY_\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Sales Invoice\",\"col\":3}},{\"id\":\"AvosoRBHdn\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Payment Entry\",\"col\":3}},{\"id\":\"BMDmRfedHH\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Sales Register\",\"col\":3}},{\"id\":\"TxLMR1nuYF\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Delivery Note\",\"col\":3}},{\"id\":\"r4rbFIj4b6\",\"type\":\"spacer\",\"data\":{\"col\":12}},{\"id\":\"NOvcbyX_E5\",\"type\":\"header\",\"data\":{\"text\":\"<span class=\\\"h4\\\"><b>Purchases Accounting</b></span>\",\"col\":12}},{\"id\":\"UmmFJsNbpU\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Purchase Order\",\"col\":3}},{\"id\":\"MyEdpfEqL1\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Purchase Invoice\",\"col\":3}},{\"id\":\"4iAoUCnBRf\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"GRN - Purchase Receipt\",\"col\":3}},{\"id\":\"6barwqYbR0\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Payment Entry\",\"col\":3}},{\"id\":\"wyBL4fhknN\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Purchase Register\",\"col\":3}},{\"id\":\"_LRKtfeciW\",\"type\":\"spacer\",\"data\":{\"col\":12}},{\"id\":\"kY2h8cQlx1\",\"type\":\"header\",\"data\":{\"text\":\"<span class=\\\"h4\\\"><b>Reconciliations</b></span>\",\"col\":12}},{\"id\":\"zG2267v3j1\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Bank Statement Import\",\"col\":3}},{\"id\":\"odoBDsfzAT\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Payment Reconciliation\",\"col\":3}},{\"id\":\"TnS4ViA6TJ\",\"type\":\"spacer\",\"data\":{\"col\":12}},{\"id\":\"S6Eoer_lTe\",\"type\":\"header\",\"data\":{\"text\":\"<span class=\\\"h4\\\"><b>Accounting Entries</b></span>\",\"col\":12}},{\"id\":\"bla8Yv_Z8R\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Journal Entry\",\"col\":3}},{\"id\":\"SrQUNN3Bd0\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Daybook - General Ledger\",\"col\":3}},{\"id\":\"gu3yZlCVXO\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Stock Reconciliation\",\"col\":3}},{\"id\":\"80pqr6or7i\",\"type\":\"spacer\",\"data\":{\"col\":12}},{\"id\":\"rOl7B5J5a4\",\"type\":\"header\",\"data\":{\"text\":\"<span class=\\\"h4\\\"><b>Masters</b></span>\",\"col\":12}},{\"id\":\"usstIc0rc4\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Account\",\"col\":3}},{\"id\":\"7HUxBpMBfb\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Bank Account\",\"col\":3}},{\"id\":\"cu69OkMPqM\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Asset\",\"col\":3}},{\"id\":\"38IRxIUAyV\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Customer\",\"col\":3}},{\"id\":\"-KlGnFH_Bw\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Supplier\",\"col\":3}},{\"id\":\"0svzErrmzt\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Bank\",\"col\":3}},{\"id\":\"m3IOGF5xeM\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Item\",\"col\":3}},{\"id\":\"ln4XSjAWYS\",\"type\":\"spacer\",\"data\":{\"col\":12}},{\"id\":\"qfqESPOG7Z\",\"type\":\"header\",\"data\":{\"text\":\"<span class=\\\"h4\\\"><b>Compliance Reports</b></span>\",\"col\":12}},{\"id\":\"tjNBV4e07g\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Gstr 1\",\"col\":3}},{\"id\":\"vhBw1gi7mG\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Gst Sales Register\",\"col\":3}},{\"id\":\"f8sbc5wQQD\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Gst Purchase Register\",\"col\":3}},{\"id\":\"KheSUlqpNT\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Gstr 3b Details\",\"col\":3}},{\"id\":\"7HfTtxt6P9\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Professional Tax Deductions\",\"col\":3}},{\"id\":\"P1ds_Nj65E\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Provident Fund Deductions\",\"col\":3}},{\"id\":\"U90X1eV5fT\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Tax Withholding Details\",\"col\":3}},{\"id\":\"vGssCwfoqf\",\"type\":\"spacer\",\"data\":{\"col\":12}},{\"id\":\"TENvCjhW8-\",\"type\":\"header\",\"data\":{\"text\":\"<span class=\\\"h4\\\"><b>Reports</b></span>\",\"col\":12}},{\"id\":\"mCPkOEa8GP\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Chart of Accounts\",\"col\":3}},{\"id\":\"Fu8EYgQpum\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Balance Sheet\",\"col\":3}},{\"id\":\"KfcPxs4AyF\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Profit And Loss Statement\",\"col\":3}},{\"id\":\"6rD_K3zcB3\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Customer Ledger Summary\",\"col\":3}},{\"id\":\"1Kai3zSu49\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Supplier Ledger Summary\",\"col\":3}},{\"id\":\"30UlKp6nrf\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Fixed Asset Register\",\"col\":3}},{\"id\":\"UG5WFGKugb\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Stock Balance\",\"col\":3}}]",
+ "creation": "2026-02-05 16:07:48.567315",
+ "custom_blocks": [],
+ "docstatus": 0,
+ "doctype": "Workspace",
+ "for_user": "",
+ "hide_custom": 0,
+ "idx": 0,
+ "indicator_color": "green",
+ "is_hidden": 0,
+ "label": "Accounts Team",
+ "links": [],
+ "modified": "2026-08-28 20:21:52.361402",
+ "modified_by": "Administrator",
+ "module": "Erp Dacsinc Custom",
+ "name": "Accounts Team",
+ "number_cards": [],
+ "owner": "Administrator",
+ "parent_page": "",
+ "public": 1,
+ "quick_lists": [],
+ "roles": [
+  {
+   "role": "Accounts Executive"
+  },
+  {
+   "role": "Accounts Manager"
+  },
+  {
+   "role": "Accounts Team"
+  },
+  {
+   "role": "Finance Collection Executive"
+  },
+  {
+   "role": "Finance Executive"
+  },
+  {
+   "role": "System Manager"
+  },
+  {
+   "role": "Super Admin"
+  },
+  {
+   "role": "Admin"
+  }
+ ],
+ "sequence_id": 10.0,
+ "shortcuts": [
+  {
+   "color": "Grey",
+   "doc_view": "List",
+   "label": "Chart of Accounts",
+   "type": "URL",
+   "url": "https://dacsinc.360ithub.com/app/account/view/tree"
+  },
+  {
+   "color": "Grey",
+   "doc_view": "List",
+   "label": "Delivery Note",
+   "link_to": "Delivery Note",
+   "stats_filter": "[]",
+   "type": "DocType"
+  },
+  {
+   "color": "Grey",
+   "doc_view": "List",
+   "label": "Quotation",
+   "link_to": "Quotation",
+   "stats_filter": "[]",
+   "type": "DocType"
+  },
+  {
+   "color": "Grey",
+   "doc_view": "List",
+   "label": "Purchase Order",
+   "link_to": "Purchase Order",
+   "stats_filter": "[]",
+   "type": "DocType"
+  },
+  {
+   "color": "Grey",
+   "doc_view": "List",
+   "label": "Payment Entry",
+   "link_to": "Payment Entry",
+   "stats_filter": "[]",
+   "type": "DocType"
+  },
+  {
+   "color": "Grey",
+   "doc_view": "List",
+   "label": "Payment Reconciliation",
+   "link_to": "Payment Reconciliation",
+   "stats_filter": "[]",
+   "type": "DocType"
+  },
+  {
+   "color": "Grey",
+   "doc_view": "List",
+   "label": "Gstr 1",
+   "link_to": "GSTR-1",
+   "report_ref_doctype": "GL Entry",
+   "type": "Report"
+  },
+  {
+   "color": "Grey",
+   "doc_view": "List",
+   "label": "Professional Tax Deductions",
+   "link_to": "Professional Tax Deductions",
+   "report_ref_doctype": "Salary Slip",
+   "type": "Report"
+  },
+  {
+   "color": "Grey",
+   "doc_view": "List",
+   "label": "Sales Register",
+   "link_to": "Sales Register",
+   "report_ref_doctype": "Sales Invoice",
+   "type": "Report"
+  },
+  {
+   "color": "Grey",
+   "doc_view": "List",
+   "label": "Gst Purchase Register",
+   "link_to": "GST Purchase Register",
+   "report_ref_doctype": "Purchase Invoice",
+   "type": "Report"
+  },
+  {
+   "color": "Grey",
+   "doc_view": "List",
+   "label": "Journal Entry",
+   "link_to": "Journal Entry",
+   "stats_filter": "[]",
+   "type": "DocType"
+  },
+  {
+   "color": "Grey",
+   "doc_view": "List",
+   "label": "GRN - Purchase Receipt",
+   "link_to": "Purchase Receipt",
+   "stats_filter": "[]",
+   "type": "DocType"
+  },
+  {
+   "color": "Grey",
+   "doc_view": "List",
+   "label": "Daybook - General Ledger",
+   "link_to": "General Ledger",
+   "report_ref_doctype": "GL Entry",
+   "type": "Report"
+  },
+  {
+   "color": "Grey",
+   "doc_view": "List",
+   "label": "Asset",
+   "link_to": "Asset",
+   "stats_filter": "[]",
+   "type": "DocType"
+  },
+  {
+   "color": "Grey",
+   "doc_view": "List",
+   "label": "Account",
+   "link_to": "Account",
+   "stats_filter": "[]",
+   "type": "DocType"
+  },
+  {
+   "color": "Grey",
+   "doc_view": "List",
+   "label": "Fixed Asset Register",
+   "link_to": "Fixed Asset Register",
+   "report_ref_doctype": "Asset",
+   "type": "Report"
+  },
+  {
+   "color": "Grey",
+   "doc_view": "List",
+   "label": "Sales Order",
+   "link_to": "Sales Order",
+   "stats_filter": "[]",
+   "type": "DocType"
+  },
+  {
+   "color": "Grey",
+   "doc_view": "List",
+   "label": "Purchase Invoice",
+   "link_to": "Purchase Invoice",
+   "stats_filter": "[]",
+   "type": "DocType"
+  },
+  {
+   "color": "Grey",
+   "doc_view": "List",
+   "label": "Bank",
+   "link_to": "Bank",
+   "stats_filter": "[]",
+   "type": "DocType"
+  },
+  {
+   "color": "Grey",
+   "doc_view": "List",
+   "label": "Customer",
+   "link_to": "Customer",
+   "stats_filter": "[]",
+   "type": "DocType"
+  },
+  {
+   "color": "Grey",
+   "doc_view": "List",
+   "label": "Gstr 3b Details",
+   "link_to": "GSTR-3B Details",
+   "report_ref_doctype": "Purchase Invoice",
+   "type": "Report"
+  },
+  {
+   "color": "Grey",
+   "doc_view": "List",
+   "label": "Purchase Register",
+   "link_to": "Purchase Register",
+   "report_ref_doctype": "Purchase Invoice",
+   "type": "Report"
+  },
+  {
+   "color": "Grey",
+   "doc_view": "List",
+   "label": "Tax Withholding Details",
+   "link_to": "Tax Withholding Details",
+   "report_ref_doctype": "Purchase Invoice",
+   "type": "Report"
+  },
+  {
+   "color": "Grey",
+   "doc_view": "List",
+   "label": "Balance Sheet",
+   "link_to": "Balance Sheet",
+   "report_ref_doctype": "GL Entry",
+   "type": "Report"
+  },
+  {
+   "color": "Grey",
+   "doc_view": "List",
+   "label": "Supplier Ledger Summary",
+   "link_to": "Supplier Ledger Summary",
+   "report_ref_doctype": "Purchase Invoice",
+   "type": "Report"
+  },
+  {
+   "color": "Grey",
+   "doc_view": "List",
+   "label": "Item",
+   "link_to": "Item",
+   "stats_filter": "[]",
+   "type": "DocType"
+  },
+  {
+   "color": "Grey",
+   "doc_view": "List",
+   "label": "Stock Balance",
+   "link_to": "Stock Balance",
+   "report_ref_doctype": "Stock Ledger Entry",
+   "type": "Report"
+  },
+  {
+   "color": "Grey",
+   "doc_view": "List",
+   "label": "Sales Invoice",
+   "link_to": "Sales Invoice",
+   "stats_filter": "[]",
+   "type": "DocType"
+  },
+  {
+   "color": "Grey",
+   "doc_view": "List",
+   "label": "Supplier",
+   "link_to": "Supplier",
+   "stats_filter": "[]",
+   "type": "DocType"
+  },
+  {
+   "color": "Grey",
+   "doc_view": "List",
+   "label": "Gst Sales Register",
+   "link_to": "GST Sales Register",
+   "report_ref_doctype": "Sales Invoice",
+   "type": "Report"
+  },
+  {
+   "color": "Grey",
+   "doc_view": "List",
+   "label": "Stock Reconciliation",
+   "link_to": "Stock Reconciliation",
+   "stats_filter": "[]",
+   "type": "DocType"
+  },
+  {
+   "color": "Grey",
+   "doc_view": "List",
+   "label": "Profit And Loss Statement",
+   "link_to": "Profit and Loss Statement",
+   "report_ref_doctype": "GL Entry",
+   "type": "Report"
+  },
+  {
+   "color": "Grey",
+   "doc_view": "List",
+   "label": "Customer Ledger Summary",
+   "link_to": "Customer Ledger Summary",
+   "report_ref_doctype": "Sales Invoice",
+   "type": "Report"
+  },
+  {
+   "color": "Grey",
+   "doc_view": "List",
+   "label": "Bank Account",
+   "link_to": "Bank Account",
+   "stats_filter": "[]",
+   "type": "DocType"
+  },
+  {
+   "color": "Grey",
+   "doc_view": "List",
+   "label": "Provident Fund Deductions",
+   "link_to": "Provident Fund Deductions",
+   "report_ref_doctype": "Salary Slip",
+   "type": "Report"
+  },
+  {
+   "color": "Grey",
+   "doc_view": "List",
+   "label": "Bank Statement Import",
+   "link_to": "Bank Statement Import",
+   "stats_filter": "[]",
+   "type": "DocType"
+  }
+ ],
+ "title": "Accounts Team"
+}

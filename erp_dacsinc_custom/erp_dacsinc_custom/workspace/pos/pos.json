@@ -1,0 +1,104 @@
+{
+ "charts": [],
+ "content": "[{\"id\":\"WA9yeZtZC8\",\"type\":\"header\",\"data\":{\"text\":\"<span class=\\\"h4\\\">POS</span>\",\"col\":12}},{\"id\":\"HnIq88G3O3\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Open POS\",\"col\":3}},{\"id\":\"EIEA3uOVn3\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"POS Closing Entry\",\"col\":3}},{\"id\":\"jDQzllB6hp\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"POS Opening Entry\",\"col\":3}},{\"id\":\"hhvw02RH2f\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"POS Invoice\",\"col\":3}},{\"id\":\"Sx03RsPCi1\",\"type\":\"spacer\",\"data\":{\"col\":12}},{\"id\":\"uDhs8VF0Rq\",\"type\":\"header\",\"data\":{\"text\":\"<span class=\\\"h4\\\"><b>Stock and Inventory</b></span>\",\"col\":12}},{\"id\":\"BC672Pk3fe\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Material Request\",\"col\":3}},{\"id\":\"XzPTAkq0NN\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Material Transfer\",\"col\":3}},{\"id\":\"38jrF9er_C\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Stock Balance Summary\",\"col\":3}}]",
+ "creation": "2026-02-15 16:44:58.866781",
+ "custom_blocks": [],
+ "docstatus": 0,
+ "doctype": "Workspace",
+ "for_user": "",
+ "hide_custom": 0,
+ "idx": 0,
+ "indicator_color": "green",
+ "is_hidden": 0,
+ "label": "POS",
+ "links": [],
+ "modified": "2026-08-28 20:21:52.244104",
+ "modified_by": "Administrator",
+ "module": "Erp Dacsinc Custom",
+ "name": "POS",
+ "number_cards": [],
+ "owner": "Administrator",
+ "parent_page": "",
+ "public": 1,
+ "quick_lists": [],
+ "roles": [
+  {
+   "role": "POS User"
+  },
+  {
+   "role": "POS Store Manager"
+  },
+  {
+   "role": "POS Admin"
+  },
+  {
+   "role": "System Manager"
+  },
+  {
+   "role": "Super Admin"
+  },
+  {
+   "role": "Admin"
+  }
+ ],
+ "sequence_id": 38.0,
+ "shortcuts": [
+  {
+   "color": "Grey",
+   "doc_view": "List",
+   "label": "Material Request",
+   "link_to": "Material Request",
+   "stats_filter": "[[\"Material Request\",\"material_request_type\",\"=\",\"Material Transfer\",false]]",
+   "type": "DocType"
+  },
+  {
+   "color": "Grey",
+   "doc_view": "List",
+   "label": "Open POS",
+   "link_to": "point-of-sale",
+   "type": "Page",
+   "url": "http://192.168.1.22:8000/app/point-of-sale"
+  },
+  {
+   "color": "Grey",
+   "doc_view": "List",
+   "label": "Stock Balance Summary",
+   "link_to": "Stock Balance Summary",
+   "report_ref_doctype": "Warehouse",
+   "type": "Report"
+  },
+  {
+   "color": "Grey",
+   "doc_view": "List",
+   "label": "POS Closing Entry",
+   "link_to": "POS Closing Entry",
+   "stats_filter": "[]",
+   "type": "DocType"
+  },
+  {
+   "color": "Grey",
+   "doc_view": "List",
+   "label": "Material Transfer",
+   "link_to": "Stock Entry",
+   "stats_filter": "[[\"Stock Entry\",\"stock_entry_type\",\"=\",\"Material Transfer\",false]]",
+   "type": "DocType"
+  },
+  {
+   "color": "Grey",
+   "doc_view": "List",
+   "label": "POS Opening Entry",
+   "link_to": "POS Opening Entry",
+   "stats_filter": "[]",
+   "type": "DocType"
+  },
+  {
+   "color": "Grey",
+   "doc_view": "List",
+   "label": "POS Invoice",
+   "link_to": "POS Invoice",
+   "stats_filter": "[]",
+   "type": "DocType"
+  }
+ ],
+ "title": "POS"
+}

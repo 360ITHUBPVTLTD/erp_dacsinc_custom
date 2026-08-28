@@ -1,0 +1,144 @@
+{
+ "charts": [],
+ "content": "[{\"id\":\"AOYPYraOez\",\"type\":\"custom_block\",\"data\":{\"custom_block_name\":\"HTML for checkin\",\"col\":12}},{\"id\":\"kyQVD38Y0H\",\"type\":\"header\",\"data\":{\"text\":\"<span class=\\\"h4\\\"><b>ESS</b></span>\",\"col\":12}},{\"id\":\"EqBodb-W-V\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Holiday List\",\"col\":3}},{\"id\":\"8PCOMo01-U\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Leave Application\",\"col\":3}},{\"id\":\"VZb6LTsJVT\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Monthly Attendance Report\",\"col\":3}},{\"id\":\"svU9IJNhuo\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Compensatory Leave Request\",\"col\":3}},{\"id\":\"njUcnuuJ5x\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Expense Claim\",\"col\":3}},{\"id\":\"NLarxqhiU-\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"On Duty Request\",\"col\":3}},{\"id\":\"tmCbBAZa9c\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Task\",\"col\":3}},{\"id\":\"GEbwAKVnVY\",\"type\":\"spacer\",\"data\":{\"col\":12}},{\"id\":\"43aEl1NlD0\",\"type\":\"header\",\"data\":{\"text\":\"<span class=\\\"h4\\\"><b>TASK</b></span>\",\"col\":12}},{\"id\":\"yCGelW_Cit\",\"type\":\"number_card\",\"data\":{\"number_card_name\":\"Open Task\",\"col\":4}},{\"id\":\"cZBL_9z_ok\",\"type\":\"number_card\",\"data\":{\"number_card_name\":\"Todays Task\",\"col\":4}},{\"id\":\"em4vKHs463\",\"type\":\"number_card\",\"data\":{\"number_card_name\":\"Overdue Task\",\"col\":4}},{\"id\":\"z29omKqdgR\",\"type\":\"header\",\"data\":{\"text\":\"<span class=\\\"h4\\\"><b>Reports</b></span>\",\"col\":12}},{\"id\":\"W-Ft2Gf_u8\",\"type\":\"custom_block\",\"data\":{\"custom_block_name\":\"Absent Table Employee 13mar\",\"col\":12}},{\"id\":\"b1wzi706fp\",\"type\":\"custom_block\",\"data\":{\"custom_block_name\":\"Pending Leave Applications Employee 13 mar\",\"col\":12}},{\"id\":\"DCgK5WB7rb\",\"type\":\"custom_block\",\"data\":{\"custom_block_name\":\"Pending / To-Approve On-Duty\",\"col\":12}},{\"id\":\"Pc0BNnV1-9\",\"type\":\"custom_block\",\"data\":{\"custom_block_name\":\"Approved Leaves Employee 13mar\",\"col\":12}},{\"id\":\"eUripfbbAV\",\"type\":\"custom_block\",\"data\":{\"custom_block_name\":\"Employees on Leave Today\",\"col\":12}},{\"id\":\"N-2wU52QFD\",\"type\":\"custom_block\",\"data\":{\"custom_block_name\":\"Month Brithday\",\"col\":12}},{\"id\":\"r0cAfHFP5o\",\"type\":\"custom_block\",\"data\":{\"custom_block_name\":\"Upcoming Holidays\",\"col\":12}}]",
+ "creation": "2026-04-20 15:32:42.433762",
+ "custom_blocks": [
+  {
+   "custom_block_name": "Upcoming Holidays",
+   "label": "Upcoming Holidays"
+  },
+  {
+   "custom_block_name": "Employees on Leave Today",
+   "label": "Employees on Leave Today"
+  },
+  {
+   "custom_block_name": "Absent Table Employee 13mar",
+   "label": "Absent Table Employee 13mar"
+  },
+  {
+   "custom_block_name": "Pending / To-Approve On-Duty",
+   "label": "Pending / To-Approve On-Duty"
+  },
+  {
+   "custom_block_name": "HTML for checkin",
+   "label": "HTML for checkin"
+  },
+  {
+   "custom_block_name": "Pending Leave Applications Employee 13 mar",
+   "label": "Pending Leave Applications Employee 13 mar"
+  },
+  {
+   "custom_block_name": "Approved Leaves Employee 13mar",
+   "label": "Approved Leaves Employee 13mar"
+  },
+  {
+   "custom_block_name": "Month Brithday",
+   "label": "Month Brithday"
+  }
+ ],
+ "docstatus": 0,
+ "doctype": "Workspace",
+ "for_user": "",
+ "hide_custom": 0,
+ "idx": 268,
+ "indicator_color": "yellow",
+ "is_hidden": 0,
+ "label": "Employee Workspace",
+ "links": [],
+ "modified": "2026-08-28 20:21:52.162432",
+ "modified_by": "Administrator",
+ "module": "Erp Dacsinc Custom",
+ "name": "Employee Workspace",
+ "number_cards": [
+  {
+   "label": "Open Task",
+   "number_card_name": "Open Task"
+  },
+  {
+   "label": "Todays Task",
+   "number_card_name": "Todays Task"
+  },
+  {
+   "label": "Overdue Task",
+   "number_card_name": "Overdue Task"
+  }
+ ],
+ "owner": "Administrator",
+ "parent_page": "",
+ "public": 1,
+ "quick_lists": [],
+ "roles": [
+  {
+   "role": "Employee"
+  },
+  {
+   "role": "System Manager"
+  },
+  {
+   "role": "Super Admin"
+  },
+  {
+   "role": "Admin"
+  }
+ ],
+ "sequence_id": 40.0,
+ "shortcuts": [
+  {
+   "color": "Grey",
+   "doc_view": "List",
+   "label": "Task",
+   "link_to": "Task",
+   "stats_filter": "[]",
+   "type": "DocType"
+  },
+  {
+   "color": "Grey",
+   "doc_view": "Report Builder",
+   "label": "Leave Application",
+   "link_to": "Leave Application",
+   "stats_filter": "[[\"Leave Application\",\"docstatus\",\"=\",\"0\",false],[\"Leave Application\",\"status\",\"=\",\"Open\",false]]",
+   "type": "DocType"
+  },
+  {
+   "color": "Grey",
+   "doc_view": "Report Builder",
+   "label": "Holiday List",
+   "link_to": "Holiday List",
+   "stats_filter": "[]",
+   "type": "DocType"
+  },
+  {
+   "color": "Grey",
+   "doc_view": "List",
+   "label": "On Duty Request",
+   "link_to": "Attendance Request",
+   "stats_filter": "[[\"Attendance Request\",\"docstatus\",\"=\",\"0\",false]]",
+   "type": "DocType"
+  },
+  {
+   "color": "Grey",
+   "doc_view": "List",
+   "label": "Monthly Attendance Report",
+   "link_to": "Monthly Attendance Sheet",
+   "report_ref_doctype": "Attendance",
+   "type": "Report"
+  },
+  {
+   "color": "Grey",
+   "doc_view": "Report Builder",
+   "label": "Expense Claim",
+   "link_to": "Expense Claim",
+   "stats_filter": "[]",
+   "type": "DocType"
+  },
+  {
+   "color": "Grey",
+   "doc_view": "List",
+   "label": "Compensatory Leave Request",
+   "link_to": "Compensatory Leave Request",
+   "stats_filter": "[]",
+   "type": "DocType"
+  }
+ ],
+ "title": "Employee Workspace"
+}
