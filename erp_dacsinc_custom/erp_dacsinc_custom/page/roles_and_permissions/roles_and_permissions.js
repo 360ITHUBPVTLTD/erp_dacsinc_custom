@@ -11,6 +11,7 @@ frappe.pages['roles-and-permissions'].on_page_load = function (wrapper) {
 	};
 
 	page.set_primary_action(__('New User'), () => panel.show_new_user_dialog(), 'add');
+	page.add_menu_item(__('DAC Matrix'), () => panel.show_dac_matrix_dialog());
 	page.add_menu_item(__('Reload'), () => panel.refresh());
 };
 
@@ -667,5 +668,178 @@ class RolesAndPermissions {
 			},
 		});
 		d.show();
+	}
+
+	// "DAC Matrix" — reconciles every employee named in
+	// erp_dacsinc_custom.dac_permission_matrix.EMPLOYEE_ROLE_PROFILE_TARGETS
+	// (the business's Excel-derived source of truth) against their current
+	// Role Profile(s). ADDITIVE ONLY: a proposed profile is only ever added
+	// on top of whatever the user already has — never a replacement — so a
+	// user already on another Role Profile for a second responsibility never
+	// loses it here. Nothing changes until the row is ticked AND the
+	// frappe.confirm() summary naming every user and profile is accepted.
+	show_dac_matrix_dialog() {
+		const d = new frappe.ui.Dialog({
+			title: __('DAC Matrix — Role Profile Reconciliation'),
+			size: 'extra-large',
+			fields: [
+				{
+					fieldname: 'info',
+					fieldtype: 'HTML',
+					options: `<p class="text-muted small">${__(
+						'Every employee named in the DAC permission matrix spreadsheet, and the Role Profile it proposes for them. This only ever ADDS the proposed profile on top of what a user already has — it never removes an existing Role Profile.'
+					)}</p>`,
+				},
+				{ fieldname: 'dac_rows_area', fieldtype: 'HTML' },
+			],
+			primary_action_label: __('Apply Selected'),
+			primary_action: () => this.confirm_and_apply_dac_matrix(d),
+		});
+
+		d.show();
+		d.get_field('dac_rows_area').$wrapper.html(`<div class="text-muted">${__('Loading...')}</div>`);
+
+		frappe.call({
+			method: 'erp_dacsinc_custom.roles_and_permissions_api.get_dac_matrix_assignment_preview',
+			callback: (r) => {
+				if (!r.message) return;
+				this.render_dac_matrix_rows(d, r.message.rows || []);
+			},
+		});
+	}
+
+	render_dac_matrix_rows(dialog, rows) {
+		dialog._dac_rows_by_user = {};
+		rows.forEach((row) => (dialog._dac_rows_by_user[row.user] = row));
+
+		const $area = dialog.get_field('dac_rows_area').$wrapper;
+
+		if (!rows.length) {
+			$area.html(`<div class="text-muted">${__('No employees in the DAC matrix.')}</div>`);
+			return;
+		}
+
+		const changed_count = rows.filter((r) => r.status === 'ok' && r.will_change).length;
+
+		const header = `
+			<div class="flex justify-between align-center mb-2">
+				<div><b>${changed_count}</b> ${__('of')} ${rows.length} ${__('will change')}</div>
+				<div>
+					<button class="btn btn-xs btn-default rp-dac-select-all">${__('Select All Changed')}</button>
+					<button class="btn btn-xs btn-default rp-dac-unselect-all">${__('Unselect All')}</button>
+				</div>
+			</div>`;
+
+		const body = rows
+			.map((row) => {
+				const selectable = row.status === 'ok';
+				const checked = selectable && row.will_change ? 'checked' : '';
+				const disabled = selectable ? '' : 'disabled';
+				const muted = selectable ? '' : 'text-muted';
+				const current = (row.current_role_profiles || []).length
+					? row.current_role_profiles
+						.map((p) => `<span class="rp-profile-chip rp-native">${frappe.utils.escape_html(p)}</span>`)
+						.join(' ')
+					: `<span class="rp-no-profile">${__('none')}</span>`;
+
+				let status_badge = '';
+				if (row.status === 'user_not_found') {
+					status_badge = `<span class="rp-status-pill rp-status-off">${__('User not found')}</span>`;
+				} else if (row.status === 'disabled') {
+					status_badge = `<span class="rp-status-pill rp-status-off">${__('User disabled')}</span>`;
+				} else if (!row.will_change) {
+					status_badge = `<span class="rp-status-pill rp-status-on">${__('Already set')}</span>`;
+				} else {
+					status_badge = `<span class="rp-profile-chip">${__('Will add')}</span>`;
+				}
+
+				return `
+				<div class="rp-dac-row ${muted}">
+					<input type="checkbox" class="rp-dac-check" ${checked} ${disabled}
+					       data-user="${frappe.utils.escape_html(row.user)}">
+					<div class="rp-dac-col-name">
+						${frappe.utils.escape_html(row.employee_name || '')}
+						<div class="text-muted small">${frappe.utils.escape_html(row.user)}</div>
+					</div>
+					<div class="rp-dac-col-current">${current}</div>
+					<div class="rp-dac-col-proposed"><span class="rp-profile-chip rp-native">${frappe.utils.escape_html(row.proposed_role_profile)}</span></div>
+					<div class="rp-dac-col-status">${status_badge}</div>
+				</div>`;
+			})
+			.join('');
+
+		$area.html(`
+			${header}
+			<div class="rp-dac-list">${body}</div>`);
+
+		$area.find('.rp-dac-select-all').on('click', () => {
+			$area.find('.rp-dac-check:not(:disabled)').prop('checked', true);
+		});
+		$area.find('.rp-dac-unselect-all').on('click', () => {
+			$area.find('.rp-dac-check').prop('checked', false);
+		});
+	}
+
+	confirm_and_apply_dac_matrix(dialog) {
+		const $area = dialog.get_field('dac_rows_area').$wrapper;
+		const $checked = $area.find('.rp-dac-check:checked');
+
+		if (!$checked.length) {
+			frappe.msgprint(__('Select at least one employee.'));
+			return;
+		}
+
+		const lines = $checked
+			.map((_, el) => {
+				const user = $(el).data('user');
+				const row = dialog._dac_rows_by_user[user] || {};
+				const label = row.employee_name || user;
+				return `${frappe.utils.escape_html(label)} → <b>+${frappe.utils.escape_html(row.proposed_role_profile || '')}</b>`;
+			})
+			.get();
+
+		const summary =
+			`<p>${__('This will ADD a Role Profile for {0} user(s) — any Role Profile they already have stays untouched:', [lines.length])}</p>` +
+			`<ul class="small">${lines.map((l) => `<li>${l}</li>`).join('')}</ul>`;
+
+		frappe.confirm(summary, () => {
+			const users = $checked.map((_, el) => $(el).data('user')).get();
+
+			frappe.call({
+				method: 'erp_dacsinc_custom.roles_and_permissions_api.apply_dac_matrix_assignments',
+				args: { users },
+				freeze: true,
+				callback: (r) => {
+					if (!r.message) return;
+					this.show_dac_matrix_result(r.message.results || []);
+					frappe.call({
+						method: 'erp_dacsinc_custom.roles_and_permissions_api.get_dac_matrix_assignment_preview',
+						callback: (r2) => {
+							if (r2.message) this.render_dac_matrix_rows(dialog, r2.message.rows || []);
+						},
+					});
+					this.refresh();
+				},
+			});
+		});
+	}
+
+	show_dac_matrix_result(results) {
+		const updated = results.filter((r) => r.status === 'updated').length;
+		const skipped = results.filter((r) => r.status !== 'updated');
+
+		let msg = `<b>${updated}</b> ${__('user(s) updated')}`;
+		if (skipped.length) {
+			const items = skipped
+				.map((r) => `<li>${frappe.utils.escape_html(r.user)} — ${frappe.utils.escape_html(r.reason || r.status)}</li>`)
+				.join('');
+			msg += `<hr><b>${__('Skipped')}</b><ul class="small">${items}</ul>`;
+		}
+
+		frappe.msgprint({
+			title: __('DAC Matrix Update Complete'),
+			message: msg,
+			indicator: updated ? 'green' : 'orange',
+		});
 	}
 }

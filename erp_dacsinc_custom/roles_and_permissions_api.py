@@ -386,3 +386,107 @@ def get_role_profile_reference():
     generated live from role_permission_matrix.py."""
     _guard()
     return {"role_profiles": ROLE_PROFILES}
+
+
+def _current_role_profiles(user):
+    """Every Role Profile currently applied to `user` — its native
+    `role_profile_name` plus any profiles from a User Access Profile record,
+    same union `get_users_overview()` already shows on this page."""
+    native = frappe.db.get_value("User", user, "role_profile_name")
+    extra = frappe.get_all(
+        "User Access Profile Role Profile", filters={"parent": user}, pluck="role_profile",
+    )
+    return ([native] if native else []) + extra
+
+
+@frappe.whitelist()
+def get_dac_matrix_assignment_preview():
+    """
+    Current-vs-proposed Role Profile for every employee named in the DAC
+    permission matrix Excel (erp_dacsinc_custom.dac_permission_matrix
+    .EMPLOYEE_ROLE_PROFILE_TARGETS) — the preview data behind the "DAC Matrix"
+    action on this page. Nothing here changes anything; see
+    apply_dac_matrix_assignments() for the actual write.
+
+    ADDITIVE, never a replacement: `will_change` is only true when the
+    proposed profile isn't already one of the user's current profiles. A user
+    already on 2 profiles who happens to also match the matrix keeps both —
+    see apply_dac_matrix_assignments().
+    """
+    _guard()
+    from erp_dacsinc_custom.dac_permission_matrix import EMPLOYEE_ROLE_PROFILE_TARGETS
+
+    rows = []
+    for target in EMPLOYEE_ROLE_PROFILE_TARGETS:
+        user = target["user"]
+        if not frappe.db.exists("User", user):
+            rows.append({
+                "user": user, "employee_name": target["employee_name"],
+                "proposed_role_profile": target["role_profile"],
+                "current_role_profiles": [], "will_change": False,
+                "enabled": None, "status": "user_not_found",
+            })
+            continue
+
+        current = _current_role_profiles(user)
+        enabled = bool(frappe.db.get_value("User", user, "enabled"))
+        rows.append({
+            "user": user, "employee_name": target["employee_name"],
+            "proposed_role_profile": target["role_profile"],
+            "current_role_profiles": current,
+            "will_change": target["role_profile"] not in current,
+            "enabled": enabled,
+            "status": "ok" if enabled else "disabled",
+        })
+    return {"rows": rows}
+
+
+@frappe.whitelist()
+def apply_dac_matrix_assignments(users):
+    """
+    ADD the DAC matrix's proposed Role Profile to each user in `users`, on
+    top of whatever Role Profile(s) they already have — never a replacement.
+    A user already on "Merchandiser" + some other profile they need for a
+    second responsibility keeps both; this only ever appends the matrix's
+    profile if it isn't already present.
+
+    Goes through the existing update_user_role_profiles() -> User Access
+    Profile -> sync_user_access_profile() path (never the raw
+    role_profile_name field), so a role held for any other reason is never
+    clobbered. Only ever acts on users actually named in
+    EMPLOYEE_ROLE_PROFILE_TARGETS, and only after the caller has shown
+    exactly what will change and gotten an explicit confirmation.
+    """
+    _guard()
+    from erp_dacsinc_custom.dac_permission_matrix import EMPLOYEE_ROLE_PROFILE_TARGETS
+
+    users = frappe.parse_json(users) if isinstance(users, str) else (users or [])
+    targets_by_user = {t["user"]: t for t in EMPLOYEE_ROLE_PROFILE_TARGETS}
+
+    results = []
+    for user in users:
+        target = targets_by_user.get(user)
+        if not target:
+            results.append({"user": user, "status": "not_in_matrix"})
+            continue
+        if not frappe.db.exists("User", user):
+            results.append({"user": user, "status": "user_not_found"})
+            continue
+
+        current = _current_role_profiles(user)
+        if target["role_profile"] in current:
+            results.append({"user": user, "status": "already_set"})
+            continue
+
+        new_profiles = current + [target["role_profile"]]
+        try:
+            update_user_role_profiles(user, new_profiles)
+        except frappe.ValidationError as e:
+            results.append({"user": user, "status": "skipped", "reason": str(e)})
+            continue
+        results.append({
+            "user": user, "status": "updated",
+            "role_profile": target["role_profile"],
+            "role_profiles": new_profiles,
+        })
+    return {"results": results}

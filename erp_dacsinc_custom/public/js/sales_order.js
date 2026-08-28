@@ -354,6 +354,28 @@ function inject_so_styles() {
         .so-action { display: flex; flex-direction: column; gap: 6px; align-items: center; }
         .so-action__note { font-size: 11px; color: var(--text-muted); }
         .so-shortfall { font-size: 12px; font-weight: 700; color: var(--so-red); }
+        /* Labels here carry a qty suffix ("Create Delivery Note (400)") that
+           .so-btn's own base nowrap would otherwise force past the column's
+           width — wrap at word boundaries (never mid-word) instead of
+           letting the button overflow and read as cut off, on any screen
+           size, not just the narrow-viewport case below. */
+        .so-action .so-btn {
+            white-space: normal;
+            height: auto;
+            line-height: 1.3;
+            text-align: center;
+        }
+        /* Only shown when a cell offers 2+ real actions (so_build_action_html) —
+           a lone action never needs "this is the one to pick" or "or" against
+           nothing. Recommended sits directly above the primary button it labels. */
+        .so-action__tag {
+            font-size: 9px; font-weight: 700; color: var(--so-blue);
+            text-transform: uppercase; letter-spacing: .04em; line-height: 1;
+        }
+        .so-action__or {
+            font-size: 9px; font-weight: 700; color: var(--text-light);
+            text-transform: uppercase; letter-spacing: .06em; line-height: 1;
+        }
 
         /* ── Cell breakdown (POs / EWOs) ─────────────────────────── */
         .so-brk { font-size: 11px; line-height: 1.5; }
@@ -372,16 +394,31 @@ function inject_so_styles() {
         .so-rm__spacer { flex: 1 1 auto; }
         .so-rm__note { font-size: 11px; color: var(--text-muted); }
         .so-rm__head .so-chip { max-width: 240px; }
-        .so-rm table { width: 100%; border-collapse: collapse; font-size: 12px; }
+        /* A visible frame around the whole table — border-collapse merges
+           into it cleanly, so the RM card never looks like it bleeds
+           straight into the page at its own right/bottom edge. */
+        .so-rm table {
+            width: 100%; border-collapse: collapse; font-size: 12px;
+            border: 1px solid var(--border-color);
+        }
         /* Grey header, not a second blue bar — one blue header per card. */
         .so-rm th {
             background: var(--subtle-fg); color: var(--text-muted);
-            font-size: 12px; font-weight: 600;
-            padding: 8px; text-align: center;
+            font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: .02em;
+            padding: 10px 12px; text-align: center;
             border: 1px solid var(--border-color);
         }
-        .so-rm td { padding: 8px; text-align: center; vertical-align: middle; border: 1px solid var(--border-color); }
+        .so-rm td {
+            padding: 12px; text-align: center; vertical-align: middle;
+            border: 1px solid var(--border-color); line-height: 1.5;
+        }
         .so-rm th:first-child, .so-rm td:first-child { text-align: left; }
+        /* Consistent vertical rhythm for a cell stacking several pieces
+           (a calc line, a value, a uom, a hint, a button) — one rule here
+           instead of an inline margin-top on every individual piece. */
+        .so-rm td > * + * { margin-top: 6px; }
+        .so-rm tbody tr:nth-child(even) td { background: var(--subtle-fg); }
+        .so-rm tbody tr:hover td { background: rgba(52, 152, 219, 0.07); }
 
         /* ── Modal ───────────────────────────────────────────────── */
         .so-modal { font-size: 13px; color: var(--text-color); }
@@ -566,6 +603,7 @@ function generate_stock_overview_table(frm, callback) {
                     <span id="bulk-pick-action-btn"></span>
                 </div>
             </div>
+            <div id="so-next-actions-banner"></div>
             <div id="so-route-banner"></div>
             <div class="so-scroll-hint"><i class="fa fa-arrows-h"></i> ${__('Scroll sideways to see every column')}</div>
             <div class="so-scroll">
@@ -579,8 +617,8 @@ function generate_stock_overview_table(frm, callback) {
                             <th style="width:13%;" title="Pending Purchase Orders, Embroidery Work Orders and Material Requests">Incoming</th>
                             <th style="width:9%;">Picked (This SO)</th>
                             <th style="width:11%;">Picked (Others)</th>
-                            <th style="width:11%;">Status</th>
-                            <th style="width:15%; min-width:150px;">Next Action</th>
+                            <th style="width:9%;">Status</th>
+                            <th style="width:17%; min-width:200px;">Next Action</th>
                         </tr>
                     </thead>
                     <tbody id="stock-tbody">
@@ -645,6 +683,15 @@ function generate_stock_overview_table(frm, callback) {
             let eligible_for_picking = false;
             let bulk_eligible_items = {};
 
+            // Whole-order "what do I actually need to do next" — the table
+            // below already answers this per line, but a merchandiser
+            // scanning a multi-line order for the FIRST thing to act on
+            // still has to read every row. Accumulated as three simple,
+            // order-wide totals (never re-deriving the per-row logic below
+            // — just reading the same numbers each row already computes)
+            // and rendered as one short checklist above the table.
+            const so_summary = { needs_invoice_qty: 0, ready_to_ship_qty: 0, shortfall_qty: 0 };
+
             const rows_html = items.map(item => {
                 // The API key is "ITEM_CODE||bom_or_no_bom"
                 const pair_key = `${item.item_code}||${item.bom_no || 'no_bom'}`;
@@ -659,11 +706,28 @@ function generate_stock_overview_table(frm, callback) {
                            <i class="fa fa-sitemap"></i> BOM</a>`
                     : '';
 
+                // A single Delivery Note / Sales Invoice can carry more than
+                // one item ROW against this same Sales Order line (one per
+                // Pick List batch that fed it) — row_dns/row_sis are those
+                // raw rows, so the SAME document name showed up once per
+                // row instead of once per document (a DN picked in 5 batches
+                // read as "DN: 00017, 00017, 00017, 00017, 00017"). De-dupe
+                // by the parent document name before rendering.
+                const _dedupe_by_parent = (rows) => {
+                    const seen = new Set();
+                    return (rows || []).filter(x => {
+                        if (seen.has(x.parent)) return false;
+                        seen.add(x.parent);
+                        return true;
+                    });
+                };
+
                 const _build_dn_si_row_links = (d) => {
                     let html = '';
-                    if (d.row_dns && d.row_dns.length) {
-                        const drafts = d.row_dns.filter(x => x.docstatus === 0);
-                        const subms = d.row_dns.filter(x => x.docstatus === 1);
+                    const dns = _dedupe_by_parent(d.row_dns);
+                    if (dns.length) {
+                        const drafts = dns.filter(x => x.docstatus === 0);
+                        const subms = dns.filter(x => x.docstatus === 1);
                         if (drafts.length) {
                             const links = drafts.map(x => `<a href="/app/delivery-note/${encodeURIComponent(x.parent)}" target="_blank" title="Draft Delivery Note: ${esc(x.parent)}"><b>${esc(x.parent.substring(x.parent.lastIndexOf('-') + 1))}</b></a>`).join(', ');
                             html += `<div class="so-micro" style="margin-top:2px; color:var(--so-orange);"><i class="fa fa-truck"></i> Draft: ${links}</div>`;
@@ -673,9 +737,10 @@ function generate_stock_overview_table(frm, callback) {
                             html += `<div class="so-micro" style="margin-top:2px; color:var(--so-green);"><i class="fa fa-truck"></i> DN: ${links}</div>`;
                         }
                     }
-                    if (d.row_sis && d.row_sis.length) {
-                        const drafts = d.row_sis.filter(x => x.docstatus === 0);
-                        const subms = d.row_sis.filter(x => x.docstatus === 1);
+                    const sis = _dedupe_by_parent(d.row_sis);
+                    if (sis.length) {
+                        const drafts = sis.filter(x => x.docstatus === 0);
+                        const subms = sis.filter(x => x.docstatus === 1);
                         if (drafts.length) {
                             const links = drafts.map(x => `<a href="/app/sales-invoice/${encodeURIComponent(x.parent)}" target="_blank" title="Draft Sales Invoice: ${esc(x.parent)}"><b>${esc(x.parent.substring(x.parent.lastIndexOf('-') + 1))}</b></a>`).join(', ');
                             html += `<div class="so-micro" style="margin-top:2px; color:var(--so-orange);"><i class="fa fa-file-text-o"></i> Draft: ${links}</div>`;
@@ -709,6 +774,21 @@ function generate_stock_overview_table(frm, callback) {
                 const needed_stock_qty = remaining_to_plan;
                 const can_fulfill_qty = Math.min(needed_stock_qty, truly_available_stock);
                 const shortage_qty = Math.max(0, needed_stock_qty - truly_available_stock);
+
+                // Same three independent zones as the Next Action cell below
+                // (billing / ship-what's-ready / source-the-shortfall) — see
+                // the FG row's own Status/Next Action logic further down for
+                // exactly how each is resolved into an actual action.
+                if (flt(item.rate) > 0) {
+                    const unbilled_qty = Math.max(0, flt(delivered) - (flt(item.billed_amt) / flt(item.rate)));
+                    if (unbilled_qty > 0.01) so_summary.needs_invoice_qty += unbilled_qty;
+                }
+                if (picked_submitted_undeliv > 0) {
+                    so_summary.ready_to_ship_qty += Math.min(picked_submitted_undeliv, Math.max(0, required - delivered));
+                }
+                if (needed_stock_qty > 0.01) {
+                    so_summary.shortfall_qty += needed_stock_qty;
+                }
 
                 // ── Bulk pick eligibility ─────────────────────────────
                 if (frm.doc.docstatus === 1 && can_fulfill_qty > 0) {
@@ -779,11 +859,11 @@ function generate_stock_overview_table(frm, callback) {
                     // Fully picked → the next command is either a Delivery Note or a
                     // direct Sales Invoice with Update Stock — whichever route this
                     // Sales Order isn't already locked out of (so_route_lock).
-                    status_html = so_pill('dn', 'cube', 'Ready for DN / SI');
+                    status_html = so_pill('dn', 'cube', so_dn_si_status_label(d.so_route_lock));
                     if (subm_pl) {
                         action_parts.push(so_cmd_btn(
                             `so_prompt_dn_or_si('${so_nm}','${js_str(item.name)}','${ic_arg}','${js_str(subm_pl)}',${flt(picked_submitted_undeliv)},'${d.so_route_lock || ''}')`,
-                            'truck', 'Waiting for DN / SI', true));
+                            'truck', so_dn_si_action_label(d.so_route_lock, required - delivered), true));
                         action_parts.push(so_cmd_btn(`so_open_doc('Pick List','${js_str(subm_pl)}')`, 'external-link', 'Open Pick List'));
                     } else {
                         action_parts.push(`<span class="so-action__note">Proceed from Pick List</span>`);
@@ -809,7 +889,24 @@ function generate_stock_overview_table(frm, callback) {
                         }
                     }
                     if (needed_stock_qty > 0 && shortage_qty > 0) {
-                        action_parts.push(so_shortfall(shortage_qty));
+                        action_parts.push(so_shortfall(shortage_qty, d.total_incoming_qty));
+                    }
+                    // A submitted Pick List can cover only PART of what's still
+                    // required (picked_submitted_undeliv not reaching required -
+                    // delivered up in the "fully picked" branch above) — but
+                    // whatever it DOES cover is real, reserved stock sitting
+                    // ready to ship right now. That must never be dropped just
+                    // because the rest of the line still needs picking/sourcing —
+                    // shipping what's ready and covering the remainder are two
+                    // independent actions, not alternatives to choose between
+                    // (the trailing '' entry keeps so_build_action_html from
+                    // pairing this with whatever action follows it as an "or").
+                    if (picked_submitted_undeliv > 0 && subm_pl) {
+                        status_html = `<div class="so-micro" style="margin-bottom:4px;color:var(--so-green);font-weight:600;">
+                            <i class="fa fa-check-circle"></i> ${flt(picked_submitted_undeliv)} Already Picked — Ready to Ship</div>` + status_html;
+                        action_parts.unshift(so_cmd_btn(
+                            `so_prompt_dn_or_si('${so_nm}','${js_str(item.name)}','${ic_arg}','${js_str(subm_pl)}',${flt(picked_submitted_undeliv)},'${d.so_route_lock || ''}')`,
+                            'truck', so_dn_si_action_label(d.so_route_lock, picked_submitted_undeliv), true), '');
                     }
 
                 } else if (needed_stock_qty > 0) {
@@ -841,8 +938,13 @@ function generate_stock_overview_table(frm, callback) {
                             action_parts.push(`<span class="so-action__note">Line Fulfilled / Planned</span>`);
                         }
                         if (shortage_qty > 0) {
-                            action_parts.push(so_shortfall(shortage_qty));
-                            if (submitted) action_parts.push(so_buy_btn(d, so_nm, ic_arg, shortage_qty));
+                            action_parts.push(so_shortfall(shortage_qty, d.total_incoming_qty));
+                            // Same reasoning as the "no stock at all" branch below: never
+                            // offer to buy qty an existing incoming PO already covers.
+                            const uncovered_by_incoming = Math.max(0, flt(shortage_qty) - flt(d.total_incoming_qty));
+                            if (uncovered_by_incoming > 0.01 && submitted) {
+                                action_parts.push(so_buy_btn(d, so_nm, ic_arg, uncovered_by_incoming));
+                            }
                         }
 
                     } else {
@@ -859,23 +961,62 @@ function generate_stock_overview_table(frm, callback) {
                             const open_mr = (d.material_requests || [])
                                 .find(m => flt(m.pending_qty) > 0) || {};
 
-                            status_html = has_incoming
+                            // Driven by the server's own rm_shortfall_exists (which already
+                            // nets out RM still outstanding at a jobber, not just physical
+                            // Bin stock) rather than has_incoming — "Incoming" can come from
+                            // something entirely unrelated to this FG's own raw material need
+                            // (an Embroidery Work Order, a different batch already in transit,
+                            // or — the case that prompted this — stock that WAS fully received
+                            // for this order and has since been used/diverted elsewhere), so a
+                            // real RM shortfall for whatever THIS shortfall still needs to
+                            // produce must keep showing, and driving the pill/action shown,
+                            // even while something unrelated happens to be en route too.
+                            const rm_shortfall_exists = !!(d.rm_procurement_status && d.rm_procurement_status.rm_shortfall_exists);
+                            const rm_blocks_this = d.is_bom_item && rm_shortfall_exists;
+
+                            status_html = (has_incoming && !rm_blocks_this)
                                 ? so_pill('wait', 'truck', 'Awaiting Stock')
-                                : (mr_open > 0
-                                    ? so_pill('planned', 'file-text-o', 'Requested')
-                                    : so_pill('blocked', 'exclamation-triangle', 'Out of Stock'));
+                                : rm_blocks_this
+                                    ? so_pill('blocked', 'flask', 'RM Needed')
+                                    : (mr_open > 0
+                                        ? so_pill('planned', 'file-text-o', 'Requested')
+                                        : so_pill('blocked', 'exclamation-triangle', 'Out of Stock'));
                             // Surface the RM block right here too, not only inside the
                             // collapsible Raw Material Pipeline sub-row below — otherwise
                             // "why is there no PO button" is invisible until it's expanded.
-                            if (d.is_bom_item && !so_rm_physically_in_stock(d)) {
+                            if (rm_blocks_this) {
                                 status_html += `<div class="so-micro" style="margin-top:4px;color:var(--so-red);font-weight:600;">
                                     <i class="fa fa-flask"></i> RM Not in Stock</div>`;
                             }
-                            action_parts.push(so_shortfall(needed_stock_qty));
+                            // Incoming is only a real answer to THIS shortfall for a plain
+                            // (non-BOM) item — for an RM-blocked BOM item, whatever's
+                            // "Incoming" is unrelated (an EWO, a different batch), so it must
+                            // never read as if it already covers this shortfall.
+                            action_parts.push(so_shortfall(needed_stock_qty, rm_blocks_this ? 0 : d.total_incoming_qty));
 
-                            if (has_incoming) {
-                                // Stock is on its way — the command is to track it.
-                                action_parts.push(so_cmd_btn(`show_details_modal('${js_str(pair_key)}','incoming_docs')`, 'eye', 'Track Incoming', true));
+                            if (rm_blocks_this) {
+                                // The real next step is to request the missing raw material
+                                // (below, in the Raw Material Pipeline), not to wait — jump the
+                                // user straight there instead of leaving them to find the
+                                // "Material Request" button after manually expanding the row.
+                                action_parts.push(so_cmd_btn(`so_expand_rm_row('${js_str(pair_key)}')`, 'flask', 'View Raw Materials', true));
+                                if (has_incoming) {
+                                    action_parts.push(so_cmd_btn(`show_details_modal('${js_str(pair_key)}','incoming_docs')`, 'eye', 'Track Incoming'));
+                                }
+                            } else if (has_incoming) {
+                                // RM is no longer the blocker (rm_blocks_this is false here). For
+                                // a plain (non-BOM) item specifically, "Incoming" IS the same PO
+                                // this shortfall would otherwise ask for — offering a fresh
+                                // "Purchase Order" button for the FULL shortfall right next to
+                                // "Track Incoming" read as if nothing had been done yet, when a
+                                // PO already covers some or all of it (so_shortfall above already
+                                // says as much). Only ever offer to buy whatever the existing
+                                // incoming qty does NOT already cover.
+                                const uncovered_by_incoming = Math.max(0, flt(needed_stock_qty) - flt(d.total_incoming_qty));
+                                if (uncovered_by_incoming > 0.01 && submitted) {
+                                    action_parts.push(so_buy_btn(d, so_nm, ic_arg, uncovered_by_incoming, true));
+                                }
+                                action_parts.push(so_cmd_btn(`show_details_modal('${js_str(pair_key)}','incoming_docs')`, 'eye', 'Track Incoming', uncovered_by_incoming <= 0.01));
                                 if (mr_open > 0 && open_mr.name) {
                                     action_parts.push(so_cmd_btn(`so_make_po_from_mr('${js_str(open_mr.name)}')`, 'shopping-cart', `Order ${flt(mr_open)} on MR`));
                                 }
@@ -896,6 +1037,25 @@ function generate_stock_overview_table(frm, callback) {
                         }
                     }
 
+                    // A submitted Pick List can cover only PART of what's still
+                    // required — picked_submitted_undeliv not reaching required -
+                    // delivered up in the "fully picked" branch above falls
+                    // through to here instead, but whatever it DOES cover is
+                    // real, reserved stock sitting ready to ship right now. That
+                    // must never be dropped just because the REST of the line
+                    // still shows "Out of Stock"/needs procuring — shipping
+                    // what's ready and sourcing the remainder are independent
+                    // actions, not alternatives (the trailing '' keeps
+                    // so_build_action_html from pairing this with the shortfall's
+                    // own action as an "or").
+                    if (picked_submitted_undeliv > 0 && subm_pl) {
+                        status_html = `<div class="so-micro" style="margin-bottom:4px;color:var(--so-green);font-weight:600;">
+                            <i class="fa fa-check-circle"></i> ${flt(picked_submitted_undeliv)} Already Picked — Ready to Ship</div>` + status_html;
+                        action_parts.unshift(so_cmd_btn(
+                            `so_prompt_dn_or_si('${so_nm}','${js_str(item.name)}','${ic_arg}','${js_str(subm_pl)}',${flt(picked_submitted_undeliv)},'${d.so_route_lock || ''}')`,
+                            'truck', so_dn_si_action_label(d.so_route_lock, picked_submitted_undeliv), true), '');
+                    }
+
                 } else {
                     // Fully planned → open the pick list that covers it.
                     status_html = so_pill('planned', 'star', 'Fully Planned');
@@ -905,16 +1065,37 @@ function generate_stock_overview_table(frm, callback) {
                         if (subm_pl) {
                             action_parts.push(so_cmd_btn(
                                 `so_prompt_dn_or_si('${so_nm}','${js_str(item.name)}','${ic_arg}','${js_str(subm_pl)}',${flt(picked_submitted_undeliv)},'${d.so_route_lock || ''}')`,
-                                'truck', 'Waiting for DN / SI'));
+                                'truck', so_dn_si_action_label(d.so_route_lock, picked_submitted_undeliv)));
                         }
                     } else {
                         action_parts.push(`<span class="so-action__note">Proceed from Pick List</span>`);
                     }
                 }
 
-                const action_html = action_parts.length
-                    ? `<div class="so-action">${action_parts.join('')}</div>`
-                    : `<span class="so-action__note">—</span>`;
+                // A line delivered in more than one batch bills in more than
+                // one batch too — the branch above only owns billing once
+                // the WHOLE line has shipped (delivered >= required), with
+                // its own more precise DN-linked check. Every other branch
+                // above decides what to do with the REMAINING qty only, with
+                // no idea whether whatever's ALREADY out the door has been
+                // invoiced yet. A line 100-of-500 delivered must show "needs
+                // invoicing" for that 100 right now, not wait for the other
+                // 400 to ship first — so this runs independently of
+                // whichever branch fired, and is skipped entirely once the
+                // line is fully delivered (that case owns itself above).
+                if (delivered > 0 && delivered < required && flt(item.rate) > 0) {
+                    const unbilled_delivered_qty = Math.max(0, flt(delivered) - (flt(item.billed_amt) / flt(item.rate)));
+                    if (unbilled_delivered_qty > 0.01) {
+                        status_html = `<div class="so-micro" style="margin-bottom:4px;color:var(--so-info);font-weight:600;">
+                            <i class="fa fa-file-text-o"></i> ${flt(unbilled_delivered_qty)} Delivered — Needs Invoice</div>` + status_html;
+                        const dn_subms = (d.row_dns || []).filter(x => x.docstatus === 1);
+                        action_parts.unshift(dn_subms.length
+                            ? so_cmd_btn(`so_make_sales_invoice_from_dn('${js_str(pair_key)}')`, 'file-text-o', `Create Sales Invoice (${flt(unbilled_delivered_qty)})`, true)
+                            : so_cmd_btn(`so_make_sales_invoice('${so_nm}')`, 'file-text-o', `Create Sales Invoice (${flt(unbilled_delivered_qty)})`, true), '');
+                    }
+                }
+
+                const action_html = so_build_action_html(action_parts);
 
                 // ── Incoming PO cell ──────────────────────────────────
                 const incoming_html = _build_incoming_html(item, d, pair_key);
@@ -1002,7 +1183,7 @@ function generate_stock_overview_table(frm, callback) {
                 // Rows with a Raw Material pipeline collapse by default; clicking
                 // anywhere on the row opens it.
                 const main_row = `
-                    <tr class="so-row-main${rm_row_html ? ' is-toggleable' : ''}">
+                    <tr class="so-row-main${rm_row_html ? ' is-toggleable' : ''}" data-pair-key="${esc(pair_key)}">
                         <td>
                             <div class="so-stack">
                                 <div>
@@ -1038,6 +1219,25 @@ function generate_stock_overview_table(frm, callback) {
             }).join('');
 
             tbody.html(rows_html || '<tr><td colspan="9" class="so-empty">No Valid Items Found.</td></tr>');
+
+            // One short checklist, aggregated across every line, so the very
+            // first thing someone sees on opening this order is exactly
+            // what's left to do — not something they have to find by
+            // reading every row's own Next Action cell.
+            const summary_parts = [];
+            if (so_summary.needs_invoice_qty > 0.01) {
+                summary_parts.push(`<span class="so-chip so-chip--warn"><i class="fa fa-file-text-o"></i> ${__('Invoice {0} delivered', [flt(so_summary.needs_invoice_qty)])}</span>`);
+            }
+            if (so_summary.ready_to_ship_qty > 0.01) {
+                summary_parts.push(`<span class="so-chip so-chip--ok"><i class="fa fa-truck"></i> ${__('Ship {0} ready', [flt(so_summary.ready_to_ship_qty)])}</span>`);
+            }
+            if (so_summary.shortfall_qty > 0.01) {
+                summary_parts.push(`<span class="so-chip so-chip--bad"><i class="fa fa-shopping-cart"></i> ${__('Source {0} shortfall', [flt(so_summary.shortfall_qty)])}</span>`);
+            }
+            container.find('#so-next-actions-banner').html(summary_parts.length ? `
+                <div class="so-hint" style="margin:0 16px 10px 16px; display:flex; align-items:center; flex-wrap:wrap; gap:8px;">
+                    <b>${__('To complete this order')}:</b> ${summary_parts.join(' ')}
+                </div>` : '');
 
             _wire_row_toggle_and_search(container, tbody);
 
@@ -1248,8 +1448,12 @@ function _wire_row_toggle_and_search(container, tbody) {
     tbody.find('tr.so-rm-row').hide();
 
     tbody.on('click', 'tr.so-row-main.is-toggleable', function (e) {
-        // Never swallow a click meant for a control inside the row.
-        if ($(e.target).closest('a, button, input, select, textarea').length) return;
+        // Never swallow a click meant for a control inside the row — matches
+        // any actual interactive element AND anything wired up with its own
+        // onclick (a plain so-chip/so-micro span can still carry one), not
+        // just the standard tag names, so a click on it can never also
+        // toggle the row underneath it.
+        if ($(e.target).closest('a, button, input, select, textarea, [onclick]').length) return;
 
         const $row = $(this);
         const $rm = $row.next('tr.so-rm-row');
@@ -1336,8 +1540,25 @@ function _build_incoming_html(item, d, pair_key) {
             // Name the supplier and the nearest expected date, not just a count.
             const suppliers = [...new Set(pending_pos.map(p => p.supplier_name || p.info || p.supplier).filter(Boolean))];
             const due_dates = pending_pos.map(p => p.expected_delivery_date).filter(Boolean).sort();
+
+            // "1 PO · 300 pending" and "300 Received" (a separate footnote
+            // further down, since received qty is already counted in
+            // Available Stock, not incoming) used to read as two unrelated
+            // facts — a reader had to do the arithmetic themselves to
+            // realize the PO was actually for 600 and half of it had
+            // already arrived. Spell that out directly wherever any of
+            // these POs already has SOME of it received.
+            const ordered_qty = pending_pos.reduce((a, p) => a + flt(p.ordered_qty || 0), 0);
+            const received_qty = pending_pos.reduce((a, p) => a + flt(p.received_qty || 0), 0);
+            const partial_note = received_qty > 0.001
+                ? `<div class="so-brk__sub" style="color:var(--so-orange); font-weight:600;">
+                       ${__('Partially Received ({0} of {1})', [flt(received_qty), flt(ordered_qty)])}
+                   </div>`
+                : '';
+
             html += `<div class="so-brk">
-                <div class="so-brk__label">${pending_pos.length} PO · ${flt(po_qty)}${is_subcon ? ` <span class="so-chip so-chip--sc">SC</span>` : ''}</div>
+                <div class="so-brk__label">${pending_pos.length} PO · ${flt(po_qty)} ${__('pending')}${is_subcon ? ` <span class="so-chip so-chip--sc">SC</span>` : ''}</div>
+                ${partial_note}
                 ${suppliers.length ? `<div class="so-brk__sub so-truncate" style="max-width:140px;" title="${esc(suppliers.join(', '))}">${esc(suppliers[0])}${suppliers.length > 1 ? ` +${suppliers.length - 1}` : ''}</div>` : ''}
                 ${due_dates.length ? `<div class="so-brk__sub">Due ${fmt_date(due_dates[0])}</div>` : ''}
             </div>`;
@@ -1496,6 +1717,20 @@ function get_rm_breakdown_html(data, so_name, docstatus, pair_key) {
             ).join(', ');
             if (draft_po_links) refs.push(`<b>PO (Draft):</b> ${draft_po_links}`);
         }
+        if (item.transfer_documents && item.transfer_documents.length) {
+            // The Purchase Order is what this flow is actually managed from —
+            // a reference naming only the Subcontracting Order left no way
+            // back to that document, so it's shown first/primary, with the
+            // SCO itself named alongside for the specific reservation it is.
+            const po_list = (item.transfer_po_documents || []).filter(Boolean);
+            const po_links = po_list.map(po =>
+                `<a href="/app/purchase-order/${encodeURIComponent(po)}" target="_blank" title="Purchase Order: ${esc(po)}" style="color:#2b6cb0; font-weight:bold; text-decoration:underline;">${esc(po)}</a>`
+            ).join(', ');
+            const sco_links = item.transfer_documents.filter(Boolean).map(sco =>
+                `<a href="/app/subcontracting-order/${encodeURIComponent(sco)}" target="_blank" title="Subcontracting Order — still holding this raw material, not yet received back as finished goods: ${esc(sco)}" style="color:#c05621; font-weight:bold; text-decoration:underline;">${esc(sco)}</a>`
+            ).join(', ');
+            refs.push(`<b>Outstanding at Jobber:</b> ${po_links ? `PO ${po_links}` : ''}${po_links && sco_links ? ' &middot; ' : ''}${sco_links ? `SC ${sco_links}` : ''}`);
+        }
 
         const shortfall_qty = flt(item.rm_shortfall_total || 0);
         // Four distinct states, not a covered/shortfall binary: "Covered"
@@ -1507,9 +1742,18 @@ function get_rm_breakdown_html(data, so_name, docstatus, pair_key) {
         // which is exactly backwards.
         const rm_status = item.status || (shortfall_qty > 0 ? 'Shortage' : 'Covered');
         const status_pill_class = shortfall_qty > 0 ? 'so-pill--blocked'
+            : rm_status === 'In Process at Jobber' ? 'so-pill--planned'
             : rm_status === 'Requested' ? 'so-pill--wait'
             : rm_status === 'Not Required' ? 'so-pill--draft'
             : 'so-pill--ready';
+        // "In Process at Jobber" can still be a MIX — part of the need
+        // already sent (job work started on that much), the rest still only
+        // a pending MR/PO with nothing moved yet. Spelling out the actual
+        // split here rather than letting one status word stand in for both.
+        const still_just_requested = flt(item.rm_pending_mr_total || 0) + flt(item.rm_pending_so_linked_total || 0);
+        const in_process_note = (rm_status === 'In Process at Jobber' && still_just_requested > 0.001)
+            ? `<div class="so-micro" style="margin-top:2px;">+ ${flt(still_just_requested, 2)} ${esc(uom)} still just requested</div>`
+            : '';
         const rm_name = item.rm_name && item.rm_name !== item.rm_code ? item.rm_name : '';
 
         return `
@@ -1520,12 +1764,14 @@ function get_rm_breakdown_html(data, so_name, docstatus, pair_key) {
                     ${rm_name ? `<div class="so-micro so-truncate" title="${esc(rm_name)}">${esc(rm_name)}</div>` : ''}
                 </td>
                 <td>
-                    <div style="font-family:monospace; color:#888; font-size:10px;"
+                    <div class="so-micro" style="font-family:monospace; white-space:nowrap;"
                          title="This order's own finished-good shortfall (qty still to produce, after its stock/picks/MR/PO) × how much of this raw material one unit of the finished good needs.">
-                        ${flt(rm.fg_shortfall || 0).toFixed(2)} &times; ${flt(item.rm_qty_per_fg || 0).toFixed(2)}/unit =
+                        ${flt(rm.fg_shortfall || 0).toFixed(2)} &times; ${flt(item.rm_qty_per_fg || 0).toFixed(2)}/unit
                     </div>
-                    <span class="so-val" title="What this row's Shortfall is actually calculated from: Stock/Pending MR/Pending PO below are subtracted from THIS number, not from the full order total shown as 'Full Order'.">${flt(item.rm_needed_for_shortfall || 0).toFixed(2)}</span>
-                    <div class="so-micro">${esc(uom)}</div>
+                    <div style="white-space:nowrap;">
+                        <span class="so-val" title="What this row's Shortfall is actually calculated from: Stock/Pending MR/Pending PO below are subtracted from THIS number, not from the full order total shown as 'Full Order'.">${flt(item.rm_needed_for_shortfall || 0).toFixed(2)}</span>
+                        <span class="so-micro">${esc(uom)}</span>
+                    </div>
                     ${flt(item.rm_required_total || 0).toFixed(2) !== flt(item.rm_needed_for_shortfall || 0).toFixed(2)
                         ? `<div class="so-micro" title="The full BOM requirement if this order's entire quantity were produced from scratch — this item's own finished-good stock/picks already reduce how much new production (and therefore raw material) is actually needed right now">Full Order: ${flt(item.rm_required_total || 0).toFixed(2)}</div>`
                         : ''}
@@ -1538,28 +1784,44 @@ function get_rm_breakdown_html(data, so_name, docstatus, pair_key) {
                                onclick="show_details_modal('${js_str(pair_key)}','rm_stock_details','${js_str(item.rm_code)}')">
                                <i class="fa fa-eye"></i> View</button>`
                         : ''}
+                    ${flt(item.rm_transferred_to_other_so_total || 0) > 0
+                        ? `<div class="so-micro" style="color:var(--so-red); margin-top:2px;"
+                               title="This raw material was bought in a shared batch — this much of that same purchase is currently outstanding at a subcontractor for OTHER Sales Orders (sent but not yet consumed into their finished goods), which is why Stock is lower than the full purchase would suggest.">
+                               ⚠ ${flt(item.rm_transferred_to_other_so_total, 2).toFixed(2)} outstanding at jobber for other orders</div>`
+                        : ''}
                 </td>
                 <td>${so_qty(flt(item.rm_pending_mr_total || 0).toFixed(2))}</td>
                 <td>${so_qty(flt(item.rm_pending_so_linked_total || 0).toFixed(2))}</td>
-                <td class="so-meta" style="max-width:180px; word-break:break-word;">
+                <td title="${flt(item.rm_transferred_to_sc_total || 0) > 0
+                ? 'Sent to the subcontractor\'s warehouse for this order and still outstanding there — not yet consumed into a Subcontracting Receipt, so it still counts as coverage. Once it\'s consumed, it shows up as finished-good stock instead and drops out of this figure.'
+                : ''}">
+                    ${so_qty(flt(item.rm_transferred_to_sc_total || 0).toFixed(2))}
+                </td>
+                <td class="so-meta" style="max-width:210px; word-break:break-word; line-height:1.6;">
                     ${refs.join('<br>') || '<span class="so-micro">—</span>'}
                 </td>
                 <td>
-                    <span class="so-pill ${status_pill_class}" title="${rm_status === 'Requested'
-                ? 'A Material Request or Purchase Order has been raised to cover this, but it has not arrived yet'
+                    <span class="so-pill ${status_pill_class}" title="${rm_status === 'In Process at Jobber'
+                ? 'This raw material has already been sent to the subcontractor for this order — job work has physically started on however much went, so nothing new needs requesting for that portion'
+                : rm_status === 'Requested'
+                    ? 'A Material Request or Purchase Order has been raised to cover this, but nothing has arrived (or been sent to a subcontractor) yet'
                 : rm_status === 'Not Required'
                     ? 'This item already has enough stock, so this raw material is not needed right now'
                     : ''}">
                         ${esc(rm_status)}
                     </span>
+                    ${in_process_note}
                 </td>
-                <td>
+                <td style="min-width:200px; text-align:left;">
                     ${shortfall_qty > 0
-                ? `<span class="so-val so-val--bad">${shortfall_qty.toFixed(2)}</span><div class="so-micro">${esc(uom)}</div>
-                           ${submitted ? `<button class="so-btn so-btn--primary" style="margin-top:4px; white-space:normal; text-align:left; max-width:100%;"
+                ? `<div style="text-align:center; white-space:nowrap;"><span class="so-val so-val--bad">${shortfall_qty.toFixed(2)}</span> <span class="so-micro">${esc(uom)}</span></div>
+                           <div class="so-micro" style="max-width:190px;" title="Once ${shortfall_qty.toFixed(2)} ${esc(uom)} of this raw material is in stock at VV Puram, the FG-level Next Action above will offer a Subcontract PO for the remaining production.">
+                               <i class="fa fa-arrow-down"></i> Request ${shortfall_qty.toFixed(2)} ${esc(uom)} below to unblock a new Subcontract PO
+                           </div>
+                           ${submitted ? `<button class="so-btn so-btn--primary" style="white-space:normal; text-align:left; max-width:100%;"
                                onclick="so_make_rm_material_request('${js_str(so_name)}','${js_str(item.rm_code)}',${shortfall_qty},'${js_str(uom)}','${js_str(data.warehouse || '')}')">
                                <i class="fa fa-file-text-o"></i> Material Request</button>` : ''}`
-                : `<span class="so-val so-val--zero">—</span>`}
+                : `<div style="text-align:center;"><span class="so-val so-val--zero">—</span></div>`}
                 </td>
             </tr>`;
     }).join('');
@@ -1579,14 +1841,27 @@ function get_rm_breakdown_html(data, so_name, docstatus, pair_key) {
     // an MR was raised, with every row underneath still showing 0.00 in Stock —
     // exactly the "stock is here" claim that isn't true yet.
     const pending_arrival = !has_shortfall && !!rm.rm_pending_arrival_exists;
+    // Material already sent to the jobber is a materially further-along
+    // state than a plain pending MR/PO — job work has physically started on
+    // whatever went. Takes priority over the plain "Requested" wording
+    // whenever any row's coverage includes it, even if some OTHER row is
+    // still only a paper request (that row's own per-row status still says
+    // "Requested" — this header just doesn't understate the ones that
+    // aren't).
+    const in_process = !has_shortfall && !!rm.rm_in_process_exists;
     const fg_already_stocked = !(flt(rm.fg_shortfall) > 0);
 
-    const header_pill_class = has_shortfall ? 'so-pill--blocked' : pending_arrival ? 'so-pill--wait' : 'so-pill--ready';
+    const header_pill_class = has_shortfall ? 'so-pill--blocked'
+        : in_process ? 'so-pill--planned'
+        : pending_arrival ? 'so-pill--wait' : 'so-pill--ready';
     const header_pill_label = has_shortfall
         ? `Shortage on ${items_with_shortage} Material${items_with_shortage === 1 ? '' : 's'}`
+        : in_process ? 'Sent to Jobber — In Process'
         : pending_arrival ? 'Requested — Awaiting Arrival' : 'Materials Covered';
     const header_pill_title = has_shortfall
         ? 'Stock on hand plus what is already requested or ordered still falls short of what this order needs'
+        : in_process
+            ? 'The raw material this needs has already been sent to the subcontractor — job work has started, nothing further to request right now'
         : pending_arrival
             ? 'A Material Request or Purchase Order has been raised for every material below, but none of it has arrived yet'
             : 'Every raw material below is either already in stock or not needed for this order right now';
@@ -1610,24 +1885,25 @@ function get_rm_breakdown_html(data, so_name, docstatus, pair_key) {
                                </span>`
             : ''}
                         <span class="so-rm__spacer"></span>
-                        <span class="so-rm__note">Coverage = Stock + Pending MR + Pending PO</span>
+                        <span class="so-rm__note">Coverage = Stock + Pending MR + Pending PO + Outstanding at Jobber</span>
                     </div>
                     <div class="so-scroll-hint"><i class="fa fa-arrows-h"></i> ${__('Scroll sideways to see every column')}</div>
                     <div class="so-scroll">
-                    <table>
+                    <table style="table-layout:fixed;">
                         <thead>
                             <tr>
-                                <th>RM Item</th>
-                                <th>Needed</th>
-                                <th>Stock</th>
-                                <th>Pending MR</th>
-                                <th>Pending PO</th>
-                                <th>References</th>
-                                <th>Status</th>
-                                <th>Shortfall</th>
+                                <th style="width:15%;">RM Item</th>
+                                <th style="width:10%;">Needed</th>
+                                <th style="width:11%;">Stock</th>
+                                <th style="width:8%;">Pending MR</th>
+                                <th style="width:8%;">Pending PO</th>
+                                <th style="width:10%;" title="Outstanding at Jobber">At Jobber</th>
+                                <th style="width:15%;">References</th>
+                                <th style="width:7%;">Status</th>
+                                <th style="width:16%;">Shortfall</th>
                             </tr>
                         </thead>
-                        <tbody>${rows || '<tr><td colspan="8" class="so-empty">No Raw Material Data Available.</td></tr>'}</tbody>
+                        <tbody>${rows || '<tr><td colspan="9" class="so-empty">No Raw Material Data Available.</td></tr>'}</tbody>
                     </table>
                     </div>
                 </div>
@@ -2021,6 +2297,7 @@ function so_open_mapped_doc(opts) {
             // the client-side cache (the mapped doc plus any children) — the
             // mapped doc itself is always the first one.
             const doc = frappe.model.sync(r.message)[0];
+            if (opts.after_map) opts.after_map(doc);
             so_show_mapped_doc_preview(doc, opts);
         }
     });
@@ -2126,7 +2403,7 @@ function so_prompt_dn_or_si(so_name, sales_order_item, item_code, pick_list, pic
         } else {
             so_make_sales_invoice_with_stock(so_name, sales_order_item, item_code, values.qty);
         }
-    }, __('Waiting for DN / SI'), __('Continue'));
+    }, __(so_dn_si_action_label(route_lock)), __('Continue'));
 }
 
 // The direct-billing alternative to Delivery Note: a Sales Invoice with
@@ -2175,7 +2452,28 @@ function so_make_material_request(so_name) {
         source_name: so_name,
         freeze_message: __('Creating Material Request…'),
         preview_title: __('Review Material Request'),
-        confirm_label: __('Create Material Request')
+        confirm_label: __('Create Material Request'),
+        // Same issue as so_make_purchase_order: ERPNext's own mapper only
+        // knows "how much of this SO line has never been put on an MR/PO" —
+        // it has no idea a line is already partly covered by stock, a Pick
+        // List or a Delivery Note, so it maps the FULL remaining qty even
+        // when most of it already shipped straight from stock. Cap every
+        // mapped row back down to this app's own shortfall figure (the
+        // cached per-item stock data the widget itself was built from),
+        // same formula _compute_stage_info-adjacent code uses: required -
+        // delivered - picked (submitted, undelivered) - picked (draft).
+        after_map: (doc) => {
+            (doc.items || []).forEach(row => {
+                const cached = get_cached_stock_row(`${row.item_code}||no_bom`);
+                if (!cached) return;
+                const needed = flt(cached.required_qty) - flt(cached.delivered_qty)
+                    - flt(cached.picked_submitted_undelivered_qty) - flt(cached.picked_draft_qty_so);
+                if (needed >= 0 && flt(row.qty) !== flt(needed)) {
+                    row.qty = flt(needed);
+                    if (row.conversion_factor) row.stock_qty = flt(needed) * flt(row.conversion_factor);
+                }
+            });
+        }
     });
 }
 
@@ -2443,7 +2741,7 @@ function so_confirm_submit_pick_list(pick_list) {
  * mapper endpoint drops it into frappe.flags, so call the method directly and
  * route to the returned draft ourselves.
  */
-function so_make_purchase_order(so_name, item_code) {
+function so_make_purchase_order(so_name, item_code, qty) {
     frappe.call({
         method: 'erpnext.selling.doctype.sales_order.sales_order.make_purchase_order',
         args: {
@@ -2458,6 +2756,24 @@ function so_make_purchase_order(so_name, item_code) {
                 return;
             }
             const doc = frappe.model.sync(r.message)[0];
+
+            // ERPNext's own mapper has no idea this item is already partly
+            // covered by stock, a Pick List or a Delivery Note — it only
+            // tracks "how much of this SO line has ever been put on a PO",
+            // so a line nothing has been ordered for yet maps at its FULL
+            // original qty even when most of it already shipped straight
+            // from stock. Cap it back down to the shortfall this action was
+            // actually raised for (only when there's exactly one mapped row
+            // for this item — a split across warehouses/rates is ERPNext's
+            // own call to make, not something to guess at by overwriting).
+            const matches = (doc.items || []).filter(it => it.item_code === item_code);
+            if (qty != null && matches.length === 1 && flt(matches[0].qty) !== flt(qty)) {
+                const row = matches[0];
+                row.qty = flt(qty);
+                if (row.conversion_factor) row.stock_qty = flt(qty) * flt(row.conversion_factor);
+                if (row.rate) row.amount = flt(qty) * flt(row.rate);
+            }
+
             so_show_mapped_doc_preview(doc, {
                 preview_title: __('Review Purchase Order'),
                 confirm_label: __('Create Purchase Order')
@@ -2607,7 +2923,10 @@ function show_details_modal(pair_key, type, extra) {
                     ${doc.po_ref ? `<div class="so-micro">against ${link_id_name('Purchase Order', doc.po_ref)}</div>` : ''}
                 </td>
                 <td>${party}</td>
-                <td>${so_qty(doc.pending_qty || 0, 'warn')}</td>
+                <td>
+                    ${so_qty(doc.pending_qty || 0, 'warn')}
+                    ${doc.ordered_qty != null ? `<div class="so-micro" style="margin-top:2px;">${flt(doc.received_qty || 0)} of ${flt(doc.ordered_qty)} received</div>` : ''}
+                </td>
                 <td class="so-meta">${fmt_date(doc.expected_delivery_date || doc.date)}</td>
                 <td class="so-meta">${doc.warehouse ? esc(doc.warehouse) : em_dash()}</td>
                 <td>${so_doc_status(doc.status)}${note}</td>
@@ -2636,7 +2955,10 @@ function show_details_modal(pair_key, type, extra) {
                 <td>${po.sales_order
                 ? link_id_name('Sales Order', po.sales_order, po.so_customer_name)
                 : `<span class="so-micro">General stock</span>`}</td>
-                <td>${so_qty(po.pending_qty || 0)}</td>
+                <td>
+                    ${so_qty(po.pending_qty || 0)}
+                    ${po.ordered_qty != null ? `<div class="so-micro" style="margin-top:2px;">${flt(po.received_qty || 0)} of ${flt(po.ordered_qty)} received</div>` : ''}
+                </td>
                 <td class="so-meta">${fmt_date(po.expected_delivery_date)}</td>
                 <td>${so_doc_status(po.status)}</td>
             </tr>`).join('');
@@ -3042,8 +3364,42 @@ function so_pill(kind, icon, label) {
     return `<span class="so-pill so-pill--${kind}"><i class="fa fa-${icon}"></i> ${esc(label)}</span>`;
 }
 
-function so_shortfall(qty) {
-    return `<span class="so-shortfall">Shortfall: ${flt(qty)}</span>`;
+function so_shortfall(qty, incoming_qty) {
+    let html = `<span class="so-shortfall">Shortfall: ${flt(qty)}</span>`;
+    // A bare "Shortfall: 200" reads as if nothing has been done about it —
+    // when a PO already covers some or all of it, say so right here rather
+    // than leaving the reader to separately notice the Incoming column and
+    // do that arithmetic themselves.
+    const incoming = flt(incoming_qty);
+    if (incoming > 0.01) {
+        const covers_all = incoming >= flt(qty);
+        html += `<div class="so-micro" style="margin-top:2px;color:${covers_all ? 'var(--so-green)' : 'var(--so-orange)'};font-weight:600;">
+            ${covers_all
+                ? `<i class="fa fa-check-circle"></i> ${incoming} Already on Order — Covers It`
+                : `${incoming} Already on Order — ${flt(flt(qty) - incoming)} More Needed`}
+        </div>`;
+    }
+    return html;
+}
+
+// Once a Sales Order has committed to a fulfillment route (a submitted DN,
+// or a submitted "Update Stock" SI — see so_route_lock / guard_so_fulfillment_
+// route_lock), calling the action "DN / SI" as if it were still an open
+// choice is actively misleading: the choice was already made. Same idea as
+// order_flow.js's own _compute_stage_info label (server-side) — kept as one
+// small helper here so every place in this widget that names this action
+// can never drift out of sync with what route is actually locked in.
+function so_dn_si_action_label(route_lock, qty) {
+    const suffix = (qty != null) ? ` (${flt(qty)})` : '';
+    if (route_lock === 'dn') return `Create Delivery Note${suffix}`;
+    if (route_lock === 'si') return `Create Sales Invoice (Update Stock)${suffix}`;
+    return `Create DN / SI${suffix}`;
+}
+
+function so_dn_si_status_label(route_lock) {
+    if (route_lock === 'dn') return 'Ready — Delivery Note';
+    if (route_lock === 'si') return 'Ready — Sales Invoice';
+    return 'Ready for DN / SI';
 }
 
 // A Next Action command button. `primary` marks the one step that moves
@@ -3053,6 +3409,68 @@ function so_cmd_btn(onclick, icon, label, primary) {
         + `<i class="fa fa-${icon}"></i> ${esc(label)}</button>`;
 }
 
+// Joins a Next Action cell's parts (buttons, shortfall/note spans) into the
+// final markup. When a cell genuinely offers more than one real action —
+// e.g. both "Purchase Order" and "Material Request" for the same shortfall —
+// a plain vertical stack read as one primary button plus an unlabelled
+// afterthought, with no visual cue that the second one is a real,
+// independently clickable alternative rather than a detail of the first.
+// Only kicks in with 2+ actual <button class="so-btn> entries — the common
+// case of a single action (the overwhelming majority of cells) is untouched.
+function so_build_action_html(action_parts) {
+    if (!action_parts.length) return `<span class="so-action__note">—</span>`;
+    const is_btn = (html) => /class="so-btn\b/.test(html);
+
+    // "or"/"Recommended" only ever apply WITHIN a contiguous run of real
+    // buttons — a note/shortfall span (or an explicit '' break, pushed
+    // wherever a caller needs to keep two genuinely independent actions
+    // from being read as alternatives) ends the run. Two buttons on
+    // opposite sides of one of those are separate, both-may-be-needed
+    // actions (e.g. "ship what's already picked" + "source the rest of
+    // the shortfall"), never a choice between one or the other.
+    const parts = [];
+    let i = 0;
+    while (i < action_parts.length) {
+        if (!is_btn(action_parts[i])) {
+            parts.push(action_parts[i]);
+            i++;
+            continue;
+        }
+        let j = i;
+        while (j < action_parts.length && is_btn(action_parts[j])) j++;
+        const run = action_parts.slice(i, j);
+        if (run.length > 1) {
+            run.forEach((html, k) => {
+                if (k > 0) parts.push(`<span class="so-action__or">${esc(__('or'))}</span>`);
+                if (/so-btn--primary/.test(html)) {
+                    parts.push(`<span class="so-action__tag">${esc(__('Recommended'))}</span>`);
+                }
+                parts.push(html);
+            });
+        } else {
+            parts.push(run[0]);
+        }
+        i = j;
+    }
+    return `<div class="so-action">${parts.join('')}</div>`;
+}
+
+// Jumps straight to the Raw Material Pipeline sub-row for this item/BOM —
+// used by the FG row's "View Raw Materials" Next Action so a real RM
+// shortfall (which needs a Material Request, not just waiting) is one click
+// away instead of requiring the user to find and click the row's own caret.
+function so_expand_rm_row(pair_key) {
+    const $row = $('tr.so-row-main').filter(function () {
+        return $(this).data('pair-key') === pair_key;
+    }).first();
+    if (!$row.length) return;
+    const $rm = $row.next('tr.so-rm-row');
+    if (!$rm.length) return;
+    $row.addClass('is-open');
+    $rm.show();
+    $rm[0].scrollIntoView({ behavior: 'smooth', block: 'center' });
+}
+
 // True only when every raw material line of this BOM item is PHYSICALLY in
 // stock right now (available >= needed) — a pending Material Request or
 // Purchase Order for the shortfall does not count. Mirrors the server-side
@@ -3060,7 +3478,24 @@ function so_cmd_btn(onclick, icon, label, primary) {
 // the same rm_items_status data get_rm_breakdown_html already renders, so
 // the two never disagree. An item with no rm_items_status at all (lookup
 // failed, or a BOM with no lines) fails open — nothing to block on.
-function so_rm_physically_in_stock(d) {
+//
+// `qty`, when given, is the SPECIFIC fg qty the caller is actually about to
+// raise a Subcontract PO for — NOT necessarily this row's own full,
+// unmodified fg_shortfall. An earlier, partial Subcontract PO/SCO can
+// already have committed raw material for PART of that shortfall (shown as
+// "Outstanding at Jobber" further down) — rm_needed_for_shortfall keeps
+// reflecting the FULL original shortfall regardless, so checking physical
+// stock against that stale, too-large figure incorrectly blocked a second,
+// smaller Subcontract PO for just the remaining balance even when there was
+// exactly enough stock for THAT smaller amount (confirmed live: 200 fg
+// shortfall committed 150 of it to an earlier SCO, leaving 50 genuinely
+// remaining; stock physically covered that 50 exactly, but the check —
+// comparing against RM needed for the full 200 — still said "not in
+// stock"). check_bom_raw_materials_in_stock server-side already takes the
+// real qty being ordered as its own parameter and gets this right; this
+// mirrors that by recomputing "needed" from qty * rm_qty_per_fg per row
+// when qty is passed, instead of trusting the row's own static figure.
+function so_rm_physically_in_stock(d, qty) {
     const rm_items = ((d.rm_procurement_status || {}).rm_items_status) || [];
     // Compare at the same 2-decimal precision the RM Pipeline table itself
     // displays (Stock / Needed / Shortfall are all shown rounded to 2dp) —
@@ -3069,7 +3504,13 @@ function so_rm_physically_in_stock(d) {
     // in Stock" here while the table right below it showed a matching
     // Stock figure and a 0.00 Shortfall — two supposedly-agreeing checks
     // visibly disagreeing over a thousandth of a unit.
-    return rm_items.every(rm => flt(rm.rm_available_stock, 2) >= flt(rm.rm_needed_for_shortfall, 2));
+    if (qty == null) {
+        return rm_items.every(rm => flt(rm.rm_available_stock, 2) >= flt(rm.rm_needed_for_shortfall, 2));
+    }
+    return rm_items.every(rm => {
+        const needed_for_qty = flt(qty) * flt(rm.rm_qty_per_fg || 0);
+        return flt(rm.rm_available_stock, 2) >= flt(needed_for_qty, 2);
+    });
 }
 
 /**
@@ -3081,14 +3522,19 @@ function so_rm_physically_in_stock(d) {
 function so_buy_btn(d, so_name_arg, item_arg, qty, primary) {
     const subcontract = (d.is_sub_contracted_item || d.is_bom_item) && d.bom_no;
     if (!subcontract) {
-        return so_cmd_btn(`so_make_purchase_order('${so_name_arg}','${item_arg}')`,
+        return so_cmd_btn(`so_make_purchase_order('${so_name_arg}','${item_arg}',${flt(qty)})`,
             'shopping-cart', 'Purchase Order', primary);
     }
     // Hard block, no override: raw materials must be physically in stock
     // before a Subcontract PO can be raised — see so_rm_physically_in_stock.
     // The server enforces this too (make_subcontract_purchase_order), so this
     // is about giving the user the right indication, not just UX polish.
-    if (!so_rm_physically_in_stock(d)) {
+    // Checked against THIS qty specifically (the amount this exact button
+    // would raise a Subcontract PO for), not the row's full original
+    // shortfall — see so_rm_physically_in_stock's own comment for why that
+    // distinction matters once an earlier, partial Subcontract PO already
+    // exists for part of it.
+    if (!so_rm_physically_in_stock(d, qty)) {
         return `<span class="so-action__note so-action__note--blocked" style="color:var(--so-red);font-weight:600;"
             title="${esc('Raw materials for this BOM are not fully in stock yet. See the Raw Material Pipeline below — request or order the shortfall, then wait for it to arrive before creating a Subcontract PO.')}">
             <i class="fa fa-ban"></i> RM Not in Stock — PO Blocked</span>`;

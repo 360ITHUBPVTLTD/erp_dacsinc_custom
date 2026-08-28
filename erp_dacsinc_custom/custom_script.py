@@ -2884,7 +2884,9 @@ def get_item_stock_details_bulk(item_bom_pairs, sales_order_name):
                 poi.item_name AS item_name,
                 poi.sales_order_item, poi.bom,
                 COALESCE(poi.expected_delivery_date, poi.schedule_date, po.schedule_date) AS expected_delivery_date,
-                CASE WHEN po.is_subcontracted = 1 THEN (poi.fg_item_qty - poi.received_qty) ELSE (poi.qty - poi.received_qty) END AS pending_qty
+                CASE WHEN po.is_subcontracted = 1 THEN (poi.fg_item_qty - poi.received_qty) ELSE (poi.qty - poi.received_qty) END AS pending_qty,
+                CASE WHEN po.is_subcontracted = 1 THEN poi.fg_item_qty ELSE poi.qty END AS ordered_qty,
+                poi.received_qty AS received_qty
             FROM `tabPurchase Order Item` poi
             JOIN `tabPurchase Order` po ON poi.parent = po.name
             LEFT JOIN `tabSupplier` sup ON po.supplier = sup.name
@@ -2909,16 +2911,18 @@ def get_item_stock_details_bulk(item_bom_pairs, sales_order_name):
         for r in filtered_po_items:
             qty = flt(r.pending_qty)
             if qty <= 0: continue
-            
+
             entry = unique_pos.setdefault(r.name, {
                 "doc_type": "Purchase Order", "name": r.name, "info": r.supplier_name or r.supplier,
                 "supplier": r.supplier, "supplier_name": r.supplier_name,
                 "item_name": r.item_name, "status": r.po_status, "date": r.po_date,
                 "expected_delivery_date": r.expected_delivery_date,
                 "warehouse": r.warehouse, "is_ewo": 0, "is_subcontracted": r.is_subcontracted,
-                "pending_qty": 0.0
+                "pending_qty": 0.0, "ordered_qty": 0.0, "received_qty": 0.0
             })
             entry["pending_qty"] += qty
+            entry["ordered_qty"] += flt(r.ordered_qty)
+            entry["received_qty"] += flt(r.received_qty)
 
         for entry in unique_pos.values():
             incoming_stock.append(entry)
@@ -3058,7 +3062,9 @@ def get_item_stock_details_bulk(item_bom_pairs, sales_order_name):
                 po.status AS po_status, po.docstatus AS po_docstatus,
                 MIN(COALESCE(poi.expected_delivery_date, poi.schedule_date, po.schedule_date)) AS expected_delivery_date,
                 MAX(poi.warehouse) AS warehouse,
-                SUM(poi.qty - poi.received_qty) AS pending_qty
+                SUM(poi.qty - poi.received_qty) AS pending_qty,
+                SUM(poi.qty) AS ordered_qty,
+                SUM(poi.received_qty) AS received_qty
             FROM `tabPurchase Order Item` poi
             JOIN `tabPurchase Order` po ON poi.parent = po.name
             LEFT JOIN `tabSupplier` sup ON po.supplier = sup.name
@@ -3087,6 +3093,7 @@ def get_item_stock_details_bulk(item_bom_pairs, sales_order_name):
                 "status": row.po_status, "warehouse": row.warehouse,
                 "expected_delivery_date": row.expected_delivery_date,
                 "pending_qty": qty, "is_draft": is_draft,
+                "ordered_qty": flt(row.ordered_qty), "received_qty": flt(row.received_qty),
             })
         total_other_po_count = sum(1 for row in other_po_data if row.po_docstatus == 1)
         # ------------- MODIFICATION ENDS HERE (Other SO POs) ------------------
@@ -3204,6 +3211,14 @@ def get_item_stock_details_bulk(item_bom_pairs, sales_order_name):
             # status below. Kept distinct from rm_shortfall_exists so the header
             # pill never claims "Materials Covered" while stock is still 0.
             "rm_pending_arrival_exists": False,
+            # True when at least one RM's coverage comes from material already
+            # SENT to the jobber (rm_transferred_to_sc_total) — a materially
+            # different state from "Requested": that raw material has already
+            # left the shelf and job work has physically started on however
+            # much of it went. Calling that "Requested — Awaiting Arrival" (the
+            # same wording used for a plain pending MR/PO nothing has moved on
+            # yet) understated real, already-in-progress work.
+            "rm_in_process_exists": False,
         }
 
         if bom_no:
@@ -3239,8 +3254,9 @@ def get_item_stock_details_bulk(item_bom_pairs, sales_order_name):
                         "rm_required_total": required_qty * qty_per_fg, "rm_available_stock": 0,
                         "rm_stock_breakdown": [],
                         "rm_pending_so_linked_total": 0, "rm_pending_mr_total": 0,
+                        "rm_transferred_to_sc_total": 0, "rm_transferred_to_other_so_total": 0,
                         "rm_shortfall_total": 0,
-                        "po_documents": [], "mr_documents": []
+                        "po_documents": [], "mr_documents": [], "transfer_documents": []
                     }
                 
                 # if rm_codes:
@@ -3412,16 +3428,123 @@ def get_item_stock_details_bulk(item_bom_pairs, sales_order_name):
                                 rm.get("draft_po_documents", []) + (d.po_list.split(",") if d.po_list else [])
                             ))
 
+                    # 4. Raw material already sent to a subcontractor for THIS SO
+                    # AND still sitting there unconsumed. Once material physically
+                    # leaves VV Puram for the jobber, it no longer shows up in
+                    # rm_available_stock there — but it hasn't been wasted, it's
+                    # been committed to producing this exact order, so it must
+                    # still count as coverage RIGHT UP UNTIL a Subcontracting
+                    # Receipt actually consumes it. Once consumed, it has already
+                    # turned into finished-good stock (which is what shrinks
+                    # fg_shortfall itself) — counting it here TOO would be
+                    # crediting the same material twice: once as reduced
+                    # fg_shortfall, again as RM coverage for whatever NEW
+                    # production is still needed beyond that. Subcontracting
+                    # Order Supplied Item is ERPNext's own running ledger of
+                    # this — supplied_qty minus consumed_qty minus returned_qty
+                    # is exactly what's still outstanding at the jobber, whereas
+                    # summing Stock Entry Detail (the raw transfer amount, ever
+                    # sent) doesn't know a Subcontracting Receipt happened since.
+                    #
+                    # A subcontracted PO links back to a Sales Order on its own
+                    # service-item row (Purchase Order Item.sales_order) — there
+                    # is no `Purchase Order Raw Material Source` row for these
+                    # (that child table is only populated by the separate
+                    # plain-purchase RM flow). And a single subcontracted PO can
+                    # combine service-item rows for SEVERAL different Sales
+                    # Orders against the same finished good (each its own row,
+                    # its own fg_item_qty), all sharing ONE Subcontracting Order
+                    # — the outstanding-supplied figure has no per-SO breakdown.
+                    # So this SO's credit is its own fg_item_qty's share of the
+                    # PO's total fg_item_qty for this finished good, applied to
+                    # that outstanding quantity — both subqueries pre-aggregate
+                    # to one row per PO first, so a PO with more than one row for
+                    # the same SO+finished-good is never fanned out and
+                    # double-counted.
+                    transfer_data = frappe.db.sql("""
+                        SELECT
+                            sosi.rm_item_code as item_code,
+                            SUM(
+                                (sosi.supplied_qty - sosi.consumed_qty - sosi.returned_qty)
+                                * this_so.so_fg_qty / po_fg_totals.total_fg_qty
+                            ) as outstanding_qty,
+                            GROUP_CONCAT(DISTINCT sosi.parent) as sco_list,
+                            GROUP_CONCAT(DISTINCT sco.purchase_order) as po_list
+                        FROM `tabSubcontracting Order Supplied Item` sosi
+                        JOIN `tabSubcontracting Order` sco ON sco.name = sosi.parent AND sco.docstatus = 1
+                        JOIN (
+                            SELECT parent, SUM(fg_item_qty) as so_fg_qty
+                            FROM `tabPurchase Order Item`
+                            WHERE sales_order = %(so)s AND fg_item = %(fg_item)s AND fg_item_qty > 0
+                            GROUP BY parent
+                        ) this_so ON this_so.parent = sco.purchase_order
+                        JOIN (
+                            SELECT parent, SUM(fg_item_qty) as total_fg_qty
+                            FROM `tabPurchase Order Item`
+                            WHERE fg_item = %(fg_item)s AND fg_item_qty > 0
+                              AND sales_order IS NOT NULL AND sales_order != ''
+                            GROUP BY parent
+                        ) po_fg_totals ON po_fg_totals.parent = sco.purchase_order
+                        WHERE sosi.rm_item_code IN %(items)s
+                        GROUP BY sosi.rm_item_code
+                    """, {"so": sales_order_name, "fg_item": item_code, "items": tuple(rm_codes)}, as_dict=1)
+
+                    for d in transfer_data:
+                        rm = rm_map.get(d.item_code)
+                        if rm:
+                            transferred_qty = max(0, flt(d.outstanding_qty, 2))
+                            rm["rm_transferred_to_sc_total"] = transferred_qty
+                            if transferred_qty > 0:
+                                rm["transfer_documents"] = d.sco_list.split(",") if d.sco_list else []
+                                # The user manages this whole flow from the Purchase
+                                # Order, not the Subcontracting Order directly — a
+                                # reference naming only the SCO leaves them with no
+                                # way back to the document they actually work from.
+                                rm["transfer_po_documents"] = d.po_list.split(",") if d.po_list else []
+
+                    # 5. Where the rest of a bulk RM purchase actually went — a raw
+                    # material bought in one large batch (one PO covering many
+                    # orders' worth) is a SHARED pool: once part of it has been
+                    # sent to a subcontractor for a DIFFERENT Sales Order and NOT
+                    # YET consumed there, it's gone from that shelf same as if it
+                    # were sent for THIS one, and "Stock: 13.00" alone doesn't
+                    # explain why that's lower than the full purchase would
+                    # suggest. Same outstanding-only rule as this SO's own share
+                    # above (supplied minus consumed minus returned) — once a
+                    # Subcontracting Receipt consumes it, it has already turned
+                    # into THAT order's finished-good stock and stopped being
+                    # "elsewhere with your raw material", it's just a completed,
+                    # unrelated transaction.
+                    total_transfer_data = frappe.db.sql("""
+                        SELECT sosi.rm_item_code as item_code,
+                               SUM(sosi.supplied_qty - sosi.consumed_qty - sosi.returned_qty) as outstanding_qty
+                        FROM `tabSubcontracting Order Supplied Item` sosi
+                        JOIN `tabSubcontracting Order` sco ON sco.name = sosi.parent AND sco.docstatus = 1
+                        WHERE sosi.rm_item_code IN %(items)s
+                        GROUP BY sosi.rm_item_code
+                    """, {"items": tuple(rm_codes)}, as_dict=1)
+                    for d in total_transfer_data:
+                        rm = rm_map.get(d.item_code)
+                        if rm:
+                            rm["rm_transferred_to_other_so_total"] = max(
+                                0, flt(flt(d.outstanding_qty, 2) - rm.get("rm_transferred_to_sc_total", 0), 2))
+
                 for rm in rm_map.values():
-                    # Coverage = Physical + PO + MR (MR is usually what's left to order).
-                    # Measured against rm_needed_for_shortfall — NOT rm_required_total (the
-                    # "Needed" column) — because Status/Shortfall answer "is raw material
+                    # Coverage = Physical + PO + MR + already sent to a subcontractor
+                    # (MR is usually what's left to order). Measured against
+                    # rm_needed_for_shortfall — NOT rm_required_total (the "Needed"
+                    # column) — because Status/Shortfall answer "is raw material
                     # action needed right now", and that is 0 whenever the finished good
                     # itself needs no new production (already in stock, already picked and
                     # ready for DN, etc.). Comparing against rm_required_total instead would
                     # flag "Shortage" on an order that is already fulfilled and about to
                     # ship — the exact wrong signal a real case surfaced.
-                    coverage = rm["rm_available_stock"] + rm["rm_pending_so_linked_total"] + rm.get("rm_pending_mr_total", 0)
+                    coverage = (
+                        rm["rm_available_stock"]
+                        + rm["rm_pending_so_linked_total"]
+                        + rm.get("rm_pending_mr_total", 0)
+                        + rm.get("rm_transferred_to_sc_total", 0)
+                    )
                     # Compare at the same 2-decimal precision the table itself
                     # displays (Needed/Stock/Shortfall are all shown rounded
                     # to 2dp). A raw floating-point remainder — e.g. 13.999 in
@@ -3443,6 +3566,7 @@ def get_item_stock_details_bulk(item_bom_pairs, sales_order_name):
                     # MR just raised for the full need immediately flipped
                     # this to "Covered" with zero stock on hand. "Requested"
                     # is the honest middle state.
+                    transferred_r = flt(rm.get("rm_transferred_to_sc_total", 0), 2)
                     if needed_r <= 0:
                         # Nothing is being drawn on this RM right now (e.g. the
                         # finished good already has enough stock, so fg_shortfall
@@ -3454,12 +3578,26 @@ def get_item_stock_details_bulk(item_bom_pairs, sales_order_name):
                         rm["status"] = "Shortage"
                     elif available_r >= needed_r:
                         rm["status"] = "Covered"
+                    elif transferred_r > 0:
+                        # Coverage closes without a genuine shortfall, and at
+                        # least some of it is material already sent to the
+                        # jobber — job work has physically started on that
+                        # much, a materially further-along state than a plain
+                        # pending MR/PO nothing has moved on yet. Still true
+                        # even when it's a MIX (partly at the jobber, partly
+                        # still just a pending MR/PO) — the client renders the
+                        # actual split (see rm_transferred_to_sc_total vs
+                        # rm_pending_mr_total/rm_pending_so_linked_total on
+                        # this same row) rather than collapsing it to one word.
+                        rm["status"] = "In Process at Jobber"
                     else:
                         rm["status"] = "Requested"
                     if shortfall > 0:
                         rm_procurement_status["rm_shortfall_exists"] = True
                     if rm["status"] == "Requested":
                         rm_procurement_status["rm_pending_arrival_exists"] = True
+                    if rm["status"] == "In Process at Jobber":
+                        rm_procurement_status["rm_in_process_exists"] = True
                     rm_procurement_status["rm_items_status"].append(rm)
 
             except Exception as e:
@@ -4611,6 +4749,76 @@ def _reset_item_rates_to_sales_order(doc):
             item.discount_amount = 0
             changed = True
     return changed
+
+
+# Fields where a Pick List's own reservation is the one source of truth for
+# a row built from it — a Delivery Note Item's own pick_list_item (set only
+# by our create_dn_or_si_from_pick_lists / the standard Pick-List-to-DN
+# mapper) means that exact qty/item/warehouse is what the Pick List already
+# physically reserved. Sales Invoice Item has no such reference field, but
+# in this company's flow the ONLY way to reach an Update Stock invoice
+# against a Sales Order is the same create_dn_or_si_from_pick_lists action
+# (guard_so_fulfillment_route_lock already establishes an order can't mix
+# routes), so update_stock + so_detail is the equivalent signal there.
+_PICK_LIST_LOCKED_FIELDS = ("qty", "item_code", "warehouse")
+
+
+def guard_dn_items_locked_to_pick_list(doc, method=None):
+    _revert_pick_list_locked_fields(doc, lambda item: bool(item.get("pick_list_item")))
+
+
+def guard_si_items_locked_to_pick_list(doc, method=None):
+    if not doc.get("update_stock"):
+        return
+    _revert_pick_list_locked_fields(doc, lambda item: bool(item.get("so_detail")))
+
+
+def _revert_pick_list_locked_fields(doc, is_locked_row):
+    """
+    Backs the client-side read_only_depends_on lock (public/js/delivery_note.js
+    / sales_invoice.js) with a real guarantee — a client-side read-only can be
+    bypassed via the API or a disabled script, and this is exactly the kind of
+    mismatch (a DN/SI row silently ending up different from what its Pick List
+    actually reserved) that quietly breaks picked_qty vs delivered_qty
+    reconciliation everywhere the Order Flow dashboard depends on it. Only
+    matters for a row that already existed on a PRIOR save — freshly mapped
+    row being saved for the first time has no earlier value to protect, and
+    IS the value the Pick List's reservation should take on.
+    """
+    if doc.is_new():
+        return
+    before = doc.get_doc_before_save()
+    if not before:
+        return
+    before_by_name = {d.name: d for d in (before.items or [])}
+    reverted_items = []
+    for item in doc.items:
+        if not is_locked_row(item):
+            continue
+        prior = before_by_name.get(item.name)
+        if not prior:
+            continue
+        changed = False
+        for fieldname in _PICK_LIST_LOCKED_FIELDS:
+            if flt(item.get(fieldname)) != flt(prior.get(fieldname)) if fieldname == "qty" \
+                    else item.get(fieldname) != prior.get(fieldname):
+                item.set(fieldname, prior.get(fieldname))
+                changed = True
+        if changed:
+            item.stock_qty = flt(item.qty) * flt(item.get("conversion_factor") or 1)
+            reverted_items.append(item.item_code)
+
+    if reverted_items:
+        doc.calculate_taxes_and_totals()
+        frappe.msgprint(
+            _(
+                "Qty/Item/Warehouse reverted for: {0}. These rows came from a "
+                "submitted Pick List, which already reserved this exact "
+                "amount — edit the Pick List instead if it needs to change."
+            ).format(", ".join(reverted_items)),
+            title=_("Locked to Pick List"),
+            indicator="orange",
+        )
 
 
 def guard_so_fulfillment_route_lock(doc, method):
@@ -7796,6 +8004,68 @@ def validate_non_zero_rate(doc, method):
             )
 
 
+def guard_po_item_not_over_so_need(doc, method=None):
+    """
+    A Purchase Order row fetched from (or manually linked to) a Sales Order
+    line must never total more than that line's own required qty, across
+    EVERY Purchase Order raised against it — not just this one. Over-
+    ordering here is exactly what forces the downstream defenses this app
+    already has to carry (create_putaway_picklist's own allocation cap, the
+    Item Stock & Action Plan widget's "shortfall vs already-on-order"
+    reconciliation) — better to block it at the source than reconcile it
+    after the fact every place it could resurface.
+
+    Scoped strictly to rows that actually carry a `sales_order_item` link —
+    a row for the very same item added to the very same PO WITHOUT that
+    link (general stock, a different customer's need, anything not
+    claiming to serve this SO line) is entirely unrestricted; it was never
+    counted as fulfilling this SO's need in the first place, by any of the
+    RM/coverage math elsewhere in this app (all of it keys off
+    sales_order/sales_order_item, never a bare item_code match).
+    """
+    so_item_qty = {}
+    for item in doc.items:
+        so_item_id = item.get("sales_order_item")
+        if not so_item_id:
+            continue
+        row_qty = flt(item.get("fg_item_qty")) if doc.get("is_subcontracted") else flt(item.get("qty"))
+        so_item_qty[so_item_id] = so_item_qty.get(so_item_id, 0) + row_qty
+
+    if not so_item_qty:
+        return
+
+    for so_item_id, this_doc_qty in so_item_qty.items():
+        so_item = frappe.db.get_value(
+            "Sales Order Item", so_item_id, ["qty", "item_code", "parent"], as_dict=True
+        )
+        if not so_item:
+            continue
+
+        other_ordered = flt(frappe.db.sql("""
+            SELECT SUM(CASE WHEN po.is_subcontracted = 1 THEN poi.fg_item_qty ELSE poi.qty END)
+            FROM `tabPurchase Order Item` poi
+            JOIN `tabPurchase Order` po ON po.name = poi.parent
+            WHERE poi.sales_order_item = %(so_item_id)s
+              AND po.docstatus IN (0, 1)
+              AND po.name != %(this_po)s
+        """, {"so_item_id": so_item_id, "this_po": doc.name or ""})[0][0])
+
+        total_ordered = other_ordered + this_doc_qty
+        if total_ordered > flt(so_item.qty) + 0.01:
+            frappe.throw(
+                _(
+                    "{0}: ordering {1} here brings the total ordered against Sales Order {2}'s "
+                    "line (needs {3}) to {4} — {5} more than that line actually needs. Reduce the "
+                    "qty on this Purchase Order, or add the extra as a separate item row with no "
+                    "Sales Order reference if it's genuinely for something else."
+                ).format(
+                    frappe.bold(so_item.item_code), flt(this_doc_qty), frappe.bold(so_item.parent),
+                    flt(so_item.qty), flt(total_ordered), flt(total_ordered - so_item.qty),
+                ),
+                title=_("Over the Sales Order's Own Need"),
+            )
+
+
 def validate_material_request_no_bom_items(doc, method):
     """
     A Material Request procures raw material / bought-out stock — an item
@@ -8214,6 +8484,16 @@ def fetch_multi_order_requirements(exclude_mr=None):
         # every order that needs the raw material, not one order at a time.
         _add_po_supply(d.item_code, None, None, d.open_qty, d.po_name, d.docstatus, bool(d.is_subcontracted))
 
+    # NOTE: a finished good already ordered on an existing subcontracted PO
+    # is NOT, by itself, proof that nothing further needs sourcing for this
+    # line — the resulting FG can still fall short of the line's full qty
+    # (e.g. some of it sent on again for embroidery finishing), and "was a
+    # PO raised" has no way to see that, only live stock does. val["shortage"]
+    # below is already stock-based (val["available"], from bin_map, nets out
+    # reservations and this order's own picks) so it already reflects
+    # whatever a subcontract PO actually produced — no separate
+    # "already subcontracted" carve-out needed on top of that.
+
     def _po_supply_for(item_code, warehouse, sales_order=None, include_general=True):
         """
         Supply already committed toward `item_code` in `warehouse` that may
@@ -8514,7 +8794,33 @@ def fetch_multi_order_requirements(exclude_mr=None):
                     "so_po_qty": max(0, flt(so_po["qty"]) - flt(general_po_here["total_qty"])),
                 })
 
+    # Raw material currently OUTSTANDING at a subcontractor (sent but not yet
+    # consumed into a Subcontracting Receipt), company-wide, across every
+    # Sales Order — purely informational (available/qty_needed above already
+    # read live Bin stock, so final_shortage below is already correct); this
+    # just explains WHY Stock is lower than a bulk purchase would otherwise
+    # suggest, the same clarity gap flagged on the Item Stock & Action Plan's
+    # own "Outstanding at Jobber" column. Once a transfer is consumed it has
+    # already turned into that other order's finished-good stock — a
+    # completed, unrelated transaction — so this reads Subcontracting Order
+    # Supplied Item's own supplied/consumed/returned ledger, not just every
+    # transfer ever made.
+    rm_transferred_map = {}
+    if rm_aggregation:
+        rm_item_codes_for_transfer = tuple({k[0] for k in rm_aggregation.keys()}) or ("",)
+        rm_transfer_rows = frappe.db.sql("""
+            SELECT sosi.rm_item_code as item_code,
+                   SUM(sosi.supplied_qty - sosi.consumed_qty - sosi.returned_qty) as outstanding_qty
+            FROM `tabSubcontracting Order Supplied Item` sosi
+            JOIN `tabSubcontracting Order` sco ON sco.name = sosi.parent AND sco.docstatus = 1
+            WHERE sosi.rm_item_code IN %s
+            GROUP BY sosi.rm_item_code
+        """, (rm_item_codes_for_transfer,), as_dict=True)
+        rm_transferred_map = {r.item_code: flt(r.outstanding_qty, 2) for r in rm_transfer_rows}
+
     for rm_key, rm in rm_aggregation.items():
+        rm["sent_to_jobber_qty"] = rm_transferred_map.get(rm_key[0], 0.0)
+
         # What's already on hand, plus any pending PO (raised directly,
         # bypassing MR) or pending MR, all cover part of the need before
         # anything new gets requested — the stock and PO legs were missing

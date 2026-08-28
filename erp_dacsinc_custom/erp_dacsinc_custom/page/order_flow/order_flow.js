@@ -243,6 +243,26 @@ class OrderFlow {
                 this.refresh(true);
             }
         });
+
+        // True real-time: every doctype that feeds this dashboard (Sales
+        // Order, Material Request, Purchase Order, Purchase Receipt, Pick
+        // List, Delivery Note, Sales Invoice, Purchase Invoice,
+        // Subcontracting Order/Receipt, Embroidery Work Order, Uniform
+        // Embroidery Transfer — see hooks.py's doc_events) calls
+        // order_flow_api.broadcast_order_flow_change on save/submit/cancel,
+        // which publishes this event to every connected Desk user. So
+        // ANYONE's change — not just this session's own actions, and not
+        // just ones that happened to open a new tab or navigate away —
+        // reaches every open dashboard without a manual reload. Debounced
+        // rather than throttled: a single user action can cascade into
+        // several of these documents changing in quick succession (e.g.
+        // creating a DN from a Pick List touches both), and those should
+        // coalesce into one refresh, not one per document.
+        let realtime_refresh_timer = null;
+        frappe.realtime.on('order_flow_changed', () => {
+            clearTimeout(realtime_refresh_timer);
+            realtime_refresh_timer = setTimeout(() => this.refresh(true), 1200);
+        });
     }
 
     // Whether the session user may see `tab`, per the permissions fetched
@@ -670,7 +690,7 @@ class OrderFlow {
 
         // Expandable Sales Order row toggle
         this.$body.on('click', 'tr.of-row-main', (e) => {
-            if ($(e.target).closest('a, button').length) return;
+            if ($(e.target).closest('a, button, input, select, textarea, [onclick]').length) return;
             const $row = $(e.currentTarget);
             const so_name = $row.data('so');
             const $btn = $row.find('.of-so-toggle');
@@ -684,7 +704,7 @@ class OrderFlow {
         // anywhere on the row toggles it, same as the Sales Order rows above
         // — the caret is just the visual affordance, not the only hit target.
         this.$body.on('click', 'tr.of-doc-row', (e) => {
-            if ($(e.target).closest('a, button').length) return;
+            if ($(e.target).closest('a, button, input, select, textarea, [onclick]').length) return;
             const $row = $(e.currentTarget);
             const $btn = $row.find('.of-doc-items-toggle');
             this.toggle_doc_items_row($row, $btn.data('doctype'), $btn.data('docname'), $btn);
@@ -695,7 +715,7 @@ class OrderFlow {
         // already read via get_ewo_details, instead of only the row's
         // aggregate totals across every item on the order.
         this.$body.on('click', 'tr.of-ewo-row', (e) => {
-            if ($(e.target).closest('a, button').length) return;
+            if ($(e.target).closest('a, button, input, select, textarea, [onclick]').length) return;
             const $row = $(e.currentTarget);
             const $btn = $row.find('.of-ewo-items-toggle');
             this.toggle_ewo_items_row($row, $btn.data('ewo'), $btn);
@@ -705,7 +725,7 @@ class OrderFlow {
         // all — the only further detail that exists is the partial-receipt
         // history of that one transfer.
         this.$body.on('click', 'tr.of-transfer-row', (e) => {
-            if ($(e.target).closest('a, button').length) return;
+            if ($(e.target).closest('a, button, input, select, textarea, [onclick]').length) return;
             const $row = $(e.currentTarget);
             const $btn = $row.find('.of-transfer-receipts-toggle');
             this.toggle_transfer_receipts_row($row, $btn.data('id'), $btn);
@@ -713,7 +733,7 @@ class OrderFlow {
 
         // Stock Tracker: per-item warehouse breakdown.
         this.$body.on('click', 'tr.of-stock-row', (e) => {
-            if ($(e.target).closest('a, button').length) return;
+            if ($(e.target).closest('a, button, input, select, textarea, [onclick]').length) return;
             const $row = $(e.currentTarget);
             const $btn = $row.find('.of-stock-wh-toggle');
             this.toggle_stock_wh_row($row, $btn.data('item'), $btn);
@@ -1405,6 +1425,29 @@ class OrderFlow {
         // are known.
         if (!this.active) return;
 
+        // Preserve whichever Item Stock & Action Plan row(s) are currently
+        // expanded across this refresh. paint() below fully replaces the
+        // panel HTML (every row, collapsed back to its default state) — so
+        // a manual Refresh click, a realtime update, or a focus-regain
+        // refresh used to silently collapse whatever was open, with nothing
+        // visibly updating unless the user happened to notice the caret
+        // reset and re-clicked it themselves. Re-expanding here (which,
+        // per toggle_so_details, always re-fetches fresh data) makes the
+        // widget itself actually reflect the refresh instead of just
+        // vanishing.
+        const panel_id = `#of-panel-${this.active}`;
+        const expanded_so_names = this.$body
+            .find(`${panel_id} tr.of-so-details-row:not(.of-hidden) .of-so-items-container`)
+            .map((i, el) => $(el).data('so'))
+            .get();
+        const re_expand_open_rows = () => {
+            expanded_so_names.forEach(so_name => {
+                const $row = this.$body.find(`${panel_id} tr.of-row-main`).filter((i, el) => $(el).data('so') === so_name);
+                const $btn = $row.find('.of-so-toggle');
+                if ($row.length && $btn.length) this.toggle_so_details(so_name, $btn);
+            });
+        };
+
         this.load_summary();
         if (force) this.cache = {};
 
@@ -1413,6 +1456,7 @@ class OrderFlow {
             this.paint(this.cache[key]);
             this.load_activity();
             this.load_summary();
+            re_expand_open_rows();
             return;
         }
 
@@ -1799,16 +1843,22 @@ class OrderFlow {
         if (is_collapsed) {
             $details_row.removeClass('of-hidden').show();
             $btn.removeClass('fa-caret-right').addClass('fa-caret-down').css('color', 'var(--of-blue)');
-            
+
+            // Always re-fetch on expand, never reuse whatever was already
+            // sitting in this container. This widget's own subtitle promises
+            // "Real-Time Availability" — but a Purchase Order, Material
+            // Request or Pick List raised from one of its own Next Action
+            // buttons opens (or navigates to) a SEPARATE document outside
+            // this dashboard's own refresh cycle, so collapsing and
+            // re-expanding the SAME row without an intervening full-table
+            // repaint used to just re-show the exact stock snapshot from
+            // before that action — stale until the whole page was reloaded.
+            // load_so_details fetches via frappe.model.with_doc, which only
+            // serves a doc from the client-side cache when one already
+            // exists there — dropping it first forces a real getdoc call.
             const $container = $details_row.find('.of-so-items-container');
-            if ($container.find('.of-empty').length || $container.find('.so-card').length === 0) {
-                this.load_so_details(so_name, $container);
-            } else {
-                const mock_frm = $container.data('mock_frm');
-                if (mock_frm) {
-                    window.cur_frm = mock_frm;
-                }
-            }
+            frappe.model.remove_from_locals('Sales Order', so_name);
+            this.load_so_details(so_name, $container);
         } else {
             $details_row.addClass('of-hidden').hide();
             $btn.removeClass('fa-caret-down').addClass('fa-caret-right').css('color', 'var(--text-light)');
@@ -2180,6 +2230,43 @@ class OrderFlow {
                 action_btn_html = `<span class="of-micro" style="color:var(--of-green);font-weight:600;"><i class="fa fa-check-circle"></i> Completed</span>`;
             }
 
+            // A secondary action is a genuinely SEPARATE, both-need-doing
+            // item (e.g. an earlier batch already delivered and unbilled,
+            // while the primary action above is about the rest of the
+            // order still being picked/sourced) — never an alternative to
+            // the primary, so it's labelled "Also Pending", not paired with
+            // an "or" the way two competing routes would be.
+            if (st.secondary_action && st.secondary_action.action_type && !view_only) {
+                const sec = st.secondary_action;
+                action_btn_html += `
+                    <div class="of-secondary-action">
+                        <span class="of-secondary-action__tag">Also Pending</span>
+                        <button class="of-btn ${sec.action_btn_class || 'of-btn--warning'} of-action-btn"
+                                data-action="${sec.action_type}"
+                                data-target="${sec.target_doc || ''}"
+                                data-doctype="${sec.target_doctype || ''}"
+                                data-so="${o.name}"
+                                data-customer="${of_esc(o.customer || '')}"
+                                data-customer-name="${of_esc(o.customer_name || '')}">
+                            <i class="fa fa-${sec.icon || 'arrow-right'}"></i> ${of_esc(sec.action_label || 'Act')}
+                        </button>
+                    </div>`;
+            }
+
+            // "What's left, overall" for this order — the same three zones
+            // the Sales Order's own Item Stock & Action Plan widget already
+            // totals per line (its "To complete this order" banner), so this
+            // never needs opening the widget just to see whether anything is
+            // still genuinely short. The primary/secondary actions above
+            // already cover ready-to-ship and needs-invoice; this is purely
+            // the one zone neither of them represents.
+            if (flt_of(o.shortfall_qty) > 0.01 && !view_only) {
+                action_btn_html += `
+                    <div class="of-micro" style="margin-top:6px;color:var(--of-red);font-weight:600;" title="${of_esc('Still not delivered or picked on this order — see the Item Stock & Action Plan below for which item and why.')}">
+                        <i class="fa fa-shopping-cart"></i> ${of_round2(o.shortfall_qty)} Still Short
+                    </div>`;
+            }
+
             return `
             <tr data-so="${o.name}" class="${o.is_overdue ? 'of-row--overdue' : ''} of-row-main">
                 <td>
@@ -2208,6 +2295,10 @@ class OrderFlow {
                     <span class="of-pill ${st.badge_class || 'of-pill--draft'}">
                         <i class="fa fa-${st.icon || 'circle'}"></i> ${of_esc(of_to_title_case(st.stage_label || 'Open'))}
                     </span>
+                    ${st.secondary_action ? `
+                        <div class="of-micro" style="margin-top:4px;color:var(--of-orange);font-weight:600;">
+                            <i class="fa fa-file-text-o"></i> + Needs Invoice
+                        </div>` : ''}
                     ${rm_stage_note_html}
                 </td>
                 <td>
@@ -3895,7 +3986,19 @@ class OrderFlow {
                 fieldtype: 'Data',
                 fieldname: 'gstin',
                 label: __('GSTIN / UIN'),
-                default: res.gstin || ''
+                default: res.gstin || '',
+                onchange: () => of_sync_gst_category(dialog)
+            },
+            {
+                fieldtype: 'Column Break'
+            },
+            {
+                fieldtype: 'Select',
+                fieldname: 'gst_category',
+                label: __('GST Category'),
+                options: of_gst_category_options(),
+                default: res.gst_category || of_guess_gst_category(res.gstin) || '',
+                // description: __("Guessed from the GSTIN above — override if it's wrong.")
             },
             {
                 fieldtype: 'Column Break'
@@ -4045,6 +4148,7 @@ class OrderFlow {
                     args: {
                         sales_order: so,
                         gstin: values.gstin || null,
+                        gst_category: values.gst_category || null,
                         tax_category: values.tax_category || null,
                         billing_address: values.billing_address || null,
                         shipping_address: values.shipping_address || null,
@@ -4418,6 +4522,31 @@ function of_refresh_address_preview(dialog, link_fieldname, preview_fieldname) {
         .then(address_display => {
             dialog.set_value(preview_fieldname, address_display || '');
         });
+}
+
+// GST Category's real options — read off the Customer doctype's own field
+// (india_compliance installs it as a custom field, so this is only known
+// once that doctype's meta has loaded) rather than a second hardcoded copy
+// of the same list that could quietly drift out of sync with it.
+function of_gst_category_options() {
+    const docfield = frappe.meta.get_docfield('Customer', 'gst_category');
+    return (docfield && docfield.options)
+        || 'Registered Regular\nRegistered Composition\nUnregistered\nSEZ\nOverseas\nDeemed Export\nUIN Holders\nTax Deductor\nTax Collector\nInput Service Distributor';
+}
+
+// india_compliance.guess_gst_category reads the GSTIN's own structure
+// (a TDS/TCS/UIN/regular-taxpayer prefix pattern) — no API call, so this is
+// safe to run on every keystroke. Returns undefined for a GSTIN that
+// doesn't match any known pattern (e.g. still mid-typing) — callers must
+// not blindly overwrite an existing value with that.
+function of_guess_gst_category(gstin) {
+    if (typeof india_compliance === 'undefined' || !india_compliance.guess_gst_category) return '';
+    return india_compliance.guess_gst_category((gstin || '').trim(), undefined) || '';
+}
+
+function of_sync_gst_category(dialog) {
+    const guessed = of_guess_gst_category(dialog.get_value('gstin'));
+    if (guessed) dialog.set_value('gst_category', guessed);
 }
 
 // "Create a New Address" from the Billing/Shipping Address Link field opens

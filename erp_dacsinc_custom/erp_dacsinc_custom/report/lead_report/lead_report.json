@@ -7,11 +7,11 @@
  "docstatus": 0,
  "doctype": "Report",
  "filters": [],
- "idx": 0,
+ "idx": 4,
  "is_standard": "Yes",
  "json": "{}",
- "letterhead": null,
- "modified": "2025-10-04 10:46:55.670705",
+ "letter_head": null,
+ "modified": "2026-08-28 19:04:37.577290",
  "modified_by": "Administrator",
  "module": "Erp Dacsinc Custom",
  "name": "Lead Report",
@@ -35,6 +35,21 @@
   },
   {
    "role": "DAC CRM Head"
+  },
+  {
+   "role": "Admin"
+  },
+  {
+   "role": "Merchandiser User"
+  },
+  {
+   "role": "POS Admin"
+  },
+  {
+   "role": "POS Store Manager"
+  },
+  {
+   "role": "POS User"
   }
  ],
  "timeout": 0

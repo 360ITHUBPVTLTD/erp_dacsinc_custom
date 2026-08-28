@@ -566,3 +566,30 @@ tr.rp-access-row {
 	gap: 6px;
 	flex-wrap: wrap;
 }
+
+/* "DAC Matrix" reconciliation dialog */
+.rp-dac-list {
+	max-height: 440px;
+	overflow-y: auto;
+	border-top: 1px solid var(--border-color);
+}
+.rp-dac-row {
+	display: flex;
+	gap: 10px;
+	align-items: center;
+	padding: 6px 0;
+	border-bottom: 1px solid var(--border-color);
+}
+.rp-dac-row.text-muted {
+	opacity: 0.6;
+}
+.rp-dac-col-name {
+	flex: 2;
+}
+.rp-dac-col-current,
+.rp-dac-col-proposed {
+	flex: 2;
+}
+.rp-dac-col-status {
+	flex: 1.5;
+}

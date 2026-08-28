@@ -760,6 +760,58 @@ def _get_tracker_rows(days=120, search=None, scope="open", merchandiser=None, ap
         row["has_bom_items"] = bom_item_count > 0
         row["all_bom_items"] = item_count > 0 and bom_item_count == item_count
 
+    # Ordered-vs-received quantity on this order's own linked Purchase Order
+    # rows (FG tier only — sales_order_item is only ever set by the
+    # SO-linked buy flow, never the RM-tier one). A submitted Purchase
+    # Receipt existing at all used to be read as "stock has arrived, go
+    # make a Pick List" — true, but silent about a PO raised for more than
+    # what's been received so far (e.g. a 600-qty PO with only 300 received):
+    # the balance still sitting on order needs to stay visible, not vanish
+    # the moment the first partial receipt lands.
+    for r in frappe.db.sql("""
+        SELECT poi.sales_order AS sales_order,
+               SUM(poi.qty) AS ordered_qty,
+               SUM(poi.received_qty) AS received_qty
+        FROM `tabPurchase Order Item` poi
+        JOIN `tabPurchase Order` po ON po.name = poi.parent
+        WHERE poi.sales_order IN %(names)s
+          AND po.docstatus = 1
+          AND poi.sales_order_item IS NOT NULL AND poi.sales_order_item != ''
+        GROUP BY poi.sales_order
+    """, {"names": tuple(names)}, as_dict=1):
+        row = by_name.get(r.sales_order)
+        if not row:
+            continue
+        row["po_ordered_qty"] = flt(r.ordered_qty)
+        row["po_received_qty"] = flt(r.received_qty)
+
+    # "What's left to do, overall" — the same three zones the Sales Order's
+    # own Item Stock & Action Plan widget already shows per-line
+    # (generate_stock_overview_table's so_summary), aggregated here across
+    # every line of the order in one cheap query so the tracker table can
+    # show a whole-order checklist without opening that widget. Deliberately
+    # uses ONLY Sales Order Item's own fields (qty/delivered_qty/picked_qty/
+    # billed_amt/rate) — no live stock/PO lookup — since this runs for every
+    # row on the page, not just one expanded order; "shortfall" here means
+    # "not yet delivered or picked", not "confirmed out of stock", but is
+    # still a meaningful signal of what's outstanding.
+    for r in frappe.db.sql("""
+        SELECT
+            parent AS sales_order,
+            SUM(GREATEST(0, delivered_qty - IF(rate > 0, billed_amt / rate, 0))) AS needs_invoice_qty,
+            SUM(GREATEST(0, LEAST(qty, picked_qty) - delivered_qty)) AS ready_to_ship_qty,
+            SUM(GREATEST(0, qty - GREATEST(delivered_qty, LEAST(qty, picked_qty)))) AS shortfall_qty
+        FROM `tabSales Order Item`
+        WHERE parent IN %(names)s
+        GROUP BY parent
+    """, {"names": tuple(names)}, as_dict=1):
+        row = by_name.get(r.sales_order)
+        if not row:
+            continue
+        row["needs_invoice_qty"] = flt(r.needs_invoice_qty)
+        row["ready_to_ship_qty"] = flt(r.ready_to_ship_qty)
+        row["shortfall_qty"] = flt(r.shortfall_qty)
+
     # Roll every linked document up to its Sales Order in one pass.
     events = frappe.db.sql(f"""
         SELECT sales_order, doctype, name, ts, status, docstatus, is_rm_tier
@@ -944,7 +996,82 @@ def get_sales_tracker(days=120, search=None, scope="open", stage_filter=None, me
     }
 
 
+def _fmt_qty(qty):
+    qty = flt(qty)
+    return str(int(qty)) if qty == int(qty) else str(qty)
+
+
+def _resolve_secondary_billing_action(order):
+    """
+    Same three-way "where does the invoice come from" resolution as the
+    primary need_to_bill stage below (draft invoice already exists > submitted
+    DN to invoice against > raise a fresh one) — used when SOME qty is
+    delivered-and-unbilled but the order's PRIMARY stage is about something
+    else entirely (the remaining qty still being picked, awaiting stock,
+    etc.). Deliberately worded "(Delivered Qty)" rather than a bare "Create
+    Sales Invoice" — this only ever covers what's already shipped, never the
+    rest of the order the primary action is about.
+    """
+    draft_invoices = order.get("draft_invoices") or []
+    if draft_invoices:
+        inv_name = draft_invoices[0]
+        return {
+            "action_type": "open_doc",
+            "action_label": f"Open Draft Invoice ({inv_name})",
+            "action_btn_class": "of-btn--warning",
+            "target_doc": inv_name,
+            "target_doctype": "Sales Invoice",
+            "icon": "file-text-o",
+        }
+
+    submitted_dns = frappe.get_all(
+        "Delivery Note Item",
+        filters={"against_sales_order": order["name"], "docstatus": 1},
+        fields=["distinct parent"]
+    )
+    if submitted_dns:
+        dns = [d.parent for d in submitted_dns]
+        return {
+            "action_type": "make_invoice_from_dn",
+            "action_label": "Create Sales Invoice (Delivered Qty)",
+            "action_btn_class": "of-btn--warning",
+            "target_doc": ",".join(dns),
+            "target_doctype": "Delivery Note",
+            "icon": "file-text-o",
+        }
+
+    return {
+        "action_type": "make_invoice",
+        "action_label": "Create Sales Invoice (Delivered Qty)",
+        "action_btn_class": "of-btn--warning",
+        "icon": "file-text-o",
+    }
+
+
 def _compute_stage_info(order):
+    """
+    Computes exact workflow stage & required action for a Sales Order.
+
+    A real order can be in more than one state at once — say, awaiting more
+    stock for its remaining qty while ALSO having an earlier batch already
+    delivered and unbilled. _compute_primary_stage_info below returns the
+    single most-actionable PRIMARY stage exactly as before; this wrapper
+    additionally attaches a "secondary_action" whenever some delivered qty
+    isn't billed yet and billing isn't already what the primary stage is
+    about — so the Action Required column can surface both instead of
+    silently dropping whichever one didn't win the primary slot.
+    """
+    result = _compute_primary_stage_info(order)
+
+    delivered = flt(order.get("per_delivered"))
+    billed = flt(order.get("per_billed"))
+    if delivered > 0 and billed < 100 and result.get("stage_key") not in ("need_to_bill", "completed"):
+        result["secondary_action"] = _resolve_secondary_billing_action(order)
+
+    return result
+
+
+def _compute_primary_stage_info(order):
     """
     Computes exact workflow stage & required action for a Sales Order.
     """
@@ -975,6 +1102,11 @@ def _compute_stage_info(order):
 
     skip_dn = bool(order.get("skip_delivery_note"))
     is_completed = billed >= 100 if skip_dn else (delivered >= 100 and billed >= 100)
+    # Some of this order already shipped, and it isn't done yet — every
+    # stage below this point describes what's blocking the *remaining*
+    # balance, which reads as if nothing had happened at all unless it's
+    # tagged as a continuation of a partial delivery, not a fresh start.
+    is_partially_delivered = delivered > 0 and not is_completed
 
     is_overdue = False
     today = nowdate()
@@ -1094,59 +1226,104 @@ def _compute_stage_info(order):
             as_dict=True
         )
         total_qty = sum(flt(i.qty) for i in so_items)
-        total_picked_or_delivered = sum(min(flt(i.qty), flt(i.picked_qty) + flt(i.delivered_qty)) for i in so_items)
+        # picked_qty is a cumulative, ever-picked total — it does NOT drop
+        # back down once a Delivery Note ships those same units, so adding
+        # it to delivered_qty double-counted whatever's already gone out
+        # (e.g. picked_qty=300, delivered_qty=300 for the SAME 300 units
+        # read as "600 covered", not 300). This is what let a Pick List
+        # whose entire picked batch had already shipped still read as
+        # "Ready for Delivery" with nothing actually left to put on a new
+        # DN — the real remaining gap (needing a fresh MR/PO, exactly what
+        # the Sales Order's own Item Stock & Action Plan widget already
+        # showed as a Shortfall) was hidden behind a stage that implied
+        # "just deliver it".
+        undelivered_picked_qty = sum(
+            max(0, min(flt(i.qty), flt(i.picked_qty)) - flt(i.delivered_qty))
+            for i in so_items
+        )
+        total_delivered_qty = sum(flt(i.delivered_qty) for i in so_items)
+        total_picked_or_delivered = total_delivered_qty + undelivered_picked_qty
         is_fully_picked = (total_picked_or_delivered >= total_qty) if total_qty > 0 else False
 
-        route_lock = ""
-        if _so_has_submitted_dn(order["name"]):
-            route_lock = "dn"
-        elif _so_has_submitted_stock_si(order["name"]):
-            route_lock = "si"
+        # Only a real signal to deliver when something is actually sitting
+        # picked-and-undelivered right now — a submitted Pick List whose
+        # entire batch already shipped is stale for this purpose; fall
+        # through to whatever the real current blocker is instead (a PO
+        # awaiting receipt, an MR still open, or genuinely needing a fresh
+        # one raised).
+        if undelivered_picked_qty > 0.001:
+            route_lock = ""
+            if _so_has_submitted_dn(order["name"]):
+                route_lock = "dn"
+            elif _so_has_submitted_stock_si(order["name"]):
+                route_lock = "si"
 
-        if route_lock == "si":
-            label = "Create Sales Invoice (Update Stock)" if is_fully_picked else "Create Sales Invoice (Update Stock, Partial)"
-            icon = "file-text-o"
-        else:
-            label = "Create DN / SI" if not route_lock else "Create Delivery Note"
-            if not is_fully_picked:
-                label += " (Partial)"
-            icon = "truck"
+            if route_lock == "si":
+                label = "Create Sales Invoice (Update Stock)" if is_fully_picked else "Create Sales Invoice (Update Stock, Partial)"
+                icon = "file-text-o"
+            else:
+                label = "Create DN / SI" if not route_lock else "Create Delivery Note"
+                if not is_fully_picked:
+                    label += " (Partial)"
+                icon = "truck"
 
-        if is_fully_picked:
-            return {
-                "stage_key": "ready_to_deliver",
-                "stage_label": "Ready for Delivery",
-                "badge_class": "of-pill--dn",
-                "icon": icon,
-                "target_doc": pl_name,
-                "target_doctype": "Pick List",
-                "action_type": "make_dn_or_si",
-                "action_label": label,
-                "action_btn_class": "of-btn--success",
-                "route_lock": route_lock
-            }
-        else:
-            return {
-                "stage_key": "ready_to_deliver",
-                "stage_label": "Partially Ready for Delivery",
-                "badge_class": "of-pill--warn",
-                "icon": icon,
-                "target_doc": pl_name,
-                "target_doctype": "Pick List",
-                "action_type": "make_dn_or_si",
-                "action_label": label,
-                "action_btn_class": "of-btn--warning",
-                "route_lock": route_lock
-            }
+            if is_fully_picked:
+                return {
+                    "stage_key": "ready_to_deliver",
+                    "stage_label": "Ready for Delivery",
+                    "badge_class": "of-pill--dn",
+                    "icon": icon,
+                    "target_doc": pl_name,
+                    "target_doctype": "Pick List",
+                    "action_type": "make_dn_or_si",
+                    "action_label": label,
+                    "action_btn_class": "of-btn--success",
+                    "route_lock": route_lock
+                }
+            else:
+                return {
+                    "stage_key": "ready_to_deliver",
+                    "stage_label": "Partially Ready for Delivery",
+                    "badge_class": "of-pill--warn",
+                    "icon": icon,
+                    "target_doc": pl_name,
+                    "target_doctype": "Pick List",
+                    "action_type": "make_dn_or_si",
+                    "action_label": label,
+                    "action_btn_class": "of-btn--warning",
+                    "route_lock": route_lock
+                }
 
     # A Purchase/Subcontracting Receipt only posts to the stock ledger on
     # submit — a draft one has moved nothing yet, so it must never read as
     # "Stock Arrived". Checked first so a submitted receipt still wins even
     # if an unrelated draft receipt also exists on the same order.
     if submitted_receipts:
+        po_ordered_qty = flt(order.get("po_ordered_qty"))
+        po_received_qty = flt(order.get("po_received_qty"))
+        po_pending_qty = max(0, po_ordered_qty - po_received_qty)
+
+        # A submitted receipt only proves SOME stock arrived — if the PO
+        # behind it is itself still short (e.g. 600 ordered, only 300
+        # received so far), that balance is real, untracked work that must
+        # stay visible instead of silently disappearing the moment the
+        # first partial receipt lands and the stage reads "Stock Arrived"
+        # as if the order were fully covered.
+        if po_pending_qty > 0.001:
+            return {
+                "stage_key": "stock_received_partial",
+                "stage_label": f"Stock Partially Arrived ({_fmt_qty(po_received_qty)}/{_fmt_qty(po_ordered_qty)})"
+                    + (" — Partial Delivery" if is_partially_delivered else ""),
+                "badge_class": "of-pill--warn",
+                "icon": "inbox",
+                "action_type": "make_picklist",
+                "action_label": f"Create Pick List — {_fmt_qty(po_pending_qty)} Still on Order",
+                "action_btn_class": "of-btn--warning"
+            }
+
         return {
             "stage_key": "stock_received",
-            "stage_label": "Stock Arrived (PL Needed)",
+            "stage_label": "Stock Arrived (PL Needed)" + (" — Partial Delivery" if is_partially_delivered else ""),
             "badge_class": "of-pill--ready",
             "icon": "inbox",
             "action_type": "make_picklist",
@@ -1158,7 +1335,7 @@ def _compute_stage_info(order):
         rcpt = draft_receipts[0]
         return {
             "stage_key": "receipt_draft",
-            "stage_label": "Receiving Stock (Draft PR)",
+            "stage_label": "Receiving Stock (Draft PR)" + (" — Partial Delivery" if is_partially_delivered else ""),
             "badge_class": "of-pill--draft",
             "icon": "inbox",
             "target_doc": rcpt["name"],
@@ -1179,7 +1356,7 @@ def _compute_stage_info(order):
         ewo_doctype = ewo.get("doctype") if isinstance(ewo, dict) else "Purchase Order"
         return {
             "stage_key": "in_embroidery",
-            "stage_label": "Embroidery",
+            "stage_label": "Embroidery" + (" — Partial Delivery" if is_partially_delivered else ""),
             "badge_class": "of-pill--planned",
             "icon": "magic",
             "target_doc": ewo_name,
@@ -1197,7 +1374,7 @@ def _compute_stage_info(order):
         jw_doctype = jw.get("doctype") if isinstance(jw, dict) else "Purchase Order"
         return {
             "stage_key": "in_jobwork",
-            "stage_label": "In Job Work",
+            "stage_label": "In Job Work" + (" — Partial Delivery" if is_partially_delivered else ""),
             "badge_class": "of-pill--planned",
             "icon": "cogs",
             "target_doc": jw_name,
@@ -1211,7 +1388,7 @@ def _compute_stage_info(order):
         po_name = open_pos[0]
         return {
             "stage_key": "awaiting_stock",
-            "stage_label": "PO Raised (Awaiting Stock)",
+            "stage_label": "PO Raised (Awaiting Stock)" + (" — Partial Delivery" if is_partially_delivered else ""),
             "badge_class": "of-pill--wait",
             "icon": "shopping-cart",
             "target_doc": po_name,
@@ -1225,7 +1402,7 @@ def _compute_stage_info(order):
         mr_name = mrs[0]
         return {
             "stage_key": "mr_raised",
-            "stage_label": "MR Raised",
+            "stage_label": "MR Raised" + (" — Partial Delivery" if is_partially_delivered else ""),
             "badge_class": "of-pill--warn",
             "icon": "file-text-o",
             "target_doc": mr_name,
@@ -1256,14 +1433,34 @@ def _compute_stage_info(order):
     # end. Only worth checking for orders with a BOM item that could actually
     # reach this branch (see _has_bom_rm_shortage's own docstring for why the
     # "newly_created" state makes the qty math simple here).
+    # An order that has already shipped part of itself must never fall
+    # through to "Newly Created" just because nothing is currently tracked
+    # (no open PO/MR/receipt/pick list left standing) — that reads as if
+    # nothing has happened yet, when in fact the remaining balance is a
+    # genuine fresh shortfall (this is exactly the case the SO's own Item
+    # Stock & Action Plan widget already flags as "Shortfall").
     if has_bom and _has_bom_rm_shortage(order["name"]):
         return {
-            "stage_key": "newly_created",
-            "stage_label": "Newly Created — RM Shortage",
+            "stage_key": "partial_rm_shortage" if is_partially_delivered else "newly_created",
+            "stage_label": "Partially Delivered — RM Shortage" if is_partially_delivered else "Newly Created — RM Shortage",
             "badge_class": "of-pill--warn",
             "icon": "exclamation-triangle",
             "action_type": "make_mr",
             "action_label": "RM Not in Stock — Cannot Create PO Yet",
+            "action_btn_class": "of-btn--warning"
+        }
+
+    if is_partially_delivered:
+        return {
+            "stage_key": "partially_delivered",
+            "stage_label": "Partially Delivered — Awaiting More Stock",
+            "badge_class": "of-pill--warn",
+            "icon": "exclamation-triangle",
+            # Still just opens the Sales Order (see the "make_mr" branch client-side)
+            # — the per-item widget there already offers the right button
+            # (Material Request / Subcontract PO) for each remaining line.
+            "action_type": "make_mr",
+            "action_label": action_label,
             "action_btn_class": "of-btn--warning"
         }
 
@@ -2184,7 +2381,16 @@ def get_billing_flow(days=120, search=None, scope="open", page=1, page_size=100)
     _guard()
     _guard_tab("billing")
     full = _get_tracker_rows(days=days, search=search, scope=scope)
-    rows = [o for o in full["rows"] if o.get("stage", {}).get("stage_key") in ("ready_to_deliver", "need_to_bill")]
+    # Choosing "All" in the shared scope selector (#of-scope) already tells
+    # _get_tracker_rows above to stop excluding Completed orders at the SQL
+    # level — but this tab's own stage_key filter, unconditionally limited to
+    # the two still-pending stages, silently threw them right back out
+    # regardless of that choice. "All" on this tab specifically should mean
+    # "every order that ever passed through this queue", not just the ones
+    # still in it.
+    allowed_stage_keys = ("ready_to_deliver", "need_to_bill", "completed") if scope == "all" \
+        else ("ready_to_deliver", "need_to_bill")
+    rows = [o for o in full["rows"] if o.get("stage", {}).get("stage_key") in allowed_stage_keys]
 
     total = len(rows)
     page = max(1, cint(page))
@@ -2686,6 +2892,7 @@ def verify_customer_details(sales_order):
         "customer": customer_name,
         "customer_display_name": customer.customer_name or customer_name,
         "gstin": customer.gstin or "",
+        "gst_category": customer.gst_category or "",
         "tax_category": customer.tax_category or "",
         "customer_primary_address": address or "",
         "customer_primary_contact": contact or "",
@@ -2819,7 +3026,7 @@ def reject_sales_orders(sales_orders, comment):
 
 
 @frappe.whitelist()
-def save_and_approve_sales_order(sales_order, gstin=None, tax_category=None, billing_address=None, shipping_address=None, contact_data=None, skip_delivery_note=None):
+def save_and_approve_sales_order(sales_order, gstin=None, gst_category=None, tax_category=None, billing_address=None, shipping_address=None, contact_data=None, skip_delivery_note=None):
     _guard()
     so = frappe.get_doc("Sales Order", sales_order)
     customer_name = so.customer
@@ -2827,6 +3034,8 @@ def save_and_approve_sales_order(sales_order, gstin=None, tax_category=None, bil
     customer = frappe.get_doc("Customer", customer_name)
     if gstin is not None:
         customer.gstin = gstin
+    if gst_category is not None:
+        customer.gst_category = gst_category
     if tax_category is not None:
         customer.tax_category = tax_category
 
@@ -3209,6 +3418,30 @@ def repost_bin_qty(item_code, warehouse):
     from erpnext.stock.stock_balance import repost_stock
     repost_stock(item_code, warehouse, only_bin=True)
     return True
+
+
+# Every doctype that feeds the Order Flow dashboard (see hooks.py's doc_events —
+# Sales Order, Material Request, Purchase Order, Purchase Receipt, Pick List,
+# Delivery Note, Sales Invoice, Purchase Invoice, Subcontracting Order,
+# Subcontracting Receipt, Embroidery Work Order, Uniform Embroidery Transfer)
+# calls this on on_update/on_cancel. order_flow.js listens for this exact
+# event and silently re-fetches whatever tab is currently open — so the
+# dashboard reflects any change (anyone's, anywhere) without the user ever
+# needing to reload or even switch away and back. Broadcast to every
+# connected Desk user (no room/user/doctype given) since any open dashboard
+# may be looking at data this change affects; after_commit so a change that
+# gets rolled back later in the same request never fires a false signal.
+# Deliberately never allowed to raise — a notification side-channel must
+# never be able to break the document's own save/submit/cancel.
+def broadcast_order_flow_change(doc, method=None):
+    try:
+        frappe.publish_realtime(
+            "order_flow_changed",
+            {"doctype": doc.doctype, "name": doc.name},
+            after_commit=True,
+        )
+    except Exception:
+        frappe.log_error(title="Order Flow: realtime broadcast failed")
 
 
 
