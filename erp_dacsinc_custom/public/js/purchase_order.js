@@ -262,6 +262,173 @@ function qty_round_indicator(exact_qty, opts) {
 }
 
 // ----------------------------------------------------------------------------------
+// --- SUBCONTRACTED ROW: FINISHED GOOD -> BOM (manual add support) ---
+// ----------------------------------------------------------------------------------
+// ERPNext's own core purchase_order.js already drives Service Item <-> Finished
+// Good <-> qty for combinations registered as a "Subcontracting BOM" record —
+// but it silently picks ONE Subcontracting BOM record for a finished good
+// without ever asking, even when a second one exists (confirmed live: adding
+// a second BOM version for an item that already had one auto-registered a
+// second Subcontracting BOM row for it, and core's own lookup just returned
+// the first). So this always checks the Finished Good's own Item BOMs itself
+// and asks when there's more than one, instead of trusting core to have
+// resolved that unambiguously — defaulting to whatever core (or a lone BOM)
+// already picked, so accepting the default changes nothing for the 2 rows
+// core does handle correctly today.
+frappe.ui.form.on("Purchase Order Item", {
+    async fg_item(frm, cdt, cdn) {
+        if (!frm.doc.is_subcontracted) return;
+        const row = locals[cdt][cdn];
+        if (!row.fg_item) return;
+
+        const boms = await frappe.db.get_list("BOM", {
+            filters: { item: row.fg_item, is_active: 1, docstatus: 1 },
+            fields: ["name"],
+            order_by: "is_default desc, modified desc",
+            limit: 20,
+        });
+        if (!boms.length) return;
+
+        if (boms.length === 1) {
+            if (!row.bom) frappe.model.set_value(cdt, cdn, "bom", boms[0].name);
+            if (flt(row.fg_item_qty) && !flt(row.qty)) {
+                frappe.model.set_value(cdt, cdn, "qty", row.fg_item_qty);
+            }
+            return;
+        }
+
+        const dialog = new frappe.ui.Dialog({
+            title: __("Select BOM for {0}", [row.fg_item]),
+            size: "small",
+            fields: [{
+                fieldname: "bom",
+                fieldtype: "Select",
+                label: __("BOM"),
+                options: boms.map(b => b.name).join("\n"),
+                default: row.bom || boms[0].name,
+                reqd: 1,
+            }],
+            primary_action_label: __("Select"),
+            primary_action: () => {
+                frappe.model.set_value(cdt, cdn, "bom", dialog.get_value("bom"));
+                if (flt(row.fg_item_qty) && !flt(row.qty)) {
+                    frappe.model.set_value(cdt, cdn, "qty", row.fg_item_qty);
+                }
+                dialog.hide();
+            },
+        });
+        dialog.show();
+    },
+
+    fg_item_qty(frm, cdt, cdn) {
+        if (!frm.doc.is_subcontracted) return;
+        const row = locals[cdt][cdn];
+        // This company's own subcontracted rows are always qty == fg_item_qty
+        // 1:1 (confirmed against every real row on file: Stitching Charges,
+        // Order Charges) — mirror it so typing the Finished Good's own qty
+        // (how these rows actually get filled in) propagates to the
+        // service-item row's own qty on its own; core's own `qty` handler
+        // only syncs the other direction (qty -> fg_item_qty via a
+        // Subcontracting BOM's conversion factor, which for every real row
+        // here has always been exactly 1 anyway).
+        if (row.fg_item && flt(row.qty) !== flt(row.fg_item_qty)) {
+            frappe.model.set_value(cdt, cdn, "qty", row.fg_item_qty);
+        }
+    },
+});
+
+// A small, purpose-built dialog for adding one subcontracted row: Service
+// Item, Finished Good and BOM are all real Link fields (proper searchable
+// autocomplete, not a plain <select>) — BOM's own options are scoped live to
+// whichever Finished Good is currently chosen, and auto-picked the moment
+// there's exactly one active BOM for it. build_subcontract_item_row does the
+// same rate/uom/HSN enrichment build_rm_purchase_rows already does for the
+// plain-purchase "Fetch Raw Materials" flow, so a row added this way never
+// hits the "Missing Fields: Rate/Amount" gap a script-added row otherwise
+// would.
+function show_add_subcontract_item_dialog(frm) {
+    const dialog = new frappe.ui.Dialog({
+        title: __('Add Subcontract Item'),
+        size: 'small',
+        fields: [
+            {
+                fieldtype: 'Link', options: 'Item', fieldname: 'service_item',
+                label: __('Service Item'), reqd: 1,
+                get_query: () => ({ filters: { is_stock_item: 0 } }),
+            },
+            {
+                fieldtype: 'Link', options: 'Item', fieldname: 'fg_item',
+                label: __('Finished Good'), reqd: 1,
+                // Same filter ERPNext's own core purchase_order.js applies to
+                // this exact field in the grid (frm.set_query("fg_item", ...))
+                // — only items actually set up to be subcontracted, with a
+                // BOM to explode. Without default_bom != "" here, choosing an
+                // item with no BOM at all just leads to an empty, unusable
+                // BOM field one step later.
+                get_query: () => ({
+                    filters: {
+                        is_stock_item: 1,
+                        is_sub_contracted_item: 1,
+                        default_bom: ['!=', ''],
+                    },
+                }),
+                onchange: async () => {
+                    dialog.set_value('bom', '');
+                    const fg_item = dialog.get_value('fg_item');
+                    if (!fg_item) return;
+                    const boms = await frappe.db.get_list('BOM', {
+                        filters: { item: fg_item, is_active: 1, docstatus: 1 },
+                        fields: ['name'],
+                        order_by: 'is_default desc, modified desc',
+                        limit: 2,
+                    });
+                    // Only auto-pick when it's unambiguous — with 2+ active
+                    // BOMs the field is left for the user to search/choose.
+                    if (boms.length === 1) dialog.set_value('bom', boms[0].name);
+                },
+            },
+            {
+                fieldtype: 'Link', options: 'BOM', fieldname: 'bom',
+                label: __('BOM'), reqd: 1,
+                description: __("Search by name if this Finished Good has more than one BOM."),
+                get_query: () => ({
+                    filters: { item: dialog.get_value('fg_item') || '', is_active: 1, docstatus: 1 },
+                }),
+            },
+            {
+                fieldtype: 'Float', fieldname: 'qty', label: __('Qty'), reqd: 1, default: 1,
+            },
+        ],
+        primary_action_label: __('Add'),
+        primary_action: (values) => {
+            frappe.call({
+                method: 'erp_dacsinc_custom.purchase_order.build_subcontract_item_row',
+                args: {
+                    service_item: values.service_item,
+                    fg_item: values.fg_item,
+                    bom: values.bom,
+                    qty: values.qty,
+                },
+                freeze: true,
+                freeze_message: __('Adding item…'),
+                callback: (r) => {
+                    if (!r.message) return;
+                    frm.add_child('items', r.message);
+                    refresh_field('items');
+                    frm.dirty();
+                    if (frm.cscript && frm.cscript.calculate_taxes_and_totals) {
+                        frm.cscript.calculate_taxes_and_totals();
+                    }
+                    frappe.show_alert({ message: __('{0} added.', [values.service_item]), indicator: 'green' }, 5);
+                    dialog.hide();
+                }
+            });
+        },
+    });
+    dialog.show();
+}
+
+// ----------------------------------------------------------------------------------
 // --- CLIENT SCRIPT HOOKS (Controller) ---
 // ----------------------------------------------------------------------------------
 
@@ -431,6 +598,19 @@ frappe.ui.form.on('Purchase Order', {
         if (frm.doc.docstatus == 0 && !frm.doc.is_subcontracted) {
             frm.add_custom_button(__('Get Items from MR'), function () {
                 load_mr_suggestions(frm);
+            });
+        }
+
+        // Manual entry point for a subcontracted row — a small, purpose-
+        // built dialog (Service Item, Finished Good, BOM, Qty, each a real
+        // searchable Link field) instead of the cramped inline grid or its
+        // own many-field expanded view. Any draft, not just a brand-new,
+        // never-saved form (frm.is_new()) — adding another item row to an
+        // already-saved draft PO is completely normal, and used to
+        // disappear the moment the very first save happened.
+        if (frm.doc.docstatus == 0 && frm.doc.is_subcontracted) {
+            frm.add_custom_button(__('Add Subcontract Item'), () => {
+                show_add_subcontract_item_dialog(frm);
             });
         }
     }
@@ -1469,9 +1649,17 @@ function show_so_selection_and_rm_purchase_dialog(frm, sales_orders) {
             ...supplier_search_text // NEW: All Suppliers in this row
         ].join(" ").toLowerCase();
 
-        return `<tr class="rm-so-row" data-idx="${idx}" data-search="${search_string}">
+        // Nothing left for this line to fetch raw material toward (already
+        // fully picked/delivered, and/or already covered by an existing
+        // Subcontract PO) — same "disabled, not just defaulted to 0" rule
+        // the sibling "Fetch Pending Sales Orders" dialog already applies
+        // (see show_sales_order_dialog's isDisabled), so a zero-Remaining
+        // row can't be ticked and mistaken for something still actionable.
+        const row_disabled = flt(so.qty_awaiting_pick) <= 0;
+
+        return `<tr class="rm-so-row${row_disabled ? ' text-muted' : ''}" data-idx="${idx}" data-search="${search_string}" style="${row_disabled ? 'opacity:0.6;' : ''}">
             <td class="text-center">
-                <input type="checkbox" class="so-check" style="transform: scale(1.2); cursor: pointer;" >
+                <input type="checkbox" class="so-check" style="transform: scale(1.2); cursor: pointer;" ${row_disabled ? 'disabled title="Nothing left to fetch for this line"' : ''}>
             </td>
             <td>
                 <div class="text-highlight">${get_link("Sales Order", so.sales_order)}</div>
@@ -1481,11 +1669,17 @@ function show_so_selection_and_rm_purchase_dialog(frm, sales_orders) {
             </td>
             <td class="text-right text-muted">${flt(so.pending_qty, 2)}</td>
             <td class="text-right text-muted">${flt(so.picked_submitted, 2)} / ${flt(so.picked_draft, 2)}</td>
-            <td class="text-right text-highlight" style="font-size: 14px;">${flt(so.qty_awaiting_pick, 2)} ${so.uom}</td>
+            <td class="text-right text-highlight" style="font-size: 14px;">
+                ${flt(so.qty_awaiting_pick, 2)} ${so.uom}
+                ${flt(so.fg_in_production || 0) > 0
+                ? `<div class="text-muted" style="font-size:10px; font-weight:normal;" title="Already ordered on a Subcontracting Purchase Order for this Sales Order — excluded here so raw material isn't fetched a second time for it">${flt(so.fg_in_production, 2)} already on Subcontract PO</div>`
+                : ''}
+            </td>
             <td class="text-center">
                 <input type="number" step="1" min="0" max="${qty_round_up(so.qty_awaiting_pick).rounded}"
                        class="form-control qty-input text-center fg-fulfill-input"
-                       data-max="${qty_round_up(so.qty_awaiting_pick).rounded}" value="${qty_round_up(so.qty_awaiting_pick).rounded}">
+                       data-max="${qty_round_up(so.qty_awaiting_pick).rounded}" value="${qty_round_up(so.qty_awaiting_pick).rounded}"
+                       ${row_disabled ? 'disabled' : ''}>
                 ${qty_round_indicator(so.qty_awaiting_pick)}
             </td>
             <td>${rm_status_html}</td>
@@ -1577,6 +1771,7 @@ function show_so_selection_and_rm_purchase_dialog(frm, sales_orders) {
                             linked_mr_qty_total: 0,
                             po_refs: rm.existing_po_list || [],
                             mr_refs: rm.existing_mr_list || [],
+                            sent_to_jobber_qty: flt(rm.sent_to_jobber_qty),
                             breakdown: []
                         };
                     }
@@ -1618,13 +1813,23 @@ function show_so_selection_and_rm_purchase_dialog(frm, sales_orders) {
 
             $line.find('.rm-prev-calc').text(`${base_bom.toFixed(2)} x ${flt(fg_qty)} = ${total_rm_req.toFixed(2)}`);
 
+            const po_ref_text = (rm_data.existing_po_list || [])
+                .map(po => `${po.name}${po.supplier ? ` (${po.supplier})` : ''}`).join(', ');
+            const mr_ref_text = (rm_data.existing_mr_list || [])
+                .map(mr => mr.name).join(', ');
+
             const coverage_note = `Need ${total_rm_req.toFixed(2)} ${rm_data.uom}\n`
                 + `Stock: ${stock.toFixed(2)}\n`
                 + `PO for this order: ${linked_po.toFixed(2)}\n`
                 + `MR for this order: ${linked_mr.toFixed(2)}\n`
                 + `Unclaimed PO (any order): ${general_po.toFixed(2)}\n`
                 + `Unclaimed MR (any order): ${general_mr.toFixed(2)}\n`
-                + `Total covered: ${coverage.toFixed(2)}`;
+                + `Total covered: ${coverage.toFixed(2)}`
+                + (po_ref_text ? `\nExisting PO: ${po_ref_text}` : '')
+                + (mr_ref_text ? `\nExisting MR: ${mr_ref_text}` : '')
+                + (flt(rm_data.sent_to_jobber_qty) > 0
+                    ? `\n⚠ ${flt(rm_data.sent_to_jobber_qty).toFixed(2)} of this item currently outstanding at a jobber (all orders combined, not yet consumed) — Stock above is already net of that.`
+                    : '');
 
             if (shortfall > 0.001) {
                 $line.find('.rm-prev-stat').html(`<span style="color:#d62222; font-weight:bold;" title="${coverage_note}">Short ${shortfall.toFixed(2)}</span>`);
@@ -1660,8 +1865,13 @@ function show_so_selection_and_rm_purchase_dialog(frm, sales_orders) {
                 let safe_meta = JSON.stringify(d).replace(/'/g, "&#39;");
 
                 let po_links = (d.po_refs || []).slice(0, 3)
-                    .map(po => `<a href="/app/purchase-order/${encodeURIComponent(po)}" target="_blank" style="font-weight:bold; text-decoration:underline;">${po}</a>`)
-                    .join(", ");
+                    .map(po => `<a href="/app/purchase-order/${encodeURIComponent(po.name)}" target="_blank"
+                            style="font-weight:bold; text-decoration:underline;">${po.name}</a>
+                            ${po.supplier ? `<span style="font-size:8px; color:#555;"> — ${po.supplier}</span>` : ''}
+                            <span style="font-size:8px; color:${po.sales_order ? '#b45309' : '#059669'};">
+                                (${po.sales_order ? `for ${po.sales_order}` : 'unclaimed'})
+                            </span>`)
+                    .join("<br>");
                 let mr_links = (d.mr_refs || []).slice(0, 3)
                     .map(mr => `<a href="/app/material-request/${encodeURIComponent(mr.name)}" target="_blank"
                             style="font-weight:bold; text-decoration:underline; color:#6d28d9;">${mr.name}</a>
@@ -1682,7 +1892,12 @@ function show_so_selection_and_rm_purchase_dialog(frm, sales_orders) {
                 html += `<tr data-item-code="${code}" data-meta='${safe_meta}'>
             <td><div class="text-highlight">${get_link("Item", code)}</div><small class="text-muted">${d.name}</small></td>
             <td class="text-right" style="font-weight:bold;">${d.required_qty.toFixed(2)}<div style="text-align:left;">${calc_lines}</div></td>
-            <td class="text-right text-muted">${d.available_stock.toFixed(2)}</td>
+            <td class="text-right text-muted">
+                ${d.available_stock.toFixed(2)}
+                ${d.sent_to_jobber_qty > 0
+                    ? `<div class="text-right" style="font-size:9px; color:#d62222;" title="This much of this raw material is currently outstanding at a subcontractor (sent but not yet consumed into finished goods) across all Sales Orders — a batch purchase is a shared pool, so once part of it is committed to subcontracting elsewhere, Stock reads lower than the full purchase would suggest.">⚠ ${d.sent_to_jobber_qty.toFixed(2)} outstanding at jobber (all orders)</div>`
+                    : ''}
+            </td>
             <td class="text-right text-primary">${(d.linked_po_qty_total + d.general_po_coming + d.linked_mr_qty_total + d.general_mr_coming).toFixed(2)}</td>
             <td class="text-right text-dark">${effective_stock.toFixed(2)}</td>
             <td style="font-size:10px;">${ref_links}</td>
@@ -1820,21 +2035,39 @@ function show_so_selection_and_rm_purchase_dialog(frm, sales_orders) {
         recalc_materials();
     });
 
-    // 3. Select All (Filters to only Visible items if search is active)
+    // 3. Select All (Filters to only Visible, selectable items if search is active)
     dialog.$wrapper.on('click', '#so-check-all', function () {
         let state = $(this).prop('checked');
-        // Only target visible rows
-        dialog.$wrapper.find('.rm-so-row:visible .so-check').prop('checked', state).trigger('change');
+        // Only target visible, non-disabled rows — a disabled row has
+        // nothing left to fetch and must stay unticked even under "select all".
+        dialog.$wrapper.find('.rm-so-row:visible .so-check:not(:disabled)').prop('checked', state).trigger('change');
     });
 
     // Init
     setTimeout(recalc_materials, 500);
 }
 
-function show_stock_check_dialog(frm, materials, linked_subcontracting_docs) {
+async function show_stock_check_dialog(frm, materials, linked_subcontracting_docs) {
     let dialog;
 
     const qty_exceeds = (a, b) => flt(flt(a, 2) - flt(b, 2), 2) > 0;
+
+    // Stock Settings' own "Over Transfer Allowance" (Stock Validations tab)
+    // is what actually governs how much MORE than the required qty this
+    // Material Transfer is allowed to move — ERPNext enforces this at
+    // submit time regardless of what this dialog shows, so without
+    // surfacing it here the only ceiling visible was "Available Qty",
+    // and typing a qty between the allowance cap and Available Qty looked
+    // perfectly fine here but was rejected the moment Create SCO & Material
+    // Transfer actually tried to submit the Stock Entry.
+    // A dedicated whitelisted read, not frappe.db.get_single_value called
+    // directly — that enforces read permission on Stock Settings itself,
+    // which most users raising a Subcontract PO (Purchase/Manufacturing
+    // Manager, not System Manager) don't have.
+    const over_transfer_allowance = flt(
+        await frappe.xcall('erp_dacsinc_custom.purchase_order.get_over_transfer_allowance')
+    ) || 0;
+    const allowance_cap = (required_qty) => flt(required_qty) * (1 + over_transfer_allowance / 100);
 
     // Function to rebuild the HTML table inside the dialog
     const rebuild_table = (updated_materials) => {
@@ -1846,10 +2079,34 @@ function show_stock_check_dialog(frm, materials, linked_subcontracting_docs) {
             const required_qty_disp = flt(required_qty, 2);
             const available_qty_disp = flt(available_qty, 2);
             const qty_to_supply = flt(item.qty_to_supply !== undefined ? item.qty_to_supply : required_qty, 2);
+            // The real ceiling is whichever binds first: physical stock, or
+            // Stock Settings' Over Transfer Allowance against Required Qty.
+            const allowance_qty = flt(allowance_cap(required_qty), 2);
+            const max_sendable = flt(Math.min(available_qty, allowance_qty), 2);
+            // Spelled out visibly (not just a hover tooltip) which one is
+            // actually binding right now, and what the OTHER number is —
+            // "19.5, capped by allowance" reads very differently from
+            // "19.5" alone when stock actually has 115 sitting there.
+            const limit_reason = allowance_qty < available_qty
+                ? __('{0}% allowance limit (stock has {1})', [over_transfer_allowance, available_qty])
+                : __('limited by stock (allowance permits {0})', [allowance_qty]);
 
             let supply_status_icon;
             let supply_input_class = '';
-            if (qty_exceeds(qty_to_supply, available_qty)) {
+            // Under-supply is just as fatal as over-supply: this Subcontracting
+            // Order's Stock Entry only ever carries what the user types here, and
+            // the later Subcontracting Receipt independently recomputes, from the
+            // BOM ratio, exactly how much of each raw material the planned
+            // finished-good qty consumes. Letting a qty below Required Qty
+            // through here (previously shown as a plain green check, since the
+            // only check was against the stock/allowance ceiling) meant the
+            // shortfall only surfaced later as a hard "Consumed Qty must be less
+            // than or equal to Available Qty" error at receipt time — confirmed
+            // live: Required 110/55 with only 100/50 in stock let 100/50 through
+            // here with no warning at all.
+            const is_over = qty_exceeds(qty_to_supply, max_sendable);
+            const is_short = qty_exceeds(required_qty, qty_to_supply);
+            if (is_over || is_short) {
                 supply_status_icon = 'fa-times text-danger';
                 supply_input_class = 'is-invalid';
                 all_stock_sufficient_for_supply = false;
@@ -1858,25 +2115,33 @@ function show_stock_check_dialog(frm, materials, linked_subcontracting_docs) {
             } else {
                 supply_status_icon = 'fa-minus text-muted';
             }
+            const shortfall_amt = flt(required_qty - qty_to_supply, 2);
+            const short_note_html = __('{0} {1} short of Required — will fail at Subcontracting Receipt', [shortfall_amt > 0 ? shortfall_amt : 0, item.uom]);
 
-            return `<tr data-item-code="${item.item_code}">
+            return `<tr data-item-code="${item.item_code}" data-max-sendable="${max_sendable}">
                 <td>${frappe.utils.get_form_link("Item", item.item_code, true)}</td>
                 <td>${required_qty_disp} ${item.uom}</td>
                 <td class="font-weight-bold ${qty_exceeds(required_qty, available_qty) ? 'text-danger' : ''}">${available_qty_disp} ${item.uom}</td>
+                <td class="font-weight-bold">
+                    ${max_sendable} ${item.uom}
+                    <div class="text-muted" style="font-size:11px; font-weight:normal; white-space:normal;">${limit_reason}</div>
+                </td>
                 <td>
                     <div class="input-group" style="width: 140px;">
                         <div class="input-group-prepend">
                             <button class="btn btn-outline-secondary btn-sm btn-qty-change" data-action="minus" data-item-code="${item.item_code}">-</button>
                         </div>
-                        <input type="number" class="form-control form-control-sm text-center qty-to-supply-input ${supply_input_class}" 
-                               data-item-code="${item.item_code}" 
-                               value="${qty_to_supply}" 
-                               min="0" 
+                        <input type="number" class="form-control form-control-sm text-center qty-to-supply-input ${supply_input_class}"
+                               data-item-code="${item.item_code}"
+                               value="${qty_to_supply}"
+                               min="0"
+                               max="${max_sendable}"
                                step="any">
                         <div class="input-group-append">
                             <button class="btn btn-outline-secondary btn-sm btn-qty-change" data-action="plus" data-item-code="${item.item_code}">+</button>
                         </div>
                     </div>
+                    <div class="text-danger short-of-required-note" style="font-size:11px; white-space:normal; margin-top:4px; ${is_short ? '' : 'display:none;'}">${short_note_html}</div>
                 </td>
                 <td class="text-center status-icon"><i class="fa ${supply_status_icon}"></i></td>
             </tr>`;
@@ -1888,6 +2153,7 @@ function show_stock_check_dialog(frm, materials, linked_subcontracting_docs) {
                     <th>Raw Material</th>
                     <th>Required Qty</th>
                     <th>Available Qty</th>
+                    <th title="${__('Physical stock, capped by Stock Settings\' Over Transfer Allowance ({0}%) against Required Qty — whichever is lower.', [over_transfer_allowance])}">Max You Can Send</th>
                     <th style="width: 160px;">Qty to Supply to SCO</th>
                     <th>Supply Status</th>
                 </tr></thead>
@@ -1895,7 +2161,7 @@ function show_stock_check_dialog(frm, materials, linked_subcontracting_docs) {
             </table>`;
 
         if (!all_stock_sufficient_for_supply) {
-            dialog_html += `<div class="alert alert-warning error-msg"><b>Cannot Proceed:</b> "Qty to Supply" exceeds "Available Qty."</div>`;
+            dialog_html += `<div class="alert alert-warning error-msg"><b>Cannot Proceed:</b> "Qty to Supply" either exceeds the Max You Can Send (physical stock, or the ${over_transfer_allowance}% Over Transfer Allowance — whichever is lower), or falls short of the Required Qty. Supplying less than Required will let this Subcontracting Order be created but will fail later at Subcontracting Receipt — reduce the subcontracted quantity for the finished good(s) using that raw material on this Purchase Order (or bring in more stock) instead.</div>`;
         }
 
         dialog.fields_dict.stock_info.html(dialog_html);
@@ -1904,16 +2170,21 @@ function show_stock_check_dialog(frm, materials, linked_subcontracting_docs) {
 
         const update_row_ui = (itemCode, newVal) => {
             const material = updated_materials.find(m => m.item_code === itemCode);
-            const available = flt(material.available_qty, 2);
+            const required_qty = flt(material.required_qty, 2);
+            const max_sendable = flt(Math.min(flt(material.available_qty, 2), allowance_cap(material.required_qty)), 2);
             const $row = $(dialog.body).find(`tr[data-item-code="${itemCode}"]`);
             const $input = $row.find('.qty-to-supply-input');
             const $iconBox = $row.find('.status-icon');
+            const $shortNote = $row.find('.short-of-required-note');
 
             // Update internal data
             material.qty_to_supply = newVal;
 
+            const is_over = qty_exceeds(newVal, max_sendable);
+            const is_short = qty_exceeds(required_qty, newVal);
+
             // Update Icon and Classes dynamically without full refresh
-            if (qty_exceeds(newVal, available)) {
+            if (is_over || is_short) {
                 $iconBox.html('<i class="fa fa-times text-danger"></i>');
                 $input.addClass('is-invalid');
             } else if (newVal > 0) {
@@ -1924,8 +2195,19 @@ function show_stock_check_dialog(frm, materials, linked_subcontracting_docs) {
                 $input.removeClass('is-invalid');
             }
 
+            if (is_short) {
+                const shortfall_amt = flt(required_qty - newVal, 2);
+                $shortNote.text(__('{0} {1} short of Required — will fail at Subcontracting Receipt', [shortfall_amt > 0 ? shortfall_amt : 0, material.uom])).show();
+            } else {
+                $shortNote.hide();
+            }
+
             // Check if primary button should be disabled
-            let any_error = updated_materials.some(m => qty_exceeds(m.qty_to_supply, m.available_qty));
+            let any_error = updated_materials.some(m => {
+                const m_required = flt(m.required_qty, 2);
+                const m_max = Math.min(flt(m.available_qty, 2), allowance_cap(m.required_qty));
+                return qty_exceeds(m.qty_to_supply, m_max) || qty_exceeds(m_required, flt(m.qty_to_supply, 2));
+            });
             dialog.get_primary_btn().prop('disabled', any_error);
             $(dialog.body).find('.error-msg').toggle(any_error);
         };
@@ -1983,14 +2265,28 @@ function show_stock_check_dialog(frm, materials, linked_subcontracting_docs) {
                 const itemCode = $(this).data('item-code');
                 const suppliedQty = flt($(this).val());
                 const materialData = materials.find(m => m.item_code === itemCode);
+                const requiredQty = materialData ? flt(materialData.required_qty, 2) : 0;
                 const availableQty = materialData ? flt(materialData.available_qty, 2) : 0;
+                const maxSendable = materialData
+                    ? flt(Math.min(availableQty, allowance_cap(materialData.required_qty)), 2)
+                    : 0;
 
-                if (qty_exceeds(suppliedQty, availableQty)) {
+                if (qty_exceeds(suppliedQty, maxSendable)) {
                     can_proceed_with_transfer = false;
                     frappe.show_alert({
-                        message: __("Cannot transfer {0} of {1}. Only {2} is available.", [flt(suppliedQty, 2), itemCode, flt(availableQty, 2)]),
+                        message: maxSendable < availableQty
+                            ? __("Cannot transfer {0} of {1}. Stock Settings' Over Transfer Allowance ({2}%) caps this at {3}.", [flt(suppliedQty, 2), itemCode, over_transfer_allowance, maxSendable])
+                            : __("Cannot transfer {0} of {1}. Only {2} is available.", [flt(suppliedQty, 2), itemCode, maxSendable]),
                         indicator: 'red'
                     }, 5);
+                    return false; // Break .each loop
+                }
+                if (qty_exceeds(requiredQty, suppliedQty)) {
+                    can_proceed_with_transfer = false;
+                    frappe.show_alert({
+                        message: __("Cannot proceed: {0} needs {1} but only {2} is set to be supplied. Supplying less will fail later at Subcontracting Receipt — reduce the subcontracted quantity for the finished good(s) using this raw material on the Purchase Order, or bring in more stock.", [itemCode, requiredQty, flt(suppliedQty, 2)]),
+                        indicator: 'red'
+                    }, 8);
                     return false; // Break .each loop
                 }
                 final_materials_to_supply.push({
@@ -2222,10 +2518,10 @@ function render_linked_docs_html(frm, docs) {
         <style>
             .sc-dashboard { background:#fff; border:1px solid #d1d8dd; border-radius:8px; overflow:hidden; box-shadow:0 1px 3px rgba(0,0,0,0.05); }
             .sc-nav { display: flex; background:#f7fafc; border-bottom:1px solid #e2e8f0; overflow-x: auto; white-space: nowrap; }
-            .sc-nav-item { padding: 12px 18px; color: #64748b; font-size:13px; font-weight:600; cursor:pointer; border-bottom:3px solid transparent; transition:0.2s; display:inline-flex; align-items:center;}
+            .sc-nav-item { padding: 14px 20px; color: #64748b; font-size:15px; font-weight:600; cursor:pointer; border-bottom:3px solid transparent; transition:0.2s; display:inline-flex; align-items:center;}
             .sc-nav-item:hover { background:#f1f5f9; color:#334155; }
             .sc-nav-item.active { background:#fff; color:#2563eb; border-bottom-color:#2563eb; }
-            .sc-badge-count { background:#e2e8f0; color:#475569; padding:2px 8px; border-radius:12px; font-size:10px; margin-left:8px; }
+            .sc-badge-count { background:#e2e8f0; color:#475569; padding:3px 9px; border-radius:12px; font-size:12px; font-weight:700; margin-left:8px; }
             .sc-nav-item.active .sc-badge-count { background:#dbeafe; color:#1e40af; }
             .sc-content { padding: 0; display:none; animation: fadeIn 0.2s; }
             .sc-content.active { display:block; }
@@ -2250,7 +2546,7 @@ function render_linked_docs_html(frm, docs) {
         sco: { label: "Orders (SCO)", icon: "fa fa-truck", doctype: "Subcontracting Order" },
         ste: { label: "Stock Entries", icon: "fa fa-exchange-alt", doctype: "Stock Entry" },
         scr: { label: "Receipts", icon: "fa fa-boxes", doctype: "Subcontracting Receipt" },
-        pr: { label: "Payments (PR)", icon: "fa fa-file-invoice", doctype: "Purchase Receipt" },
+        pr: { label: "Purchase Receipt (PR)", icon: "fa fa-file-invoice", doctype: "Purchase Receipt" },
         pi: { label: "Invoices", icon: "fa fa-file-invoice-dollar", doctype: "Purchase Invoice" }
     };
 

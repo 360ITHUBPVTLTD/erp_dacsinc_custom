@@ -290,6 +290,9 @@ function render_fulfillment_dialog(frm, data) {
             <td class="p-2">
                 <b style="color:#111827;">${link('Item', rm.item_code)}</b><br>
                 <small style="color:#059669; font-weight:700;" title="Shared across every order that needs this material — not reserved for any one of them. Requesting or consuming it here reduces what's left for all of them, not just the ones checked below.">Stock: ${(Number(rm.available) || 0).toFixed(2)}</small>
+                ${(Number(rm.sent_to_jobber_qty) || 0) > 0
+                    ? `<br><small style="color:#d62222; font-weight:700;" title="This much of this raw material is currently outstanding at a subcontractor (sent but not yet consumed into finished goods) across every Sales Order that shares it — a shared batch purchase, once partly committed to subcontracting elsewhere, is why Stock reads lower than the full purchase would suggest.">⚠ ${(Number(rm.sent_to_jobber_qty) || 0).toFixed(2)} outstanding at jobber</small>`
+                    : ''}
             </td>
             <td class="p-2">
                 <div class="rm-orders-summary" style="font-size:9px; font-weight:800; color:#475569; margin-bottom:3px;"

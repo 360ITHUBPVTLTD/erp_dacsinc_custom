@@ -461,6 +461,20 @@
     color: #fff !important;
 }
 
+/* The tracker's own primary Action Required button — the single most
+   important "what do I do next" signal on the row — made to stand out
+   more than a plain default-sized button. Scoped to a DIRECT child of the
+   cell so the secondary/"Also Pending" action (nested inside
+   .of-secondary-action) is never matched — that one must keep reading as
+   secondary, not compete for the same emphasis. */
+td > .of-action-btn {
+    height: 32px;
+    padding: 0 14px;
+    font-size: 12px;
+    font-weight: 700;
+    box-shadow: 0 1px 4px rgba(0, 0, 0, 0.18);
+}
+
 .of-btn-disabled {
     opacity: 0.5;
     cursor: not-allowed;
@@ -872,6 +886,26 @@
 .of-meta {
     font-size: 11px;
     color: var(--text-muted);
+}
+
+/* A secondary action (e.g. "also needs invoicing") sitting alongside the
+   primary Action Required button — a genuinely separate, both-need-doing
+   item, never an alternative to the primary action above it. */
+.of-secondary-action {
+    margin-top: 8px;
+    padding-top: 8px;
+    border-top: 1px dashed var(--border-color);
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 4px;
+}
+.of-secondary-action__tag {
+    font-size: 9px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: .04em;
+    color: var(--of-orange, #e67e22);
 }
 
 .of-micro {

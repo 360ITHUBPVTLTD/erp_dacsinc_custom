@@ -216,7 +216,19 @@ class WorkflowOverride extends frappe.ui.form.States {
                                                 fieldtype: 'Data',
                                                 fieldname: 'gstin',
                                                 label: __('GSTIN / UIN'),
-                                                default: res.gstin || ''
+                                                default: res.gstin || '',
+                                                onchange: () => wf_sync_gst_category(dialog)
+                                            },
+                                            {
+                                                fieldtype: 'Column Break'
+                                            },
+                                            {
+                                                fieldtype: 'Select',
+                                                fieldname: 'gst_category',
+                                                label: __('GST Category'),
+                                                options: wf_gst_category_options(),
+                                                default: res.gst_category || wf_guess_gst_category(res.gstin) || '',
+                                                // description: __("Guessed from the GSTIN above — override if it's wrong.")
                                             },
                                             {
                                                 fieldtype: 'Column Break'
@@ -366,6 +378,7 @@ class WorkflowOverride extends frappe.ui.form.States {
                                                      args: {
                                                          sales_order: me.frm.doc.name,
                                                          gstin: values.gstin || null,
+                                                         gst_category: values.gst_category || null,
                                                          tax_category: values.tax_category || null,
                                                          billing_address: values.billing_address || null,
                                                          shipping_address: values.shipping_address || null,
@@ -486,6 +499,24 @@ function wf_refresh_address_preview(dialog, link_fieldname, preview_fieldname) {
         .then(address_display => {
             dialog.set_value(preview_fieldname, address_display || '');
         });
+}
+
+// Same GST Category helpers as order_flow.js's of_gst_category_options /
+// of_guess_gst_category / of_sync_gst_category — see that file's comments.
+function wf_gst_category_options() {
+    const docfield = frappe.meta.get_docfield('Customer', 'gst_category');
+    return (docfield && docfield.options)
+        || 'Registered Regular\nRegistered Composition\nUnregistered\nSEZ\nOverseas\nDeemed Export\nUIN Holders\nTax Deductor\nTax Collector\nInput Service Distributor';
+}
+
+function wf_guess_gst_category(gstin) {
+    if (typeof india_compliance === 'undefined' || !india_compliance.guess_gst_category) return '';
+    return india_compliance.guess_gst_category((gstin || '').trim(), undefined) || '';
+}
+
+function wf_sync_gst_category(dialog) {
+    const guessed = wf_guess_gst_category(dialog.get_value('gstin'));
+    if (guessed) dialog.set_value('gst_category', guessed);
 }
 
 function wf_esc(v) {

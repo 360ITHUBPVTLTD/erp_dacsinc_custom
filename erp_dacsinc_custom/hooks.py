@@ -27,13 +27,13 @@ app_license = "mit"
 # include js, css files in header of desk.html
 # app_include_css = "/assets/erp_dacsinc_custom/css/erp_dacsinc_custom.css"
 app_include_js = [
-    "/assets/erp_dacsinc_custom/js/workflow.js?v=1.0.5",
-    "/assets/erp_dacsinc_custom/js/toogle.js?v=1.0.4"
+    "/assets/erp_dacsinc_custom/js/workflow.js?v=1.0.6",
+    "/assets/erp_dacsinc_custom/js/toogle.js?v=1.0.5"
 ]
 
 app_include_css = [
-    "/assets/erp_dacsinc_custom/style.css?v=1.0.4",
-    "/assets/erp_dacsinc_custom/css/order_flow.css?v=1.0.8"
+    "/assets/erp_dacsinc_custom/style.css?v=1.0.5",
+    "/assets/erp_dacsinc_custom/css/order_flow.css?v=1.0.9"
 ]
 
 # include js, css files in header of web template
@@ -60,7 +60,8 @@ doctype_js = {
 	"Material Request": "public/js/material_request.js",
 	"BOM": "public/js/bom.js",
 	"Sales Invoice": "public/js/sales_invoice.js",
-	"Delivery Note": "public/js/delivery_note.js"
+	"Delivery Note": "public/js/delivery_note.js",
+	"Pick List": "public/js/pick_list.js"
 }
 doctype_list_js = {
 	"Lead": "public/js/lead_list.js",
@@ -199,18 +200,29 @@ doc_events = {
         "before_validate": "erp_dacsinc_custom.custom_script.lock_item_rate_to_sales_order_early",
         "validate": [
             "erp_dacsinc_custom.custom_script.lock_item_rate_to_sales_order",
+            "erp_dacsinc_custom.custom_script.guard_si_items_locked_to_pick_list",
             "erp_dacsinc_custom.custom_script.validate_non_zero_rate",
             "erp_dacsinc_custom.custom_script.sales_invoice_validate"
         ],
         "before_submit": "erp_dacsinc_custom.custom_script.guard_so_fulfillment_route_lock",
         "on_submit": "erp_dacsinc_custom.custom_script.update_pick_lists_on_stock_si_submit",
-        "on_cancel": "erp_dacsinc_custom.custom_script.update_pick_lists_on_stock_si_cancel"
+        "on_update": "erp_dacsinc_custom.order_flow_api.broadcast_order_flow_change",
+        "on_cancel": [
+            "erp_dacsinc_custom.custom_script.update_pick_lists_on_stock_si_cancel",
+            "erp_dacsinc_custom.order_flow_api.broadcast_order_flow_change",
+        ]
     },
     "Sales Order": {
         "on_submit": "erp_dacsinc_custom.custom_script.sales_order_on_submit",
-        "on_cancel": "erp_dacsinc_custom.custom_script.sales_order_on_cancel",
+        "on_cancel": [
+            "erp_dacsinc_custom.custom_script.sales_order_on_cancel",
+            "erp_dacsinc_custom.order_flow_api.broadcast_order_flow_change",
+        ],
        "after_insert": "erp_dacsinc_custom.notifications.notify_on_new_so",
-       "on_update": "erp_dacsinc_custom.custom_script.sales_order_on_update",
+       "on_update": [
+            "erp_dacsinc_custom.custom_script.sales_order_on_update",
+            "erp_dacsinc_custom.order_flow_api.broadcast_order_flow_change",
+       ],
         "on_trash": "erp_dacsinc_custom.custom_script.sales_order_on_trash",
         "before_insert": "erp_dacsinc_custom.custom_script.sales_order_before_insert",
        "before_validate": "erp_dacsinc_custom.custom_script.sales_order_before_insert",
@@ -218,10 +230,17 @@ doc_events = {
     },
     "Delivery Note": {
         "before_validate": "erp_dacsinc_custom.custom_script.lock_item_rate_to_sales_order_early",
-        "validate": "erp_dacsinc_custom.custom_script.lock_item_rate_to_sales_order",
+        "validate": [
+            "erp_dacsinc_custom.custom_script.lock_item_rate_to_sales_order",
+            "erp_dacsinc_custom.custom_script.guard_dn_items_locked_to_pick_list",
+        ],
         "before_submit": "erp_dacsinc_custom.custom_script.guard_so_fulfillment_route_lock",
         "on_submit": "erp_dacsinc_custom.custom_script.update_pick_lists_on_dn_submit",
-        "on_cancel": "erp_dacsinc_custom.custom_script.update_pick_lists_on_dn_cancel"
+        "on_update": "erp_dacsinc_custom.order_flow_api.broadcast_order_flow_change",
+        "on_cancel": [
+            "erp_dacsinc_custom.custom_script.update_pick_lists_on_dn_cancel",
+            "erp_dacsinc_custom.order_flow_api.broadcast_order_flow_change",
+        ]
     },
     "BOM": {
         "on_submit": "erp_dacsinc_custom.bom_events.after_submit",
@@ -230,7 +249,11 @@ doc_events = {
     },
     "Purchase Receipt": {
         "on_submit": "erp_dacsinc_custom.purchase_order.create_putaway_picklist",
-        "on_cancel": "erp_dacsinc_custom.purchase_order.delete_putaway_picklist"
+        "on_update": "erp_dacsinc_custom.order_flow_api.broadcast_order_flow_change",
+        "on_cancel": [
+            "erp_dacsinc_custom.purchase_order.delete_putaway_picklist",
+            "erp_dacsinc_custom.order_flow_api.broadcast_order_flow_change",
+        ]
     },
     # "Customer": {
     #     "after_insert": "erp_dacsinc_custom.custom_customer.customer_after_insert",
@@ -242,16 +265,47 @@ doc_events = {
         "on_update": "erp_dacsinc_custom.custom_customer.update_customer_sharing"
     },
     "Purchase Order": {
-        "validate": "erp_dacsinc_custom.custom_script.validate_non_zero_rate"
+        "validate": [
+            "erp_dacsinc_custom.custom_script.validate_non_zero_rate",
+            "erp_dacsinc_custom.custom_script.guard_po_item_not_over_so_need",
+        ],
+        "on_update": "erp_dacsinc_custom.order_flow_api.broadcast_order_flow_change",
+        "on_cancel": "erp_dacsinc_custom.order_flow_api.broadcast_order_flow_change",
     },
     "Purchase Invoice": {
-        "validate": "erp_dacsinc_custom.custom_script.validate_non_zero_rate"
+        "validate": "erp_dacsinc_custom.custom_script.validate_non_zero_rate",
+        "on_update": "erp_dacsinc_custom.order_flow_api.broadcast_order_flow_change",
+        "on_cancel": "erp_dacsinc_custom.order_flow_api.broadcast_order_flow_change",
     },
     "Notification Settings": {
         "on_update": "erp_dacsinc_custom.custom_script.share_notification_settings"
     },
     "Material Request": {
         "validate": "erp_dacsinc_custom.custom_script.validate_material_request_no_bom_items",
+        "on_update": "erp_dacsinc_custom.order_flow_api.broadcast_order_flow_change",
+        "on_cancel": "erp_dacsinc_custom.order_flow_api.broadcast_order_flow_change",
+    },
+    "Pick List": {
+        "on_update": "erp_dacsinc_custom.order_flow_api.broadcast_order_flow_change",
+        "on_cancel": "erp_dacsinc_custom.order_flow_api.broadcast_order_flow_change",
+    },
+    "Subcontracting Order": {
+        "on_update": "erp_dacsinc_custom.order_flow_api.broadcast_order_flow_change",
+        "on_cancel": "erp_dacsinc_custom.order_flow_api.broadcast_order_flow_change",
+    },
+    "Subcontracting Receipt": {
+        "on_update": "erp_dacsinc_custom.order_flow_api.broadcast_order_flow_change",
+        "on_cancel": "erp_dacsinc_custom.order_flow_api.broadcast_order_flow_change",
+    },
+    "Embroidery Work Order": {
+        "on_update": "erp_dacsinc_custom.order_flow_api.broadcast_order_flow_change",
+        "on_cancel": "erp_dacsinc_custom.order_flow_api.broadcast_order_flow_change",
+    },
+    "Uniform Embroidery Transfer": {
+        # Not a submittable doctype — its Sent/Partially Received/Received
+        # lifecycle is a plain status field, so on_update alone covers it;
+        # there is no on_cancel to hook.
+        "on_update": "erp_dacsinc_custom.order_flow_api.broadcast_order_flow_change",
     },
     "Admin Settings": {
         # The Order Flow page's role gate is derived from the six tab-role
