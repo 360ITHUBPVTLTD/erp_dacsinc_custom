@@ -42,6 +42,18 @@ OF_TAB_LABELS = {
     "uniform": "Embroidery Transfers",
 }
 
+TAB_DOCTYPES = {
+    "approval": ["Sales Order"],
+    "tracker": ["Sales Order"],
+    "purchase": ["Purchase Order", "Material Request"],
+    "jobwork": ["Subcontracting Order", "Embroidery Work Order"],
+    "stock": ["Stock Entry"],
+    "billing": ["Sales Invoice"],
+    "accounts": ["Payment Entry", "Journal Entry", "Sales Invoice", "Purchase Invoice"],
+    "uniform": ["Uniform Embroidery Transfer"],
+}
+
+
 # The roles that could open the Order Flow page before this feature existed
 # (order_flow.json's original static role list). Used only while at least one
 # tab is still unconfigured, so that "the page opens for anyone who can see a
@@ -125,11 +137,22 @@ def can_view_tab(tab, user=None, tab_roles=None):
     if is_admin(user):
         return True
 
+    user = user or frappe.session.user
+    if tab in TAB_DOCTYPES:
+        has_doctype_access = False
+        for dt in TAB_DOCTYPES[tab]:
+            if frappe.has_permission(dt, "read", user=user):
+                has_doctype_access = True
+                break
+        if not has_doctype_access:
+            return False
+
     allowed = (tab_roles or get_tab_roles()).get(tab) or []
     if not allowed:
-        return True  # unconfigured = everyone
+        return True  # unconfigured = everyone who has doctype read access
 
     return bool(set(frappe.get_roles(user)) & set(allowed))
+
 
 
 def is_scoped_to_own_customers(tab, user=None, tab_roles=None):

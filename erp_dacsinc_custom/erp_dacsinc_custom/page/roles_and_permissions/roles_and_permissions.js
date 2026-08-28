@@ -12,8 +12,10 @@ frappe.pages['roles-and-permissions'].on_page_load = function (wrapper) {
 
 	page.set_primary_action(__('New User'), () => panel.show_new_user_dialog(), 'add');
 	page.add_menu_item(__('DAC Matrix'), () => panel.show_dac_matrix_dialog());
+	page.add_menu_item(__('Sync Permissions & Users'), () => panel.show_sync_dac_matrix_dialog());
 	page.add_menu_item(__('Reload'), () => panel.refresh());
 };
+
 
 const RP_AVATAR_PALETTE = [
 	'#2490ef', '#29a745', '#e0863b', '#8e5ce6', '#e0507a',
@@ -842,4 +844,55 @@ class RolesAndPermissions {
 			indicator: updated ? 'green' : 'orange',
 		});
 	}
+
+	show_sync_dac_matrix_dialog() {
+		const summary = `
+			<h4>${__('Rebuild Permissions & Sync Users')}</h4>
+			<p>${__('This action will run the following synchronization procedure:')}</p>
+			<ol class="small">
+				<li><b>${__('Re-apply Custom DocPerms')}</b>: ${__('Rebuilds and merges all custom doctype, report, and dashboard permissions from the spreadsheet definition matrix.')}</li>
+				<li><b>${__('Update User Profiles')}</b>: ${__("Syncs and overwrites each matched employee's Role Profile to exactly match the proposed role profile in the spreadsheet.")}</li>
+			</ol>
+			<p class="text-danger"><b>${__('Warning:')}</b> ${__("Any additional manually-assigned Role Profiles on these matched users will be overwritten to match the spreadsheet source of truth.")}</p>
+			<p>${__('Are you sure you want to run this full synchronization?')}</p>
+		`;
+
+		frappe.confirm(summary, () => {
+			frappe.call({
+				method: 'erp_dacsinc_custom.roles_and_permissions_api.sync_dac_matrix_and_users',
+				freeze: true,
+				freeze_message: __('Synchronizing roles, permissions, and users...'),
+				callback: (r) => {
+					if (!r.message) return;
+					const updated = r.message.updated || [];
+					const skipped = r.message.skipped || [];
+
+					let msg = `<b>${updated.length}</b> ${__('user(s) successfully synced.')}`;
+					if (updated.length) {
+						const up_items = updated
+							.map((u) => `<li><b>${frappe.utils.escape_html(u.employee_name || u.user)}</b>: ${frappe.utils.escape_html(u.previous.join(', ') || 'none')} &rarr; <b>${frappe.utils.escape_html(u.profile)}</b></li>`)
+							.join('');
+						msg += `<br><ul class="small">${up_items}</ul>`;
+					}
+
+					if (skipped.length) {
+						const sk_items = skipped
+							.map((u) => `<li>${frappe.utils.escape_html(u.employee_name || u.user)} — ${frappe.utils.escape_html(u.reason)}</li>`)
+							.join('');
+						msg += `<hr><b>${__('Skipped / Failed')}:</b><ul class="small">${sk_items}</ul>`;
+					}
+
+					frappe.msgprint({
+						title: __('Synchronization Complete'),
+						message: msg,
+						indicator: updated.length ? 'green' : 'orange',
+						wide: true,
+					});
+
+					this.refresh();
+				}
+			});
+		});
+	}
 }
+

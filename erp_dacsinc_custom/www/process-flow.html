@@ -237,7 +237,7 @@
     <a href="#sales">Sales</a>
     <a href="#purchase">Purchase</a>
     <a href="/process-flow-diagram" target="_blank" rel="noopener">Workflow diagram ↗</a>
-    <a href="/roles-and-permissions">Roles &amp; permissions ↗</a>
+    <a href="/roles-and-permissions">Roles &amp; responsibilities ↗</a>
   </nav>
   <button type="button" id="download-doc" class="btn-download">Download document</button>
   <span class="tag">Dacsinc</span>
@@ -246,10 +246,10 @@
 <div class="page">
 
   <header class="masthead">
-    <p class="eyebrow">internal reference — order lifecycle</p>
-    <h1 class="title">Who does <em>what</em>, and when, on every order.</h1>
+    <p class="eyebrow">Order Lifecycle &amp; Fulfillment Process</p>
+    <h1 class="title">How your orders are processed and fulfilled.</h1>
     <div class="prose">
-      <p class="lede">Nineteen stages, grouped into CRM, Sales, and Purchase. Each one names who is responsible and what actually happens — open a section, or collapse it once you know it.</p>
+      <p class="lede">An overview of the stages your order goes through, from the initial lead and quotation, through sales verification and picking, to purchasing raw materials, subcontracting/embroidery where needed, and final delivery.</p>
     </div>
     <a class="diagram-cta" href="/process-flow-diagram" target="_blank" rel="noopener">
       View the full workflow diagram <span aria-hidden="true">↗</span>
@@ -266,10 +266,10 @@
           <tr><td class="stage-name">Quotation</td><td class="stage-role">Marketing Team / Inside Sales</td></tr>
           <tr><td class="stage-name">Sales Order Creation</td><td class="stage-role">Merchandiser / Marketing / Inside Sales</td></tr>
           <tr><td class="stage-name">Sales Order Approval</td><td class="stage-role">Merchandiser</td></tr>
-          <tr><td class="stage-name">Sales Order Submission</td><td class="stage-role">Anuj Sir</td></tr>
+          <tr><td class="stage-name">Sales Order Submission</td><td class="stage-role">Management</td></tr>
           <tr><td class="stage-name">Material Request</td><td class="stage-role">Merchandiser / Production Team</td></tr>
           <tr><td class="stage-name">Purchase Order for Readymade &amp; RM — creation</td><td class="stage-role">Purchase Team</td></tr>
-          <tr><td class="stage-name">Purchase Order for Readymade &amp; RM — approval</td><td class="stage-role">Purchase Manager / Anuj Sir</td></tr>
+          <tr><td class="stage-name">Purchase Order for Readymade &amp; RM — approval</td><td class="stage-role">Purchase Manager / Management</td></tr>
           <tr><td class="stage-name">GRN / PR for Readymade &amp; Fabric</td><td class="stage-role">Inward Team</td></tr>
           <tr><td class="stage-name">Purchase Invoice</td><td class="stage-role">Accounts Team</td></tr>
           <tr><td class="stage-name">Subcontracting PO</td><td class="stage-role">Production Team</td></tr>
@@ -277,7 +277,7 @@
           <tr><td class="stage-name">Subcontracting Receipt</td><td class="stage-role">Inward Team</td></tr>
           <tr><td class="stage-name">Embroidery Issue</td><td class="stage-role">Production Team</td></tr>
           <tr><td class="stage-name">Embroidery Receipt</td><td class="stage-role">Inward Team</td></tr>
-          <tr><td class="stage-name">Picklist Approval / Submission</td><td class="stage-role">Merchandiser / Packing Executive (Junior Merchandiser)</td></tr>
+          <tr><td class="stage-name">Pick List Approval / Submission</td><td class="stage-role">Merchandiser / Packing Executive (Junior Merchandiser)</td></tr>
           <tr><td class="stage-name">Delivery Note</td><td class="stage-role">Accounts Team / Inward Team</td></tr>
           <tr><td class="stage-name">Sales Invoice</td><td class="stage-role">Accounts Team</td></tr>
           <tr><td class="stage-name">Stock Transfer</td><td class="stage-role">Inward Team</td></tr>
@@ -309,8 +309,7 @@
         <span class="stage__num">02</span>
         <div class="stage__main">
           <div class="stage__head"><h3 class="stage__name">Quotation</h3><div class="roles"><span class="role">Marketing Team</span><span class="role">Inside Sales</span></div></div>
-          <p class="stage__desc">Drafted once the Lead is ready to be priced (terms and tax category are filled in automatically from the Lead). Submitting it moves the Lead to Pipeline and syncs its expected revenue to the quote total. It can still be marked <b class="mono">Lost Pipeline</b> from here.</p>
-          <p class="stage__note">When the deal is genuinely won, a separate manual action — <b class="mono">Move to Order</b> — records the real order value and moves the Lead to <b class="mono">Order · WON</b>. That's the human signal a real Sales Order should follow; nothing does this automatically off a submitted Quotation.</p>
+          <p class="stage__desc">Drafted once the Lead is ready to be priced. Submitting it automatically moves the Lead to Pipeline. When the deal is won, creating the Sales Order directly from the Quotation automatically creates the Customer record and marks the Lead as won — moving it to the active order flow.</p>
         </div>
       </div>
     </div>
@@ -331,7 +330,7 @@
         <span class="stage__num">03</span>
         <div class="stage__main">
           <div class="stage__head"><h3 class="stage__name">Sales Order Creation</h3><div class="roles"><span class="role">Merchandiser</span><span class="role">Marketing</span><span class="role">Inside Sales</span></div></div>
-          <p class="stage__desc">Created from the won Quotation. Starts as a Draft, open for anyone to edit until it's sent for approval.</p>
+          <p class="stage__desc">Created from the won Quotation — this single action creates the Customer record and marks the Lead <b class="mono">Order · WON</b> automatically. Starts as a Draft, open for anyone to edit until it's sent for approval.</p>
         </div>
       </div>
 
@@ -346,18 +345,18 @@
       <div class="stage">
         <span class="stage__num">05</span>
         <div class="stage__main">
-          <div class="stage__head"><h3 class="stage__name">Sales Order Submission</h3><div class="roles"><span class="role">Anuj Sir</span></div></div>
-          <p class="stage__desc">The last gate. Only Anuj Sir (or a System Manager) can give this final approval — it's what actually submits the order and releases it for fulfillment.</p>
-          <p class="stage__note">The moment this happens, one Pick List is created <b class="mono">automatically</b> for every line on the order — nobody has to raise those by hand.</p>
+          <div class="stage__head"><h3 class="stage__name">Sales Order Submission</h3><div class="roles"><span class="role">Management</span></div></div>
+          <p class="stage__desc">The final approval. Once management approves the order, it is officially submitted and released for fulfillment.</p>
+          <p class="stage__note">The moment this happens, a Pick List is created <b class="mono">automatically</b> for available stock. A line with no stock at all doesn't get one yet; it moves into Purchase instead until stock arrives.</p>
         </div>
       </div>
 
       <div class="stage">
         <span class="stage__num">06</span>
         <div class="stage__main">
-          <div class="stage__head"><h3 class="stage__name">Picklist Approval / Submission</h3><div class="roles"><span class="role">Merchandiser</span><span class="role">Packing Executive (Junior Merchandiser)</span></div></div>
-          <p class="stage__desc">For each line, whoever is picking sets the quantity to whatever is genuinely free right now — in full, partly (say 5 of 10 units), or none at all — then submits, which reserves exactly that much stock.</p>
-          <p class="stage__note">The <b class="mono">first</b> line on the order to actually ship locks the whole order onto one route for every line after it: <b class="mono">Delivery Note</b> (ship now, bill later) or <b class="mono">Sales Invoice + Update Stock</b> (ship and bill together). The two can never mix on the same order.</p>
+          <div class="stage__head"><h3 class="stage__name">Pick List Approval / Submission</h3><div class="roles"><span class="role">Merchandiser</span><span class="role">Packing Executive (Junior Merchandiser)</span></div></div>
+          <p class="stage__desc">For each line that got a Pick List, the packing team confirms the quantity. If there is some stock, they pick what is available. For any balance quantity (partially available items) or completely out-of-stock items, a Purchase process is initiated to fulfill the rest.</p>
+          <p class="stage__note">The Delivery Note (outlined in bold in the diagram) marks the milestone when your order physically ships. Billing and payment continue after shipping as the order is completed upon final payment.</p>
         </div>
       </div>
 
@@ -365,7 +364,7 @@
         <span class="stage__num">07</span>
         <div class="stage__main">
           <div class="stage__head"><h3 class="stage__name">Delivery Note</h3><div class="roles"><span class="role">Accounts Team</span><span class="role">Inward Team</span></div></div>
-          <p class="stage__desc">Raised and submitted for the Delivery Note route only — scoped to exactly what that line's Pick List picked, never more. This ships the goods; the bill still comes separately.</p>
+          <p class="stage__desc"><b>This is the milestone where your order physically ships.</b> The Delivery Note is created and submitted for the shipped items. Billing is handled separately after this stage.</p>
         </div>
       </div>
 
@@ -415,7 +414,7 @@
           <div class="stage">
             <span class="stage__num">11</span>
             <div class="stage__main">
-              <div class="stage__head"><h3 class="stage__name">Purchase Order for Readymade &amp; RM — approval</h3><div class="roles"><span class="role">Purchase Manager</span><span class="role">Anuj Sir</span></div></div>
+              <div class="stage__head"><h3 class="stage__name">Purchase Order for Readymade &amp; RM — approval</h3><div class="roles"><span class="role">Purchase Manager</span><span class="role">Management</span></div></div>
               <p class="stage__desc">Signed off before it goes to the supplier.</p>
             </div>
           </div>

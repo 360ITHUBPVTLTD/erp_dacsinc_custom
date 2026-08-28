@@ -87,6 +87,53 @@ from frappe.permissions import setup_custom_perms
 NEW_ROLES = ["Logistics", "Online"]
 
 
+DOCTYPE_DEPENDENCIES = {
+    "Sales Order": [
+        "Customer", "Item", "Warehouse", "Sales Taxes and Charges Template",
+        "Payment Terms Template", "Currency", "UOM", "Price List",
+        "Tax Category", "Cost Center", "Item Group", "Customer Group",
+        "Territory", "Brand"
+    ],
+    "Sales Invoice": [
+        "Customer", "Item", "Warehouse", "Sales Taxes and Charges Template",
+        "Payment Terms Template", "Currency", "UOM", "Price List",
+        "Tax Category", "Cost Center", "Item Group", "Customer Group",
+        "Territory", "Brand"
+    ],
+    "POS Invoice": [
+        "Customer", "Item", "Warehouse", "Sales Taxes and Charges Template",
+        "Payment Terms Template", "Currency", "UOM", "Price List",
+        "Tax Category", "Cost Center", "Item Group", "Customer Group",
+        "Territory", "Brand", "POS Profile"
+    ],
+    "Quotation": [
+        "Customer", "Item", "Warehouse", "Sales Taxes and Charges Template",
+        "Payment Terms Template", "Currency", "UOM", "Price List",
+        "Tax Category", "Cost Center", "Item Group", "Customer Group",
+        "Territory", "Brand"
+    ],
+    "Purchase Order": [
+        "Supplier", "Item", "Warehouse", "Purchase Taxes and Charges Template",
+        "Payment Terms Template", "Currency", "UOM", "Price List",
+        "Tax Category", "Cost Center", "Item Group", "Supplier Group",
+        "Brand"
+    ],
+    "Purchase Receipt": [
+        "Supplier", "Item", "Warehouse", "Purchase Taxes and Charges Template",
+        "Currency", "UOM", "Tax Category", "Cost Center", "Item Group",
+        "Supplier Group", "Brand"
+    ],
+    "Purchase Invoice": [
+        "Supplier", "Item", "Warehouse", "Purchase Taxes and Charges Template",
+        "Payment Terms Template", "Currency", "UOM", "Price List",
+        "Tax Category", "Cost Center", "Item Group", "Supplier Group",
+        "Brand"
+    ],
+    "Material Request": ["Item", "Warehouse", "UOM", "Item Group", "Brand"],
+    "BOM": ["Item", "Warehouse", "UOM", "Item Group", "Brand"],
+}
+
+
 def set_doc_permission(doctype, role, read=0, write=0, create=0, submit=0, delete=0,
                         cancel=0, amend=0, if_owner=0, select=0, print=0, export=0):
     """
@@ -110,6 +157,17 @@ def set_doc_permission(doctype, role, read=0, write=0, create=0, submit=0, delet
     guarantee every patch in this app relies on. Verified against a dry run on
     dacsinc.local: with a plain overwrite this would have shrunk 106 existing rows.
     """
+    # 1. Enforce standard Frappe permission dependencies (e.g., create/write requires read)
+    if cancel or amend:
+        submit = 1
+    if submit:
+        create = 1
+    if create:
+        write = 1
+    if create or write or delete or export or print or select:
+        read = 1
+
+    # 2. Apply Custom DocPerm changes
     setup_custom_perms(doctype)
     existing = frappe.db.get_value(
         "Custom DocPerm",
@@ -133,6 +191,13 @@ def set_doc_permission(doctype, role, read=0, write=0, create=0, submit=0, delet
             "role": role, "permlevel": 0, "if_owner": if_owner,
             **values,
         }).insert(ignore_permissions=True)
+
+    # 3. Propagate dependent permissions automatically
+    if read and doctype in DOCTYPE_DEPENDENCIES:
+        for dep in DOCTYPE_DEPENDENCIES[doctype]:
+            if frappe.db.exists("DocType", dep):
+                set_doc_permission(dep, role, read=1, select=1, if_owner=0)
+
 
 
 # (doctype, is_submittable, [(roles, dict(perm kwargs)), ...]) — mechanically transcribed

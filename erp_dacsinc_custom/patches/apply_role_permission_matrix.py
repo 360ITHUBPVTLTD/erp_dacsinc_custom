@@ -100,6 +100,13 @@ STOCK_REPORTS = ["Stock Balance", "Stock Ledger"]
 
 
 def set_doc_permission(doctype, role, read=1, write=0, create=0, submit=0):
+    if submit:
+        create = 1
+    if create:
+        write = 1
+    if create or write or submit:
+        read = 1
+
     setup_custom_perms(doctype)
     existing = frappe.db.get_value(
         "Custom DocPerm", {"parent": doctype, "role": role, "permlevel": 0, "if_owner": 0}
@@ -115,6 +122,7 @@ def set_doc_permission(doctype, role, read=1, write=0, create=0, submit=0):
             "role": role, "permlevel": 0,
             "read": read, "write": write, "create": create, "submit": submit,
         }).insert(ignore_permissions=True)
+
 
 
 def execute():
