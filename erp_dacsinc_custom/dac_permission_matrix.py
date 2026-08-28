@@ -547,3 +547,31 @@ EMPLOYEE_ROLE_PROFILE_TARGETS = [
     {"user": "sunilb6675@yahoo.co.in", "employee_name": "B Sunil",
      "sheet_role": ("Store Manager", "POS Store Manager"), "role_profile": "POS Store Manager"},
 ]
+
+
+def sync_workspace_roles():
+    """
+    Restrict dashboard Workspaces to their target business roles idempotently.
+    """
+    WORKSPACE_ROLES = {
+        "HR Workspace": ["HR Manager", "HR User", "System Manager"],
+        "Employee Workspace": ["Employee", "System Manager"],
+        "POS": ["POS User", "POS Store Manager", "POS Admin", "System Manager"],
+        "POS Admin": ["POS Admin", "System Manager"],
+        "Accounts Team": ["Accounts Executive", "Accounts Manager", "Accounts Team", "Finance Collection Executive", "Finance Executive", "System Manager"],
+        "DAC Accounts": ["Accounts Executive", "Accounts Manager", "Accounts Team", "Finance Collection Executive", "Finance Executive", "System Manager"],
+        "CRM Dashboard": ["DAC CRM", "DAC CRM Head", "System Manager"],
+        "Operation Team": ["Operation Manager Corporate", "Store Operation Manager", "Accounts User", "Accounts Manager", "Sales Manager", "System Manager"],
+        "Accounting": ["Accounts Executive", "Accounts Manager", "Accounts Team", "Finance Collection Executive", "Finance Executive", "System Manager"],
+    }
+
+    for ws_name, roles in WORKSPACE_ROLES.items():
+        if not frappe.db.exists("Workspace", ws_name):
+            continue
+        doc = frappe.get_doc("Workspace", ws_name)
+        doc.set("roles", [{"role": r} for r in roles if frappe.db.exists("Role", r)])
+        doc.flags.ignore_permissions = True
+        doc.save(ignore_permissions=True)
+
+    frappe.db.commit()
+

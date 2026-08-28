@@ -514,6 +514,19 @@ def sync_dac_matrix_and_users():
         frappe.log_error(title="Sync DAC matrix: patch execution failed", message=frappe.get_traceback())
         frappe.throw(_("Rebuilding permissions failed: {0}").format(str(e)))
 
+    # 1.5 Sync tab configuration, page permissions, and workspace permissions
+    from erp_dacsinc_custom.order_flow_permissions import sync_admin_settings_tab_roles, sync_order_flow_page_roles
+    from erp_dacsinc_custom.dac_permission_matrix import sync_workspace_roles
+
+    try:
+        sync_admin_settings_tab_roles()
+        sync_order_flow_page_roles()
+        sync_workspace_roles()
+    except Exception as e:
+        frappe.log_error(title="Sync DAC matrix: workspace/tab sync failed", message=frappe.get_traceback())
+        frappe.throw(_("Rebuilding page/workspace permissions failed: {0}").format(str(e)))
+
+
     # 2. Reconcile and overwrite user Role Profiles
     from erp_dacsinc_custom.dac_permission_matrix import EMPLOYEE_ROLE_PROFILE_TARGETS
 
