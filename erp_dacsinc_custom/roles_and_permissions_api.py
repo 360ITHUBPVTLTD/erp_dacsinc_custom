@@ -490,3 +490,67 @@ def apply_dac_matrix_assignments(users):
             "role_profiles": new_profiles,
         })
     return {"results": results}
+
+
+@frappe.whitelist()
+def sync_dac_matrix_and_users():
+    """
+    Sync all permissions, roles, and role profiles from the Python definition files
+    (executing all three matrix patches), and reconcile/sync all users to match exactly
+    their proposed Role Profile from the spreadsheet (overwriting/setting it).
+    """
+    _guard()
+
+    # 1. Execute all three matrix patches in order
+    from erp_dacsinc_custom.patches.apply_role_permission_matrix import execute as run_matrix1
+    from erp_dacsinc_custom.patches.apply_stage_role_matrix import execute as run_matrix2
+    from erp_dacsinc_custom.patches.apply_dac_permission_matrix import execute as run_matrix3
+
+    try:
+        run_matrix1()
+        run_matrix2()
+        run_matrix3()
+    except Exception as e:
+        frappe.log_error(title="Sync DAC matrix: patch execution failed", message=frappe.get_traceback())
+        frappe.throw(_("Rebuilding permissions failed: {0}").format(str(e)))
+
+    # 2. Reconcile and overwrite user Role Profiles
+    from erp_dacsinc_custom.dac_permission_matrix import EMPLOYEE_ROLE_PROFILE_TARGETS
+
+    updated_users = []
+    skipped_users = []
+
+    for target in EMPLOYEE_ROLE_PROFILE_TARGETS:
+        user = target["user"]
+        proposed = target["role_profile"]
+
+        if not frappe.db.exists("User", user):
+            skipped_users.append({"user": user, "employee_name": target["employee_name"], "reason": _("User not found")})
+            continue
+
+        enabled = bool(frappe.db.get_value("User", user, "enabled"))
+        if not enabled:
+            skipped_users.append({"user": user, "employee_name": target["employee_name"], "reason": _("User disabled")})
+            continue
+
+        current = _current_role_profiles(user)
+        # Check if the user's role profiles are exactly [proposed]
+        if len(current) == 1 and current[0] == proposed:
+            continue
+
+        try:
+            update_user_role_profiles(user, [proposed])
+            updated_users.append({
+                "user": user,
+                "employee_name": target["employee_name"],
+                "profile": proposed,
+                "previous": current
+            })
+        except Exception as e:
+            skipped_users.append({"user": user, "employee_name": target["employee_name"], "reason": str(e)})
+
+    return {
+        "updated": updated_users,
+        "skipped": skipped_users
+    }
+

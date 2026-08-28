@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Roles &amp; Permissions — Dacsinc</title>
+<title>Roles &amp; Responsibilities — Dacsinc</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Newsreader:ital,wght@0,400;0,500;0,600;0,700;1,400;1,500&family=IBM+Plex+Mono:wght@400;500;600&display=swap">
 <style>
@@ -156,19 +156,19 @@
 <div class="page">
 
   <header class="masthead">
-    <p class="eyebrow">internal reference — access control</p>
-    <h1 class="title">Which <em>role</em>, and which <em>profile</em>, for a new hire.</h1>
+    <p class="eyebrow">roles &amp; responsibilities — order lifecycle</p>
+    <h1 class="title">How our teams coordinate to fulfill your orders.</h1>
     <div class="prose">
-      <p class="lede">Every role behind the stage matrix on the <a href="/process-flow">process flow page</a>, and the Role Profile to actually assign when you create a user — so the two pages read together.</p>
+      <p class="lede">An overview of the different teams involved in the order lifecycle, from quotation to manufacturing and final delivery, and their specific responsibilities.</p>
     </div>
   </header>
 
   <section class="block" id="roles">
-    <h2>Roles</h2>
-    <p class="block-intro">What each role can actually do. <span class="pill pill--new">new</span> roles were created specifically for this matrix; <span class="pill pill--existing">existing</span> roles were already in use and are reused as-is — nothing about them changed.</p>
+    <h2>Roles &amp; Responsibilities</h2>
+    <p class="block-intro">What each role is responsible for in the order lifecycle.</p>
     <div class="table-wrap">
       <table class="ref-table">
-        <thead><tr><th>Role</th><th>Status</th><th>Stages it covers</th><th>What it can do</th></tr></thead>
+        <thead><tr><th>Role</th><th>Status</th><th>Stages it covers</th><th>What it is responsible for</th></tr></thead>
         <tbody>
           <tr>
             <td class="name">Marketing Team</td>
@@ -185,32 +185,32 @@
           <tr>
             <td class="name">Merchandiser User</td>
             <td><span class="pill pill--existing">existing</span></td>
-            <td class="muted">Sales Order creation &amp; approval, Material Request, Picklist</td>
-            <td class="muted">Create/edit Sales Orders and move them through the approval workflow up to Final Approval; raise Material Requests; create and submit Pick Lists. Scoped to their own customers' orders only (see <span class="mono">Customer.custom_merchandiser_user</span>).</td>
+            <td class="muted">Sales Order creation &amp; approval, Material Request, Pick List</td>
+            <td class="muted">Create/edit Sales Orders and move them through the approval workflow; raise Material Requests; create and submit Pick Lists. Scoped to their own customers' orders only.</td>
           </tr>
           <tr>
             <td class="name">Production Team</td>
             <td><span class="pill pill--new">new</span></td>
             <td class="muted">Material Request, Subcontracting PO/Issue, Embroidery Issue</td>
-            <td class="muted">Raise Material Requests; create and submit Subcontracting Orders and the Stock Entries that issue material to a jobber; create and submit embroidery work (Uniform Embroidery Transfer, Embroidery Work Order).</td>
+            <td class="muted">Raise Material Requests; create and submit Subcontracting Orders and the Stock Entries that issue material to a jobber; create and submit embroidery work.</td>
           </tr>
           <tr>
             <td class="name">Purchase Team</td>
             <td><span class="pill pill--new">new</span></td>
             <td class="muted">Purchase Order creation</td>
-            <td class="muted">Create and edit Purchase Orders. Cannot submit — approval stays with Purchase Manager.</td>
+            <td class="muted">Create and edit Purchase Orders. Approval is completed by Management.</td>
           </tr>
           <tr>
             <td class="name">Purchase Manager</td>
             <td><span class="pill pill--existing">existing</span></td>
             <td class="muted">Purchase Order approval</td>
-            <td class="muted">Standard ERPNext role — already has full Purchase Order access including submit. No changes made.</td>
+            <td class="muted">Standard Purchase Order access, including submit.</td>
           </tr>
           <tr>
             <td class="name">Inward Team</td>
             <td><span class="pill pill--new">new</span></td>
             <td class="muted">GRN/PR, Subcontracting Receipt, Embroidery Receipt, Delivery Note, Stock Transfer</td>
-            <td class="muted">Create and submit Purchase Receipts and Subcontracting Receipts; log embroidery work received back against the same Uniform Embroidery Transfer record Production Team issued; create and submit Delivery Notes; create and submit Stock Entries (covers Stock Transfer).</td>
+            <td class="muted">Create and submit Purchase Receipts and Subcontracting Receipts; log embroidery work received back; create and submit Delivery Notes; create and submit Stock Entries (covers Stock Transfer).</td>
           </tr>
           <tr>
             <td class="name">Accounts Team</td>
@@ -219,119 +219,11 @@
             <td class="muted">Create and submit Purchase Invoices, Delivery Notes, and Sales Invoices.</td>
           </tr>
           <tr>
-            <td class="name">Junior Merchandiser</td>
+            <td class="name">Packing Executive (Junior Merchandiser)</td>
             <td><span class="pill pill--existing">existing</span></td>
-            <td class="muted">Picklist Approval/Submission ("Packing Executive")</td>
-            <td class="muted">This is what the process flow calls "Packing Executive" — same role, business-friendly name. Create and submit Pick Lists.</td>
+            <td class="muted">Pick List Approval / Submission</td>
+            <td class="muted">Create and submit Pick Lists.</td>
           </tr>
-          <tr>
-            <td class="name">Admin</td>
-            <td><span class="pill pill--admin">admin</span></td>
-            <td class="muted">Everything above</td>
-            <td class="muted">Full read/write/create/submit/cancel/delete on every business doctype in the matrix. Not System Manager — no access to Users, Roles, System Settings, or DocType customization.</td>
-          </tr>
-          <tr>
-            <td class="name">Super Admin</td>
-            <td><span class="pill pill--admin">admin</span></td>
-            <td class="muted">Everything above + Order Flow dashboard</td>
-            <td class="muted">Same full business access as Admin, plus it always sees every tab on the Order Flow dashboard regardless of tab configuration.</td>
-          </tr>
-        </tbody>
-      </table>
-    </div>
-  </section>
-
-  <section class="block" id="profiles">
-    <h2>Role Profiles — what to assign a new user</h2>
-    <p class="block-intro">A Role Profile is the one-click bundle you pick on <span class="mono">User &gt; Role Profile</span> when creating someone new. Pick the row matching their job title; you never need to hand-pick individual roles.</p>
-    <div class="note">Anyone hired for one of these jobs should get <b class="mono">Role Profile</b> set to the matching name below — not individual roles added by hand. If their role profile ever needs another permission, add it to the profile (or to <span class="mono">role_permission_matrix.py</span> if it's a matrix-wide change), not to the individual user.</div>
-    <div class="table-wrap">
-      <table class="ref-table">
-        <thead><tr><th>Role Profile</th><th>Assign to</th><th>Roles included</th></tr></thead>
-        <tbody>
-          <tr>
-            <td class="name">Marketing Team</td>
-            <td class="muted">Marketing Team member</td>
-            <td><div class="roles-inline"><span class="role-chip">Employee</span><span class="role-chip">Employee Self Service</span><span class="role-chip is-headline">Marketing Team</span></div></td>
-          </tr>
-          <tr>
-            <td class="name">Inside Sales</td>
-            <td class="muted">Inside Sales member</td>
-            <td><div class="roles-inline"><span class="role-chip">Employee</span><span class="role-chip">Employee Self Service</span><span class="role-chip is-headline">Inside Sales</span></div></td>
-          </tr>
-          <tr>
-            <td class="name">Merchandiser</td>
-            <td class="muted">Merchandiser</td>
-            <td><div class="roles-inline"><span class="role-chip">Employee</span><span class="role-chip">Employee Self Service</span><span class="role-chip is-headline">Merchandiser User</span></div></td>
-          </tr>
-          <tr>
-            <td class="name">Production Team</td>
-            <td class="muted">Production Team member</td>
-            <td><div class="roles-inline"><span class="role-chip">Employee</span><span class="role-chip">Employee Self Service</span><span class="role-chip">Item Manager</span><span class="role-chip">Stock User</span><span class="role-chip is-headline">Production Team</span></div></td>
-          </tr>
-          <tr>
-            <td class="name">Purchase Team</td>
-            <td class="muted">Purchase Team member</td>
-            <td><div class="roles-inline"><span class="role-chip">Employee</span><span class="role-chip">Employee Self Service</span><span class="role-chip">Item Manager</span><span class="role-chip is-headline">Purchase Team</span></div></td>
-          </tr>
-          <tr>
-            <td class="name">Inward Team</td>
-            <td class="muted">Inward Team member</td>
-            <td><div class="roles-inline"><span class="role-chip">Employee</span><span class="role-chip">Employee Self Service</span><span class="role-chip">Item Manager</span><span class="role-chip">Stock User</span><span class="role-chip is-headline">Inward Team</span></div></td>
-          </tr>
-          <tr>
-            <td class="name">Accounts Team</td>
-            <td class="muted">Accounts Team member</td>
-            <td><div class="roles-inline"><span class="role-chip">Employee</span><span class="role-chip">Employee Self Service</span><span class="role-chip is-headline">Accounts Team</span></div></td>
-          </tr>
-          <tr>
-            <td class="name">Packing Executive</td>
-            <td class="muted">Packing Executive / Junior Merchandiser</td>
-            <td><div class="roles-inline"><span class="role-chip">Employee</span><span class="role-chip">Employee Self Service</span><span class="role-chip">Item Manager</span><span class="role-chip">Purchase User</span><span class="role-chip">Sales User</span><span class="role-chip">Stock User</span><span class="role-chip is-headline">Junior Merchandiser</span></div></td>
-          </tr>
-          <tr>
-            <td class="name">Super Admin</td>
-            <td class="muted">Full business access, minimal bundle</td>
-            <td><div class="roles-inline"><span class="role-chip">Employee</span><span class="role-chip">Employee Self Service</span><span class="role-chip is-headline">Super Admin</span></div></td>
-          </tr>
-          <tr>
-            <td class="name">POS Manager</td>
-            <td class="muted">Store/counter manager — full POS access</td>
-            <td><div class="roles-inline"><span class="role-chip">Employee</span><span class="role-chip">Employee Self Service</span><span class="role-chip is-headline">POS Admin</span></div></td>
-          </tr>
-          <tr>
-            <td class="name">Admin</td>
-            <td class="muted">Anuj Sir and other senior admins — existing profile, unchanged</td>
-            <td class="muted">The pre-existing 30+ role bundle (Admin, Super Admin, and every legacy operational role). Left exactly as it was.</td>
-          </tr>
-        </tbody>
-      </table>
-    </div>
-  </section>
-
-  <section class="block" id="live-panel">
-    <h2>Managing this live</h2>
-    <div class="note">This page is the reference. To actually assign Role Profiles, create users, reset passwords, or edit profile details, use <b class="mono">Roles &amp; Permissions</b> in the desk (<span class="mono">/app/roles-and-permissions</span>) — a live, editable panel restricted to System Manager / Admin / Super Admin. A user can be given <em>several</em> Role Profiles there at once (e.g. Merchandiser + POS User), which isn't possible on the standard User form.</div>
-    <div class="note">Passwords are never visible to anyone, at any permission level — Frappe only ever stores a one-way hash. A <b class="mono">System Manager</b> can set a new password directly; <b class="mono">Admin</b> / <b class="mono">Super Admin</b> can only send the user a reset-link email instead.</div>
-  </section>
-
-  <section class="block" id="test-accounts">
-    <h2>Test accounts</h2>
-    <p class="block-intro">One login per new role, for manually checking what each role can actually do in the desk. Shared password below — change it before handing these out beyond this check, and disable or delete any you no longer need from the live panel.</p>
-    <div class="table-wrap">
-      <table class="ref-table">
-        <thead><tr><th>Role Profile</th><th>Login</th><th>Password</th></tr></thead>
-        <tbody>
-          <tr><td class="name">Marketing Team</td><td class="mono">test.marketing-team@dacsinc.local</td><td class="mono" rowspan="10" style="vertical-align:middle;">Test@12345</td></tr>
-          <tr><td class="name">Inside Sales</td><td class="mono">test.inside-sales@dacsinc.local</td></tr>
-          <tr><td class="name">Merchandiser</td><td class="mono">test.merchandiser@dacsinc.local</td></tr>
-          <tr><td class="name">Production Team</td><td class="mono">test.production-team@dacsinc.local</td></tr>
-          <tr><td class="name">Purchase Team</td><td class="mono">test.purchase-team@dacsinc.local</td></tr>
-          <tr><td class="name">Inward Team</td><td class="mono">test.inward-team@dacsinc.local</td></tr>
-          <tr><td class="name">Accounts Team</td><td class="mono">test.accounts-team@dacsinc.local</td></tr>
-          <tr><td class="name">Packing Executive</td><td class="mono">test.packing-executive@dacsinc.local</td></tr>
-          <tr><td class="name">Super Admin</td><td class="mono">test.super-admin@dacsinc.local</td></tr>
-          <tr><td class="name">POS Manager</td><td class="mono">test.pos-manager@dacsinc.local</td></tr>
         </tbody>
       </table>
     </div>

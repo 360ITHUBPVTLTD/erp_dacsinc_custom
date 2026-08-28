@@ -142,15 +142,15 @@
 
 <div class="topbar">
   <span class="topbar__mark">WORKFLOW<span> · </span>DIAGRAM</span>
-  <span class="back"><a href="/process-flow">← Roles &amp; process reference</a></span>
+  <span class="back"><a href="/process-flow">← Roles &amp; responsibilities reference</a></span>
 </div>
 
 <div class="page">
 
   <header class="masthead">
-    <p class="eyebrow">erp_dacsinc_custom — order lifecycle</p>
+    <p class="eyebrow">Order Lifecycle &amp; Fulfillment Process</p>
     <h1 class="title">The full order flow, one diagram: <em>CRM</em> to <em>Delivery</em> and beyond.</h1>
-    <p class="lede">Every box is a real stage, every arrow a real action, and every stage names who is responsible for it — the same roles as the process reference, laid out as one continuous flow for a client walkthrough.</p>
+    <p class="lede">A step-by-step overview of our order fulfillment process, from initial quotation to physical shipment and billing.</p>
   </header>
 
   <div class="legend">
@@ -165,7 +165,7 @@
   </div>
 
   <figure class="plate">
-    <div class="plate__label"><span><b>Full workflow</b> — CRM → Sales → Purchase → Sales</span><span>with role on every stage</span></div>
+    <div class="plate__label"><span><b>Full workflow</b> — CRM → Sales → Purchase</span><span>with role on every stage</span></div>
     <div class="plate__body">
       <div id="diagram-loading" class="loading">Rendering diagram…</div>
       <pre class="mermaid" id="diagram-src" style="display:none">
@@ -186,25 +186,16 @@ flowchart TD
         L4["Lead → Pipeline"]
         L5{"Outcome?"}
         LD2["Lost Pipeline"]:::dead
-        M1["Move to Order<br/>— Marketing / Inside Sales"]
-        L6["Lead → Order · WON"]
-        C1{"Quotation<br/>on file?"}
-        C2["Convert to<br/>Business Contact"]
-        C3["Create Customer"]
 
         L1 --> L2 --> L3
         L3 -->|"Mark Lost"| LD1
         L3 -->|"Ready to quote"| Q1
         Q1 --> Q2 --> L4 --> L5
         L5 -->|"Mark Lost"| LD2
-        L5 -->|"Deal won"| M1 --> L6
-        L6 --> C1
-        C1 -->|"No"| C2
-        C1 -->|"Yes"| C3
     end
 
-    SO0["Create Sales Order<br/>— Merchandiser / Marketing / Inside Sales"]
-    L6 -->|"Create Sales Order"| SO0
+    SO0["Create Sales Order from the Quotation<br/>— Merchandiser / Marketing / Inside Sales<br/>Customer is created automatically and the<br/>order flow is initiated"]:::done
+    L5 -->|"Deal won"| SO0
 
     subgraph SALES["SALES"]
         D1["Draft"]
@@ -212,11 +203,11 @@ flowchart TD
         P2["Pending Final<br/>Approval"]
         A1["Approved"]:::done
         R1["Rejected"]:::dead
-        PL0["Pick List Drafted<br/>— automatic, one per line"]
-        ST1{"Stock?"}
-        RD["Ready to Pick"]
-        PS["Partial Stock"]
-        OOS["Out of Stock"]
+        PL0["Pick List automatically created<br/>for available stock"]
+        ST1{"How much stock<br/>does this line have?"}
+        RD["Full stock<br/>— ready to pick"]
+        PS["Some stock<br/>— ready to pick what's available"]
+        OOS["No stock<br/>— no Pick List yet"]
         PICK["Set Pick Qty<br/>— Merchandiser / Packing Executive"]
         SUB["Submit Pick List<br/>— Merchandiser / Packing Executive"]
         RL{"Route chosen<br/>for this order?"}
@@ -236,15 +227,16 @@ flowchart TD
         D1 -->|"Reject"| R1
         P1 -->|"Approve<br/>— Merchandiser"| P2
         P1 -->|"Reject<br/>— Merchandiser"| R1
-        P2 -->|"Final Approve<br/>— Anuj Sir"| A1
-        P2 -->|"Reject<br/>— Anuj Sir"| R1
+        P2 -->|"Final Approve<br/>— Management"| A1
+        P2 -->|"Reject<br/>— Management"| R1
         R1 -->|"Resubmit<br/>— Merchandiser"| P1
         A1 --> PL0 --> ST1
-        ST1 -->|"Full"| RD
+        ST1 -->|"Full,<br/>e.g. 10 of 10"| RD
         ST1 -->|"Partial,<br/>e.g. 5 of 10"| PS
-        ST1 -->|"None"| OOS
+        ST1 -->|"None yet"| OOS
         RD --> PICK
         PS --> PICK
+        PS -->|"Balance qty<br/>needs purchase"| MRQ0
         PICK -->|"Submit"| SUB --> RL
         RL -->|"Choose DN"| DNR
         RL -->|"Choose SI"| SIR
@@ -268,12 +260,12 @@ flowchart TD
         MRQ0{"This row<br/>has a BOM?"}
         MR1["Create Material Request<br/>— Merchandiser / Production"]
         PO1["Create PO — direct<br/>— Purchase Team"]
-        POA1["Approve PO<br/>— Purchase Manager / Anuj Sir"]
+        POA1["Approve PO<br/>— Purchase Manager / Management"]
         PR1["GRN / Purchase Receipt<br/>— Inward Team"]
         BOMR{"In-house, or<br/>subcontract?"}
         MR2["Create Material Request<br/>— RM — Merchandiser / Production"]
         PO2["Create PO — RM<br/>— Purchase Team"]
-        POA2["Approve PO<br/>— Purchase Manager / Anuj Sir"]
+        POA2["Approve PO<br/>— Purchase Manager / Management"]
         PR2["GRN / Purchase Receipt<br/>— Inward Team"]
         SPO["Create Subcontracting PO<br/>— Production Team"]
         CHECK["Check RM Stock<br/>— Production Team"]
@@ -322,7 +314,7 @@ flowchart TD
     style PURCHASE fill:#f2e5d9,stroke:#a9622f,color:#4a2e17
       </pre>
     </div>
-    <figcaption class="plate__caption">Delivery Note and its Submit step are outlined in bold — the point in this flow a client's own order physically ships. Billing and payment continue past it because the order isn't finished until it's paid, but shipping is the milestone that matters most to explain first.</figcaption>
+    <figcaption class="plate__caption">The Delivery Note and its Submit step are outlined in bold because this is the milestone where your order physically ships. Billing and payment continue after shipping as the order is completed upon final payment.</figcaption>
   </figure>
 
   <div class="downloads" id="downloads" hidden>

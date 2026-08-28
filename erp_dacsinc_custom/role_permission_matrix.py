@@ -335,6 +335,16 @@ def set_doc_permission(doctype, role, read=1, write=0, create=0, submit=0,
     would find the wrong row and could silently turn an owner-restricted
     grant into an unrestricted one.
     """
+    # Enforce standard Frappe permission dependencies (e.g., create/write requires read)
+    if cancel or amend:
+        submit = 1
+    if submit:
+        create = 1
+    if create:
+        write = 1
+    if create or write or delete:
+        read = 1
+
     setup_custom_perms(doctype)
     existing = frappe.db.get_value(
         "Custom DocPerm",
@@ -353,3 +363,4 @@ def set_doc_permission(doctype, role, read=1, write=0, create=0, submit=0,
             "read": read, "write": write, "create": create, "submit": submit,
             "delete": delete, "cancel": cancel, "amend": amend,
         }).insert(ignore_permissions=True)
+
