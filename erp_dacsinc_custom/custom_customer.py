@@ -287,3 +287,40 @@ def update_customer_sharing(doc, method=None):
 
     for user in users_to_remove:
         frappe.share.remove("Customer", doc.name, user)
+
+
+def guard_merchandiser_user_change(doc, method=None):
+    """
+    A Merchandiser User must never be able to change which merchandiser a
+    Customer is assigned to (custom_merchandiser_user) — that field is
+    exactly what their own "own customers only" scoping is keyed off (see
+    get_customer_permission_query_conditions / get_sales_order_permission_
+    query_conditions in custom_script.py). Letting a Merchandiser set or
+    change it — including on a brand-new Customer they're creating — would
+    let them grant themselves (or anyone) visibility into any customer's
+    orders. Applies to create as well as update: old_value is None for a
+    new document, so setting it to anything already counts as a change.
+
+    Admin / Super Admin / System Manager are unaffected — this only blocks
+    someone whose ONLY relevant role is Merchandiser User.
+    """
+    roles = frappe.get_roles()
+    if "Merchandiser User" not in roles:
+        return
+    if frappe.session.user == "Administrator" or set(roles) & {"System Manager", "Admin", "Super Admin"}:
+        return
+
+    if doc.is_new():
+        old_value = None
+    else:
+        before = doc.get_doc_before_save()
+        old_value = (
+            before.custom_merchandiser_user if before
+            else frappe.db.get_value("Customer", doc.name, "custom_merchandiser_user")
+        )
+
+    if doc.custom_merchandiser_user != old_value:
+        frappe.throw(
+            "You don't have permission to change the assigned Merchandiser on a Customer.",
+            frappe.PermissionError,
+        )

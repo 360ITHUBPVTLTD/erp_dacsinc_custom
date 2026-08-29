@@ -27,8 +27,10 @@ from frappe import _
 # "accounts" was the original receivables/payables tab and is now labelled
 # "Finance" (see OF_TAB_LABELS) — its key stays "accounts" so existing
 # of_tab_accounts_roles configuration keeps applying unchanged. "billing" is
-# the new tab that took over the "Accounts" label: Sales Orders that have a
-# Delivery Note but still need to be billed.
+# a different tab, now labelled "Pending DN/SI" on the dashboard: Sales
+# Orders that have a Delivery Note but still need to be billed (its key
+# stays "billing" for the same reason — of_tab_billing_roles keeps applying
+# unchanged even though the on-screen label has changed twice since).
 OF_TABS = ("approval", "tracker", "purchase", "jobwork", "stock", "billing", "accounts", "uniform")
 
 OF_TAB_LABELS = {
@@ -37,7 +39,7 @@ OF_TAB_LABELS = {
     "purchase": "Purchase Flow",
     "jobwork": "Job Work",
     "stock": "Stock Tracker",
-    "billing": "Accounts",
+    "billing": "Pending DN/SI",
     "accounts": "Finance",
     "uniform": "Embroidery Transfers",
 }

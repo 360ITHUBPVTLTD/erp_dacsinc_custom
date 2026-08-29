@@ -274,6 +274,23 @@ from elsewhere) collapses and is torn down, and next gets rebuilt from
 scratch on its next expand. Only the same-row collapse/re-expand case
 above was ever actually stale.
 
+## Sales Tracker hides what Pending DN/SI hides
+
+`need_to_bill` and `ready_to_deliver` are the two stages Pending DN/SI (the
+"billing" tab, gated by Admin Settings' `of_tab_billing_roles`) exists to
+show. Sales Tracker's `get_summary` (stage tiles) and `get_sales_tracker`
+(the row list) both compute the very same stages via the shared
+`_compute_stage_info`/`_get_tracker_rows` — so without an explicit check, a
+user excluded from `of_tab_billing_roles` but included in
+`of_tab_tracker_roles` could see every "still needs a DN/SI" order and
+count through Sales Tracker, making the billing tab's own restriction
+pointless. Both endpoints now call `can_view_tab("billing")` and, when
+`False`: `get_summary` returns `need_to_bill`/`ready_to_deliver` as `None`
+(not `0` — the client tells "nothing pending" apart from "hidden from you"
+and renders a lock icon on those two tiles instead of a count) and
+`get_sales_tracker` drops those orders' rows entirely, from every scope and
+`stage_filter`. Every other stage tile/row is unaffected.
+
 ## Pending DN/SI's "All" scope also shows Completed orders
 
 `get_billing_flow` lists orders in the Sales Tracker's own `ready_to_deliver`

@@ -68,7 +68,8 @@ doctype_list_js = {
   "Employee": "public/js/employee_list.js",
 	"Sales Order": "public/js/sales_order_list.js",
 	"Item": "public/js/item_list.js",
-	"BOM": "public/js/bom_list.js"
+	"BOM": "public/js/bom_list.js",
+	"Customer": "public/js/customer_list.js"
 }
 
 # Svg Icons
@@ -262,6 +263,7 @@ doc_events = {
     "Customer": {
         "before_insert": "erp_dacsinc_custom.custom_customer.customer_before_insert",
         "after_insert": "erp_dacsinc_custom.custom_customer.customer_after_insert",
+        "validate": "erp_dacsinc_custom.custom_customer.guard_merchandiser_user_change",
         "on_update": "erp_dacsinc_custom.custom_customer.update_customer_sharing"
     },
     "Purchase Order": {
