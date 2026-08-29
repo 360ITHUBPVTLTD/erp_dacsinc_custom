@@ -3859,6 +3859,103 @@ def create_full_piece_receipt(ewo_name, items_data):
     frappe.msgprint(f"Stock received successfully against {doc.name}")
     return "Success"
 
+
+@frappe.whitelist()
+def bulk_add_stock(item_codes, qty, warehouse):
+    """
+    Item list view's "Add Stock" bulk action. Creates and submits ONE
+    Material Receipt Stock Entry — same stock_entry_type this app already
+    uses for programmatic stock receipts (see create_full_piece_receipt
+    above) — with one row per selected item, all at the same qty and into
+    the same warehouse. Non-stock and disabled items are skipped (reported
+    back, not silently dropped); everything else lands in a single
+    document so a bad item (e.g. one requiring a batch/serial number)
+    fails the whole entry rather than leaving some items updated and
+    others not.
+
+    System Manager only — matches the "Add Stock" button itself, which the
+    Item list view only shows to that role.
+    """
+    if "System Manager" not in frappe.get_roles():
+        frappe.throw("Only a System Manager can add stock this way.", frappe.PermissionError)
+
+    if isinstance(item_codes, str):
+        item_codes = frappe.parse_json(item_codes)
+    if not item_codes:
+        frappe.throw("Select at least one item.")
+
+    qty = flt(qty)
+    if qty <= 0:
+        frappe.throw("Quantity must be greater than zero.")
+    if not frappe.db.exists("Warehouse", warehouse):
+        frappe.throw(f"Warehouse {warehouse} does not exist.")
+
+    item_rows = frappe.get_all(
+        "Item", filters={"name": ["in", item_codes]},
+        fields=["name", "is_stock_item", "disabled"],
+    )
+    by_code = {d.name: d for d in item_rows}
+
+    skipped = []
+    valid = []
+    for code in item_codes:
+        item = by_code.get(code)
+        if not item:
+            skipped.append({"item_code": code, "reason": "Item not found"})
+        elif item.disabled:
+            skipped.append({"item_code": code, "reason": "Item is disabled"})
+        elif not item.is_stock_item:
+            skipped.append({"item_code": code, "reason": "Not a stock item"})
+        else:
+            valid.append(code)
+
+    if not valid:
+        return {"added": 0, "skipped": skipped, "stock_entry": None}
+
+    se = frappe.new_doc("Stock Entry")
+    se.stock_entry_type = "Material Receipt"
+    se.posting_date = frappe.utils.nowdate()
+    for code in valid:
+        se.append("items", {"item_code": code, "t_warehouse": warehouse, "qty": qty})
+    se.insert()
+    se.submit()
+
+    return {"added": len(valid), "skipped": skipped, "stock_entry": se.name}
+
+
+@frappe.whitelist()
+def bulk_assign_merchandiser(customers, merchandiser_user):
+    """
+    Customer list view's "Assign Merchandiser" bulk action — sets
+    Customer.custom_merchandiser_user for every selected Customer. This is
+    the exact field Merchandiser User's "own customers only" scoping keys
+    off (see get_sales_order_permission_query_conditions /
+    get_customer_permission_query_conditions below), so this directly
+    controls which Sales Orders and Customers a Merchandiser can see.
+
+    Super Admin only — matches the "Assign Merchandiser" button itself,
+    which the Customer list view only shows to that role.
+    """
+    if "Super Admin" not in frappe.get_roles():
+        frappe.throw("Only a Super Admin can assign a Merchandiser this way.", frappe.PermissionError)
+
+    if isinstance(customers, str):
+        customers = frappe.parse_json(customers)
+    if not customers:
+        frappe.throw("Select at least one customer.")
+    if not merchandiser_user or not frappe.db.exists("User", merchandiser_user):
+        frappe.throw(f"User {merchandiser_user} does not exist.")
+
+    updated = []
+    for customer in customers:
+        if not frappe.db.exists("Customer", customer):
+            continue
+        frappe.db.set_value("Customer", customer, "custom_merchandiser_user", merchandiser_user)
+        updated.append(customer)
+
+    return {"updated": len(updated)}
+
+
 @frappe.whitelist()
 def get_linked_delivery_notes(sales_order_name):
     if not sales_order_name: return []

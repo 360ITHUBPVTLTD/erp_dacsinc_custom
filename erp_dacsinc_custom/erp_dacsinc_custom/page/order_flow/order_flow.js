@@ -1529,19 +1529,28 @@ class OrderFlow {
         }
     }
 
+    // Stages hidden from this tab whenever the viewer lacks of_tab_billing_roles
+    // access — see get_summary/get_sales_tracker in order_flow_api.py. Their count
+    // comes back as null (not 0) specifically so this can tell "nothing pending"
+    // apart from "hidden from you".
+    of_stage_restricted(s, key) {
+        return s && s.billing_visible === false && (key === 'need_to_bill' || key === 'ready_to_deliver');
+    }
+
     render_tracker_summary(s) {
         s = s || {};
 
         const tiles = OF_STAGES.map(st => {
+            const restricted = this.of_stage_restricted(s, st.key);
             const value = of_num(s[OF_STAGE_COUNT_KEY[st.key]]);
             // "Overdue" is only alarming when there is something in it.
             const mod = (st.key === 'overdue' && !value) ? 'ok' : st.tile;
             return `
-            <div class="of-tile of-tile--${mod} ${this.stage_filter === st.key ? 'is-active' : ''}"
-                 data-stage="${st.key}" title="${of_esc(st.hint)}">
+            <div class="of-tile of-tile--${mod} ${this.stage_filter === st.key ? 'is-active' : ''} ${restricted ? 'is-restricted' : ''}"
+                 data-stage="${st.key}" title="${restricted ? __('Restricted — you do not have access to the Pending DN/SI tab') : of_esc(st.hint)}">
                 <span class="of-tile__label">${__(st.label === 'All Open' ? 'Open Orders' : st.label)}</span>
-                <div class="of-tile__value">${value}</div>
-                <span class="of-tile__hint">Click to filter</span>
+                <div class="of-tile__value">${restricted ? '&#128274;' : value}</div>
+                <span class="of-tile__hint">${restricted ? __('Restricted') : __('Click to filter')}</span>
             </div>`;
         }).join('');
 
@@ -1553,11 +1562,12 @@ class OrderFlow {
     render_stage_counts(s) {
         s = s || {};
         OF_STAGES.forEach(st => {
+            const restricted = this.of_stage_restricted(s, st.key);
             const value = of_num(s[OF_STAGE_COUNT_KEY[st.key]]);
             const $btn = this.$body.find(`.of-stage-btn[data-stage="${st.key}"]`);
-            $btn.find('.of-stage-count').text(value);
+            $btn.find('.of-stage-count').text(restricted ? '\u{1F512}' : value);
             // A stage with nothing in it stays clickable but recedes.
-            $btn.toggleClass('is-empty', !value && st.key !== 'all');
+            $btn.toggleClass('is-empty', !restricted && !value && st.key !== 'all');
         });
     }
 

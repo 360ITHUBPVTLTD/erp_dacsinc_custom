@@ -21,6 +21,7 @@ from frappe.utils import cint, flt, add_days, nowdate
 
 from erp_dacsinc_custom.order_flow_permissions import (
     OF_TABS,
+    can_view_tab,
     guard_tab as _guard_tab,
     get_order_flow_permissions,
     is_scoped_to_own_customers,
@@ -961,6 +962,12 @@ def get_sales_tracker(days=120, search=None, scope="open", stage_filter=None, me
     """
     _guard()
     _guard_tab("tracker")
+    # Same restriction get_summary applies to its counts: an order sitting in
+    # "need_to_bill" / "ready_to_deliver" is exactly what the "billing" tab
+    # (Pending DN/SI) shows, so a user without of_tab_billing_roles access
+    # must not see those orders here either — otherwise Tracker would leak
+    # everything the billing tab exists to restrict.
+    billing_visible = can_view_tab("billing")
     # Completed orders are excluded at the SQL level under scope="open" (see
     # _get_tracker_rows) — force scope to "all" so clicking the "Completed"
     # stage tile can actually find them, same override get_summary already
@@ -969,6 +976,8 @@ def get_sales_tracker(days=120, search=None, scope="open", stage_filter=None, me
     full = _get_tracker_rows(days=days, search=search, scope=effective_scope,
                               merchandiser=merchandiser, approval_stage=approval_stage)
     rows = full["rows"]
+    if not billing_visible:
+        rows = [o for o in rows if o.get("stage", {}).get("stage_key") not in ("need_to_bill", "ready_to_deliver")]
     if stage_filter and stage_filter != "all":
         if stage_filter == "overdue":
             rows = [o for o in rows if o.get("is_overdue")]
@@ -2090,6 +2099,11 @@ def get_summary(days=120, scope="open", search=None, merchandiser=None, approval
     """
     _guard()
     _guard_tab("tracker")  # only called from the Sales Tracker tab
+    # "need_to_bill" / "ready_to_deliver" are exactly what the "billing" tab
+    # (labelled "Pending DN/SI") shows — a user without of_tab_billing_roles
+    # access must not see those counts here either, or the billing tab's own
+    # restriction would be pointless (see docs/order-flow-dashboard.md).
+    billing_visible = can_view_tab("billing")
     # To compute accurate summary counts for all stages (including completed ones),
     # we override "open" scope to "all". "mine" scope is preserved to only count the user's orders.
     summary_scope = "all" if scope == "open" else scope
@@ -2140,9 +2154,9 @@ def get_summary(days=120, scope="open", search=None, merchandiser=None, approval
 
     return {
         "open_orders": open_orders,
-        "need_to_bill": need_to_bill,
+        "need_to_bill": need_to_bill if billing_visible else None,
         "draft_pick_list": draft_pick_list,
-        "ready_to_deliver": ready_to_deliver,
+        "ready_to_deliver": ready_to_deliver if billing_visible else None,
         "stock_received": stock_received,
         "receipt_draft": receipt_draft,
         "in_jobwork": in_jobwork,
@@ -2150,7 +2164,8 @@ def get_summary(days=120, scope="open", search=None, merchandiser=None, approval
         "awaiting_stock": awaiting_stock,
         "newly_created": newly_created,
         "overdue": overdue,
-        "completed": completed
+        "completed": completed,
+        "billing_visible": billing_visible,
     }
 
 

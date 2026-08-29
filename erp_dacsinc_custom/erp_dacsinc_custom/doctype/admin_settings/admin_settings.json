@@ -301,7 +301,7 @@
    "description": "Accounts tab (Sales Orders with a Delivery Note that still need billing). Empty = visible to everyone who can open the page.",
    "fieldname": "of_tab_billing_roles",
    "fieldtype": "Table MultiSelect",
-   "label": "Accounts \u2014 Allowed Roles",
+   "label": "Pending DN/SI \u2014 Allowed Roles",
    "options": "Order Flow Tab Role"
   },
   {
