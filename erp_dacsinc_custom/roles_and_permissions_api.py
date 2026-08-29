@@ -527,40 +527,44 @@ def sync_dac_matrix_and_users():
         frappe.throw(_("Rebuilding page/workspace permissions failed: {0}").format(str(e)))
 
 
-    # 2. Reconcile and overwrite user Role Profiles
+    # 2. Reconcile user Role Profiles — via apply_dac_matrix_assignments(), the
+    # SAME additive-only path the "DAC Matrix" dialog uses, so this "sync
+    # everything" action can never diverge into the destructive behavior it
+    # used to have here (a hard `update_user_role_profiles(user, [proposed])`
+    # replacing a user's ENTIRE profile list — wiping out any other Role
+    # Profile they held for a second responsibility, e.g. Merchandiser +
+    # something else). It only ever ADDS the matrix's proposed profile.
     from erp_dacsinc_custom.dac_permission_matrix import EMPLOYEE_ROLE_PROFILE_TARGETS
+
+    target_by_user = {t["user"]: t for t in EMPLOYEE_ROLE_PROFILE_TARGETS}
+    before_by_user = {
+        user: _current_role_profiles(user)
+        for user in target_by_user if frappe.db.exists("User", user)
+    }
+
+    apply_result = apply_dac_matrix_assignments(list(target_by_user.keys()))
 
     updated_users = []
     skipped_users = []
-
-    for target in EMPLOYEE_ROLE_PROFILE_TARGETS:
-        user = target["user"]
-        proposed = target["role_profile"]
-
-        if not frappe.db.exists("User", user):
-            skipped_users.append({"user": user, "employee_name": target["employee_name"], "reason": _("User not found")})
-            continue
-
-        enabled = bool(frappe.db.get_value("User", user, "enabled"))
-        if not enabled:
-            skipped_users.append({"user": user, "employee_name": target["employee_name"], "reason": _("User disabled")})
-            continue
-
-        current = _current_role_profiles(user)
-        # Check if the user's role profiles are exactly [proposed]
-        if len(current) == 1 and current[0] == proposed:
-            continue
-
-        try:
-            update_user_role_profiles(user, [proposed])
+    reason_labels = {
+        "user_not_found": _("User not found"),
+        "not_in_matrix": _("Not in matrix"),
+    }
+    for row in apply_result["results"]:
+        user = row["user"]
+        if row["status"] == "already_set":
+            continue  # no-op — nothing to report, matches the old silent-skip
+        employee_name = target_by_user.get(user, {}).get("employee_name", user)
+        if row["status"] == "updated":
             updated_users.append({
                 "user": user,
-                "employee_name": target["employee_name"],
-                "profile": proposed,
-                "previous": current
+                "employee_name": employee_name,
+                "profile": row["role_profile"],
+                "previous": before_by_user.get(user, []),
             })
-        except Exception as e:
-            skipped_users.append({"user": user, "employee_name": target["employee_name"], "reason": str(e)})
+        else:
+            reason = row.get("reason") or reason_labels.get(row["status"], row["status"])
+            skipped_users.append({"user": user, "employee_name": employee_name, "reason": reason})
 
     return {
         "updated": updated_users,

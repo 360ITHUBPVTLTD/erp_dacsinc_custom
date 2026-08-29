@@ -551,7 +551,14 @@ EMPLOYEE_ROLE_PROFILE_TARGETS = [
 
 def sync_workspace_roles():
     """
-    Restrict dashboard Workspaces to their target business roles idempotently.
+    Give each dashboard Workspace below its target business roles,
+    additively — merged into whatever roles are already configured on it,
+    never replacing them. (Previously did `doc.set("roles", [...])`, a hard
+    overwrite that would silently delete any role someone had added to a
+    Workspace by hand the next time this ran — the same "explicit admin
+    config must not be silently undone by a sync" bug fixed in
+    order_flow_permissions.sync_admin_settings_tab_roles(); see
+    docs/order-flow-dashboard.md.)
     """
     ADMIN_ROLES = ["System Manager", "Super Admin", "Admin"]
 
@@ -571,9 +578,19 @@ def sync_workspace_roles():
         if not frappe.db.exists("Workspace", ws_name):
             continue
         doc = frappe.get_doc("Workspace", ws_name)
+        changed = not doc.public or doc.is_hidden
         doc.public = 1
         doc.is_hidden = 0
-        doc.set("roles", [{"role": r} for r in roles if frappe.db.exists("Role", r)])
+
+        existing = {d.role for d in (doc.get("roles") or [])}
+        for role in roles:
+            if role in existing or not frappe.db.exists("Role", role):
+                continue
+            doc.append("roles", {"role": role})
+            changed = True
+
+        if not changed:
+            continue
         doc.flags.ignore_permissions = True
         doc.save(ignore_permissions=True)
 

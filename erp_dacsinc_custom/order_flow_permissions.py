@@ -135,25 +135,33 @@ def get_tab_roles():
 
 
 def can_view_tab(tab, user=None, tab_roles=None):
-    """Whether `user` (session user by default) may see `tab`."""
+    """
+    Whether `user` (session user by default) may see `tab`.
+
+    An explicit role list in Admin Settings is authoritative — that's the
+    whole point of configuring it. A role named there is never silently
+    overridden by whether it also happens to have doctype-level read access
+    to that tab's underlying data (TAB_DOCTYPES) — an admin naming a role
+    here is a deliberate decision, and second-guessing it made the config
+    field lie: a role could be added to e.g. of_tab_billing_roles and the
+    tab would still not appear, with no error or indication why. The
+    TAB_DOCTYPES check only ever applies to the *unconfigured* fallback
+    below, so a tab nobody has explicitly opened up still doesn't leak to a
+    role with zero access to what it would display.
+    """
     if is_admin(user):
         return True
 
     user = user or frappe.session.user
-    if tab in TAB_DOCTYPES:
-        has_doctype_access = False
-        for dt in TAB_DOCTYPES[tab]:
-            if frappe.has_permission(dt, "read", user=user):
-                has_doctype_access = True
-                break
-        if not has_doctype_access:
-            return False
-
     allowed = (tab_roles or get_tab_roles()).get(tab) or []
-    if not allowed:
-        return True  # unconfigured = everyone who has doctype read access
 
-    return bool(set(frappe.get_roles(user)) & set(allowed))
+    if allowed:
+        return bool(set(frappe.get_roles(user)) & set(allowed))
+
+    # Unconfigured: everyone who has doctype read access, not truly everyone.
+    if tab in TAB_DOCTYPES:
+        return any(frappe.has_permission(dt, "read", user=user) for dt in TAB_DOCTYPES[tab])
+    return True
 
 
 
@@ -173,6 +181,16 @@ def is_scoped_to_own_customers(tab, user=None, tab_roles=None):
     Deliberately keyed off the tab's own role configuration rather than a
     hard-coded list of "broad" roles, so this stays correct automatically if
     that configuration changes — no second list to keep in sync.
+
+    "All" is excluded from the "other role" check even though it's a real
+    Frappe role every user holds — it can end up in a tab's role list as a
+    byproduct of sync_admin_settings_tab_roles() picking up "roles with read
+    access to the underlying doctype" (some core doctypes grant that to All
+    by default), not as a deliberate "open this tab to literally everyone"
+    admin choice. Counting it as a legitimate "other reason" would silently
+    defeat scoping for every merchandiser the moment it appears anywhere —
+    confirmed live: with All present, is_scoped_to_own_customers("accounts")
+    returned False for a user whose only role was Merchandiser User.
     """
     user = user or frappe.session.user
     if is_admin(user):
@@ -182,7 +200,7 @@ def is_scoped_to_own_customers(tab, user=None, tab_roles=None):
     if "Merchandiser User" not in roles:
         return False
 
-    other_roles = set((tab_roles or get_tab_roles()).get(tab) or []) - {"Merchandiser User"}
+    other_roles = set((tab_roles or get_tab_roles()).get(tab) or []) - {"Merchandiser User", "All"}
     return not (roles & other_roles)
 
 
@@ -445,8 +463,14 @@ def get_roles_with_read_access(doctypes):
 
 def sync_admin_settings_tab_roles():
     """
-    Automatically clear and rebuild the allowed roles list in Admin Settings
-    for each tab based on the roles that have read access to the tab's main doctypes.
+    Suggest, additively, every role that has read access to each tab's main
+    doctype(s) — merged into whatever is already configured, never replacing
+    it. This used to clear and rebuild each field from scratch, which
+    silently deleted any role an admin had deliberately added by hand (e.g.
+    Merchandiser User on of_tab_billing_roles, which has no Sales Invoice
+    read access and would keep getting dropped every time this ran) — the
+    exact same "admin's explicit choice must be authoritative" principle
+    can_view_tab() enforces now. See docs/order-flow-dashboard.md.
     """
     settings = frappe.get_doc("Admin Settings")
     changed = False
@@ -460,11 +484,12 @@ def sync_admin_settings_tab_roles():
         # Exclude system-internal roles
         roles = [r for r in roles if r not in ("Guest", "Administrator")]
 
-        # Re-set child table
-        settings.set(fieldname, [])
-        for role in sorted(roles):
+        existing = {d.role for d in (settings.get(fieldname) or [])}
+        for role in roles:
+            if role in existing:
+                continue
             settings.append(fieldname, {"role": role})
-        changed = True
+            changed = True
 
     if changed:
         settings.flags.ignore_permissions = True

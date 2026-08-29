@@ -583,14 +583,23 @@ def _event_relevance(ev, ctx):
 _TRACKER_ROW_CEILING = 5000
 
 
-def _get_tracker_rows(days=120, search=None, scope="open", merchandiser=None, approval_stage=None):
+def _get_tracker_rows(days=120, search=None, scope="open", merchandiser=None, approval_stage=None, tab="tracker"):
     """
     Sales Orders ordered by most recent downstream activity, each enriched
     with doc-flow counts and `stage` (via _compute_stage_info) — the full
     matching set, unpaginated and not yet filtered by stage. Shared by
-    get_sales_tracker (which paginates and applies stage_filter on top) and
-    get_summary (which counts across every stage without paginating), so
-    the two can never compute different figures for the same filters.
+    get_sales_tracker (which paginates and applies stage_filter on top),
+    get_summary (which counts across every stage without paginating), and
+    get_billing_flow (which reuses this same query for its own tab), so
+    none of them can ever compute different figures for the same filters.
+
+    `tab` decides WHICH tab's own of_tab_<tab>_roles config the merchandiser
+    scoping check below is keyed off — it defaults to "tracker" for the
+    Sales Tracker's own callers, but get_billing_flow passes tab="billing"
+    so a merchandiser's billing-tab visibility is governed by
+    of_tab_billing_roles, not silently inherited from of_tab_tracker_roles
+    (those two lists can differ — someone with Merchandiser User + Accounts
+    Executive might be scoped for one tab's purposes but not the other's).
 
     Returns {"rows": [...], "truncated": bool} — see _TRACKER_ROW_CEILING.
     """
@@ -647,7 +656,7 @@ def _get_tracker_rows(days=120, search=None, scope="open", merchandiser=None, ap
     # get_order_flow_permissions() uses for tracker_scoped_to_own_customers,
     # so the client's button-hiding can never disagree with what rows the
     # server actually returns.
-    if is_scoped_to_own_customers("tracker"):
+    if is_scoped_to_own_customers(tab):
         conditions.append("cust.custom_merchandiser_user = %(merch_scope)s")
         params["merch_scope"] = frappe.session.user
 
@@ -1688,7 +1697,21 @@ def get_purchase_flow(days=120, search=None, scope="open", merchandiser=None,
                                   OR sup.supplier_name LIKE %({param_key})s OR poi.sales_order LIKE %({param_key})s
                                   OR poi.item_code LIKE %({param_key})s)""")
             params[param_key] = f"%{word}%"
-
+    # A plain Merchandiser User only sees the lines of a PO/MR/Receipt that
+    # are for their own customers — same is_scoped_to_own_customers guard as
+    # Tracker/Approval/Billing (see order_flow_permissions.py). Because these
+    # are header+item JOIN queries GROUPed by the document, adding this to
+    # the WHERE clause does double duty: a PO with none of its lines tied to
+    # one of the merchandiser's customers disappears from the list entirely
+    # (every joined item-row gets filtered out, so GROUP BY produces nothing
+    # for it), and a PO that DOES have some matching lines still shows, but
+    # its GROUP_CONCAT/SUM aggregates roll up only the matching lines — the
+    # merchandiser sees "their" portion of a shared PO, not the whole
+    # company's. Applied identically to every sub-list below (they all
+    # already JOIN through to `cust` the same way).
+    if is_scoped_to_own_customers("purchase"):
+        params["merch_scope"] = frappe.session.user
+        conditions.append("cust.custom_merchandiser_user = %(merch_scope)s")
 
     purchase_orders = _paged_query(f"""
         SELECT po.name, po.transaction_date, po.schedule_date, po.status, po.docstatus,
@@ -1747,7 +1770,8 @@ def get_purchase_flow(days=120, search=None, scope="open", merchandiser=None,
             param_key = f"q_{idx}"
             mr_conditions.append(f"(mr.name LIKE %({param_key})s OR mri.sales_order LIKE %({param_key})s OR mri.item_code LIKE %({param_key})s)")
             params[param_key] = f"%{word}%"
-
+    if is_scoped_to_own_customers("purchase"):
+        mr_conditions.append("cust.custom_merchandiser_user = %(merch_scope)s")
 
     pr_conditions = ["pr.docstatus < 2", "pr.posting_date >= %(from_date)s", "IFNULL(pr.is_subcontracted, 0) = 0", _NOT_DISABLED_SO]
     scr_conditions = ["scr.docstatus < 2", "scr.posting_date >= %(from_date)s", _NOT_DISABLED_SO]
@@ -1765,7 +1789,9 @@ def get_purchase_flow(days=120, search=None, scope="open", merchandiser=None,
             pr_conditions.append(f"(pr.name LIKE %({param_key})s OR pr.supplier LIKE %({param_key})s OR sup.supplier_name LIKE %({param_key})s)")
             scr_conditions.append(f"(scr.name LIKE %({param_key})s OR scr.supplier LIKE %({param_key})s OR sup.supplier_name LIKE %({param_key})s)")
             params[param_key] = f"%{word}%"
-
+    if is_scoped_to_own_customers("purchase"):
+        pr_conditions.append("cust.custom_merchandiser_user = %(merch_scope)s")
+        scr_conditions.append("cust.custom_merchandiser_user = %(merch_scope)s")
 
     receipts = _paged_query(f"""
         (SELECT 'Purchase Receipt' AS doctype, pr.name, pr.posting_date, pr.status, pr.docstatus,
@@ -1849,6 +1875,7 @@ def get_purchase_flow(days=120, search=None, scope="open", merchandiser=None,
             FROM `tabMaterial Request Item` mri
             JOIN `tabMaterial Request` mr ON mr.name = mri.parent
             LEFT JOIN `tabSales Order` so ON so.name = mri.sales_order
+            LEFT JOIN `tabCustomer` cust ON cust.name = so.customer
             WHERE {' AND '.join(mr_conditions)}
             GROUP BY mr.name
             HAVING total_qty - total_ordered > 0
@@ -1865,6 +1892,7 @@ def get_purchase_flow(days=120, search=None, scope="open", merchandiser=None,
             JOIN `tabPurchase Order` po ON po.name = poi.parent
             LEFT JOIN `tabSupplier` sup ON sup.name = po.supplier
             LEFT JOIN `tabSales Order` so ON so.name = poi.sales_order
+            LEFT JOIN `tabCustomer` cust ON cust.name = so.customer
             WHERE {' AND '.join(conditions)}
         ) x
     """, params, as_dict=1)[0]
@@ -1918,7 +1946,15 @@ def get_jobwork_flow(days=180, search=None, scope="open", merchandiser=None,
                                   OR sup.supplier_name LIKE %({param_key})s OR poi.sales_order LIKE %({param_key})s
                                   OR poi.item_code LIKE %({param_key})s)""")
             params[param_key] = f"%{word}%"
-
+    # Same is_scoped_to_own_customers guard as Tracker/Approval/Billing/
+    # Purchase — see the detailed comment in get_purchase_flow. A plain
+    # Merchandiser User only sees the lines of a subcontract PO/Receipt/EWO
+    # tied to their own customers; a PO/Receipt spanning several customers
+    # still shows, but its rolled-up GROUP_CONCAT/SUM figures cover only the
+    # matching lines.
+    if is_scoped_to_own_customers("jobwork"):
+        params["merch_scope"] = frappe.session.user
+        conditions.append("cust.custom_merchandiser_user = %(merch_scope)s")
 
     purchase_orders = _paged_query(f"""
         SELECT po.name, po.transaction_date, po.schedule_date, po.status, po.docstatus,
@@ -1966,7 +2002,10 @@ def get_jobwork_flow(days=180, search=None, scope="open", merchandiser=None,
             ewo_conditions.append(f"""(ewo.name LIKE %({param_key})s OR ewo.purchase_order LIKE %({param_key})s
                                       OR fp.supplier_name LIKE %({param_key})s OR pn.supplier_name LIKE %({param_key})s)""")
             params[param_key] = f"%{word}%"
-
+    if is_scoped_to_own_customers("jobwork"):
+        pr_conditions.append("cust.custom_merchandiser_user = %(merch_scope)s")
+        scr_conditions.append("cust.custom_merchandiser_user = %(merch_scope)s")
+        ewo_conditions.append("cust.custom_merchandiser_user = %(merch_scope)s")
 
     receipts = _paged_query(f"""
         (SELECT 'Purchase Receipt' AS doctype, pr.name, pr.posting_date, pr.status, pr.docstatus,
@@ -2033,6 +2072,7 @@ def get_jobwork_flow(days=180, search=None, scope="open", merchandiser=None,
             LEFT JOIN `tabSupplier` po_sup ON po_sup.name = po.supplier
             LEFT JOIN `tabPurchase Order Item` poi ON poi.parent = ewo.purchase_order
             LEFT JOIN `tabSales Order` so ON so.name = poi.sales_order
+            LEFT JOIN `tabCustomer` cust ON cust.name = so.customer
             WHERE {' AND '.join(ewo_conditions)} AND ewo.work_type = %(work_type)s
             GROUP BY ewo.name, ewo.date, ewo.status, ewo.docstatus, ewo.work_type,
                      ewo.purchase_order, ewo.subcontracting_order, ewo.completed_on,
@@ -2059,6 +2099,7 @@ def get_jobwork_flow(days=180, search=None, scope="open", merchandiser=None,
             JOIN `tabPurchase Order` po ON po.name = poi.parent
             LEFT JOIN `tabSupplier` sup ON sup.name = po.supplier
             LEFT JOIN `tabSales Order` so ON so.name = poi.sales_order
+            LEFT JOIN `tabCustomer` cust ON cust.name = so.customer
             WHERE {' AND '.join(conditions)}
             GROUP BY po.name, po.status
         ) x
@@ -2072,6 +2113,7 @@ def get_jobwork_flow(days=180, search=None, scope="open", merchandiser=None,
         LEFT JOIN `tabPurchase Order` po ON po.name = ewo.purchase_order
         LEFT JOIN `tabPurchase Order Item` poi ON poi.parent = ewo.purchase_order
         LEFT JOIN `tabSales Order` so ON so.name = poi.sales_order
+        LEFT JOIN `tabCustomer` cust ON cust.name = so.customer
         WHERE {' AND '.join(ewo_conditions)}
     """, params)[0][0]
 
@@ -2205,7 +2247,13 @@ def get_accounts_flow(days=120, search=None, scope="open", merchandiser=None,
             si_conditions.append(f"""(si.name LIKE %({param_key})s OR si.customer LIKE %({param_key})s
                                      OR cust.customer_name LIKE %({param_key})s OR sii.sales_order LIKE %({param_key})s)""")
             params[param_key] = f"%{word}%"
-
+    # Same is_scoped_to_own_customers guard as every other tab (see
+    # get_purchase_flow's comment for the full reasoning). A Sales Invoice
+    # belongs to exactly one Customer (si.customer), so this is a clean,
+    # unambiguous WHERE condition — no multi-customer aggregation caveat.
+    if is_scoped_to_own_customers("accounts"):
+        params["merch_scope"] = frappe.session.user
+        si_conditions.append("cust.custom_merchandiser_user = %(merch_scope)s")
 
     sales_invoices = _paged_query(f"""
         SELECT si.name, si.posting_date, si.due_date, si.status, si.docstatus,
@@ -2251,7 +2299,14 @@ def get_accounts_flow(days=120, search=None, scope="open", merchandiser=None,
             pi_conditions.append(f"""(pi.name LIKE %({param_key})s OR pi.supplier LIKE %({param_key})s
                                      OR sup.supplier_name LIKE %({param_key})s OR poi.sales_order LIKE %({param_key})s)""")
             pi_params[param_key] = f"%{word}%"
-
+    # Same guard, applied transitively: a Purchase/Jobber Invoice is a
+    # Supplier bill, not a Customer one, but a merchandiser scoped to their
+    # own customers should only see the payables tied to fulfilling THEIR
+    # customers' orders — same "shows if any line matches, aggregates roll
+    # up to only the matching lines" behavior as Purchase/Job Work.
+    if is_scoped_to_own_customers("accounts"):
+        pi_params["merch_scope"] = frappe.session.user
+        pi_conditions.append("cust.custom_merchandiser_user = %(merch_scope)s")
 
     def _purchase_invoice_sql(jobber_flag):
         return f"""
@@ -2285,6 +2340,7 @@ def get_accounts_flow(days=120, search=None, scope="open", merchandiser=None,
                 LEFT JOIN `tabPurchase Order Item` poi ON poi.parent = pii.purchase_order
                 LEFT JOIN `tabSupplier` sup ON sup.name = pi.supplier
                 LEFT JOIN `tabSales Order` so ON so.name = poi.sales_order
+                LEFT JOIN `tabCustomer` cust ON cust.name = so.customer
                 WHERE {' AND '.join(pi_conditions)} AND IFNULL(sup.custom_is_jobber, 0) = {jobber_flag}
                 GROUP BY pi.name, pi.grand_total, pi.outstanding_amount
             ) x
@@ -2395,7 +2451,7 @@ def get_billing_flow(days=120, search=None, scope="open", page=1, page_size=100)
     """
     _guard()
     _guard_tab("billing")
-    full = _get_tracker_rows(days=days, search=search, scope=scope)
+    full = _get_tracker_rows(days=days, search=search, scope=scope, tab="billing")
     # Choosing "All" in the shared scope selector (#of-scope) already tells
     # _get_tracker_rows above to stop excluding Completed orders at the SQL
     # level — but this tab's own stage_key filter, unconditionally limited to
