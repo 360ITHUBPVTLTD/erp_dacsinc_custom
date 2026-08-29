@@ -2283,7 +2283,7 @@ class OrderFlow {
                     <div style="display:flex; align-items:center; gap:6px;">
                         <i class="fa fa-caret-right of-so-toggle" style="cursor:pointer; width:12px; font-size:14px; color:var(--text-light);" data-so="${o.name}"></i>
                         <div>
-                            <a href="/app/sales-order/${encodeURIComponent(o.name)}" target="_blank" style="font-weight:700;">${of_esc(o.name)}</a>
+                            ${of_so_link(o.name, {bold: true})}
                             ${is_new ? '<span class="of-new-dot" title="New activity notification"></span>' : ''}
                             ${o.is_overdue ? '<span class="of-chip of-chip--bad" style="margin-left:4px;">Overdue</span>' : ''}
                             ${o.skip_delivery_note ? '<span class="of-chip" style="margin-left:4px; background:#e83e8c; color:#fff; font-size:9px; padding:2px 5px; border-radius:3px; font-weight:700;">Direct Bill</span>' : ''}
@@ -2418,9 +2418,7 @@ class OrderFlow {
                 doc_link = '';
             }
             // Embroidery stock transfers have no Sales Order behind them.
-            const so_link = ev.sales_order
-                ? `<a href="/app/sales-order/${encodeURIComponent(ev.sales_order)}" target="_blank" style="font-weight:700;">${of_esc(ev.sales_order)}</a>`
-                : '';
+            const so_link = ev.sales_order ? of_so_link(ev.sales_order, {bold: true}) : '';
             const customer_str = ev.customer_name ? ` · ${of_esc(ev.customer_name)}` : '';
 
             // Generate message text & border class based on doctype, docstatus and status
@@ -3417,7 +3415,7 @@ class OrderFlow {
                 body = `<table class="of-table">
                     <thead><tr><th>Sales Order</th><th>Customer</th><th>Qty</th><th>Delivered</th><th>Outstanding</th></tr></thead>
                     <tbody>${rows.map(x => `<tr>
-                        <td><a href="/app/sales-order/${encodeURIComponent(x.name)}" target="_blank">${of_esc(x.name)}</a></td>
+                        <td>${of_so_link(x.name)}</td>
                         <td>${of_esc(x.customer_name || '')}</td>
                         <td>${of_round2(x.qty)}</td>
                         <td>${of_round2(x.delivered_qty)}</td>
@@ -3441,7 +3439,7 @@ class OrderFlow {
                     <tbody>${rows.map(x => `<tr>
                         <td><a href="/app/pick-list/${encodeURIComponent(x.name)}" target="_blank">${of_esc(x.name)}</a></td>
                         <td>${of_esc(x.warehouse || '')}</td>
-                        <td>${x.sales_order ? `<a href="/app/sales-order/${encodeURIComponent(x.sales_order)}" target="_blank">${of_esc(x.sales_order)}</a>
+                        <td>${x.sales_order ? `${of_so_link(x.sales_order)}
                             ${x.customer_name ? `<div class="of-micro text-muted">${of_esc(x.customer_name)}</div>` : ''}` : ''}</td>
                         <td style="font-weight:700;">${of_round2(x.qty)}</td>
                     </tr>`).join('')}</tbody>
@@ -3515,7 +3513,7 @@ class OrderFlow {
 
             return `<tr data-so="${of_esc(o.name)}" class="of-row-main">
                 <td><i class="fa fa-caret-right of-so-toggle" data-so="${of_esc(o.name)}" style="cursor:pointer; width:12px; font-size:14px; color:var(--text-light);"></i>
-                    <a href="/app/sales-order/${encodeURIComponent(o.name)}" target="_blank" style="font-weight:700;">${of_esc(o.name)}</a></td>
+                    ${of_so_link(o.name, {bold: true})}</td>
                 <td style="text-align:left;">
                     <a href="/app/customer/${encodeURIComponent(o.customer)}" target="_blank" style="font-weight:600;">${of_customer_display(o.customer_name || o.customer, o.contact_person_name)}</a>
                 </td>
@@ -3822,7 +3820,7 @@ class OrderFlow {
                 ` : ''}
                 <td>
                     <i class="fa fa-caret-right of-so-toggle" data-so="${o.name}" style="cursor:pointer; width:12px; font-size:14px; color:var(--text-light);"></i>
-                    <a href="/app/sales-order/${encodeURIComponent(o.name)}" target="_blank" style="font-weight:700;">${of_esc(o.name)}</a>
+                    ${of_so_link(o.name, {bold: true})}
                     <div class="of-meta" style="font-weight:500;">
                         <a href="/app/customer/${encodeURIComponent(o.customer)}" target="_blank" style="color:inherit;">${of_customer_display(o.customer_name || o.customer, o.contact_person_name)}</a>
                     </div>
@@ -4504,6 +4502,30 @@ function of_esc(v) {
     if (v === undefined || v === null) return '';
     return String(v).replace(/&/g, '&amp;').replace(/</g, '&lt;')
         .replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+}
+
+// A role can be configured to SEE a Sales Order on this dashboard (the tab
+// queries read via raw SQL, bypassing doctype permissions — see
+// docs/order-flow-dashboard.md) without actually holding Sales Order READ
+// permission (e.g. DAC CRM: Create only, by deliberate business design —
+// they raise the order and hand it off, they were never meant to keep
+// browsing it). Linking straight to /app/sales-order/<name> for such a user
+// works right up until they click it, then Frappe's real permission check
+// throws "You do not have access to this document" — confusing, since nothing
+// about the dashboard suggested the link was dead. frappe.model.can_read is
+// a cheap, already-in-bootinfo doctype-level check (no round-trip), so every
+// Sales Order reference on this page goes through this one place rather than
+// rendering a real <a> unconditionally.
+function of_so_link(name, opts) {
+    opts = opts || {};
+    const label = of_esc(name);
+    if (!name) return '';
+    if (!frappe.model.can_read('Sales Order')) {
+        const style = opts.bold ? ' style="font-weight:700;"' : '';
+        return `<span class="text-muted" title="${__('You do not have access to open Sales Orders')}"${style}>${label}</span>`;
+    }
+    const style = opts.bold ? ' style="font-weight:700;"' : '';
+    return `<a href="/app/sales-order/${encodeURIComponent(name)}" target="_blank"${style}>${label}</a>`;
 }
 
 // Every dashboard table shows a customer name; this appends that customer's
