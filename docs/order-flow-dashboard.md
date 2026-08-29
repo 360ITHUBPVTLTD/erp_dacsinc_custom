@@ -274,6 +274,110 @@ from elsewhere) collapses and is torn down, and next gets rebuilt from
 scratch on its next expand. Only the same-row collapse/re-expand case
 above was ever actually stale.
 
+## An explicit tab role never gets silently overridden by doctype access
+
+`can_view_tab(tab, user)` in `order_flow_permissions.py` had a second gate
+beyond the tab's own role list: `TAB_DOCTYPES` (e.g. `"billing": ["Sales
+Invoice"]`), which required the user to also have doctype-level read access
+to at least one of those doctypes — checked *before* the role list, so it
+could return `False` even for a role explicitly named in
+`of_tab_billing_roles`. Confirmed live: adding `Merchandiser User` to
+`of_tab_billing_roles` still hid the tab, because that role has no Custom
+DocPerm grant on Sales Invoice at all (correct, per the business's own
+permission matrix — a Merchandiser doesn't touch Sales Invoice directly).
+The admin had no way to know the field they'd just set wasn't actually
+deciding anything.
+
+Fixed: an explicit, non-empty role list is now authoritative on its own —
+`TAB_DOCTYPES` only applies to the *unconfigured* fallback (a tab with no
+role list configured falls back to "everyone who can read the underlying
+doctype", not literally everyone, same as before). Naming a role in Admin
+Settings is a deliberate decision and must not be second-guessed by a
+separate, invisible permission check.
+
+The same investigation found two more places with the identical root cause
+— an automated "sync" silently overwriting a deliberate admin choice — both
+reachable from the "Sync DAC Matrix" action on the Roles & Permissions page
+(`sync_dac_matrix_and_users` in `roles_and_permissions_api.py`):
+`order_flow_permissions.sync_admin_settings_tab_roles()` used to `.set(field,
+[])` and fully rebuild each `of_tab_*_roles` list from doctype access alone
+(so a role like Merchandiser User on `of_tab_billing_roles` would vanish
+again the next time anyone clicked that button), and
+`dac_permission_matrix.sync_workspace_roles()` did the same
+`doc.set("roles", [...])` full replace on dashboard Workspaces. Both are now
+additive merges, and the user-Role-Profile step of `sync_dac_matrix_and_users`
+now calls `apply_dac_matrix_assignments()` (the same additive path the "DAC
+Matrix" dialog itself uses) instead of its own separate
+`update_user_role_profiles(user, [proposed])`, which was a hard replace that
+could silently drop a second Role Profile someone else had added for another
+responsibility.
+
+## Merchandiser scoping now covers every tab that can show it
+
+`is_scoped_to_own_customers(tab)` (order_flow_permissions.py) used to only be
+called from Tracker. It's now called from Purchase, Job Work, Accounts, and
+Billing too (Approval has its own separate, deliberately different
+mechanism — see below), so a plain Merchandiser User (no other tab-granting
+role) sees only the Purchase Orders/Material Requests/Receipts/Embroidery
+Work Orders/Invoices tied to their own customers' Sales Orders, the same way
+Tracker already scoped Sales Orders themselves.
+
+**How the SQL scoping actually works, since most of these are aggregated,
+not one-row-per-Sales-Order queries.** Purchase/Job Work/the Purchase-Invoice
+half of Accounts are `GROUP BY <document>` queries joining an item table up
+through Sales Order to Customer (a single PO can carry lines for several
+Sales Orders/customers, rolled up via `GROUP_CONCAT`). Adding
+`cust.custom_merchandiser_user = %(merch_scope)s` to the WHERE clause does
+double duty on these: a document with **no** line belonging to one of the
+merchandiser's customers disappears entirely (every joined row gets filtered
+before `GROUP BY` can produce one), and a document that **does** have some
+matching lines still shows, but its `GROUP_CONCAT`/`SUM` columns roll up only
+the matching lines — the merchandiser sees their own portion of a
+company-wide PO, not the whole thing. The Sales Invoice half of Accounts
+needed no such nuance — a Sales Invoice belongs to exactly one Customer
+(`si.customer`), so the same condition is an unambiguous per-row filter
+there. Every query that reuses one of these condition lists for a separate
+aggregate (`pending_mrs`, both `po_agg`s, `active_ewos`,
+`_purchase_invoice_agg`) needed its own `LEFT JOIN tabCustomer cust` added
+too — several of them didn't have one before, since nothing had ever
+filtered on `cust` there.
+
+**Billing's own scoping decision, not Tracker's.** `get_billing_flow` reuses
+Tracker's `_get_tracker_rows` query wholesale, which used to hard-code
+`is_scoped_to_own_customers("tracker")` regardless of which tab actually
+called it — so a merchandiser's Billing-tab visibility was silently decided
+by `of_tab_tracker_roles`, not `of_tab_billing_roles`. `_get_tracker_rows`
+now takes a `tab` parameter (defaulting to `"tracker"`) and
+`get_billing_flow` passes `tab="billing"`, so each tab's own role
+configuration governs its own scoping — they can legitimately disagree (a
+user with Merchandiser User + Accounts Executive might be broadly visible on
+Billing but scoped on Tracker, if Accounts Executive is only configured on
+`of_tab_billing_roles`).
+
+**The "All" role defeated scoping wherever it appeared.** `is_scoped_to_own_
+customers` narrows a merchandiser only if none of their OTHER roles are also
+configured on that tab — but `sync_admin_settings_tab_roles()` (see above)
+can pull the universal `All` role into a tab's list as a byproduct of "roles
+with read access to the underlying doctype," not as a deliberate "open this
+to literally everyone" choice. Since every user holds `All`, it always
+satisfied that "other role" check, silently un-scoping every merchandiser on
+any tab where it showed up — confirmed live on `of_tab_accounts_roles`.
+`All` is now excluded from that check.
+
+**Not scoped, and can't meaningfully be:** Stock Tracker (`get_stock_
+tracker`) is a company-wide, per-Item availability report with no Sales
+Order or Customer in its query at all — "my customers' items" isn't a
+coherent question to ask of it. Embroidery Transfers
+(`get_embroidery_transfers`, `uniform_transfer_api.py`) queries `Uniform
+Embroidery Transfer` directly, a doctype with no `sales_order` or `customer`
+field whatsoever — a warehouse-to-warehouse stock move, structurally
+decoupled from any order. Approval (`get_pending_approvals`) keeps its own
+existing, intentionally different rule (`is_merchandiser_user()`, not
+`is_scoped_to_own_customers` — also matches customers with **no**
+merchandiser assigned yet, not just the viewer's own, so a merchandiser can
+still claim and approve a brand-new customer's first order) — left as-is,
+not unified into the others.
+
 ## Sales Tracker hides what Pending DN/SI hides
 
 `need_to_bill` and `ready_to_deliver` are the two stages Pending DN/SI (the
