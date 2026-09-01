@@ -1,6 +1,6 @@
 {
  "charts": [],
- "content": "[{\"id\":\"AOYPYraOez\",\"type\":\"custom_block\",\"data\":{\"custom_block_name\":\"HTML for checkin\",\"col\":12}},{\"id\":\"kyQVD38Y0H\",\"type\":\"header\",\"data\":{\"text\":\"<span class=\\\"h4\\\"><b>ESS</b></span>\",\"col\":12}},{\"id\":\"EqBodb-W-V\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Holiday List\",\"col\":3}},{\"id\":\"8PCOMo01-U\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Leave Application\",\"col\":3}},{\"id\":\"VZb6LTsJVT\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Monthly Attendance Report\",\"col\":3}},{\"id\":\"svU9IJNhuo\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Compensatory Leave Request\",\"col\":3}},{\"id\":\"njUcnuuJ5x\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Expense Claim\",\"col\":3}},{\"id\":\"NLarxqhiU-\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"On Duty Request\",\"col\":3}},{\"id\":\"tmCbBAZa9c\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Task\",\"col\":3}},{\"id\":\"GEbwAKVnVY\",\"type\":\"spacer\",\"data\":{\"col\":12}},{\"id\":\"43aEl1NlD0\",\"type\":\"header\",\"data\":{\"text\":\"<span class=\\\"h4\\\"><b>TASK</b></span>\",\"col\":12}},{\"id\":\"yCGelW_Cit\",\"type\":\"number_card\",\"data\":{\"number_card_name\":\"Open Task\",\"col\":4}},{\"id\":\"cZBL_9z_ok\",\"type\":\"number_card\",\"data\":{\"number_card_name\":\"Todays Task\",\"col\":4}},{\"id\":\"em4vKHs463\",\"type\":\"number_card\",\"data\":{\"number_card_name\":\"Overdue Task\",\"col\":4}},{\"id\":\"z29omKqdgR\",\"type\":\"header\",\"data\":{\"text\":\"<span class=\\\"h4\\\"><b>Reports</b></span>\",\"col\":12}},{\"id\":\"W-Ft2Gf_u8\",\"type\":\"custom_block\",\"data\":{\"custom_block_name\":\"Absent Table Employee 13mar\",\"col\":12}},{\"id\":\"b1wzi706fp\",\"type\":\"custom_block\",\"data\":{\"custom_block_name\":\"Pending Leave Applications Employee 13 mar\",\"col\":12}},{\"id\":\"DCgK5WB7rb\",\"type\":\"custom_block\",\"data\":{\"custom_block_name\":\"Pending / To-Approve On-Duty\",\"col\":12}},{\"id\":\"Pc0BNnV1-9\",\"type\":\"custom_block\",\"data\":{\"custom_block_name\":\"Approved Leaves Employee 13mar\",\"col\":12}},{\"id\":\"eUripfbbAV\",\"type\":\"custom_block\",\"data\":{\"custom_block_name\":\"Employees on Leave Today\",\"col\":12}},{\"id\":\"N-2wU52QFD\",\"type\":\"custom_block\",\"data\":{\"custom_block_name\":\"Month Brithday\",\"col\":12}},{\"id\":\"r0cAfHFP5o\",\"type\":\"custom_block\",\"data\":{\"custom_block_name\":\"Upcoming Holidays\",\"col\":12}}]",
+ "content": "[{\"id\":\"AOYPYraOez\",\"type\":\"custom_block\",\"data\":{\"custom_block_name\":\"HTML for checkin\",\"col\":12}},{\"id\":\"kyQVD38Y0H\",\"type\":\"header\",\"data\":{\"text\":\"<span class=\\\"h4\\\"><b>ESS</b></span>\",\"col\":12}},{\"id\":\"EqBodb-W-V\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Holiday List\",\"col\":3}},{\"id\":\"8PCOMo01-U\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Leave Application\",\"col\":3}},{\"id\":\"VZb6LTsJVT\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Monthly Attendance Report\",\"col\":3}},{\"id\":\"svU9IJNhuo\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Compensatory Leave Request\",\"col\":3}},{\"id\":\"njUcnuuJ5x\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Expense Claim\",\"col\":3}},{\"id\":\"NLarxqhiU-\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"On Duty Request\",\"col\":3}},{\"id\":\"tmCbBAZa9c\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Task\",\"col\":3}},{\"id\":\"5NlBqQ6i00\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Operation Dashboard\",\"col\":3}},{\"id\":\"GEbwAKVnVY\",\"type\":\"spacer\",\"data\":{\"col\":12}},{\"id\":\"43aEl1NlD0\",\"type\":\"header\",\"data\":{\"text\":\"<span class=\\\"h4\\\"><b>TASK</b></span>\",\"col\":12}},{\"id\":\"yCGelW_Cit\",\"type\":\"number_card\",\"data\":{\"number_card_name\":\"Open Task\",\"col\":4}},{\"id\":\"cZBL_9z_ok\",\"type\":\"number_card\",\"data\":{\"number_card_name\":\"Todays Task\",\"col\":4}},{\"id\":\"em4vKHs463\",\"type\":\"number_card\",\"data\":{\"number_card_name\":\"Overdue Task\",\"col\":4}},{\"id\":\"z29omKqdgR\",\"type\":\"header\",\"data\":{\"text\":\"<span class=\\\"h4\\\"><b>Reports</b></span>\",\"col\":12}},{\"id\":\"W-Ft2Gf_u8\",\"type\":\"custom_block\",\"data\":{\"custom_block_name\":\"Absent Table Employee 13mar\",\"col\":12}},{\"id\":\"b1wzi706fp\",\"type\":\"custom_block\",\"data\":{\"custom_block_name\":\"Pending Leave Applications Employee 13 mar\",\"col\":12}},{\"id\":\"DCgK5WB7rb\",\"type\":\"custom_block\",\"data\":{\"custom_block_name\":\"Pending / To-Approve On-Duty\",\"col\":12}},{\"id\":\"Pc0BNnV1-9\",\"type\":\"custom_block\",\"data\":{\"custom_block_name\":\"Approved Leaves Employee 13mar\",\"col\":12}},{\"id\":\"eUripfbbAV\",\"type\":\"custom_block\",\"data\":{\"custom_block_name\":\"Employees on Leave Today\",\"col\":12}},{\"id\":\"N-2wU52QFD\",\"type\":\"custom_block\",\"data\":{\"custom_block_name\":\"Month Brithday\",\"col\":12}},{\"id\":\"r0cAfHFP5o\",\"type\":\"custom_block\",\"data\":{\"custom_block_name\":\"Upcoming Holidays\",\"col\":12}}]",
  "creation": "2026-04-20 15:32:42.433762",
  "custom_blocks": [
   {
@@ -45,7 +45,7 @@
  "is_hidden": 0,
  "label": "Employee Workspace",
  "links": [],
- "modified": "2026-08-28 20:21:52.162432",
+ "modified": "2026-08-28 20:33:24.784316",
  "modified_by": "Administrator",
  "module": "Erp Dacsinc Custom",
  "name": "Employee Workspace",
@@ -90,6 +90,13 @@
    "link_to": "Task",
    "stats_filter": "[]",
    "type": "DocType"
+  },
+  {
+   "color": "Grey",
+   "doc_view": "List",
+   "label": "Operation Dashboard",
+   "link_to": "order-flow",
+   "type": "Page"
   },
   {
    "color": "Grey",

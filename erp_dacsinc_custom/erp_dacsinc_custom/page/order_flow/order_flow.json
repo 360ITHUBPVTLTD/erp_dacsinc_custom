@@ -3,38 +3,65 @@
  "creation": "2026-07-31 10:00:00",
  "docstatus": 0,
  "doctype": "Page",
- "idx": 0,
- "modified": "2026-08-14 12:00:00.000000",
+ "idx": 1,
+ "modified": "2026-08-29 09:35:04.868953",
  "modified_by": "Administrator",
  "module": "Erp Dacsinc Custom",
  "name": "order-flow",
  "owner": "Administrator",
  "page_name": "order-flow",
  "roles": [
-  {"role": "System Manager"},
-  {"role": "Super Admin"},
-  {"role": "Admin"},
-  {"role": "Marketing Team"},
-  {"role": "Inside Sales"},
-  {"role": "Merchandiser User"},
-  {"role": "Junior Merchandiser"},
-  {"role": "Production Team"},
-  {"role": "Purchase Team"},
-  {"role": "Inward Team"},
-  {"role": "Accounts Team"},
-  {"role": "POS User"},
-  {"role": "POS Admin"},
-  {"role": "POS Store Manager"},
-  {"role": "Production Manager"},
-  {"role": "Production Assistant"},
-  {"role": "Accounts Executive"},
-  {"role": "Accounts Manager"},
-  {"role": "Finance Executive"},
-  {"role": "Online"},
-  {"role": "Purchase Manager"},
-  {"role": "Purchase Executive"},
-  {"role": "Logistics"},
-  {"role": "HR Manager"}
+  {
+   "role": "System Manager"
+  },
+  {
+   "role": "Online"
+  },
+  {
+   "role": "Logistics"
+  },
+  {
+   "role": "Accounts Team"
+  },
+  {
+   "role": "Inward Team"
+  },
+  {
+   "role": "Purchase Team"
+  },
+  {
+   "role": "Production Team"
+  },
+  {
+   "role": "Inside Sales"
+  },
+  {
+   "role": "Marketing Team"
+  },
+  {
+   "role": "Sales Order Final Approver"
+  },
+  {
+   "role": "Super Admin"
+  },
+  {
+   "role": "Store Manager"
+  },
+  {
+   "role": "Executive"
+  },
+  {
+   "role": "Merchandiser User"
+  },
+  {
+   "role": "Production Assistant"
+  },
+  {
+   "role": "Junior Merchandiser"
+  },
+  {
+   "role": "Sales User"
+  }
  ],
  "script": null,
  "standard": "Yes",
