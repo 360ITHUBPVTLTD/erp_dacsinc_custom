@@ -429,6 +429,61 @@ function show_add_subcontract_item_dialog(frm) {
 }
 
 // ----------------------------------------------------------------------------------
+// --- Adding items from the fetch dialogs: merge, never replace ---
+// ----------------------------------------------------------------------------------
+//
+// This form has three different "fetch and add items" dialogs (pending Sales
+// Orders, raw materials, Material Request suggestions). Each of them used to
+// call frm.clear_table("items") before adding, so using a second dialog threw
+// away everything the first one had added — the user's whole reason for
+// opening two of them.
+//
+// They now UPSERT: a row from the same source is updated in place, anything
+// else is appended. Matching on item_code alone would be wrong, because this
+// app deliberately supports the same item on two rows — one linked to a Sales
+// Order line, one not (that is how extra qty beyond the order's own need is
+// ordered, see guard_po_item_not_over_so_need). The identity of a row is
+// therefore the item PLUS what it is for.
+
+function po_item_key(row) {
+    return [
+        row.item_code || '',
+        row.sales_order_item || '',
+        row.material_request_item || '',
+        row.fg_item || '',
+        row.warehouse || '',
+    ].join('||');
+}
+
+// A brand-new form carries one empty placeholder row. clear_table() used to
+// take it away; since it no longer runs, drop the blanks explicitly or they
+// survive as rows with no item and block the save.
+function po_drop_blank_items(frm) {
+    const kept = (frm.doc.items || []).filter(r => r.item_code);
+    if (kept.length !== (frm.doc.items || []).length) {
+        frm.doc.items = kept;
+        (frm.doc.items || []).forEach((r, i) => { r.idx = i + 1; });
+    }
+}
+
+// Returns the row that now holds `built` — existing (qty replaced) or new.
+// The qty is REPLACED rather than added to: every one of these dialogs offers
+// an absolute "this is what is still outstanding" figure, so re-running one
+// should restate that row, not double it.
+function po_upsert_item(frm, built) {
+    po_drop_blank_items(frm);
+    const key = po_item_key(built);
+    const existing = (frm.doc.items || []).find(r => po_item_key(r) === key);
+    if (existing) {
+        Object.keys(built).forEach(f => {
+            if (built[f] !== undefined && built[f] !== null) existing[f] = built[f];
+        });
+        return existing;
+    }
+    return frm.add_child('items', built);
+}
+
+// ----------------------------------------------------------------------------------
 // --- CLIENT SCRIPT HOOKS (Controller) ---
 // ----------------------------------------------------------------------------------
 
@@ -447,6 +502,13 @@ frappe.ui.form.on('Purchase Order', {
         frm.trigger('refresh');
     },
 
+    // Re-read the limit at the moment of a save attempt, so when the server
+    // guard refuses the save the note beside the error shows the CURRENT
+    // remaining figure rather than whatever it read when the form was opened.
+    validate: function (frm) {
+        if (window.so_qty_cap) window.so_qty_cap.set_intro(frm);
+    },
+
     schedule_date: function (frm) {
         if (frm.doc.schedule_date) {
             frm.doc.items.forEach(row => {
@@ -459,10 +521,23 @@ frappe.ui.form.on('Purchase Order', {
     refresh: function (frm) {
         apply_supplier_filter(frm);
 
+        // Standing note about the Sales Order cap (see so_qty_cap.js).
+        if (window.so_qty_cap) window.so_qty_cap.set_intro(frm);
+
         setTimeout(() => {
             frm.page.remove_inner_button('Purchase Invoice', 'Create');
             // frm.page.remove_inner_button('Payment Request', 'Create');
-            // frm.page.remove_inner_button('Purchase Receipt', 'Create');
+            // A subcontracted PO is only ever received through a Subcontracting
+            // Receipt (via "Receive Finished Goods" above) — the standard
+            // "Create > Purchase Receipt" button raises a plain goods-receipt
+            // against this PO's own items, which for a subcontracted PO are the
+            // finished-good/service rows, not real stock to receive that way.
+            // Left visible it invited receiving through the wrong document
+            // entirely, bypassing the whole SCO/Stock Entry flow this app builds.
+            if (frm.doc.is_subcontracted) {
+                frm.page.remove_inner_button('Purchase Receipt', 'Create');
+                frm.page.remove_inner_button('Subcontracting Order', 'Create');
+            }
             frm.remove_custom_button('Supplier Quotation', 'Get Items From');
             frm.remove_custom_button('Material Request', 'Get Items From');
             frm.remove_custom_button('Product Bundle', 'Get Items From');
@@ -1276,6 +1351,10 @@ function show_sales_order_dialog(frm, data, is_subcontracted) {
         
         .text-pick-sub { color: #28a745; font-weight: 700; }
         .text-pick-draft { color: #bf7500; font-weight: 600; }
+        .text-po-draft { color: #ea580c; font-weight: 600; }
+        .draft-tag { display: inline-block; padding: 0 4px; border-radius: 3px; background: #fff7ed;
+                     border: 1px solid #fed7aa; color: #ea580c; font-size: 9px; font-weight: 700;
+                     text-transform: uppercase; letter-spacing: 0.3px; vertical-align: middle; }
         
         .po-box-linked { background: #f4f9ff; border: 1px solid #dce9f9; padding: 8px; border-radius: 4px; margin-bottom: 6px; }
         .po-box-other { background: #fffcf0; border: 1px solid #f9ebbe; padding: 8px; border-radius: 4px; font-size: 12px; }
@@ -1294,6 +1373,10 @@ function show_sales_order_dialog(frm, data, is_subcontracted) {
         .po-detail-line:last-child { border-bottom: none; }
         .sup-text { color: #777; font-size: 10px; font-weight: normal; }
         
+        .po-state { display: inline-block; padding: 0 5px; border-radius: 3px; font-size: 9px; font-weight: 800;
+                    text-transform: uppercase; letter-spacing: 0.3px; vertical-align: middle; margin-left: 4px; }
+        .po-state-draft { background: #fff7ed; border: 1px solid #fed7aa; color: #ea580c; }
+        .po-state-sub { background: #ecfdf5; border: 1px solid #a7f3d0; color: #047857; }
         .toggle-details-btn { cursor: pointer; color: #1160b7; font-size: 11px; text-decoration: underline; font-weight: 700; }
         .toggle-details-btn:hover { color: #d9534f; }
         
@@ -1303,11 +1386,38 @@ function show_sales_order_dialog(frm, data, is_subcontracted) {
     </style>
     `;
 
+    // ── 0. PLAN EVERY ROW FIRST, ONCE ──
+    // The overview's "Still to Buy" and each row's own "Final" have to be the
+    // SAME number — they were computed by two different formulas (the server's
+    // summary netted off picks and the linked PO, the row also netted off
+    // draft picks and any open Material Request), so the header claimed 26
+    // still to buy above rows that between them offered 14. Both now read from
+    // this one pass, so they cannot drift apart again.
+    const row_plan = new Map();
+    const need_by_item = {};
+    sales_orders.forEach((so) => {
+        const req = flt(so.qty) - flt(so.delivered_qty);
+        const sub_picks = flt(so.pick_sub || 0);
+        const draft_picks = flt(so.pick_draft || 0);
+        const linked_po_qty = flt(so.linked_po_qty || 0);
+        const mr_open_qty = flt(so.mr_open_qty || 0);
+        const to_buy_exact = flt(Math.max(0, req - linked_po_qty - sub_picks - draft_picks - mr_open_qty), 2);
+        const to_buy = qty_round_up(to_buy_exact).rounded; // round up so this SO's need is never bought short
+        row_plan.set(so, { req, sub_picks, draft_picks, linked_po_qty, mr_open_qty, to_buy_exact, to_buy });
+        need_by_item[so.item_code] = (need_by_item[so.item_code] || 0) + to_buy;
+    });
+
     let html = css + '<div class="dialog-container">';
 
     // ── 1. TOP GLOBAL SUMMARY ──
     if (item_summary && item_summary.length > 0) {
-        let sum_rows = item_summary.map(i => `
+        let sum_rows = item_summary.map(i => {
+            // Which POs, not just how much — a "Need" that reads lower than
+            // the open orders suggest is only actionable if the reader can
+            // go and look at the draft PO that is holding the difference.
+            const draft_po_qty = flt(i.draft_po_qty || 0);
+            const draft_po_ids = i.draft_po_ids || [];
+            return `
             <tr>
                 <td><strong><a href="/app/item/${i.item_code}" target="_blank" style="color: var(--primary-color); text-decoration: none;">
             ${i.item_code}
@@ -1315,13 +1425,32 @@ function show_sales_order_dialog(frm, data, is_subcontracted) {
                 <td class="text-right">${flt(i.avail).toFixed(0)}</td>
                 <td class="text-right text-pick-draft">${flt(i.draft_picks || 0).toFixed(0)}</td>
                 <td class="text-right text-pick-sub">${flt(i.sub_picks || 0).toFixed(0)}</td>
-                <td class="text-right" style="color:#d9534f; font-weight:700;">${flt(i.total_need).toFixed(0)}</td>
-            </tr>`).join("");
+                <td class="text-right text-po-draft" title="${draft_po_qty > 0
+                        ? frappe.utils.escape_html(`Already on a DRAFT Purchase Order (${draft_po_ids.join(', ')}) and deducted from Need. Submit or cancel it rather than ordering the same qty again.`)
+                        : 'No draft Purchase Order is holding any of this item&#39;s need.'}">
+                    ${draft_po_qty > 0 ? draft_po_qty.toFixed(0) : '<span style="color:#cbd5e1;">—</span>'}
+                    ${draft_po_ids.length ? `<div style="font-size:9px; font-weight:600; line-height:1.3;">${draft_po_ids.slice(0, 3).map(id =>
+                        `<a href="/app/purchase-order/${encodeURIComponent(id)}" target="_blank" style="color:#ea580c;">${id}</a>`).join('<br>')}${
+                        draft_po_ids.length > 3 ? `<br>+${draft_po_ids.length - 3} more` : ''}</div>` : ''}
+                </td>
+                <td class="text-right" style="color:#d9534f; font-weight:700;">${flt(need_by_item[i.item_code] || 0).toFixed(0)}</td>
+            </tr>`;
+        }).join("");
         html += `
-            <div style="font-weight: 600; margin-bottom: 5px; font-size: 12px; color: #777;">Inventory Status Overview</div>
+            <div style="font-weight: 600; margin-bottom: 5px; font-size: 12px; color: #777;">
+                Inventory Status Overview
+                <span style="font-weight: 400; color: #9aa5b1;">— stock and pick figures are company-wide for the item; the last two columns cover only the Sales Orders listed below.</span>
+            </div>
             <div style="border: 1px solid #eee; border-radius: 4px; overflow-y: auto; max-height: 200px; margin-bottom: 15px;">
                 <table class="table table-bordered table-sm m-0">
-                    <thead><tr><th width="40%">Item</th><th class="text-right">In Stock</th><th class="text-right text-pick-draft">Draft</th><th class="text-right text-pick-sub">Sub</th><th class="text-right">Need</th></tr></thead>
+                    <thead><tr>
+                        <th width="30%">Item</th>
+                        <th class="text-right" title="Physical stock on hand right now in the main stock warehouse (VV Puram - IND).">In Stock</th>
+                        <th class="text-right text-pick-draft" title="Reserved on DRAFT Pick Lists across all orders — not confirmed yet, but already earmarked.">Reserved on<br><small>Draft Picks</small></th>
+                        <th class="text-right text-pick-sub" title="Picked on SUBMITTED Pick Lists across all orders and NOT yet delivered — i.e. still physically held for an order. Delivered and Completed picks are excluded: those goods have already left the warehouse and are gone from In Stock too.">Held for Orders<br><small>(picked, not delivered)</small></th>
+                        <th class="text-right text-po-draft" title="Qty for the Sales Orders listed below that is already on a DRAFT Purchase Order. It is deducted from Still to Buy, so it is never ordered a second time — submit or cancel that PO instead.">Already on<br><small>Draft PO</small></th>
+                        <th class="text-right" title="The sum of the Final column for this item across every row below — what is still genuinely left to buy after stock, picks, and every existing Purchase Order / Material Request.">Still to Buy</th>
+                    </tr></thead>
                     <tbody>${sum_rows}</tbody>
                 </table>
             </div>`;
@@ -1345,12 +1474,14 @@ function show_sales_order_dialog(frm, data, is_subcontracted) {
     `;
 
     sales_orders.forEach((so) => {
-        const req = flt(so.qty) - flt(so.delivered_qty);
-        const sub_picks = flt(so.pick_sub || 0);
-        const draft_picks = flt(so.pick_draft || 0); // <--- ADDED DRAFT DEDUCTION
-        const linked_po_qty = flt(so.linked_po_qty || 0);
-        const to_buy_exact = flt(Math.max(0, req - linked_po_qty - sub_picks - draft_picks), 2); // *** UPDATED MATH ***
-        const to_buy = qty_round_up(to_buy_exact).rounded; // round up so this SO's need is never bought short
+        // Deductions computed once in the planning pass above, so this row and
+        // the overview header can never disagree. Draft picks and any open
+        // Material Request are netted off for the same reason the linked PO
+        // is: already spoken for, and buying it again here would strand that
+        // MR open forever having ordered the same qty twice. The right move
+        // for that qty is "Get Items from MR", not a second direct PO.
+        const { req, sub_picks, draft_picks, linked_po_qty, mr_open_qty,
+                to_buy_exact, to_buy } = row_plan.get(so);
         // Hard block, no override: a BOM row whose raw materials aren't
         // physically in stock yet (so.rm_in_stock, computed server-side in
         // get_pending_so_with_material_stock) can't be selected here even if
@@ -1364,10 +1495,23 @@ function show_sales_order_dialog(frm, data, is_subcontracted) {
               ).join('\n')
             : '';
 
+        // Every Purchase Order listed here says whether it is a Draft or
+        // Submitted. Both are netted off "Final" (a draft PO is a real
+        // commitment as far as the Sales Order over-order guard is concerned),
+        // so without the tag a reduced Final looks unexplained — and the one
+        // thing the user most wants to act on, a PO still sitting unsubmitted,
+        // was indistinguishable from a firm order.
+        const po_state_tag = (is_draft) => is_draft
+            ? '<span class="po-state po-state-draft" title="This Purchase Order has NOT been submitted yet. Its qty is still deducted below — submit or cancel it instead of ordering the same qty again.">Draft</span>'
+            : '<span class="po-state po-state-sub" title="Submitted Purchase Order.">Submitted</span>';
+
+        const draft_linked_qty = flt(so.linked_po_draft_qty || 0);
+        const draft_linked_pos = (so.linked_po_details || []).filter(p => p.draft).map(p => p.id);
+
         let linked_list = (so.linked_po_details || []).map(p => `
             <div class="po-detail-line">
-                <span style="white-space:nowrap; overflow:hidden; text-overflow:ellipsis; width:75%">${get_link("Purchase Order", p.id)} <span class="sup-text">(${p.sup || 'N/A'})</span></span>
-                <strong style="color: #1160b7;">${flt(p.qty).toFixed(0)}</strong>
+                <span style="white-space:nowrap; overflow:hidden; text-overflow:ellipsis; width:75%">${get_link("Purchase Order", p.id)} ${po_state_tag(p.draft)} <span class="sup-text">(${p.sup || 'N/A'})</span></span>
+                <strong style="color: ${p.draft ? '#ea580c' : '#1160b7'};">${flt(p.qty).toFixed(0)}</strong>
             </div>
         `).join("");
 
@@ -1381,7 +1525,7 @@ function show_sales_order_dialog(frm, data, is_subcontracted) {
         let other_details_html = (so.other_po_list || []).map(p => `
             <div class="po-detail-line">
                 <span style="white-space:nowrap; overflow:hidden; text-overflow:ellipsis; width:75%">
-                    ${get_link("Purchase Order", p.id)} <span class="sup-text">(${p.sup || 'Stock'})</span>
+                    ${get_link("Purchase Order", p.id)} ${po_state_tag(p.draft)} <span class="sup-text">(${p.sup || 'Stock'})</span>
                     <br><small style="color:${p.sales_order ? '#b45309' : '#059669'};">
                         ${p.sales_order
                             ? `Reserved for ${frappe.utils.escape_html(p.sales_order)}${p.so_customer_name ? ` (${frappe.utils.escape_html(p.so_customer_name)})` : ''}`
@@ -1432,21 +1576,37 @@ function show_sales_order_dialog(frm, data, is_subcontracted) {
                 </td>
                 <td style="font-size:12px;">
                     <div class="d-flex justify-content-between mb-1"><span>Need:</span> <strong>${req.toFixed(0)}</strong></div>
-                    <div class="d-flex justify-content-between text-pick-sub"><span>Picked (Sub):</span> <strong>${sub_picks.toFixed(0)}</strong></div>
-                    <div class="d-flex justify-content-between text-pick-draft" style="font-size:11px; margin-top:-1px;"><span>Draft Pick:</span> <span>${draft_picks.toFixed(0)}</span></div>
+                    <div class="d-flex justify-content-between text-pick-sub" title="Already picked on a SUBMITTED Pick List for this order."><span>Pick List (Submitted):</span> <strong>${sub_picks.toFixed(0)}</strong></div>
+                    <div class="d-flex justify-content-between text-pick-draft" style="font-size:11px; margin-top:-1px;" title="Reserved on a DRAFT Pick List for this order — not confirmed yet, but still deducted so it isn't bought twice."><span>Pick List (Draft):</span> <span>${draft_picks.toFixed(0)}</span></div>
+                    ${linked_po_qty > 0 ? `<div class="d-flex justify-content-between" style="font-size:11px; margin-top:-1px; color:#1160b7;"
+                         title="Already on a Purchase Order raised for this exact Sales Order line."><span>On PO:</span> <span><strong>${linked_po_qty.toFixed(0)}</strong></span></div>` : ''}
+                    ${draft_linked_qty > 0 ? `<div class="d-flex justify-content-between text-po-draft" style="font-size:11px; margin-top:-1px;"
+                         title="${frappe.utils.escape_html(`Of the ${linked_po_qty.toFixed(0)} already on a Purchase Order for this line, ${draft_linked_qty.toFixed(0)} is on a PO that has NOT been submitted yet (${draft_linked_pos.join(', ')}). It is still deducted from Final — submit or cancel that PO instead of ordering the same qty again here.`)}"><span>&nbsp;&nbsp;↳ of which Draft PO:</span> <span><strong>${draft_linked_qty.toFixed(0)}</strong></span></div>
+                    <div style="font-size:10px; margin-top:1px;">${draft_linked_pos.map(id =>
+                        `<a href="/app/purchase-order/${encodeURIComponent(id)}" target="_blank" style="color:#ea580c; font-weight:700;">${id}</a> <span class="po-state po-state-draft" style="margin-left:0;">Draft</span>`
+                    ).join('<br>')}</div>` : ''}
+                    ${mr_open_qty > 0 ? `<div class="d-flex justify-content-between" style="font-size:11px; margin-top:-1px; color:#6366f1;"
+                         title="Already requested on ${(so.mr_open_details || []).map(m => m.id).join(', ')} — convert that Material Request to a Purchase Order instead of ordering this qty again."><span>On MR:</span> <span><strong>${mr_open_qty.toFixed(0)}</strong></span></div>
+                    <div style="font-size:10px; color:#6366f1; margin-top:1px;">${(so.mr_open_details || []).map(m =>
+                        `<a href="/app/material-request/${encodeURIComponent(m.id)}" target="_blank" style="color:#6366f1; font-weight:700;">${m.id}</a> <span style="color:#94a3b8;">(${m.status})</span>`
+                    ).join('<br>')}</div>` : ''}
                     <div class="d-flex justify-content-between" style="border-top:1px dashed #ccc; margin-top:5px; padding-top:4px;">
                         <span>Final:</span> <strong class="text-danger">${to_buy.toFixed(0)}</strong>
                     </div>
                 </td>
                 <td>
                     <div class="po-box-linked">
-                        <div style="font-size: 10px; font-weight:700; color: #2980b9; margin-bottom: 2px;">PO LINKED TO THIS SO</div>
+                        <div style="font-size: 10px; font-weight:700; color: #2980b9; margin-bottom: 2px;">
+                            PO LINKED TO THIS SO
+                            ${draft_linked_qty > 0 ? `<span class="po-state po-state-draft" title="Part of this SO's coverage is on a Purchase Order that has not been submitted yet.">${draft_linked_qty.toFixed(0)} on draft</span>` : ''}
+                        </div>
                         ${linked_list || '<small class="text-muted">None</small>'}
                     </div>
                     <div class="po-box-other">
                         <div style="font-size: 10px; font-weight:700; color: #7f8c8d; margin-bottom: 2px; display:flex; justify-content: space-between;"
                              title="Neither figure is counted toward this row's own Final need — general stock is unclaimed and could still help, reserved stock already belongs to a different Sales Order">
-                            <span>OTHER PO: ${other_general_qty.toFixed(0)} Unclaimed${other_reserved_qty > 0 ? ` &middot; ${other_reserved_qty.toFixed(0)} Reserved Elsewhere` : ''}</span>
+                            <span>OTHER PO: ${other_general_qty.toFixed(0)} Unclaimed${other_reserved_qty > 0 ? ` &middot; ${other_reserved_qty.toFixed(0)} Reserved Elsewhere` : ''}${
+                                flt(so.other_po_draft_qty || 0) > 0 ? ` &middot; <span style="color:#ea580c;">${flt(so.other_po_draft_qty).toFixed(0)} on draft</span>` : ''}</span>
                             <span class="toggle-details-btn">View Details</span>
                         </div>
                         <div class="other-po-list-container">
@@ -1507,7 +1667,6 @@ function show_sales_order_dialog(frm, data, is_subcontracted) {
                         frappe.msgprint(__("No valid items could be added."));
                         return;
                     }
-                    frm.clear_table("items");
                     if (r.message.rejected_items?.length) {
                         const msg = r.message.rejected_items
                             .map(i => `• ${i.item_name || i.item_code}: ${i.reason}`)
@@ -1519,10 +1678,10 @@ function show_sales_order_dialog(frm, data, is_subcontracted) {
                         });
                     }
 
-                    // Add valid rows to PO
+                    // Merge into whatever is already on the form — another
+                    // dialog may have put rows there (see po_upsert_item).
                     r.message.valid_items.forEach(data => {
-                        const row = frm.add_child("items");
-                        Object.assign(row, data);           // faster than many set_value calls
+                        po_upsert_item(frm, data);
                     });
 
                     frm.refresh_field("items");
@@ -1602,6 +1761,10 @@ function show_so_selection_and_rm_purchase_dialog(frm, sales_orders) {
             .qty-input { border: 1px solid #dfe2e5; background: #fff; font-weight: bold; border-radius: 4px; padding: 4px 8px; font-size: 15px; height: 30px; transition: all 0.2s; }
             .qty-input:focus { border-color: #5e64ff; box-shadow: 0 0 0 3px rgba(94,100,255,0.1); }
             
+            .po-state { display: inline-block; padding: 0 5px; border-radius: 3px; font-size: 9px; font-weight: 800;
+                        text-transform: uppercase; letter-spacing: 0.3px; vertical-align: middle; margin-left: 3px; }
+            .po-state-draft { background: #fff7ed; border: 1px solid #fed7aa; color: #ea580c; }
+            .po-state-sub { background: #ecfdf5; border: 1px solid #a7f3d0; color: #047857; }
             .rm-preview-line { display: flex; justify-content: space-between; align-items: center; margin-bottom: 2px; font-size: 14px; border-bottom: 1px dashed #eee; padding-bottom: 2px; }
             .rm-preview-line:last-child { border-bottom: none; }
             .rm-prev-stat { font-family: monospace; }
@@ -1672,7 +1835,10 @@ function show_so_selection_and_rm_purchase_dialog(frm, sales_orders) {
             <td class="text-right text-highlight" style="font-size: 14px;">
                 ${flt(so.qty_awaiting_pick, 2)} ${so.uom}
                 ${flt(so.fg_in_production || 0) > 0
-                ? `<div class="text-muted" style="font-size:10px; font-weight:normal;" title="Already ordered on a Subcontracting Purchase Order for this Sales Order — excluded here so raw material isn't fetched a second time for it">${flt(so.fg_in_production, 2)} already on Subcontract PO</div>`
+                ? `<div class="text-muted" style="font-size:10px; font-weight:normal;" title="Already ordered on a SUBMITTED Subcontracting Purchase Order for this Sales Order — excluded here so raw material isn't fetched a second time for it">${flt(so.fg_in_production, 2)} on Subcontract PO <span class="po-state po-state-sub">Submitted</span></div>`
+                : ''}
+                ${flt(so.fg_in_production_draft || 0) > 0
+                ? `<div style="font-size:10px; font-weight:normal; color:#ea580c;" title="${frappe.utils.escape_html(`Also on a Subcontracting Purchase Order that has NOT been submitted yet: ${(so.fg_in_production_draft_pos || []).join(', ')}. Check it before fetching raw material for this line again.`)}">${flt(so.fg_in_production_draft, 2)} on Subcontract PO <span class="po-state po-state-draft">Draft</span></div>`
                 : ''}
             </td>
             <td class="text-center">
@@ -1707,7 +1873,7 @@ function show_so_selection_and_rm_purchase_dialog(frm, sales_orders) {
                         <th width="4%" class="text-center"><input type="checkbox" id="so-check-all" ></th>
                         <th width="28%">Order / Item</th>
                         <th width="10%" class="text-right">Org. Qty</th>
-                        <th width="10%" class="text-right">Picked (S/D)</th>
+                        <th width="10%" class="text-right" title="Qty already picked on a SUBMITTED Pick List / reserved on a DRAFT Pick List.">Picked<br><small>Submitted / Draft</small></th>
                         <th width="12%" class="text-right">Remaining</th>
                         <th width="12%" class="text-center">Qty to Make</th>
                         <th width="24%" title="Per raw material: Need (this order's own qty-to-make × BOM ratio) versus what's already covered — this order's own stock/PO/MR share, plus anything genuinely unclaimed. Hover a status to see the full breakdown.">RM Availability Status</th>
@@ -1765,9 +1931,11 @@ function show_so_selection_and_rm_purchase_dialog(frm, sales_orders) {
                             uom: rm.uom,
                             available_stock: flt(rm.available_qty),
                             general_po_coming: flt(rm.incoming_general_qty),
+                            general_po_draft: flt(rm.incoming_general_draft_qty),
                             general_mr_coming: flt(rm.mr_general_qty),
                             required_qty: 0,
                             linked_po_qty_total: 0,
+                            linked_po_draft_total: 0,
                             linked_mr_qty_total: 0,
                             po_refs: rm.existing_po_list || [],
                             mr_refs: rm.existing_mr_list || [],
@@ -1778,6 +1946,7 @@ function show_so_selection_and_rm_purchase_dialog(frm, sales_orders) {
                     let req = fg_qty * flt(rm.bom_qty_per_unit);
                     consolidated_rms[rm.item_code].required_qty += req;
                     consolidated_rms[rm.item_code].linked_po_qty_total += flt(rm.ordered_linked_qty);
+                    consolidated_rms[rm.item_code].linked_po_draft_total += flt(rm.ordered_linked_draft_qty);
                     consolidated_rms[rm.item_code].linked_mr_qty_total += flt(rm.mr_linked_qty);
                     consolidated_rms[rm.item_code].breakdown.push({
                         so: so_data.sales_order, fg: so_data.item_code,
@@ -1813,16 +1982,20 @@ function show_so_selection_and_rm_purchase_dialog(frm, sales_orders) {
 
             $line.find('.rm-prev-calc').text(`${base_bom.toFixed(2)} x ${flt(fg_qty)} = ${total_rm_req.toFixed(2)}`);
 
+            let linked_po_draft = flt(rm_data.ordered_linked_draft_qty);
+            let general_po_draft = flt(rm_data.incoming_general_draft_qty);
             const po_ref_text = (rm_data.existing_po_list || [])
-                .map(po => `${po.name}${po.supplier ? ` (${po.supplier})` : ''}`).join(', ');
+                .map(po => `${po.name}${po.supplier ? ` (${po.supplier})` : ''}${po.docstatus === 0 ? ' [DRAFT]' : ''}`).join(', ');
             const mr_ref_text = (rm_data.existing_mr_list || [])
                 .map(mr => mr.name).join(', ');
 
             const coverage_note = `Need ${total_rm_req.toFixed(2)} ${rm_data.uom}\n`
                 + `Stock: ${stock.toFixed(2)}\n`
-                + `PO for this order: ${linked_po.toFixed(2)}\n`
+                + `PO for this order: ${linked_po.toFixed(2)}`
+                + (linked_po_draft > 0 ? `  (${linked_po_draft.toFixed(2)} still on a DRAFT PO)` : '') + `\n`
                 + `MR for this order: ${linked_mr.toFixed(2)}\n`
-                + `Unclaimed PO (any order): ${general_po.toFixed(2)}\n`
+                + `Unclaimed PO (any order): ${general_po.toFixed(2)}`
+                + (general_po_draft > 0 ? `  (${general_po_draft.toFixed(2)} still on a DRAFT PO)` : '') + `\n`
                 + `Unclaimed MR (any order): ${general_mr.toFixed(2)}\n`
                 + `Total covered: ${coverage.toFixed(2)}`
                 + (po_ref_text ? `\nExisting PO: ${po_ref_text}` : '')
@@ -1831,10 +2004,14 @@ function show_so_selection_and_rm_purchase_dialog(frm, sales_orders) {
                     ? `\n⚠ ${flt(rm_data.sent_to_jobber_qty).toFixed(2)} of this item currently outstanding at a jobber (all orders combined, not yet consumed) — Stock above is already net of that.`
                     : '');
 
+            const po_draft_total = linked_po_draft + general_po_draft;
+            const draft_flag = po_draft_total > 0.001
+                ? ` <span class="po-state po-state-draft">Draft PO ${po_draft_total.toFixed(2)}</span>`
+                : '';
             if (shortfall > 0.001) {
-                $line.find('.rm-prev-stat').html(`<span style="color:#d62222; font-weight:bold;" title="${coverage_note}">Short ${shortfall.toFixed(2)}</span>`);
+                $line.find('.rm-prev-stat').html(`<span style="color:#d62222; font-weight:bold;" title="${coverage_note}">Short ${shortfall.toFixed(2)}</span>${draft_flag}`);
             } else {
-                $line.find('.rm-prev-stat').html(`<span style="color:#00994d;" title="${coverage_note}">Covered</span>`);
+                $line.find('.rm-prev-stat').html(`<span style="color:#00994d;" title="${coverage_note}">Covered</span>${draft_flag}`);
             }
         });
     }
@@ -1846,7 +2023,7 @@ function show_so_selection_and_rm_purchase_dialog(frm, sales_orders) {
                 <th width="20%">Raw Material</th>
                 <th width="12%" class="text-right" title="Sum of every TICKED Sales Order's own qty-to-make × BOM ratio for this raw material. See the breakdown lines under the number for exactly which orders contributed.">Required</th>
                 <th width="12%" class="text-right" title="Physical stock on hand right now, across all warehouses.">Stock</th>
-                <th width="12%" class="text-right" title="Only counts: (a) Purchase Orders/Material Requests raised specifically for the Sales Order(s) ticked above, and (b) genuinely unclaimed PO/MR quantity not tied to any Sales Order. A PO or MR dedicated to a DIFFERENT, unticked Sales Order is never included here.">Incoming (PO+MR)</th>
+                <th width="12%" class="text-right" title="Only counts: (a) Purchase Orders/Material Requests raised specifically for the Sales Order(s) ticked above, and (b) genuinely unclaimed PO/MR quantity not tied to any Sales Order. A PO or MR dedicated to a DIFFERENT, unticked Sales Order is never included here. DRAFT Purchase Orders count too — the qty is already committed — and the draft share is called out under the number.">Incoming (PO+MR)</th>
                 <th width="12%" class="text-right" title="Stock + Incoming — everything this raw material's need can currently draw on.">Effective</th>
                 <th width="20%">Existing Ref (PO/MR)</th>
                 <th width="12%" class="text-right" style="background: #ebf8ff; border-bottom: 2px solid #5e64ff;" title="Required minus Effective — what's actually left to buy.">Purchase</th>
@@ -1864,9 +2041,16 @@ function show_so_selection_and_rm_purchase_dialog(frm, sales_orders) {
                 let purchase_rec = qty_round_up(purchase_rec_exact).rounded;
                 let safe_meta = JSON.stringify(d).replace(/'/g, "&#39;");
 
+                // Draft POs are listed and netted off like submitted ones, so
+                // every entry states which it is — an untagged PO would leave
+                // "submitted" and "we didn't say" looking identical, and a
+                // draft is precisely the one worth opening before buying more.
                 let po_links = (d.po_refs || []).slice(0, 3)
                     .map(po => `<a href="/app/purchase-order/${encodeURIComponent(po.name)}" target="_blank"
                             style="font-weight:bold; text-decoration:underline;">${po.name}</a>
+                            ${po.docstatus === 0
+                                ? '<span class="po-state po-state-draft" title="Not submitted yet — its qty is still deducted from Purchase below.">Draft</span>'
+                                : '<span class="po-state po-state-sub">Submitted</span>'}
                             ${po.supplier ? `<span style="font-size:8px; color:#555;"> — ${po.supplier}</span>` : ''}
                             <span style="font-size:8px; color:${po.sales_order ? '#b45309' : '#059669'};">
                                 (${po.sales_order ? `for ${po.sales_order}` : 'unclaimed'})
@@ -1898,7 +2082,11 @@ function show_so_selection_and_rm_purchase_dialog(frm, sales_orders) {
                     ? `<div class="text-right" style="font-size:9px; color:#d62222;" title="This much of this raw material is currently outstanding at a subcontractor (sent but not yet consumed into finished goods) across all Sales Orders — a batch purchase is a shared pool, so once part of it is committed to subcontracting elsewhere, Stock reads lower than the full purchase would suggest.">⚠ ${d.sent_to_jobber_qty.toFixed(2)} outstanding at jobber (all orders)</div>`
                     : ''}
             </td>
-            <td class="text-right text-primary">${(d.linked_po_qty_total + d.general_po_coming + d.linked_mr_qty_total + d.general_mr_coming).toFixed(2)}</td>
+            <td class="text-right text-primary">${(d.linked_po_qty_total + d.general_po_coming + d.linked_mr_qty_total + d.general_mr_coming).toFixed(2)}
+                ${(d.linked_po_draft_total + d.general_po_draft) > 0.001
+                    ? `<div style="font-size:9px; font-weight:700; color:#ea580c;" title="This much of Incoming is on a Purchase Order that has NOT been submitted yet. It is still subtracted from Purchase — check or submit that PO rather than buying the same qty again.">incl. ${(d.linked_po_draft_total + d.general_po_draft).toFixed(2)} on draft PO</div>`
+                    : ''}
+            </td>
             <td class="text-right text-dark">${effective_stock.toFixed(2)}</td>
             <td style="font-size:10px;">${ref_links}</td>
             <td class="text-right">
@@ -1961,13 +2149,21 @@ function show_so_selection_and_rm_purchase_dialog(frm, sales_orders) {
                         return;
                     }
 
-                    frm.clear_table("items");
-                    if (has_breakdown) frm.clear_table("custom_rm_source_breakdown");
-
                     built_rows.forEach(built => {
-                        frm.add_child("items", built);
+                        po_upsert_item(frm, built);
 
                         if (has_breakdown) {
+                            // The breakdown explains ONE item's rows, so
+                            // re-fetching that item must replace its own
+                            // trace lines and leave every other item's
+                            // alone — clearing the whole table discarded the
+                            // trace for items a different dialog had added.
+                            const kept = (frm.doc.custom_rm_source_breakdown || [])
+                                .filter(b => b.raw_material_item !== built.item_code);
+                            if (kept.length !== (frm.doc.custom_rm_source_breakdown || []).length) {
+                                frm.doc.custom_rm_source_breakdown = kept;
+                                kept.forEach((b, i) => { b.idx = i + 1; });
+                            }
                             const source = to_add.find(r => r.item_code === built.item_code);
                             (source && source.breakdown || []).forEach(b => {
                                 frm.add_child("custom_rm_source_breakdown", {
@@ -2523,19 +2719,36 @@ function render_linked_docs_html(frm, docs) {
             .sc-nav-item.active { background:#fff; color:#2563eb; border-bottom-color:#2563eb; }
             .sc-badge-count { background:#e2e8f0; color:#475569; padding:3px 9px; border-radius:12px; font-size:12px; font-weight:700; margin-left:8px; }
             .sc-nav-item.active .sc-badge-count { background:#dbeafe; color:#1e40af; }
-            .sc-content { padding: 0; display:none; animation: fadeIn 0.2s; }
+            .sc-content { padding: 0; display:none; animation: fadeIn 0.2s; overflow-x: auto; }
             .sc-content.active { display:block; }
             @keyframes fadeIn { from { opacity:0; } to { opacity:1; } }
-            .sc-table { width:100%; border-collapse: collapse; font-size:13px; table-layout: fixed; }
+            /* min-width so a five-column tab (ID / Items / Stage / Status /
+               Print) scrolls in .sc-content rather than squeezing every
+               column until its text wraps to three lines. */
+            .sc-table { width:100%; border-collapse: collapse; font-size:13px; table-layout: fixed; min-width: 720px; }
             .sc-table th { text-align:left; background:#f8fafc; padding:10px 15px; color:#64748b; font-weight:600; font-size:11px;  border-bottom:1px solid #e2e8f0; }
-            .sc-table td { padding:12px 15px; border-bottom:1px solid #f1f5f9; vertical-align:middle; overflow: hidden; text-overflow: ellipsis; }
+            /* No overflow:hidden/ellipsis here. With table-layout:fixed that
+               CLIPPED the cell — the Stage and Items text was cut off rather
+               than wrapped, which is what "not showing fully" was. Let it
+               wrap; the column widths below give it room to. */
+            .sc-table td {
+                padding:12px 15px; border-bottom:1px solid #f1f5f9; vertical-align:top;
+                overflow-wrap: break-word; white-space: normal;
+            }
             .sc-table tr:last-child td { border-bottom:none; }
             .sc-link { font-weight:600; color:#2563eb; }
             .badge-extra { background:#fff7ed; color:#c2410c; border:1px solid #ffedd5; font-size:9px; font-weight:700; padding:1px 5px; border-radius:4px; margin-left:6px;  }
             .status-dot { display:inline-block; width:8px; height:8px; border-radius:50%; margin-right:6px; }
             .dot-green { background:#10b981; } .dot-gray { background:#94a3b8; } .dot-orange { background:#f59e0b; }
             .item-list { max-height:100px; overflow-y:auto; border-left: 2px solid #f1f5f9; padding-left: 8px; }
-            .item-row { display:flex; justify-content:space-between; font-size:11px; margin-bottom: 2px; }
+            /* justify-content:space-between pushed the qty to the far right of
+               a wide Items cell, leaving a gap that read as broken layout. It
+               sits next to the item name now and wraps under it if narrow. */
+            .item-row {
+                display:flex; flex-wrap: wrap; gap: 2px 8px;
+                font-size:11px; margin-bottom: 2px; line-height: 1.5;
+            }
+            .item-row__qty { color:#64748b; white-space: nowrap; }
             .btn-print-sc { padding: 2px 6px; font-size: 10px; color: #64748b; border: 1px solid #d1d8dd; background: #fff; border-radius: 4px; cursor: pointer; }
             .btn-print-sc:hover { background: #f8fafc; color: #2563eb; border-color: #2563eb; }
         </style>
@@ -2614,7 +2827,7 @@ function render_linked_docs_html(frm, docs) {
                     middleCols += `<td>${cellContent}</td>`;
                 });
 
-                tableRows += `<tr><td width="20%">${col1}</td>${middleCols}</tr>`;
+                tableRows += `<tr><td>${col1}</td>${middleCols}</tr>`;
             });
 
             tabsContent += `
@@ -2623,9 +2836,19 @@ function render_linked_docs_html(frm, docs) {
                         <thead>
                             <tr>
                                 ${columns[key].map(h => {
-                let width = h === 'Items' ? '50%' : 'auto';
-                if (h === 'ID') width = '20%';
-                return `<th style="width:${width}">${h}</th>`;
+                // Per-column widths. Only ID and Items had one before, so on a
+                // five-column tab the remaining three shared what was left and
+                // "Returned to Jobber (Closed)" wrapped onto three lines.
+                // Every column EXCEPT Items gets a fixed width, so Items —
+                // the content-heavy one — absorbs whatever is left on each
+                // tab. Fixing Items too left 13-38% unallocated depending on
+                // the tab, and an unlisted column (Due Date) fell to `auto`
+                // and fought the others for space.
+                const COL_W = {
+                    'ID': '17%', 'Stage': '17%', 'Status': '12%', 'Print': '8%',
+                    'Total': '13%', 'Type': '15%', 'Date': '13%', 'Due Date': '13%',
+                };
+                return `<th${COL_W[h] ? ` style="width:${COL_W[h]}"` : ''}>${h}</th>`;
             }).join('')}
                             </tr>
                         </thead>
@@ -2675,7 +2898,7 @@ function render_linked_docs_html(frm, docs) {
             // Correct quantity display based on field existence
             let qtyStr = flt(i.qty ? i.qty : (i.stock_qty || 0), 2);
             let qtyInfo = (i.received_qty != null) ? `Ord:${flt(i.ordered_qty, 2) || qtyStr}, Rec:${flt(i.received_qty, 2)}` : `Qty: ${qtyStr}`;
-            h += `<div class="item-row"><span style="flex:1;">${i.item_code}</span><span style="color:#64748b;">${qtyInfo}</span></div>`;
+            h += `<div class="item-row"><span>${i.item_code}</span><span class="item-row__qty">${qtyInfo}</span></div>`;
         });
         return h + '</div>';
     }
@@ -2784,6 +3007,7 @@ function load_mr_suggestions(frm) {
     frappe.dom.freeze(__('Fetching Procurement Demands...'));
     frappe.call({
         method: 'erp_dacsinc_custom.purchase_order.get_mr_suggestions_for_po',
+        args: { purchase_order: frm.is_new() ? null : frm.doc.name },
         callback: function (r) {
             frappe.dom.unfreeze();
             if (r.message && r.message.length > 0) {
@@ -2802,18 +3026,35 @@ function render_smart_po_dialog(frm, raw_data) {
         if (!grouped[key]) {
             grouped[key] = {
                 item_code: d.item_code, item_name: d.item_name, uom: d.uom,
-                total_mr_qty: 0, ordered_qty: 0, total_pending: 0, origins: []
+                total_mr_qty: 0, ordered_qty: 0, draft_ordered_qty: 0, total_pending: 0, origins: []
             };
         }
         grouped[key].total_mr_qty += flt(d.mr_total_qty);
-        grouped[key].ordered_qty += flt(d.ordered_qty);
+        // already_ordered_qty counts DRAFT Purchase Orders too, which the MR
+        // line's own ordered_qty does not — see get_mr_suggestions_for_po.
+        grouped[key].ordered_qty += flt(d.already_ordered_qty);
+        // The draft slice of that same total — see get_mr_suggestions_for_po.
+        grouped[key].draft_ordered_qty += flt(d.draft_ordered_qty);
         grouped[key].total_pending += flt(d.pending_qty);
         grouped[key].origins.push(d);
     });
     Object.values(grouped).forEach(g => {
         g.total_mr_qty = flt(g.total_mr_qty, 2);
         g.ordered_qty = flt(g.ordered_qty, 2);
+        g.draft_ordered_qty = flt(g.draft_ordered_qty, 2);
         g.total_pending = flt(g.total_pending, 2);
+        // Which draft POs are holding it, deduplicated across this item's MR
+        // lines, and whether one of them is the very document this dialog was
+        // opened from — "PUR-ORD-…  Draft" reads as somebody else's PO unless
+        // the current one is called out as such.
+        g.draft_pos = [];
+        g.origins.forEach(o => (o.previous_po_history || []).forEach(p => {
+            if (p.is_draft && !g.draft_pos.some(x => x.po_id === p.po_id)) g.draft_pos.push(p);
+        }));
+        // Everything this item still needed is already on a Purchase Order
+        // (draft or submitted). Shown for reference, never orderable again —
+        // ordering it twice is exactly what trips ERPNext's over-limit error.
+        g.fully_ordered = g.total_pending <= 0.01;
     });
 
     let data = Object.values(grouped);
@@ -2846,13 +3087,28 @@ function render_smart_po_dialog(frm, raw_data) {
                 .mr-pill { background: #fffbeb; color: #92400e; border-color: #fef3c7; }
                 .so-pill { background: #ecfdf5; color: #065f46; border-color: #d1fae5; }
                 .po-pill { background: #eff6ff; color: #1e40af; border-color: #bfdbfe; }
+                .po-pill-draft { background: #fff7ed; color: #9a3412; border-color: #fed7aa; }
+                .po-pill-current { background: #f5f3ff; color: #5b21b6; border-color: #ddd6fe; }
+                .draft-note { font-size: 10px; font-weight: 700; color: #ea580c; margin-top: 3px; line-height: 1.35; }
                 .track-lbl { font-size: 9.5px; font-weight: 800; color: #94a3b8; margin-bottom: 2px; }
                 .sum-card { background: #f8fafc; padding: 8px 10px; border-radius: 6px; border: 1px solid #f1f5f9; width: 115px; margin-left: auto; }
                 .sum-line { display: flex; justify-content: space-between; font-size: 10.5px; font-weight: 700; margin-bottom: 2px;}
                 .qty-inp { width: 85px; text-align: center; border: 1px solid #d1d5db; font-weight: 800; color: #c2410c; border-radius: 6px; height: 35px; font-size: 15px; }
+                .planner-row.row-covered { background: #f8fafc; opacity: 0.75; }
+                .covered-tag { display:inline-block; padding: 5px 10px; border-radius: 6px; background:#ecfdf5; color:#065f46; border:1px solid #d1fae5; font-size: 10.5px; font-weight: 800; white-space: nowrap; }
+                .planner-summary { display:flex; gap:18px; align-items:center; padding: 8px 4px 10px; font-size: 12px; font-weight: 700; color:#475569; }
+                .planner-summary .ps-open { color:#1e40af; }
+                .planner-summary .ps-covered { color:#065f46; }
             </style>`;
 
-        let html = styles + `<div style="max-height: 65vh; overflow-y: auto;"><table class="planner-table">
+        const open_count = data.filter(r => !r.fully_ordered).length;
+        const covered_count = data.length - open_count;
+
+        let html = styles + `<div class="planner-summary">
+                <span class="ps-open">${__('{0} still to purchase', [open_count])}</span>
+                ${covered_count ? `<span class="ps-covered">${__('{0} already ordered (reference only)', [covered_count])}</span>` : ''}
+            </div>
+            <div style="max-height: 65vh; overflow-y: auto;"><table class="planner-table">
             <thead><tr style="color: #80848a; font-size: 11px; font-weight: 800;">
                 <th style="width: 45px;" class="text-center"><input type="checkbox" id="master-chk"></th>
                 <th style="width: 25%;">${__('Item Identity')}</th>
@@ -2875,7 +3131,14 @@ function render_smart_po_dialog(frm, raw_data) {
 
             const prev_po_links = row.origins.flatMap(o => o.previous_po_history.map(p => {
                 meta_search_pool.push(p.po_id, p.supplier_name);
-                return `<a href="/app/purchase-order/${p.po_id}" target="_blank" class="pill po-pill" title="${p.supplier_name} • #${p.po_id}">${p.supplier_name} • #${p.po_id}</a>`;
+                const cls = p.is_current ? 'po-pill-current' : (p.is_draft ? 'po-pill-draft' : 'po-pill');
+                const state = p.is_current ? 'THIS PO (Draft)' : (p.is_draft ? 'Draft' : 'Submitted');
+                const tip = p.is_current
+                    ? `This is the Purchase Order you are on right now — its ${flt(p.po_qty)} is already counted below.`
+                    : (p.is_draft
+                        ? `Purchase Order NOT submitted yet — its ${flt(p.po_qty)} is still deducted from Net Due. Submit or cancel it rather than ordering the same qty again.`
+                        : `Submitted Purchase Order for ${flt(p.po_qty)}.`);
+                return `<a href="/app/purchase-order/${p.po_id}" target="_blank" class="pill ${cls}" title="${frappe.utils.escape_html(tip)}">${p.supplier_name || p.po_id} • #${p.po_id} • ${state}</a>`;
             }));
             const distinct_po_links = [...new Set(prev_po_links)];
 
@@ -2883,10 +3146,11 @@ function render_smart_po_dialog(frm, raw_data) {
             let search_str = `${row.item_code} ${row.item_name} ${meta_search_pool.join(' ')}`.toLowerCase();
             if (q && !search_str.includes(q)) return;
 
-            const is_selected = d.selected_keys.has(row.item_code);
+            const is_selected = d.selected_keys.has(row.item_code) && !row.fully_ordered;
 
-            html += `<tr class="planner-row ${is_selected ? 'row-selected' : ''}" data-key="${row.item_code}">
-                <td class="text-center"><input type="checkbox" class="row-chk" data-key="${row.item_code}" ${is_selected ? 'checked' : ''}></td>
+            html += `<tr class="planner-row ${is_selected ? 'row-selected' : ''} ${row.fully_ordered ? 'row-covered' : ''}" data-key="${row.item_code}">
+                <td class="text-center"><input type="checkbox" class="row-chk" data-key="${row.item_code}"
+                    ${is_selected ? 'checked' : ''} ${row.fully_ordered ? `disabled title="Already fully ordered${row.draft_ordered_qty > 0.01 ? ' (partly on a draft Purchase Order)' : ''} — shown for reference only"` : ''}></td>
                 <td>
                     <a href="/app/item/${row.item_code}" target="_blank" class="link-item">${row.item_code}</a>
                     <div style="font-size:10.5px; color:#64748b; line-height: 1.4;">${row.item_name}</div>
@@ -2902,13 +3166,25 @@ function render_smart_po_dialog(frm, raw_data) {
                 <td>
                     <div class="sum-card">
                         <div class="sum-line" style="color:#64748b;"><span>Original:</span><span>${row.total_mr_qty}</span></div>
-                        <div class="sum-line" style="color:#ef4444; border-bottom: 1px solid #ebedef; padding-bottom: 3px;"><span>Previous:</span><span>-${row.ordered_qty}</span></div>
-                        <div class="sum-line" style="color:#3b82f6; padding-top:3px; font-size:11px;"><span>Net Due:</span><span>${qty_round_up(row.total_pending).rounded}</span></div>
+                        <div class="sum-line" style="color:#ef4444;"><span>On PO:</span><span>-${row.ordered_qty}</span></div>
+                        ${row.draft_ordered_qty > 0 ? `<div class="sum-line" style="color:#ea580c; font-size:9.5px;"
+                            title="${frappe.utils.escape_html(`Of the ${row.ordered_qty} already on a Purchase Order, ${row.draft_ordered_qty} is on one that has NOT been submitted: ${row.draft_pos.map(p => p.is_current ? `${p.po_id} (this PO)` : p.po_id).join(', ')}.`)}"><span>↳ draft:</span><span>${row.draft_ordered_qty}</span></div>` : ''}
+                        <div class="sum-line" style="color:${row.fully_ordered ? '#16a34a' : '#3b82f6'}; border-top: 1px solid #ebedef; padding-top:3px; font-size:11px;"><span>Net Due:</span><span>${qty_round_up(row.total_pending).rounded}</span></div>
+                        ${row.draft_ordered_qty > 0 ? `<div class="draft-note">${row.draft_pos.map(p =>
+                            `<a href="/app/purchase-order/${encodeURIComponent(p.po_id)}" target="_blank" style="color:#ea580c;">${p.po_id}</a>${p.is_current ? ' (this PO)' : ''} is a draft`
+                        ).join('<br>')}</div>` : ''}
                     </div>
                 </td>
                 <td class="text-right">
-                    <input type="number" step="1" min="0" class="qty-inp row-qty" data-key="${row.item_code}" value="${qty_round_up(row.total_pending).rounded}">
-                    ${qty_round_indicator(row.total_pending)}
+                    ${row.fully_ordered
+                        ? (row.draft_ordered_qty > 0.01
+                            ? `<span class="covered-tag" style="background:#fff7ed; color:#9a3412; border-color:#fed7aa;"
+                                     title="${frappe.utils.escape_html(`Fully covered, but ${row.draft_ordered_qty} of it is on a Purchase Order that has not been submitted: ${row.draft_pos.map(p => p.is_current ? `${p.po_id} (this PO)` : p.po_id).join(', ')}.`)}">${__('Ordered — Draft PO')}</span>`
+                            : `<span class="covered-tag">${__('Already Ordered')}</span>`)
+                        : `<input type="number" step="1" min="0" max="${qty_round_up(row.total_pending).rounded}"
+                                  class="qty-inp row-qty" data-key="${row.item_code}"
+                                  value="${qty_round_up(row.total_pending).rounded}">
+                           ${qty_round_indicator(row.total_pending)}`}
                 </td>
             </tr>`;
         });
@@ -2925,7 +3201,9 @@ function render_smart_po_dialog(frm, raw_data) {
 
         d.$wrapper.find('#master-chk').on('change', function () {
             let active = this.checked;
-            d.$wrapper.find('.row-chk:visible').each(function () {
+            // A fully-ordered row's checkbox is disabled — "select all" must
+            // leave it alone rather than quietly re-ordering what's covered.
+            d.$wrapper.find('.row-chk:visible:not(:disabled)').each(function () {
                 $(this).prop('checked', active).trigger('change');
             });
         });
@@ -2938,9 +3216,18 @@ function render_smart_po_dialog(frm, raw_data) {
 
 function submit_to_po(d, frm, data) {
     let to_add = [];
+    let capped_items = [];
     data.forEach(group => {
-        if (d.selected_keys.has(group.item_code)) {
+        if (d.selected_keys.has(group.item_code) && !group.fully_ordered) {
             let user_qty = flt(d.$wrapper.find(`.row-qty[data-key="${group.item_code}"]`).val());
+            // Never build a row for more than this item still has outstanding on
+            // its Material Request(s). Going over is what makes ERPNext reject
+            // the whole Purchase Order later with its own over-limit error,
+            // naming a Material Request Item the user never sees from here.
+            if (user_qty - group.total_pending > 0.01) {
+                capped_items.push(`${group.item_code} (${user_qty} → ${group.total_pending})`);
+                user_qty = group.total_pending;
+            }
             let multiplier = group.total_pending > 0 ? (user_qty / group.total_pending) : 0;
             if (multiplier > 0) {
                 group.origins.forEach(l => {
@@ -2956,6 +3243,13 @@ function submit_to_po(d, frm, data) {
     });
 
     if (to_add.length === 0) return frappe.msgprint("Please select rows to process.");
+
+    if (capped_items.length) {
+        frappe.show_alert({
+            message: __("Reduced to what the Material Request still has outstanding: {0}", [capped_items.join(', ')]),
+            indicator: 'orange'
+        }, 8);
+    }
 
     // A row built purely from add_child + frappe.model.set_value never runs
     // ERPNext's own item_code trigger — no rate, no price_list_rate, no
@@ -2979,15 +3273,20 @@ function submit_to_po(d, frm, data) {
                 frappe.msgprint(__('No valid rows to add.'));
                 return;
             }
-            frm.clear_table('items');
             built_rows.forEach((built, i) => {
                 const source = to_add[i] || {};
-                const row = frm.add_child('items', built);
-                row.warehouse = source.warehouse;
-                row.material_request = source.material_request;
-                row.material_request_item = source.material_request_item;
-                row.sales_order = source.sales_order;
-                row.description = source.description;
+                // The MR links are part of a row's identity (po_item_key), so
+                // they have to be on the payload BEFORE the upsert decides
+                // whether this is the same row as an existing one — setting
+                // them afterwards would match against a linkless key and
+                // append a duplicate on every re-fetch.
+                po_upsert_item(frm, Object.assign({}, built, {
+                    warehouse: source.warehouse,
+                    material_request: source.material_request,
+                    material_request_item: source.material_request_item,
+                    sales_order: source.sales_order,
+                    description: source.description,
+                }));
             });
             frm.refresh_field('items');
             frm.cscript.calculate_taxes_and_totals();
@@ -2995,3 +3294,208 @@ function submit_to_po(d, frm, data) {
         }
     });
 }
+
+// Keep the Sales Order limit note current as rows change. Note only — no
+// dialog; see so_qty_cap.js for why typing-time validation was removed.
+frappe.ui.form.on('Purchase Order Item', {
+    items_add: function (frm) { if (window.so_qty_cap) window.so_qty_cap.refresh(frm); },
+    items_remove: function (frm) { if (window.so_qty_cap) window.so_qty_cap.refresh(frm); },
+    qty: function (frm) { if (window.so_qty_cap) window.so_qty_cap.refresh(frm); },
+    fg_item_qty: function (frm) { if (window.so_qty_cap) window.so_qty_cap.refresh(frm); },
+    sales_order_item: function (frm) { if (window.so_qty_cap) window.so_qty_cap.refresh(frm); },
+});
+
+
+// ============================================================================
+//  Price Check — what this item costs, and from whom
+// ============================================================================
+//
+// Renders into the custom_price_check_html field: the buying price list rate,
+// what the chosen supplier last charged, and what other suppliers last charged,
+// so the rate being entered can be judged against the alternatives rather than
+// taken on trust.
+//
+// Shown only on a NON-subcontracted Purchase Order: a subcontracted PO's rows
+// are service/raw lines whose price comes from the job-work arrangement, not
+// from a market comparison, so a "who is cheaper" table there would be
+// comparing the wrong thing. Visibility is also role-gated server-side (see
+// can_see_po_price_check) — the endpoint returns nothing at all to a user
+// without the role, so the table cannot be reached by calling it directly.
+
+function po_price_check_refresh(frm) {
+    const wrapper = frm.fields_dict.custom_price_check_html
+        && frm.fields_dict.custom_price_check_html.$wrapper;
+    if (!wrapper) return;
+
+    if (frm.doc.is_subcontracted) { wrapper.empty(); return; }
+
+    const item_codes = [...new Set((frm.doc.items || []).map(i => i.item_code).filter(Boolean))];
+    if (!item_codes.length) { wrapper.empty(); return; }
+
+    frappe.call({
+        method: 'erp_dacsinc_custom.purchase_order.get_po_price_check',
+        // Always the items ON THE FORM, never the saved document's. Passing
+        // `purchase_order` made the server read the items from the database,
+        // so a row added since the last save was invisible here and the table
+        // only caught up after saving.
+        args: {
+            items: JSON.stringify(item_codes),
+            supplier: frm.doc.supplier || null,
+            price_list: frm.doc.buying_price_list || null,
+            company: frm.doc.company || null,
+        },
+    }).then(r => {
+        const res = (r && r.message) || {};
+        if (!res.allowed || !(res.rows || []).length) { wrapper.empty(); return; }
+        wrapper.html(po_price_check_html(res));
+    }).catch(() => wrapper.empty());
+}
+
+function po_price_check_html(res) {
+    const money = (v, cur) => (v === null || v === undefined)
+        ? '<span style="color:#94a3b8;">—</span>'
+        : frappe.format(v, { fieldtype: 'Currency', options: cur || undefined });
+
+    const rows = res.rows.map(r => {
+        const ts = r.this_supplier;
+        // The cheapest rate anyone has actually charged is worth pointing at,
+        // but as a mark on that rate — not as a separate "Verdict" column,
+        // which was a judgement in words where the numbers already say it.
+        const best = (r.best_other_rate === null || r.best_other_rate === undefined)
+            ? null : flt(r.best_other_rate);
+
+        const shown = r.other_suppliers || [];
+        const hidden = Math.max(0, flt(r.other_supplier_count) - shown.length);
+        // One supplier per line in a fixed grid, cheapest first. Laying them
+        // out inline meant several suppliers ran together on one wrapped line
+        // and nothing could be compared at a glance.
+        const others = shown.length
+            ? shown.map(o => {
+                const is_low = (best !== null && Math.abs(flt(o.rate) - best) < 0.001);
+                return `
+                <div class="pc-other${is_low ? ' is-best' : ''}">
+                    <span class="pc-other__rate">${money(o.rate, o.currency)}</span>
+                    <span class="pc-other__sup">${frappe.utils.escape_html(o.supplier_name)}
+                        ${is_low && shown.length > 1 ? `<span class="pc-low">${__('best')}</span>` : ''}</span>
+                    <span class="pc-other__meta">${frappe.datetime.str_to_user(o.date)} ·
+                        <a href="/app/purchase-order/${encodeURIComponent(o.purchase_order)}"
+                           target="_blank">${frappe.utils.escape_html(o.purchase_order)}</a></span>
+                </div>`;
+            }).join('')
+                + (hidden ? `<div class="pc-muted">+${hidden} ${__('more supplier(s), all dearer')}</div>` : '')
+            : '<span class="pc-muted">' + __('Not bought from anyone else') + '</span>';
+
+        return `
+        <tr>
+            <td>
+                <b>${frappe.utils.escape_html(r.item_code)}</b>
+                ${r.item_name && r.item_name !== r.item_code
+                    ? `<div class="pc-muted">${frappe.utils.escape_html(r.item_name)}</div>` : ''}
+            </td>
+            <td class="text-right">
+                ${money(r.price_list_rate)}
+                <div class="pc-muted">${frappe.utils.escape_html(r.price_list)}${
+                    r.price_list_is_supplier_specific ? ' · ' + __('for this supplier') : ''}</div>
+            </td>
+            <td class="text-right">
+                ${ts ? `${money(ts.rate, ts.currency)}
+                    <div class="pc-muted">${frappe.datetime.str_to_user(ts.date)} ·
+                        <a href="/app/purchase-order/${encodeURIComponent(ts.purchase_order)}"
+                           target="_blank">${frappe.utils.escape_html(ts.purchase_order)}</a></div>`
+                    : `<span class="pc-muted">${__('Never bought from them')}</span>`}
+            </td>
+            <td class="text-right">
+                ${(() => {
+                    // The cheapest thing anyone has actually charged, this
+                    // supplier included — the single number the table exists
+                    // to surface, so it gets its own column rather than being
+                    // inferred from the list.
+                    const mine = ts ? flt(ts.rate) : null;
+                    const cands = [];
+                    if (mine !== null && mine > 0) cands.push({ rate: mine, who: res.supplier, is_mine: true });
+                    if (best !== null) {
+                        const bo = shown.find(o => Math.abs(flt(o.rate) - best) < 0.001);
+                        if (bo) cands.push({ rate: best, who: bo.supplier_name, is_mine: false });
+                    }
+                    if (!cands.length) return '<span class="pc-muted">—</span>';
+                    // Stable sort with this supplier pushed first, so an
+                    // equal price resolves in their favour — there is nothing
+                    // to gain by suggesting a switch at the same rate.
+                    cands.sort((a, b) => a.rate - b.rate);
+                    const w = cands[0];
+                    return `<b class="${w.is_mine ? 'pc-ok' : 'pc-warn'}">${money(w.rate)}</b>`
+                        + `<div class="pc-muted">${w.is_mine
+                            ? __('this supplier is cheapest')
+                            : frappe.utils.escape_html(w.who)}</div>`;
+                })()}
+            </td>
+            <td>${others}</td>
+        </tr>`;
+    }).join('');
+
+    return `
+    <style>
+        .pc-wrap { border: 1px solid var(--border-color); border-radius: 8px; overflow: hidden; }
+        .pc-head { padding: 8px 12px; background: var(--subtle-fg); font-size: 12px; font-weight: 600; }
+        .pc-head small { font-weight: 400; color: var(--text-muted); margin-left: 6px; }
+        .pc-scroll { overflow-x: auto; }
+        .pc-table { width: 100%; border-collapse: collapse; font-size: 12px; min-width: 820px; }
+        .pc-table th {
+            background: #3498db; color: #fff; text-align: left; padding: 8px 10px;
+            font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: .02em;
+        }
+        .pc-table th.text-right, .pc-table td.text-right { text-align: right; }
+        .pc-table td { padding: 9px 10px; border-top: 1px solid var(--border-color); vertical-align: top; }
+        .pc-muted { font-size: 11px; color: var(--text-muted); }
+        .pc-other {
+            display: grid; grid-template-columns: 78px minmax(0, 1fr); gap: 2px 10px;
+            padding: 3px 0; border-top: 1px dashed var(--border-color);
+        }
+        .pc-other:first-child { border-top: 0; }
+        .pc-other__rate {
+            font-weight: 700; font-variant-numeric: tabular-nums; text-align: right;
+        }
+        .pc-other__sup { font-weight: 600; min-width: 0; overflow-wrap: break-word; }
+        .pc-other__meta {
+            grid-column: 2; font-size: 11px; color: var(--text-muted); margin-top: -2px;
+        }
+        .pc-other.is-best .pc-other__rate { color: #059669; }
+        .pc-ok { color: #059669; }
+        .pc-warn { color: #b45309; }
+        .pc-low {
+            font-size: 9px; font-weight: 800; text-transform: uppercase; letter-spacing: .04em;
+            color: #059669; background: #dcfce7; border: 1px solid #bbf7d0;
+            border-radius: 8px; padding: 0 5px; white-space: nowrap;
+        }
+    </style>
+    <div class="pc-wrap">
+        <div class="pc-head">
+            <i class="fa fa-tags"></i> ${__('Price Check')}
+            <small>${__('What has actually been paid for these items — {0} vs everyone else',
+                [frappe.utils.escape_html(res.supplier || __('this supplier'))])}</small>
+        </div>
+        <div class="pc-scroll"><table class="pc-table">
+            <thead><tr>
+                <th style="width:20%;">${__('Item')}</th>
+                <th style="width:13%;" class="text-right">${__('Price List')}</th>
+                <th style="width:19%;" class="text-right">${__('This Supplier')}</th>
+                <th style="width:16%;" class="text-right">${__('Best Price')}</th>
+                <th style="width:32%;">${__('Other Suppliers (cheapest first)')}</th>
+            </tr></thead>
+            <tbody>${rows}</tbody>
+        </table></div>
+    </div>`;
+}
+
+frappe.ui.form.on('Purchase Order', {
+    refresh: function (frm) { po_price_check_refresh(frm); },
+    supplier: function (frm) { po_price_check_refresh(frm); },
+    buying_price_list: function (frm) { po_price_check_refresh(frm); },
+    is_subcontracted: function (frm) { po_price_check_refresh(frm); },
+});
+
+frappe.ui.form.on('Purchase Order Item', {
+    items_add: function (frm) { po_price_check_refresh(frm); },
+    items_remove: function (frm) { po_price_check_refresh(frm); },
+    item_code: function (frm) { po_price_check_refresh(frm); },
+});

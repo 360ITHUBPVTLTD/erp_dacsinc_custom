@@ -55,9 +55,9 @@ doctype_js = {
 	"Lead": "public/js/lead.js",
 	"Sales Order": "public/js/sales_order.js",
 	"Item": "public/js/item.js",
-	"Purchase Order": "public/js/purchase_order.js",
+	"Purchase Order": ["public/js/so_qty_cap.js", "public/js/purchase_order.js"],
 	"Purchase Invoice": "public/js/purchase_invoice.js",
-	"Material Request": "public/js/material_request.js",
+	"Material Request": ["public/js/so_qty_cap.js", "public/js/material_request.js"],
 	"BOM": "public/js/bom.js",
 	"Sales Invoice": "public/js/sales_invoice.js",
 	"Delivery Note": "public/js/delivery_note.js",
@@ -283,7 +283,13 @@ doc_events = {
         "on_update": "erp_dacsinc_custom.custom_script.share_notification_settings"
     },
     "Material Request": {
-        "validate": "erp_dacsinc_custom.custom_script.validate_material_request_no_bom_items",
+        "validate": [
+            "erp_dacsinc_custom.custom_script.validate_material_request_no_bom_items",
+            # Mirrors guard_po_item_not_over_so_need — without it the
+            # over-order cap could be walked around by requesting the excess
+            # on a Material Request and then converting that to a PO.
+            "erp_dacsinc_custom.custom_script.guard_mr_item_not_over_so_need",
+        ],
         "on_update": "erp_dacsinc_custom.order_flow_api.broadcast_order_flow_change",
         "on_cancel": "erp_dacsinc_custom.order_flow_api.broadcast_order_flow_change",
     },

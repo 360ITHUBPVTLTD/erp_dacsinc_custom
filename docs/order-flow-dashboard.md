@@ -14,9 +14,43 @@ Subcontracting/Embroidery → Pick List → Delivery Note → Invoice.
   `workflow_state` *values* compared in code were left untouched, only the
   user-facing labels changed).
 - **Sales Tracker** — all orders, their current stage and next action.
+- **Pick Lists** — the Pick Lists themselves (see below).
 - **Purchase Flow**, **Job Work**, **Stock Tracker**, **Pending DN/SI**,
   **Finance**, **Embroidery Transfers** — each a different lens on the same
   underlying documents.
+
+## Pick Lists tab
+
+`get_pick_list_flow` in `order_flow_api.py`, rendered by `picklist_html`.
+
+The only tab whose row **is** the document rather than a Sales Order — the
+point is working through the Pick Lists themselves. It exists because a
+draft Pick List holds no stock and delivers nothing until it is submitted,
+and until then the order behind it silently reads as unfulfilled everywhere
+else in this dashboard; a forgotten draft is invisible from every other tab.
+
+The shared scope selector means:
+
+- **Open (default)** — `Draft`, `Open`, `Partly Delivered`: exactly the set
+  someone still has to act on.
+- **All** — adds `Completed` and `Cancelled`, for history and lookup.
+
+A Pick List that is fully picked but not yet delivered has status
+`Completed` (ERPNext marks that on *picking*, not delivery), so it does not
+appear under Open — that queue is **Pending DN/SI**'s job, and duplicating it
+here would just mean two tabs claiming the same work.
+
+Each row's Action column shows the one thing it is waiting on: **Submit**
+(a draft — submitting it from here calls the same
+`update_and_submit_pick_list` the Sales Order widget uses, with no row edits,
+so all of its validation applies identically), or the qty still awaiting a
+DN/SI. A draft's Picked column reads "not yet" rather than `0`, because
+`picked_qty` genuinely stays 0 until submit and a bare 0 reads like
+something went wrong.
+
+Visibility follows the same rule as every other tab —
+`of_tab_picklist_roles` on **Admin Settings > Tab Visibility**, empty meaning
+"everyone who can open the page".
 
 ## Sales Tracker row layout
 
@@ -28,6 +62,15 @@ was tried and reverted per explicit feedback: this information needs to
 stay in the same row, not be one click away). Clicking the row's own caret
 expands the Item Stock & Action Plan widget below it (`toggle_so_details`,
 anchored directly on the main row, as it always was).
+
+The **Sales Order & Customer** cell carries, under the customer, the
+customer's own PO reference (`po_no`, with `po_date` beside it when set) —
+the number the customer and the merchandiser actually use to talk about the
+order, so looking one up no longer means opening the Sales Order to check.
+It is **searchable by the same box**: `_get_tracker_rows` matches `so.po_no`
+alongside the SO name and customer, and the tracker's search placeholder says
+so. Showing a reference on the row without making it findable is the half
+that leaves people scrolling, so the two always ship together.
 
 The tracker's own primary Action Required button is visually emphasized
 (`td > .of-action-btn` — bigger, bolder, a subtle shadow) so it reads as
@@ -231,6 +274,18 @@ Backed by `verify_customer_details(sales_order)` in `order_flow_api.py`.
   button label, placeholder text) per an explicit request that the word
   read badly to merchandisers; the internal fieldname `bypass_comment` was
   also renamed to `skip_comment`.
+- There is **no "Approval Settings > Skip Delivery Note (Direct Billing)"
+  checkbox**. Approval is a customer-verification step; how the order
+  eventually ships or bills is not decided here. The `skip_delivery_note`
+  field still exists on the Sales Order (hidden on the form by property
+  setter) and everything downstream still honours it — the "Direct Bill"
+  chip on the tracker row, and the Sales Invoice's own delivery-note check
+  in `custom_script.py`. Both copies of the dialog also stop **sending**
+  the argument, which matters: `save_and_approve_sales_order` /
+  `approve_sales_order_with_comment` only write the field
+  `if skip_delivery_note is not None`, so an order that already carries the
+  flag keeps it through approval instead of being silently reset by a
+  checkbox that is no longer on screen.
 
 ## Cross-order stock conflicts ("Picked (Others)")
 
@@ -394,6 +449,246 @@ pointless. Both endpoints now call `can_view_tab("billing")` and, when
 and renders a lock icon on those two tiles instead of a count) and
 `get_sales_tracker` drops those orders' rows entirely, from every scope and
 `stage_filter`. Every other stage tile/row is unaffected.
+
+## Pending DN/SI includes orders whose billing is a *secondary* action
+
+An order can need billing without billing being its **primary** stage: part
+of it shipped on a Delivery Note while the rest is still being picked or
+sourced, so its primary stage is `partially_delivered` and the unbilled
+delivered qty rides along as `secondary_action` instead (see
+`_compute_stage_info`).
+
+`get_billing_flow` used to filter on the primary `stage_key` alone, which
+dropped exactly that order from this queue — confirmed live: an 81.8%
+delivered, 0% billed order with a submitted Delivery Note sitting ready to
+invoice appeared nowhere on the tab. The filter now also admits any row
+carrying a `secondary_action`: if `_compute_stage_info` decided there is a
+billing action to take, this tab is where it belongs, whichever slot that
+action ended up in.
+
+## "RM tier" means raw material, not "missing a link"
+
+`is_rm_tier` in `_EVENT_SQL` marks a document raised for a BOM **raw
+material** rather than for the item the Sales Order sells. It drives the
+separate "RM:" pipeline indicator and is deliberately kept out of stage
+computation.
+
+A missing `sales_order_item` link alone does NOT make something raw
+material. ERPNext's own Material Request → Purchase Order mapping carries
+`sales_order` through but not `sales_order_item`, so a PO for the order's
+own sold item arrives with that link empty — confirmed live: a PO for "Item
+1 without BOM" (an item with no BOM at all, so it can have no raw-material
+tier) was reported on the tracker as "RM: 1 PO", and its real progress went
+missing from the normal document flow.
+
+The test is therefore whether the line is for an item this Sales Order
+itself sells (for a subcontracted PO, matched on `fg_item` too). Only a line
+that is neither linked to an SO line nor for a sold item is raw material.
+
+## Submitting a Pick List asks what was picked
+
+Submitting sets each line's `picked_qty` and reserves that stock, so the Pick
+Lists tab's old bare "Submit Pick List X?" confirm silently committed the full
+allocated qty even when less was physically picked.
+
+`prompt_submit_pick_list` now lists the lines — item, warehouse, allocated qty
+— with an editable **Picking now** figure per line, defaulted to the allocated
+qty and capped at it. Lines are fetched by `get_pick_list_rows`, which returns
+each child row's own `pick_list_item` name, and submitted through the same
+`custom_script.update_and_submit_pick_list` the Sales Order widget uses.
+
+Quantities can only be **reduced**. The input's cap is a convenience, not the
+guard: `update_and_submit_pick_list` refuses an increase server-side and names
+the item and its ceiling, so the rule holds however the call is made. A
+submit with every line at 0 is refused too — that is a cancel, not a pick.
+
+### A short pick sets picked_qty — it must NOT shrink the allocation
+
+`Pick List Item` holds both figures: `qty`/`stock_qty` is what was allocated,
+`picked_qty` ("Picked Qty (in Stock UOM)") is what was physically picked.
+Picking 80 of an 88 line must record **88 allocated, 80 picked**, leaving the
+8 short visible on the document itself.
+
+`update_and_submit_pick_list` briefly did the opposite — it overwrote `qty`
+down to 80, which destroyed the fact that 88 was ever asked for and made the
+app auto-raise a second Pick List for the "missing" 8. `qty_means` now
+separates the two actions explicitly:
+
+- `"picked"` (default, used by every submit path) — sets `picked_qty`, leaves
+  the allocation alone. Converted by `conversion_factor`, since `picked_qty`
+  is in stock UOM.
+- `"allocated"` — replaces `qty`/`stock_qty`, for correcting a draft that was
+  built for the wrong quantity in the first place.
+
+`scan_mode` must stay off. ERPNext's `validate_picked_items` fills `picked_qty`
+from `stock_qty` **only when it is still 0**, so an explicitly-set short pick
+survives submit untouched — whereas `scan_mode = 1` makes it *throw* on any
+pick short of `stock_qty`, which is the opposite of what a short pick needs.
+
+Delivery is then measured against what was **picked**, not allocated (see
+`_calculate_pick_list_delivery_status`): an 88/80 line can only ever deliver
+80, so keeping 88 as the denominator capped it at 90.9% and left the Pick List
+permanently "Partly Delivered" with 8 forever "awaiting DN/SI".
+
+Verified end to end: 5 picked against an 8-allocated line submits with
+`qty = 8, picked_qty = 5`, the Sales Order line's `picked_qty` moves by 5, a
+Delivery Note maps exactly 5, and the Pick List reaches 100% / Completed.
+Asking for more than was allocated is refused by item name.
+
+## Some events are keyed by the Purchase Order, not by their own doctype
+
+`_EVENT_SQL` selects the **Purchase Order** as `name` for the job-work and
+embroidery events (`ewo.purchase_order`, and the PO behind the Subcontracting
+Order) — deliberately, because the PO is what this business manages the job
+from. The doc-flow chips already relabel those as Purchase Order, and so does
+the "Track Embroidery" action.
+
+Last Activity did not: it linked `last_event_doc` (a PO name) using
+`last_event` (the milestone's display doctype), producing
+`/app/embroidery-work-order/PUR-ORD-2026-00109` — a dead link to a doctype
+that never had that name. The Job Work variant was worse:
+`/app/job-work-(subcontract)/…` is not even a real route.
+
+`_EVENT_LINK_DOCTYPE` now records, for exactly those events, the doctype the
+name actually belongs to, and the row carries `last_event_doc_doctype` for the
+client to route by. The milestone WORDING is unchanged — "Embroidery work
+started" is still the right thing to say; only the link target moves. Any new
+event whose `name` is not a document of its own doctype must be added there.
+
+## An undefined CSS variable fails silently — and invisibly
+
+`--of-pink` was referenced by `.of-stage-btn--emb.is-active` and
+`.of-tile--emb` but never defined in the `.of-page` palette. An undefined
+custom property with no fallback makes the whole declaration invalid at
+computed-value time, so `background: var(--of-pink)` resolved to transparent
+rather than to the blue it was overriding — while the base `.is-active` rule's
+`color: #fff` still applied. The Embroidery chip therefore rendered as a
+completely blank pill (white label on the white card) whenever it was the
+selected filter; only its literal `#c91a7d` border showed. `--of-yellow` had
+the same defect on an icon colour.
+
+Both are defined now, and the palette is worth checking whenever a colour is
+added: every `var(--of-*)` in `order_flow.css` **and** in `order_flow.js`'s
+inline styles must resolve against the `.of-page` block, since nothing warns
+when one doesn't.
+
+## Printing an Embroidery Work Order
+
+Both Job Work embroidery sub-tabs (Full Piece and Panel) carry a print button
+in their Action cell, beside whatever the row's own action is — a work order
+can be printed at any stage, so printing never replaces Receive / Close /
+Track. Both tables share one row builder, so the button is added once.
+
+`of_print_ewo` uses the **same** doctype, print format, letterhead and
+language arguments as the Purchase Order form's own linked-documents table
+(`render_linked_docs_html`), so a work order prints identically wherever it is
+printed from. That is duplication of a kind — if the print format is ever
+renamed, both call sites must change together.
+
+The handler calls `stopPropagation`: these rows are click-to-expand, and
+without it printing would also toggle the row open. (The row's own click guard
+already excludes `button`, so this is belt and braces.)
+
+## "RM Ready — Make SCO PO": a card that is not a stage
+
+Most filter cards map to a `stage_key`, and a stage is **exclusive** — a row
+has exactly one. "raw material has arrived, so a Subcontracting PO can be
+raised now" is not exclusive: an order can be sitting at any stage while that
+is true (verified: the one order this fired on was at `in_embroidery`). So it
+is a per-row boolean, `rm_ready_for_sco`, listed in `OF_FLAG_STAGES` on the
+client and `_FLAG_FILTERS` on the server; `get_sales_tracker` matches those
+against the row flag instead of `stage_key`, which would always return
+nothing.
+
+`_rm_ready_for_sco` computes it for every order on the page at once:
+
+- Candidate lines are BOM lines on open orders with qty still undelivered,
+  minus finished-good qty **already on a Subcontracting PO** (that part needs
+  no new PO, and its raw material may already be at the jobber).
+- "In stock" means the same thing as everywhere else in this app: physically
+  in `tabBin` at VV Puram now. A pending MR or PO does not count.
+
+**Stock is allocated, not just compared.** `check_bom_raw_materials_in_stock`
+documents that each call is an independent snapshot, so calling it once per
+candidate would hand the same fabric to every order needing it and report "5
+ready" off stock covering 2 — the same double-counting bug class this app has
+hit repeatedly. Instead one working stock map is decremented as each candidate
+claims it, so the count only ever promises stock that exists. Candidates are
+taken earliest-delivery-first, then by name, so the result is stable between
+loads rather than shuffling with row order.
+
+The row also carries `rm_ready_fg_qty` / `rm_ready_items` and shows an inline
+"RM Ready — Make SCO PO (qty)" note under its stage pill, so a filtered list
+explains itself rather than looking arbitrary.
+
+## The dashboard reuses the Sales Order widget's preview and picker
+
+`sales_order.js` is already `frappe.require()`d on this page (that is how
+`show_bulk_dn_si_modal` is reused), so create-from actions here use its
+`so_show_mapped_doc_preview` and `so_pick_source_docs` rather than a second,
+thinner implementation. The dashboard's own preview listed item/qty/warehouse
+only; the shared one names the SOURCE document each line came from with its
+date and status, the customer, and what the document is doing relative to
+what was already raised.
+
+`make_invoice_from_dn` carries a comma-joined list of Delivery Notes, so it
+opens the picker (all ticked) when there is more than one — anything unticked
+stays unbilled. Every other action here maps from a single source and needs
+no such step. Both delegations are guarded by a `typeof` check so a load
+failure degrades to the plain table instead of leaving the button dead.
+
+## On Pending DN/SI, the billing action leads
+
+Being *in* this queue isn't enough — the Action column has to offer the
+action this queue is about. A partly-delivered order's primary action is
+about the rest of the order (raise an MR, await stock) while its billing
+need is the `secondary_action`, so rendering the primary action alone put
+"Raise MR from SO" in the Action column while the invoice the tab exists for
+had no button at all.
+
+`billing_html` therefore leads with the billing action wherever one exists,
+and shows the primary stage's action beneath it as "Also pending" — it is
+real work, just not what this queue is for. The Stage cell keeps showing the
+order's true stage ("Partially Delivered — Awaiting More Stock") plus a
+"Needs Invoice" note, so the stage is never misrepresented to make the
+action fit.
+
+## A Pick List can be delivered by either route
+
+`Pick List Item.delivered_qty` is only written by the **Delivery Note**
+route. A **Sales Invoice with Update Stock** delivers the same Pick List
+without touching its child rows at all — it updates the parent's
+`per_delivered` / `delivery_status`, which
+`_reconcile_pick_lists_for_sales_orders` keeps current for both routes.
+
+So any "how much of this Pick List is still undelivered" figure must read
+the parent, not just sum the rows. `get_pick_list_flow` takes whichever of
+the two shows MORE delivery. Confirmed live: three Pick Lists on a
+Completed, 100%-delivered, 100%-billed order (delivered through one Update
+Stock invoice) each had `delivered_qty = 0` on every row and were reported
+as "awaiting DN / SI" for their full picked qty.
+
+## The items toggle shows ordered vs received, per item
+
+`get_document_items` returns `ordered_qty` / `received_qty` / `pending_qty`
+per line, so the row-level toggle answers "how much was ordered and how much
+has actually come back" instead of just listing quantities.
+
+What that means differs per doctype, so `_doc_item_progress` resolves it
+rather than assuming one shared field name — and `progress_label` names what
+the figure actually is, so the column never claims "Received" over something
+else:
+
+- **Purchase Order / Purchase Invoice** — `qty` vs `received_qty`. On a
+  subcontracted PO the Finished Good row compares `fg_item_qty` against the
+  same row's `received_qty`, so "sent X, get back Y" reads per line.
+- **Material Request** — the only one with both natively: `qty` requested,
+  `ordered_qty` turned into a PO (shown as its own **On PO** column), and
+  `received_qty` arrived.
+- **Purchase Receipt / Subcontracting Receipt** — the row *is* the arrival,
+  so `qty` is the received figure and there is no Pending column at all
+  rather than a made-up zero.
+- **Sales Invoice** — `qty` vs `delivered_qty`, labelled "Delivered".
 
 ## Pending DN/SI's "All" scope also shows Completed orders
 

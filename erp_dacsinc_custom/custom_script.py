@@ -2487,12 +2487,37 @@ def get_item_stock_details_bulk(item_bom_pairs, sales_order_name):
     dn_items = []
     si_items = []
     if so_doc:
+        # per_billed / billed_amt come along so the "which Delivery Notes do I
+        # invoice" step can offer only what is still billable. Without them a
+        # fully-invoiced Delivery Note was offered again and ERPNext rejected
+        # the whole attempt with "All these items have already been
+        # Invoiced/Returned" — one already-billed document blocking the
+        # genuinely unbilled ones selected alongside it.
         dn_items = frappe.db.sql("""
-            SELECT dni.name, dni.parent, dn.docstatus, dni.qty, dni.warehouse, dni.so_detail AS sales_order_item
+            SELECT dni.name, dni.parent, dn.docstatus, dni.qty, dni.warehouse,
+                   dni.so_detail AS sales_order_item,
+                   dn.per_billed, dn.status AS dn_status,
+                   dni.billed_amt, dni.amount
             FROM `tabDelivery Note Item` dni
             JOIN `tabDelivery Note` dn ON dn.name = dni.parent
             WHERE dni.against_sales_order = %s AND dn.docstatus < 2
         """, so_doc.name, as_dict=True)
+
+        # Qty still to invoice on each Delivery Note row. billed_amt is an
+        # AMOUNT, so it is converted back to a qty against the row's own
+        # amount — that is what makes a PARTIALLY billed row report the right
+        # remainder instead of all-or-nothing.
+        for d in dn_items:
+            qty = flt(d.qty)
+            amount = flt(d.amount)
+            billed = flt(d.billed_amt)
+            if amount > 0:
+                unbilled = qty * max(0.0, (amount - billed)) / amount
+            else:
+                # No amount to prorate against (a zero-value line): fall back
+                # to the parent's own billing percentage.
+                unbilled = qty if flt(d.per_billed) < 100 else 0.0
+            d["unbilled_qty"] = flt(unbilled, 3)
 
         si_items = frappe.db.sql("""
             SELECT sii.name, sii.parent, si.docstatus, sii.qty, sii.warehouse, sii.so_detail AS sales_order_item
@@ -2847,7 +2872,8 @@ def get_item_stock_details_bulk(item_bom_pairs, sales_order_name):
                     LEFT JOIN `tabSales Order Item` soi ON soi.name = pli.sales_order_item
                     WHERE pli.item_code = %s AND pli.sales_order != %s AND pl.docstatus < 2
                       AND pl.status NOT IN ('Completed', 'Cancelled')
-                      AND IFNULL(so.status, '') NOT IN ('Closed', 'Completed')
+                      AND IFNULL(so.status, '') NOT IN ('Closed', 'Completed', 'Cancelled')
+                      AND IFNULL(so.docstatus, 0) < 2
                 ) x
                 WHERE x.held_qty > 0
             """
@@ -3138,6 +3164,36 @@ def get_item_stock_details_bulk(item_bom_pairs, sales_order_name):
                 "uom": row.uom or row.stock_uom, "warehouse": row.warehouse,
                 "per_ordered": flt(row.per_ordered),
             })
+
+        # How much of this item is already asked for ON PAPER for this order —
+        # an open (unordered) Material Request, or a Purchase Order still in
+        # draft. Neither is in total_incoming_qty, which only counts SUBMITTED
+        # POs/EWOs, so without this a line whose whole qty was already on an MR
+        # still looked completely unrequested.
+        #
+        # The two overlap and must not simply be added: a draft PO raised FROM
+        # an MR leaves that MR's ordered_qty at 0 (ERPNext only moves it on
+        # submit), so the same qty appears as both "open MR" and "draft PO" —
+        # summing them double-counted it. The draft PO's own qty is netted off
+        # against the MR row it came from, exactly as get_so_item_commitment
+        # does for the over-order cap.
+        draft_po_from_mr = {}
+        mr_item_names = [m["mr_item"] for m in material_requests if m.get("mr_item")]
+        if mr_item_names:
+            for r in frappe.db.sql("""
+                SELECT poi.material_request_item AS mri, SUM(poi.qty) AS qty
+                FROM `tabPurchase Order Item` poi
+                JOIN `tabPurchase Order` po ON po.name = poi.parent
+                WHERE po.docstatus = 0 AND poi.material_request_item IN %(rows)s
+                GROUP BY poi.material_request_item
+            """, {"rows": tuple(mr_item_names)}, as_dict=1):
+                draft_po_from_mr[r.mri] = flt(r.qty)
+
+        open_mr_qty = 0.0
+        for m in material_requests:
+            open_mr_qty += max(0.0, flt(m["pending_qty"]) - flt(draft_po_from_mr.get(m.get("mr_item"), 0)))
+        draft_po_qty = sum(flt(p["qty"]) for p in draft_purchase_orders)
+        total_paper_coverage_qty = flt(open_mr_qty + draft_po_qty, 3)
 
         # 8a-draft. Draft Material Requests for this item/SO — not yet submitted,
         # so they are not a real commitment and are excluded from
@@ -3631,6 +3687,7 @@ def get_item_stock_details_bulk(item_bom_pairs, sales_order_name):
             "stale_blockers": stale_blockers,
             "material_requests": material_requests, "total_mr_qty": total_mr_qty,
             "total_mr_pending_qty": total_mr_pending_qty, "total_mr_count": len(material_requests),
+            "total_paper_coverage_qty": total_paper_coverage_qty,
             "picked_for_others_qty": picked_for_others_qty, "draft_qty_for_others": draft_qty_for_others, "conflict_details": conflict_details,
             "picked_submitted_other_rows": picked_submitted_other_rows, "picked_draft_other_rows": picked_draft_other_rows,
             "incoming_stock": incoming_stock, "total_incoming_qty": total_incoming_qty, "total_incoming_po_count": total_incoming_po_count, "total_incoming_ewo_count": total_incoming_ewo_count,
@@ -4519,22 +4576,38 @@ def _log_pick_list_qty_reduction(pick_list_name, reductions):
 
 
 @frappe.whitelist()
-def update_and_submit_pick_list(pick_list, rows=None, submit=1):
+def update_and_submit_pick_list(pick_list, rows=None, submit=1, qty_means="picked"):
     """
-    (Called from the Sales Order stock widget)
+    Record what was actually picked on a DRAFT Pick List and submit it in one
+    step, instead of opening the Pick List form.
 
-    Lets a planner correct the picked quantity on a DRAFT Pick List and submit it
-    in one step, instead of opening the Pick List form.
+    rows: [{"pick_list_item": "<Pick List Item row name>", "qty": <qty>}, ...]
+    Only the rows passed in are touched; everything else is left alone.
 
-    rows: [{"pick_list_item": "<Pick List Item row name>", "qty": <new qty>}, ...]
-    Only the rows passed in are touched; everything else on the Pick List is left
-    alone.
+    `qty_means` decides WHICH field that qty lands on, because these are two
+    genuinely different actions:
 
-    A row's qty can only be REDUCED here, never raised: the qty a Pick List
-    line was created with is the most that was actually available/allocated
-    for it, so asking for more is always rejected up front, with a clear
-    error naming the item and the ceiling — not left for ERPNext's own
-    stock-availability check to reject later with a more generic message.
+    * "picked" (default) — the qty is what was physically picked. The line's
+      own `qty`/`stock_qty` (what was allocated) is left ALONE and `picked_qty`
+      is set. Picking 80 of an 88 line therefore records "88 allocated, 80
+      picked" — the shortfall stays visible on the Pick List itself.
+      Overwriting `qty` down to 80 instead (which this used to do) destroyed
+      the fact that 88 was ever asked for, and made the app auto-raise a
+      second Pick List for the 8 "missing" from the allocation.
+    * "allocated" — the qty replaces the allocation itself (`qty`/`stock_qty`),
+      leaving picked_qty for ERPNext to fill. For correcting a draft that was
+      built for the wrong quantity in the first place.
+
+    Either way the qty can only be REDUCED, never raised: the qty a line was
+    created with is the most that was actually available/allocated for it, so
+    asking for more is rejected up front with a clear error naming the item
+    and the ceiling — not left for ERPNext's own stock check to reject later
+    with a more generic message.
+
+    ERPNext fills picked_qty from stock_qty at submit ONLY when it is still 0
+    (Pick List.validate_picked_items), so an explicitly-set short pick is
+    preserved without touching `scan_mode` — and `scan_mode` must NOT be set
+    here, since it makes ERPNext THROW on a pick that is short of stock_qty.
     """
     if isinstance(rows, str):
         rows = json.loads(rows or "[]")
@@ -4571,20 +4644,39 @@ def update_and_submit_pick_list(pick_list, rows=None, submit=1):
                 "allocated for this line. You can only reduce it, down to {2} or less."
             ).format(loc.item_code, new_qty, original_qty))
 
-        if original_qty == new_qty:
+        conversion = flt(loc.conversion_factor or 1)
+
+        if qty_means == "allocated":
+            if original_qty == new_qty:
+                continue
+            reductions.append({
+                "item_code": loc.item_code,
+                "sales_order": loc.sales_order,
+                "original_qty": original_qty,
+                "new_qty": new_qty,
+            })
+            loc.qty = new_qty
+            loc.stock_qty = new_qty * conversion
+            # Leave picked_qty at 0 — validate_picked_items fills it from stock_qty.
+            loc.picked_qty = 0
+            changed += 1
             continue
 
-        reductions.append({
-            "item_code": loc.item_code,
-            "sales_order": loc.sales_order,
-            "original_qty": original_qty,
-            "new_qty": new_qty,
-        })
-
-        loc.qty = new_qty
-        loc.stock_qty = new_qty * flt(loc.conversion_factor or 1)
-        # Leave picked_qty at 0 — Pick List.before_submit fills it from stock_qty.
-        loc.picked_qty = 0
+        # qty_means == "picked": keep the allocation, record the pick.
+        # picked_qty is held in STOCK uom (the field is labelled "Picked Qty
+        # (in Stock UOM)"), so a line bought in one uom and stocked in another
+        # must be converted or the pick would be recorded at the wrong scale.
+        new_picked = new_qty * conversion
+        if flt(loc.picked_qty) == new_picked:
+            continue
+        if new_picked < flt(loc.stock_qty):
+            reductions.append({
+                "item_code": loc.item_code,
+                "sales_order": loc.sales_order,
+                "original_qty": original_qty,
+                "new_qty": new_qty,
+            })
+        loc.picked_qty = new_picked
         changed += 1
 
     if changed:
@@ -4616,25 +4708,112 @@ def release_stock_from_picklist(picklist_name):
     except Exception as e:
         frappe.log_error(frappe.get_traceback(), "Release Stock Error")
         return {"status": "fail", "message": str(e)}
+def _resync_pick_list_row_delivered(pl_doc):
+    """
+    Set each Pick List row's delivered_qty to what SUBMITTED Delivery Notes
+    actually took from it (Delivery Note Item.pick_list_item). Recomputed from
+    scratch every time so submit and cancel share one code path.
+
+    Rows fulfilled through a stock-updating Sales Invoice are left untouched:
+    Sales Invoice Item has no pick-list link, so there is nothing to attribute
+    and zeroing them would be inventing a fact. See
+    _calculate_pick_list_delivery_status for how that route is accounted for.
+    """
+    rows = [i for i in pl_doc.get("locations") if i.name]
+    if not rows:
+        return
+
+    delivered_by_row = {}
+    for r in frappe.db.sql("""
+        SELECT dni.pick_list_item AS row_name, SUM(dni.qty) AS qty
+        FROM `tabDelivery Note Item` dni
+        JOIN `tabDelivery Note` dn ON dn.name = dni.parent
+        WHERE dn.docstatus = 1 AND dni.pick_list_item IN %(rows)s
+        GROUP BY dni.pick_list_item
+    """, {"rows": tuple(i.name for i in rows)}, as_dict=True):
+        delivered_by_row[r.row_name] = flt(r.qty)
+
+    for row in rows:
+        # Never touch a row no Delivery Note has ever referenced — that is the
+        # Sales Invoice route, where 0 here is expected and correct.
+        ever_linked = frappe.db.exists("Delivery Note Item", {"pick_list_item": row.name})
+        if not ever_linked:
+            continue
+        new_val = flt(delivered_by_row.get(row.name, 0))
+        if flt(row.delivered_qty) != new_val:
+            frappe.db.set_value("Pick List Item", row.name, "delivered_qty", new_val,
+                                update_modified=False)
+
+
 def _calculate_pick_list_delivery_status(pl_doc, allow_downgrade_from_completed=False):
     # ... (code to calculate total_qty and total_delivered_qty as before) ...
     total_qty = 0
     total_delivered_qty_raw = 0
 
     # 1. Loop through each item in the Pick List to calculate totals
-    for item in pl_doc.get("locations"):
-        total_qty += item.qty
+    #
+    # Sales Order Item.delivered_qty is the SALES ORDER LINE's cumulative
+    # total across every Pick List, so crediting it to THIS Pick List (then
+    # capping at this Pick List's own qty) marked every Pick List on the order
+    # fully delivered the moment the line's total reached their size —
+    # confirmed live: shipping ONE 10-unit Pick List took the order to 100 of
+    # 110 delivered, and a sibling 10-unit Pick List that had shipped nothing
+    # (its own rows still at delivered_qty 0) was flipped to Completed / 100%
+    # alongside it, taking its 10 out of the "still to ship" figures entirely.
+    #
+    # Delivery Note Item carries pick_list_item, so the DN route CAN be
+    # attributed to the exact Pick List that fed it. A Sales Invoice with
+    # Update Stock carries no such link (there is no pick-list field on Sales
+    # Invoice Item at all) — that route is why the Sales Order total is still
+    # consulted, but only for delivery no Delivery Note accounts for.
+    row_names = [i.name for i in pl_doc.get("locations") if i.name]
+    so_item_names = list({i.sales_order_item for i in pl_doc.get("locations") if i.sales_order_item})
 
-        # Sales Order Item.delivered_qty is ERPNext's own combined total —
-        # maintained by both Delivery Note submit and Sales Invoice submit
-        # (when Update Stock is set), including return handling. Reading it
-        # directly here (rather than hand-summing Delivery Note Item) keeps
-        # this in sync with either fulfillment route without having to
-        # duplicate core's own union-and-cap logic.
-        if item.sales_order_item:
-            delivered_qty = frappe.db.get_value(
-                "Sales Order Item", item.sales_order_item, "delivered_qty")
-            total_delivered_qty_raw += flt(delivered_qty)
+    # Exactly what THIS Pick List's rows fed into submitted Delivery Notes.
+    dn_for_this_pl = 0.0
+    if row_names:
+        dn_for_this_pl = flt(frappe.db.sql("""
+            SELECT SUM(dni.qty) FROM `tabDelivery Note Item` dni
+            JOIN `tabDelivery Note` dn ON dn.name = dni.parent
+            WHERE dn.docstatus = 1 AND dni.pick_list_item IN %(rows)s
+        """, {"rows": tuple(row_names)})[0][0] or 0)
+
+    # Delivery on these Sales Order lines that NO Delivery Note attributes to
+    # a Pick List — i.e. shipped through a stock-updating Sales Invoice (or a
+    # Delivery Note raised straight off the order). That much is genuinely
+    # unattributable, so this Pick List may absorb as much of it as its own
+    # remaining size allows.
+    so_total_delivered = 0.0
+    dn_attributed_total = 0.0
+    if so_item_names:
+        so_total_delivered = flt(frappe.db.sql("""
+            SELECT SUM(delivered_qty) FROM `tabSales Order Item` WHERE name IN %(names)s
+        """, {"names": tuple(so_item_names)})[0][0] or 0)
+        dn_attributed_total = flt(frappe.db.sql("""
+            SELECT SUM(dni.qty) FROM `tabDelivery Note Item` dni
+            JOIN `tabDelivery Note` dn ON dn.name = dni.parent
+            WHERE dn.docstatus = 1 AND dni.so_detail IN %(names)s
+              AND IFNULL(dni.pick_list_item, '') != ''
+        """, {"names": tuple(so_item_names)})[0][0] or 0)
+
+    unattributed = max(0.0, so_total_delivered - dn_attributed_total)
+
+    for item in pl_doc.get("locations"):
+        # What this Pick List actually COMMITTED, which is what delivery is
+        # measured against — not what was originally allocated to it. A short
+        # pick (88 allocated, 80 picked) can only ever deliver 80, so keeping
+        # 88 as the denominator would cap it at 90.9% and leave the Pick List
+        # permanently "Partly Delivered" with 8 forever "awaiting DN/SI".
+        # A draft has picked nothing yet, so its allocation is the best
+        # available measure there — same rule as get_pick_list_flow's
+        # effective_qty.
+        picked = flt(item.picked_qty)
+        total_qty += picked if (cint(pl_doc.docstatus) == 1 and picked > 0) else flt(item.qty)
+
+    # This Pick List's own share: what it demonstrably shipped, plus as much
+    # of the unattributable remainder as it can still hold.
+    total_delivered_qty_raw = dn_for_this_pl + min(
+        unattributed, max(0.0, flt(total_qty) - dn_for_this_pl))
 
 
     # 2. CAP the effective delivered quantity at the Pick List's total requested quantity
@@ -4720,6 +4899,21 @@ def _reconcile_pick_lists_for_sales_orders(related_sales_orders, source_doc_name
 
                 # Step 2: Save the new data to the database (including 'status')
                 frappe.db.set_value("Pick List", pl_name, new_status_data)
+
+                # Step 3: Re-derive each ROW's delivered_qty from the Delivery
+                # Notes that are still submitted. Cancelling a Delivery Note
+                # leaves the row's own delivered_qty behind at its old value —
+                # confirmed live: a cancelled DN left its Pick List row reading
+                # delivered 10 of 10, so the widget saw nothing left to ship
+                # and offered no way to re-deliver it. Recomputing (rather than
+                # decrementing) means submit and cancel need no separate
+                # arithmetic and repeated runs cannot drift.
+                #
+                # Only the Delivery Note route is attributable per row — a
+                # stock-updating Sales Invoice carries no pick-list link, and
+                # for that route these rows legitimately stay 0 while the
+                # parent's per_delivered carries the truth.
+                _resync_pick_list_row_delivered(pl_doc)
 
             except Exception as e:
                 frappe.log_error(title=f"Hook failed for PL {pl_name}", message=f"Source: {source_doc_name}, Error: {e}")
@@ -4860,14 +5054,39 @@ def _reset_item_rates_to_sales_order(doc):
 _PICK_LIST_LOCKED_FIELDS = ("qty", "item_code", "warehouse")
 
 
+# Every link that makes a row DERIVED from another document rather than
+# free-standing. Kept in step with DN_LINK_FIELDS / SI_LINK_FIELDS in
+# public/js/delivery_note.js and sales_invoice.js — the client greys these rows
+# out, this is what actually enforces it.
+_DN_LINK_FIELDS = ("so_detail", "against_sales_order", "pick_list_item", "against_pick_list", "dn_detail")
+_SI_LINK_FIELDS = ("so_detail", "sales_order", "dn_detail", "delivery_note")
+
+
 def guard_dn_items_locked_to_pick_list(doc, method=None):
-    _revert_pick_list_locked_fields(doc, lambda item: bool(item.get("pick_list_item")))
+    """
+    A Delivery Note row derived from a Sales Order, Pick List or another
+    Delivery Note keeps the qty/item/warehouse it was created with.
+
+    Widened from "pick_list_item only": a Delivery Note mapped straight off a
+    Sales Order (no Pick List) was left fully editable, so the one route that
+    bypasses the Pick List was also the one route with no protection.
+    """
+    _revert_pick_list_locked_fields(
+        doc, lambda item: any(item.get(f) for f in _DN_LINK_FIELDS))
 
 
 def guard_si_items_locked_to_pick_list(doc, method=None):
-    if not doc.get("update_stock"):
-        return
-    _revert_pick_list_locked_fields(doc, lambda item: bool(item.get("so_detail")))
+    """
+    Same for a Sales Invoice row derived from a Sales Order or Delivery Note.
+
+    No longer scoped to update_stock invoices: a plain invoice raised against a
+    Delivery Note must not silently bill a different qty than was delivered,
+    which is precisely the mismatch the dashboard's delivered-vs-billed figures
+    are read from. (rate is protected separately and unconditionally by
+    lock_item_rate_to_sales_order.)
+    """
+    _revert_pick_list_locked_fields(
+        doc, lambda item: any(item.get(f) for f in _SI_LINK_FIELDS))
 
 
 def _revert_pick_list_locked_fields(doc, is_locked_row):
@@ -5790,12 +6009,88 @@ def sales_order_on_cancel(doc, method):
     """Cancel: Automatically finds the next most recent Submitted/Draft SO."""
     lead_name = get_lead_from_so_items(doc)
     sync_lead_data(lead_name)
+    _cleanup_pick_lists_for_cancelled_so(doc.name)
 
 def sales_order_on_trash(doc, method):
     """Delete: Manually excludes this doc to find the next valid record."""
     lead_name = get_lead_from_so_items(doc)
     sync_lead_data(lead_name, exclude_so_name=doc.name)
     _cancel_pick_lists_before_so_delete(doc.name)
+
+
+def _cleanup_pick_lists_for_cancelled_so(sales_order_name):
+    """
+    A cancelled Sales Order can still have Pick Lists pointing at it — the
+    cancel itself does nothing to them, ERPNext or otherwise. Left alone this
+    reads as pure confusion in the "Item Stock & Action Plan" widget's
+    Picked (Others) column: it lists a Pick List as a live stock conflict
+    holding qty for "Customer X, Sales Order Y" when SO Y is actually
+    Cancelled and will never be delivered.
+
+    A still-DRAFT Pick List against a cancelled SO has never picked or
+    reserved anything real (no submitted commitment exists), so it's deleted
+    outright rather than cancelled — there's nothing to "un-submit" and
+    nothing worth keeping as an audit record. A SUBMITTED one has actually
+    reserved/picked stock, so it's cancelled instead (same treatment as
+    _cancel_pick_lists_before_so_delete below), preserving it as a record
+    while releasing the stock it was holding.
+
+    A Pick List can legitimately span SEVERAL Sales Orders (ERPNext supports
+    picking for multiple orders on one document), so "this SO is cancelled"
+    is never on its own a reason to destroy the whole document — that would
+    take the other, still-live orders' picking down with it. Only a Pick List
+    belonging ENTIRELY to this Sales Order is deleted or cancelled outright;
+    a mixed one has just this order's rows dropped (draft), or is left intact
+    and logged (submitted, where rows can't be edited) — the widget's own
+    conflict query filters cancelled orders out per row either way, so a
+    mixed submitted Pick List never shows this order as a live conflict.
+    """
+    pick_list_names = frappe.db.get_all(
+        "Pick List Item",
+        filters={"sales_order": sales_order_name},
+        pluck="parent",
+        distinct=True,
+    )
+    for pl_name in set(pick_list_names):
+        docstatus = frappe.db.get_value("Pick List", pl_name, "docstatus")
+        if docstatus is None or docstatus == 2:
+            continue
+        try:
+            other_so_rows = frappe.db.count("Pick List Item", {
+                "parent": pl_name,
+                "sales_order": ("!=", sales_order_name),
+            })
+
+            if docstatus == 0:
+                if not other_so_rows:
+                    frappe.delete_doc("Pick List", pl_name, ignore_permissions=True, force=True)
+                else:
+                    pl_doc = frappe.get_doc("Pick List", pl_name)
+                    pl_doc.locations = [r for r in pl_doc.locations if r.sales_order != sales_order_name]
+                    pl_doc.add_comment(
+                        "Info",
+                        f"Rows for Sales Order {sales_order_name} were removed automatically: that order was cancelled."
+                    )
+                    pl_doc.save(ignore_permissions=True)
+            elif not other_so_rows:
+                pl_doc = frappe.get_doc("Pick List", pl_name)
+                pl_doc.add_comment(
+                    "Info",
+                    f"Auto-cancelled: Sales Order {sales_order_name} was cancelled while this Pick List still referenced it."
+                )
+                pl_doc.cancel()
+            else:
+                frappe.log_error(
+                    title=f"Pick List {pl_name} left as-is after cancelling {sales_order_name}",
+                    message=(
+                        f"{pl_name} is submitted and also picks for other Sales Orders, "
+                        f"so it was not cancelled. Review it manually if the picked stock "
+                        f"for {sales_order_name} needs releasing."
+                    ))
+        except Exception:
+            frappe.log_error(
+                title=f"Could not auto-clean Pick List {pl_name} after cancelling {sales_order_name}",
+                message=frappe.get_traceback())
 
 
 def _cancel_pick_lists_before_so_delete(sales_order_name):
@@ -5815,9 +6110,12 @@ def _cancel_pick_lists_before_so_delete(sales_order_name):
     Cancel it now instead, while the Sales Order can still be loaded (this
     hook runs before the delete transaction actually removes it), so nothing
     ever attempts to cancel it again against a Sales Order that's gone.
-    Deliberately cancel-only, not delete — the Pick List stays as an audit
-    record of what was picked, just no longer live, same as any other
-    cancelled document in this system.
+    A submitted Pick List is deliberately cancel-only, not deleted — it stays
+    as an audit record of what was picked, just no longer live, same as any
+    other cancelled document in this system. A still-DRAFT one has never
+    picked or reserved anything real, so it is deleted outright: keeping it
+    would leave a live-looking draft permanently pointing at a Sales Order
+    that no longer exists.
     """
     pick_list_names = frappe.db.get_all(
         "Pick List Item",
@@ -5827,18 +6125,21 @@ def _cancel_pick_lists_before_so_delete(sales_order_name):
     )
     for pl_name in set(pick_list_names):
         docstatus = frappe.db.get_value("Pick List", pl_name, "docstatus")
-        if docstatus != 1:
+        if docstatus is None or docstatus == 2:
             continue
         try:
-            pl_doc = frappe.get_doc("Pick List", pl_name)
-            pl_doc.add_comment(
-                "Info",
-                f"Auto-cancelled: Sales Order {sales_order_name} was deleted while this Pick List still referenced it."
-            )
-            pl_doc.cancel()
+            if docstatus == 0:
+                frappe.delete_doc("Pick List", pl_name, ignore_permissions=True, force=True)
+            else:
+                pl_doc = frappe.get_doc("Pick List", pl_name)
+                pl_doc.add_comment(
+                    "Info",
+                    f"Auto-cancelled: Sales Order {sales_order_name} was deleted while this Pick List still referenced it."
+                )
+                pl_doc.cancel()
         except Exception:
             frappe.log_error(
-                title=f"Could not auto-cancel Pick List {pl_name} before deleting {sales_order_name}",
+                title=f"Could not auto-clean Pick List {pl_name} before deleting {sales_order_name}",
                 message=frappe.get_traceback())
 
 
@@ -8101,6 +8402,185 @@ def validate_non_zero_rate(doc, method):
             )
 
 
+@frappe.whitelist()
+def get_so_item_commitment(sales_order_item, exclude_doctype=None, exclude_name=None):
+    """
+    How much of a Sales Order line is already spoken for, and how much is
+    still free to request/order.
+
+    Committed = every Purchase Order raised against the line + every Material
+    Request against it that has NOT yet become a Purchase Order
+    (`qty - ordered_qty`). Counting an MR's full qty as well as the PO it
+    turned into would double-count the same requirement — `ordered_qty` is
+    exactly what ERPNext moves as an MR is converted, so netting it off is
+    what keeps the two documents from both claiming the same need.
+
+    Used by the PO/MR forms to warn while the qty is being typed, and by the
+    guards below which are the actual enforcement.
+    """
+    so_item = frappe.db.get_value(
+        "Sales Order Item", sales_order_item, ["qty", "item_code", "parent"], as_dict=True)
+    if not so_item:
+        return None
+
+    po_qty = flt(frappe.db.sql("""
+        SELECT SUM(CASE WHEN po.is_subcontracted = 1 THEN poi.fg_item_qty ELSE poi.qty END)
+        FROM `tabPurchase Order Item` poi
+        JOIN `tabPurchase Order` po ON po.name = poi.parent
+        WHERE poi.sales_order_item = %(soi)s AND po.docstatus IN (0, 1)
+          AND po.name != %(excl)s
+    """, {"soi": sales_order_item,
+          "excl": exclude_name if exclude_doctype == "Purchase Order" else ""})[0][0])
+
+    # `ordered_qty` is only bumped when a Purchase Order is SUBMITTED, so a
+    # draft PO raised from an MR leaves that MR still reading as fully open
+    # while its own qty is already counted in po_qty above — the same
+    # requirement counted twice, which then blocks edits to a line that is
+    # not actually over-committed. Netting draft PO rows off against the MR
+    # row they came from (Purchase Order Item.material_request_item) closes
+    # that window; a submitted PO needs no such treatment because
+    # ordered_qty has by then moved on its own.
+    mr_open_qty = flt(frappe.db.sql("""
+        SELECT SUM(GREATEST(mri.qty - IFNULL(mri.ordered_qty, 0) - IFNULL(draft_po.qty, 0), 0))
+        FROM `tabMaterial Request Item` mri
+        JOIN `tabMaterial Request` mr ON mr.name = mri.parent
+        LEFT JOIN (
+            SELECT poi.material_request_item AS mri_name, SUM(poi.qty) AS qty
+            FROM `tabPurchase Order Item` poi
+            JOIN `tabPurchase Order` po ON po.name = poi.parent
+            WHERE po.docstatus = 0 AND IFNULL(poi.material_request_item, '') != ''
+            GROUP BY poi.material_request_item
+        ) draft_po ON draft_po.mri_name = mri.name
+        WHERE mri.sales_order_item = %(soi)s AND mr.docstatus IN (0, 1)
+          AND mr.name != %(excl)s
+    """, {"soi": sales_order_item,
+          "excl": exclude_name if exclude_doctype == "Material Request" else ""})[0][0])
+
+    # WHICH documents hold it. A total alone reads as unexplained when it
+    # blocks something — naming them turns "8 more than the line needs" into
+    # "there is already a draft PO for the full qty", which points straight at
+    # what to do about it.
+    docs = []
+    for r in frappe.db.sql("""
+        SELECT poi.parent AS name, po.docstatus,
+               CASE WHEN po.is_subcontracted = 1 THEN poi.fg_item_qty ELSE poi.qty END AS qty
+        FROM `tabPurchase Order Item` poi
+        JOIN `tabPurchase Order` po ON po.name = poi.parent
+        WHERE poi.sales_order_item = %(soi)s AND po.docstatus IN (0, 1)
+          AND po.name != %(excl)s
+    """, {"soi": sales_order_item,
+          "excl": exclude_name if exclude_doctype == "Purchase Order" else ""}, as_dict=True):
+        docs.append({"doctype": "Purchase Order", "name": r.name, "qty": flt(r.qty),
+                     "status": _("Draft") if cint(r.docstatus) == 0 else _("Submitted")})
+
+    for r in frappe.db.sql("""
+        SELECT mri.parent AS name, mr.docstatus,
+               GREATEST(mri.qty - IFNULL(mri.ordered_qty, 0) - IFNULL(draft_po.qty, 0), 0) AS qty
+        FROM `tabMaterial Request Item` mri
+        JOIN `tabMaterial Request` mr ON mr.name = mri.parent
+        LEFT JOIN (
+            SELECT poi.material_request_item AS mri_name, SUM(poi.qty) AS qty
+            FROM `tabPurchase Order Item` poi
+            JOIN `tabPurchase Order` po ON po.name = poi.parent
+            WHERE po.docstatus = 0 AND IFNULL(poi.material_request_item, '') != ''
+            GROUP BY poi.material_request_item
+        ) draft_po ON draft_po.mri_name = mri.name
+        WHERE mri.sales_order_item = %(soi)s AND mr.docstatus IN (0, 1)
+          AND mr.name != %(excl)s
+    """, {"soi": sales_order_item,
+          "excl": exclude_name if exclude_doctype == "Material Request" else ""}, as_dict=True):
+        if flt(r.qty) <= 0.001:
+            continue
+        docs.append({"doctype": "Material Request", "name": r.name, "qty": flt(r.qty),
+                     "status": _("Draft") if cint(r.docstatus) == 0 else _("Submitted")})
+
+    committed = po_qty + mr_open_qty
+    return {
+        "sales_order": so_item.parent,
+        "item_code": so_item.item_code,
+        "so_qty": flt(so_item.qty),
+        "on_po": po_qty,
+        "on_open_mr": mr_open_qty,
+        "committed": committed,
+        "remaining": max(0.0, flt(so_item.qty) - committed),
+        "docs": docs,
+    }
+
+
+def _commitment_doc_list(info):
+    """"PUR-ORD-… (Draft, 10)" for every document holding part of a line."""
+    return ", ".join(
+        "{0} ({1}, {2})".format(frappe.bold(d["name"]), d["status"], flt(d["qty"]))
+        for d in (info.get("docs") or [])
+    ) or _("nothing")
+
+
+@frappe.whitelist()
+def get_so_item_commitments(sales_order_items, exclude_doctype=None, exclude_name=None):
+    """
+    get_so_item_commitment for several Sales Order lines at once, keyed by
+    line — so a form can state the actual remaining allowance for every linked
+    row it holds without one round trip per row.
+    """
+    if isinstance(sales_order_items, str):
+        sales_order_items = json.loads(sales_order_items or "[]")
+    out = {}
+    for soi in (sales_order_items or []):
+        if not soi or soi in out:
+            continue
+        info = get_so_item_commitment(soi, exclude_doctype, exclude_name)
+        if info:
+            out[soi] = info
+    return out
+
+
+def guard_mr_item_not_over_so_need(doc, method=None):
+    """
+    Same rule as guard_po_item_not_over_so_need, for Material Requests: a row
+    linked to a Sales Order line must not push that line's total commitment
+    (POs + still-unordered MRs) past what the line actually needs.
+
+    Without this the cap could simply be walked around by requesting the
+    excess on an MR instead of ordering it on a PO — and that MR then becomes
+    a PO through "Get Items from MR", arriving with the over-order already
+    baked in.
+
+    Rows with no `sales_order_item` link are unrestricted, exactly as on the
+    PO side: they were never counted as serving this line by any of the
+    coverage math, which keys off the link and never a bare item_code match.
+    """
+    by_so_item = {}
+    for item in doc.items:
+        so_item_id = item.get("sales_order_item")
+        if not so_item_id:
+            continue
+        by_so_item[so_item_id] = by_so_item.get(so_item_id, 0) + flt(item.get("qty"))
+
+    for so_item_id, this_doc_qty in by_so_item.items():
+        info = get_so_item_commitment(so_item_id, "Material Request", doc.name or "")
+        if not info:
+            continue
+        total = flt(info["committed"]) + this_doc_qty
+        if total > flt(info["so_qty"]) + 0.01:
+            frappe.throw(
+                _(
+                    "{0} on Sales Order {1} needs {2}, and {3} is already covered by:<br>{4}<br><br>"
+                    "Requesting {5} here takes the total to {6} — {7} more than the line needs.<br><br>"
+                    "Either work on the document above instead, {8}, or — to request the extra "
+                    "anyway — add the <b>same item again in a new row</b> and leave that row's Sales "
+                    "Order field blank; a row not tied to the order is unrestricted."
+                ).format(
+                    frappe.bold(info["item_code"]), frappe.bold(info["sales_order"]),
+                    flt(info["so_qty"]), flt(info["committed"]), _commitment_doc_list(info),
+                    flt(this_doc_qty), flt(total), flt(total - info["so_qty"]),
+                    _("reduce this row to {0} or less").format(flt(info["remaining"]))
+                    if flt(info["remaining"]) > 0.01
+                    else _("remove this row — the line has nothing left for a linked row"),
+                ),
+                title=_("Over the Sales Order's Own Need"),
+            )
+
+
 def guard_po_item_not_over_so_need(doc, method=None):
     """
     A Purchase Order row fetched from (or manually linked to) a Sales Order
@@ -8138,26 +8618,36 @@ def guard_po_item_not_over_so_need(doc, method=None):
         if not so_item:
             continue
 
-        other_ordered = flt(frappe.db.sql("""
-            SELECT SUM(CASE WHEN po.is_subcontracted = 1 THEN poi.fg_item_qty ELSE poi.qty END)
-            FROM `tabPurchase Order Item` poi
-            JOIN `tabPurchase Order` po ON po.name = poi.parent
-            WHERE poi.sales_order_item = %(so_item_id)s
-              AND po.docstatus IN (0, 1)
-              AND po.name != %(this_po)s
-        """, {"so_item_id": so_item_id, "this_po": doc.name or ""})[0][0])
+        # Counts other PURCHASE ORDERS only, deliberately: an open Material
+        # Request has not ordered anything yet, and during "Get Items from MR"
+        # the MR is not decremented until the PO is submitted — including it
+        # here would refuse the very conversion the MR exists for.
+        info = get_so_item_commitment(so_item_id, "Purchase Order", doc.name or "")
+        if not info:
+            continue
+        other_ordered = flt(info["on_po"])
 
         total_ordered = other_ordered + this_doc_qty
         if total_ordered > flt(so_item.qty) + 0.01:
+            po_docs = [d for d in (info.get("docs") or []) if d["doctype"] == "Purchase Order"]
+            listed = ", ".join(
+                "{0} ({1}, {2})".format(frappe.bold(d["name"]), d["status"], flt(d["qty"]))
+                for d in po_docs) or _("nothing")
             frappe.throw(
                 _(
-                    "{0}: ordering {1} here brings the total ordered against Sales Order {2}'s "
-                    "line (needs {3}) to {4} — {5} more than that line actually needs. Reduce the "
-                    "qty on this Purchase Order, or add the extra as a separate item row with no "
-                    "Sales Order reference if it's genuinely for something else."
+                    "{0} on Sales Order {1} needs {2}, and {3} is already on:<br>{4}<br><br>"
+                    "Ordering {5} here takes the total to {6} — {7} more than the line needs.<br><br>"
+                    "Either work on the Purchase Order above instead, {8}, or — to order the extra "
+                    "anyway — add the <b>same item again in a new row</b> and leave that row's Sales "
+                    "Order field blank; a row not tied to the order is unrestricted."
                 ).format(
-                    frappe.bold(so_item.item_code), flt(this_doc_qty), frappe.bold(so_item.parent),
-                    flt(so_item.qty), flt(total_ordered), flt(total_ordered - so_item.qty),
+                    frappe.bold(so_item.item_code), frappe.bold(so_item.parent),
+                    flt(so_item.qty), other_ordered, listed,
+                    flt(this_doc_qty), flt(total_ordered), flt(total_ordered - so_item.qty),
+                    _("reduce this row to {0} or less").format(
+                        flt(so_item.qty) - other_ordered)
+                    if (flt(so_item.qty) - other_ordered) > 0.01
+                    else _("remove this row — the line has nothing left for a linked row"),
                 ),
                 title=_("Over the Sales Order's Own Need"),
             )
@@ -8436,6 +8926,7 @@ def fetch_multi_order_requirements(exclude_mr=None):
             so.name as so_id, so.customer, so.customer_name,
             so_item.name as so_item_name,
             so_item.item_code, so_item.warehouse, so_item.qty,
+            so_item.delivered_qty,
             so_item.bom_no, so_item.uom, so.delivery_date
         FROM `tabSales Order` so
         INNER JOIN `tabSales Order Item` so_item ON so_item.parent = so.name
@@ -8638,10 +9129,12 @@ def fetch_multi_order_requirements(exclude_mr=None):
             aggregated_so_data[key] = {
                 "so_id": row.so_id, "customer": row.customer, "customer_name": row.customer_name,
                 "item_code": row.item_code, "warehouse": row.warehouse, "uom": row.uom,
-                "order_qty": 0.0, "line_count": 0, "bom_no": row.bom_no, "so_item_names": [],
+                "order_qty": 0.0, "delivered": 0.0, "line_count": 0,
+                "bom_no": row.bom_no, "so_item_names": [],
             }
 
         aggregated_so_data[key]["order_qty"] += flt(row.qty)
+        aggregated_so_data[key]["delivered"] += flt(row.delivered_qty)
         aggregated_so_data[key]["line_count"] += 1
         aggregated_so_data[key]["so_item_names"].append(row.so_item_name)
 
@@ -8780,10 +9273,12 @@ def fetch_multi_order_requirements(exclude_mr=None):
             flt(val["order_qty"]) - flt(val["picked"]) - flt(val["on_request_pending"])
             - flt(val["available"]) - val["po_pending"], 0)
 
-        # Once stock, picks, an outstanding MR and any PO already cover this
-        # line, it needs no further action — leaving it in the list with a
-        # Net Need of 0 just clutters "Individual Purchase Requirements"
-        # with rows nobody has to do anything about.
+        # This dialog lists work to DO: only a line that still needs
+        # requesting belongs here. Once stock, picks, an outstanding MR and
+        # any PO already cover it, a row with a Net Need of 0 is nothing but
+        # noise — the coverage that closed it is visible on the Sales Order's
+        # own Item Stock & Action Plan, which is where "where did the
+        # outstanding qty go" is answered.
         if not val["bom_no"]:
             if val["shortage"] > 0:
                 standard_results.append(val)
@@ -8999,6 +9494,11 @@ def create_material_request_custom(items, company, sales_order_name, is_subcontr
 
         mr.append("items", {
             "item_code": it.get('item_code'),
+            # Linking the specific Sales Order LINE (not just the order) is
+            # what makes this request count as coverage for that line and
+            # brings it inside guard_mr_item_not_over_so_need's cap. Only set
+            # when the caller could attribute it to exactly one line.
+            "sales_order_item": it.get('sales_order_item') or None,
             "qty": it.get('qty'),
             "warehouse": it.get('warehouse'),
             "schedule_date": target_date, # Validated Date

@@ -318,19 +318,14 @@ class WorkflowOverride extends frappe.ui.form.States {
                                             }
                                         ];
 
-                                        if (me.frm.doc.workflow_state === "Pending Final Approval") {
-                                            fields.push({
-                                                fieldtype: 'Section Break',
-                                                label: __('Approval Settings')
-                                            });
-                                            fields.push({
-                                                fieldtype: 'Check',
-                                                fieldname: 'skip_delivery_note',
-                                                label: __('Skip Delivery Note (Direct Billing)'),
-                                                default: me.frm.doc.skip_delivery_note || 0
-                                            });
-                                        }
-                                        
+                                        // No "Skip Delivery Note (Direct Billing)" control here —
+                                        // same reasoning as the Order Flow page's copy of this
+                                        // dialog: approval verifies the customer, it does not decide
+                                        // how the order ships or bills. The argument is not sent
+                                        // either, so an order that already carries the flag keeps it
+                                        // through approval rather than being reset by an absent
+                                        // checkbox.
+
                                          const dialog = new frappe.ui.Dialog({
                                              title: __('Verify Customer Details'),
                                              size: 'large',
@@ -352,8 +347,7 @@ class WorkflowOverride extends frappe.ui.form.States {
                                                          method: 'erp_dacsinc_custom.order_flow_api.approve_sales_order_with_comment',
                                                          args: {
                                                              sales_order: me.frm.doc.name,
-                                                             comment: values.skip_comment,
-                                                             skip_delivery_note: values.skip_delivery_note
+                                                             comment: values.skip_comment
                                                          },
                                                          error: enable_buttons
                                                      }).then(() => {
@@ -382,8 +376,7 @@ class WorkflowOverride extends frappe.ui.form.States {
                                                          tax_category: values.tax_category || null,
                                                          billing_address: values.billing_address || null,
                                                          shipping_address: values.shipping_address || null,
-                                                         contact_data: contact_data,
-                                                         skip_delivery_note: values.skip_delivery_note
+                                                         contact_data: contact_data
                                                      },
                                                      error: enable_buttons
                                                  }).then(() => {
@@ -413,8 +406,7 @@ class WorkflowOverride extends frappe.ui.form.States {
                                                      method: 'erp_dacsinc_custom.order_flow_api.approve_sales_order_with_comment',
                                                      args: {
                                                          sales_order: me.frm.doc.name,
-                                                         comment: values.skip_comment,
-                                                         skip_delivery_note: values.skip_delivery_note
+                                                         comment: values.skip_comment
                                                      },
                                                      error: enable_buttons
                                                  }).then(() => {

@@ -47,9 +47,12 @@
   "of_column_break_tabs",
   "of_tab_jobwork_roles",
   "of_tab_stock_roles",
+  "of_tab_picklist_roles",
   "of_tab_billing_roles",
   "of_tab_accounts_roles",
-  "of_tab_uniform_roles"
+  "of_tab_uniform_roles",
+  "po_price_check_section",
+  "po_price_check_roles"
  ],
  "fields": [
   {
@@ -294,7 +297,14 @@
    "description": "Stock Tracker tab (global item availability & Pick List reservations). Empty = visible to everyone who can open the page.",
    "fieldname": "of_tab_stock_roles",
    "fieldtype": "Table MultiSelect",
-   "label": "Stock Tracker — Allowed Roles",
+   "label": "Stock Tracker \u2014 Allowed Roles",
+   "options": "Order Flow Tab Role"
+  },
+  {
+   "description": "Stock Tracker tab (global item availability & Pick List reservations). Empty = visible to everyone who can open the page.",
+   "fieldname": "of_tab_picklist_roles",
+   "fieldtype": "Table MultiSelect",
+   "label": "Pick Lists \u2014 Allowed Roles",
    "options": "Order Flow Tab Role"
   },
   {
@@ -317,13 +327,25 @@
    "fieldtype": "Table MultiSelect",
    "label": "Embroidery Transfers \u2014 Allowed Roles",
    "options": "Order Flow Tab Role"
+  },
+  {
+   "fieldname": "po_price_check_section",
+   "fieldtype": "Section Break",
+   "label": "Purchase Order \u2014 Price Check"
+  },
+  {
+   "description": "Who may see the Price Check table on a Purchase Order (price list rate, this supplier's last rate, and what other suppliers charge). Empty = nobody: rates a buyer sees are a deliberate disclosure, so this one defaults to hidden rather than to everyone.",
+   "fieldname": "po_price_check_roles",
+   "fieldtype": "Table MultiSelect",
+   "label": "Price Check \u2014 Allowed Roles",
+   "options": "Order Flow Tab Role"
   }
  ],
  "grid_page_length": 50,
  "index_web_pages_for_search": 1,
  "issingle": 1,
  "links": [],
- "modified": "2026-08-18 09:48:54.358177",
+ "modified": "2026-09-02 00:00:00.000000",
  "modified_by": "Administrator",
  "module": "Erp Dacsinc Custom",
  "name": "Admin Settings",
