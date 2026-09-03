@@ -318,6 +318,7 @@ ORDER_FLOW_TAB_ROLES = {
     "tracker": ["Marketing Team", "Inside Sales", "Purchase Team", "Inward Team", "Accounts Team", "Production Team"],
     "purchase": ["Purchase Team", "Inward Team"],
     "jobwork": ["Production Team"],
+    "picklist": ["Inward Team", "Production Team", "Merchandiser User", "Junior Merchandiser"],
     "accounts": ["Accounts Team"],
     "uniform": ["Production Team", "Inward Team"],
 }

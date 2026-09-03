@@ -2658,7 +2658,6 @@ def get_pick_list_flow(search=None, scope="open", page=1, page_size=100):
     tabs — the row here IS the Pick List, since the whole point is working
     through the Pick Lists themselves.
     """
-    _guard()
     _guard_tab("picklist")
 
     conditions = []
