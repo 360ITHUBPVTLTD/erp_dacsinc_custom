@@ -31,7 +31,7 @@ from frappe import _
 # Orders that have a Delivery Note but still need to be billed (its key
 # stays "billing" for the same reason — of_tab_billing_roles keeps applying
 # unchanged even though the on-screen label has changed twice since).
-OF_TABS = ("approval", "tracker", "purchase", "jobwork", "stock", "picklist", "billing", "accounts", "uniform")
+OF_TABS = ("approval", "tracker", "picklist", "purchase", "jobwork", "stock", "billing", "accounts", "uniform")
 
 OF_TAB_LABELS = {
     "approval": "SO Approvals",

@@ -109,10 +109,10 @@ const OF_TAB_DOCTYPES = Object.fromEntries(
 const OF_TABS = [
     { key: 'approval', label: 'SO Approvals',         icon: 'fa-check-square-o' },
     { key: 'tracker',  label: 'Sales Tracker',        icon: 'fa-list-ul' },
+    { key: 'picklist', label: 'Pick Lists',           icon: 'fa-hand-paper-o' },
     { key: 'purchase', label: 'Purchase Flow',        icon: 'fa-shopping-cart' },
     { key: 'jobwork',  label: 'Job Work',             icon: 'fa-cogs' },
     { key: 'stock',    label: 'Stock Tracker',        icon: 'fa-cubes' },
-    { key: 'picklist', label: 'Pick Lists',           icon: 'fa-hand-paper-o' },
     { key: 'billing',  label: 'Pending DN/SI',         icon: 'fa-truck' },
     { key: 'accounts', label: 'Finance',              icon: 'fa-calculator' },
     { key: 'uniform',  label: 'Embroidery Transfers', icon: 'fa-random' }
