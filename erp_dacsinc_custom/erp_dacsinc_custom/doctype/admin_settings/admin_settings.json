@@ -140,9 +140,9 @@
   },
   {
    "fieldname": "mobile_app_crm_card",
-   "fieldtype": "Link",
+   "fieldtype": "Table MultiSelect",
    "label": "Mobile App CRM Card",
-   "options": "Department"
+   "options": "Has Department"
   },
   {
    "fieldname": "what_apps_tab",
