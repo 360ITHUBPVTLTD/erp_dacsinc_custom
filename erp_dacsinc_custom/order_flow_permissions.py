@@ -243,9 +243,6 @@ def get_order_flow_permissions():
     one from the other client-side would just reintroduce the tab ordering
     as a second list in JavaScript.
     """
-    if not frappe.has_permission("Sales Order", "read"):
-        frappe.throw(_("You are not permitted to view Sales Orders."), frappe.PermissionError)
-
     roles = frappe.get_roles()
     admin = is_admin()
 

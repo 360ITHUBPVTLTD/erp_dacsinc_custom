@@ -301,7 +301,7 @@
    "options": "Order Flow Tab Role"
   },
   {
-   "description": "Stock Tracker tab (global item availability & Pick List reservations). Empty = visible to everyone who can open the page.",
+   "description": "Pick Lists tab. Empty = visible to everyone who can open the page.",
    "fieldname": "of_tab_picklist_roles",
    "fieldtype": "Table MultiSelect",
    "label": "Pick Lists \u2014 Allowed Roles",
