@@ -83,8 +83,28 @@ frappe.ui.form.on('Material Request', {
         if (!frm.is_new()) {
             render_stock_html(frm);
         }
+
+        // Standing note about the Sales Order cap (see so_qty_cap.js).
+        if (window.so_qty_cap) window.so_qty_cap.set_intro(frm);
+    },
+
+    // Re-read the limit at the moment of a save attempt, so when the server
+    // guard refuses the save the note beside the error shows the CURRENT
+    // remaining figure rather than whatever it read when the form was opened.
+    validate: function (frm) {
+        if (window.so_qty_cap) window.so_qty_cap.set_intro(frm);
     }
 });
+
+frappe.ui.form.on('Material Request Item', {
+    // Note only — no dialog. See so_qty_cap.js for why typing-time validation
+    // was removed.
+    items_add: function (frm) { if (window.so_qty_cap) window.so_qty_cap.refresh(frm); },
+    items_remove: function (frm) { if (window.so_qty_cap) window.so_qty_cap.refresh(frm); },
+    qty: function (frm) { if (window.so_qty_cap) window.so_qty_cap.refresh(frm); },
+    sales_order_item: function (frm) { if (window.so_qty_cap) window.so_qty_cap.refresh(frm); },
+});
+
 
 // Function to generate the stock availability table
 function render_stock_html(frm) {
@@ -228,7 +248,8 @@ function render_fulfillment_dialog(frm, data) {
             <td class="p-2">
                 <table style="width:100%; font-size:11px; border-collapse:collapse; line-height:1.4;">
                     <tr><td style="color:#475569;">Total Ordered</td><td class="text-right font-weight-bold">${(Number(row.order_qty) || 0).toFixed(2)}</td></tr>
-                    ${(Number(row.picked) || 0) > 0 ? `<tr><td style="color:#475569;">&minus; Already Picked</td><td class="text-right">${(Number(row.picked) || 0).toFixed(2)}</td></tr>` : ''}
+                    ${(Number(row.delivered) || 0) > 0 ? `<tr><td style="color:#475569;">&minus; Delivered</td><td class="text-right">${(Number(row.delivered) || 0).toFixed(2)}</td></tr>` : ''}
+                    ${(Number(row.picked) || 0) > 0 ? `<tr><td style="color:#475569;">&minus; Picked${(Number(row.delivered) || 0) > 0 ? ' (incl. delivered)' : ''}</td><td class="text-right">${(Number(row.picked) || 0).toFixed(2)}</td></tr>` : ''}
                     ${(Number(row.available) || 0) > 0 ? `<tr><td style="color:#059669;">&minus; In Stock</td><td class="text-right" style="color:#059669;">${(Number(row.available) || 0).toFixed(2)}</td></tr>` : ''}
                     ${(Number(row.on_request_pending) || 0) > 0 ? `<tr><td style="color:#6366f1;">&minus; Pending MR</td><td class="text-right" style="color:#6366f1;">${(Number(row.on_request_pending) || 0).toFixed(2)}</td></tr>` : ''}
                     ${(Number(row.po_pending) || 0) > 0 ? `<tr><td style="color:#2563eb;">&minus; Pending PO</td><td class="text-right" style="color:#2563eb;">${(Number(row.po_pending) || 0).toFixed(2)}</td></tr>` : ''}

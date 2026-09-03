@@ -31,6 +31,10 @@ const OF_STAGES = [
     { key: 'in_jobwork',       label: 'In Job Work',        mod: 'jw',        tile: 'jw',        hint: 'Active subcontracting POs' },
     { key: 'in_embroidery',    label: 'Embroidery',         mod: 'emb',       tile: 'emb',       hint: 'Active embroidery work' },
     { key: 'awaiting_stock',   label: 'Awaiting Stock (PO)', mod: 'po',       tile: 'wait',      hint: 'PO active — waiting for supplier receipt' },
+    // Not a stage: an order can sit at ANY stage while its raw material is
+    // ready to be subcontracted, so this filters on its own row flag
+    // (rm_ready_for_sco) rather than on stage_key. See OF_FLAG_STAGES.
+    { key: 'rm_ready_for_sco', label: 'RM Ready — Make SCO PO', mod: 'jw',      tile: 'jw',        hint: 'Raw material has arrived and is in stock — a Subcontract PO can be raised now' },
     { key: 'newly_created',    label: 'Newly Created',      mod: 'new',       tile: 'new',       hint: 'New order — nothing raised yet' },
     { key: 'overdue',          label: 'Overdue',            mod: 'due',       tile: 'bad',       hint: 'Past delivery date' },
     { key: 'completed',        label: 'Completed',          mod: 'ok',        tile: 'ok',        hint: 'Fully delivered and billed, or closed' }
@@ -43,8 +47,14 @@ const OF_STAGE_COUNT_KEY = {
     receipt_draft: 'receipt_draft',
     in_jobwork: 'in_jobwork', in_embroidery: 'in_embroidery',
     awaiting_stock: 'awaiting_stock', newly_created: 'newly_created', overdue: 'overdue',
+    rm_ready_for_sco: 'rm_ready_for_sco',
     completed: 'completed'
 };
+
+// Filter chips backed by a per-row boolean rather than by stage_key. A stage
+// is exclusive (a row has exactly one); these are parallel signals that can be
+// true alongside any stage, so they must be matched on the flag itself.
+const OF_FLAG_STAGES = { rm_ready_for_sco: 'rm_ready_for_sco' };
 const OF_TOGGLE_KEY = 'dac_of_stream_collapsed';
 const OF_FOR_ME_KEY = 'dac_of_activity_for_me';
 const OF_LAST_TAB_KEY = 'dac_of_last_tab';
@@ -78,6 +88,9 @@ const OF_TAB_FILTERS = {
     // A live inventory report, not a document feed — no notification stream,
     // so this never matches a real event doctype.
     stock:    { doctypes: ['__no_notifications__'] },
+    // The Pick Lists themselves are the rows here, so any Pick List event
+    // (created, submitted, delivered against) is a real change to this tab.
+    picklist: { doctypes: ['Pick List'] },
     // Lists embroidery stock transfers, which carry no Sales Order.
     uniform:  { doctypes: ['Uniform Embroidery Transfer'] }
 };
@@ -99,6 +112,7 @@ const OF_TABS = [
     { key: 'purchase', label: 'Purchase Flow',        icon: 'fa-shopping-cart' },
     { key: 'jobwork',  label: 'Job Work',             icon: 'fa-cogs' },
     { key: 'stock',    label: 'Stock Tracker',        icon: 'fa-cubes' },
+    { key: 'picklist', label: 'Pick Lists',           icon: 'fa-hand-paper-o' },
     { key: 'billing',  label: 'Pending DN/SI',         icon: 'fa-truck' },
     { key: 'accounts', label: 'Finance',              icon: 'fa-calculator' },
     { key: 'uniform',  label: 'Embroidery Transfers', icon: 'fa-random' }
@@ -161,6 +175,7 @@ class OrderFlow {
                 ewo_pn: { page: 1, page_size: 100 },
             },
             stock: { page: 1, page_size: 100 },
+            picklist: { page: 1, page_size: 100 },
             billing: { page: 1, page_size: 100 },
             accounts: {
                 sales: { page: 1, page_size: 100 },
@@ -399,6 +414,7 @@ class OrderFlow {
                 <div id="of-panel-purchase" class="of-hidden"></div>
                 <div id="of-panel-jobwork" class="of-hidden"></div>
                 <div id="of-panel-stock" class="of-hidden"></div>
+                <div id="of-panel-picklist" class="of-hidden"></div>
                 <div id="of-panel-billing" class="of-hidden"></div>
                 <div id="of-panel-accounts" class="of-hidden"></div>
                 <div id="of-panel-approval" class="of-hidden"></div>
@@ -653,6 +669,26 @@ class OrderFlow {
             this.refresh(true);
         });
 
+        // Submit a draft Pick List straight from the Pick Lists tab — the
+        // whole point of that tab is not having to open each one. Reuses the
+        // same server method the Sales Order widget submits through
+        // (update_and_submit_pick_list with no row edits), so all of its own
+        // validation applies identically here.
+        this.$body.on('click', '.of-pl-submit', (e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            const $btn = $(e.currentTarget);
+            const pl = $btn.data('pl');
+            if (!pl) return;
+            // Ask WHAT is being picked, not just whether to submit. Submitting
+            // sets each line's picked_qty and reserves that stock, so a bare
+            // "Submit?" confirm silently committed the full allocated qty even
+            // when less was physically picked. Quantities can only be reduced
+            // (update_and_submit_pick_list enforces the same ceiling
+            // server-side, and explains it by item if exceeded).
+            this.prompt_submit_pick_list(pl, $btn);
+        });
+
         // "Create" dropdown — toggle on its own button, close on an outside
         // click or a menu item's own click (the link still opens in a new
         // tab either way; this just keeps the menu from staying open on the
@@ -819,37 +855,52 @@ class OrderFlow {
                             frappe.msgprint(__('Nothing to create — every line is already fully processed.'));
                             return;
                         }
-                        const has_wh = items.some(it => !!it.warehouse);
-                        const rows = items.map(it => `
-                            <tr>
-                                <td>${of_esc(it.item_code)}${it.item_name && it.item_name !== it.item_code
-                                    ? `<div class="of-micro text-muted">${of_esc(it.item_name)}</div>` : ''}</td>
-                                <td class="text-right">${of_round2(it.qty)} ${of_esc(it.uom || it.stock_uom || '')}</td>
-                                ${has_wh ? `<td>${of_esc(it.warehouse || '')}</td>` : ''}
-                            </tr>`).join('');
-
-                        const dialog = new frappe.ui.Dialog({
-                            title: opts.preview_title || __('Review before creating'),
-                            fields: [{ fieldtype: 'HTML', fieldname: 'preview' }],
-                            primary_action_label: opts.confirm_label || __('Create'),
-                            primary_action: () => {
-                                dialog.hide();
-                                frappe.set_route('Form', doc.doctype, doc.name);
-                            },
-                            secondary_action_label: __('Cancel'),
-                            secondary_action: () => dialog.hide()
+                        // One preview for the whole app. sales_order.js is
+                        // already frappe.require()d on this page, and its
+                        // renderer names the SOURCE document each line came
+                        // from (with its date/status), the customer, and what
+                        // the document is doing relative to what was already
+                        // raised — none of which a local item/qty/warehouse
+                        // table could say. Kept behind a guard so a load
+                        // failure degrades to the plain table rather than
+                        // leaving the button dead.
+                        frappe.require('/assets/erp_dacsinc_custom/js/sales_order.js', () => {
+                            if (typeof window.so_show_mapped_doc_preview === 'function') {
+                                window.so_show_mapped_doc_preview(doc, {
+                                    preview_title: opts.preview_title,
+                                    confirm_label: opts.confirm_label
+                                });
+                                return;
+                            }
+                            const rows = items.map(it => `
+                                <tr>
+                                    <td>${of_esc(it.item_code)}${it.item_name && it.item_name !== it.item_code
+                                        ? `<div class="of-micro text-muted">${of_esc(it.item_name)}</div>` : ''}</td>
+                                    <td class="text-right">${of_round2(it.qty)} ${of_esc(it.uom || it.stock_uom || '')}</td>
+                                </tr>`).join('');
+                            const dialog = new frappe.ui.Dialog({
+                                title: opts.preview_title || __('Review before creating'),
+                                fields: [{ fieldtype: 'HTML', fieldname: 'preview' }],
+                                primary_action_label: opts.confirm_label || __('Create'),
+                                primary_action: () => {
+                                    dialog.hide();
+                                    frappe.set_route('Form', doc.doctype, doc.name);
+                                },
+                                secondary_action_label: __('Cancel'),
+                                secondary_action: () => dialog.hide()
+                            });
+                            dialog.fields_dict.preview.$wrapper.html(`
+                                <div class="doc-preview-wrap"><table class="doc-preview-table">
+                                    <thead><tr>
+                                        <th>${__('Item')}</th><th class="text-right">${__('Qty')}</th>
+                                    </tr></thead>
+                                    <tbody>${rows}</tbody>
+                                </table></div>
+                                <p class="doc-preview-hint">${
+                                    __('This opens as a draft, not yet saved — you can still review or edit it before submitting.')
+                                }</p>`);
+                            dialog.show();
                         });
-                        dialog.fields_dict.preview.$wrapper.html(`
-                            <div class="doc-preview-wrap"><table class="doc-preview-table">
-                                <thead><tr>
-                                    <th>${__('Item')}</th><th class="text-right">${__('Qty')}</th>${has_wh ? `<th>${__('Warehouse')}</th>` : ''}
-                                </tr></thead>
-                                <tbody>${rows}</tbody>
-                            </table></div>
-                            <p class="doc-preview-hint">${
-                                __('This opens as a draft, not yet saved — you can still review or edit it before submitting.')
-                            }</p>`);
-                        dialog.show();
                     }
                 });
             };
@@ -900,13 +951,39 @@ class OrderFlow {
                     }
                 });
             } else if (action === 'make_invoice_from_dn' && target) {
-                preview_and_open_mapped_doc({
+                // `target` is a comma-joined list of Delivery Notes. Where
+                // there is more than one, which of them this invoice covers is
+                // the user's call — the same select-your-sources step every
+                // other create-from action uses, rather than silently
+                // invoicing all of them.
+                const dn_names = String(target).split(',').map(x => x.trim()).filter(Boolean);
+                const build = (names) => preview_and_open_mapped_doc({
                     method: 'erp_dacsinc_custom.custom_script.make_sales_invoice_from_multiple_delivery_notes',
-                    source_name: target,
+                    source_name: names.join(','),
                     freeze_message: __('Creating Sales Invoice from Delivery Notes…'),
                     preview_title: __('Review Sales Invoice — from Delivery Note(s)'),
                     confirm_label: __('Create Sales Invoice')
                 });
+
+                if (dn_names.length <= 1) {
+                    build(dn_names);
+                } else {
+                    frappe.require('/assets/erp_dacsinc_custom/js/sales_order.js', () => {
+                        if (typeof window.so_pick_source_docs !== 'function') {
+                            build(dn_names);
+                            return;
+                        }
+                        window.so_pick_source_docs({
+                            doctype: 'Delivery Note',
+                            names: dn_names,
+                            multi: true,
+                            title: __('Create Sales Invoice — select Delivery Notes'),
+                            hint: __('{0} Delivery Notes are ready to invoice, all selected. Untick any that should not be on this invoice — those stay unbilled.', [dn_names.length]),
+                            confirm_label: __('Create Sales Invoice'),
+                            on_confirm: (selected) => build(selected),
+                        });
+                    });
+                }
             } else if (action === 'make_purchase_invoice' && po) {
                 preview_and_open_mapped_doc({
                     method: 'erpnext.buying.doctype.purchase_order.purchase_order.make_purchase_invoice',
@@ -1173,6 +1250,15 @@ class OrderFlow {
             e.stopPropagation();
             this.show_ewo_receive_fp_dialog($(e.currentTarget).data('name'));
         });
+        // Same print as the Purchase Order's own linked-documents table, so a
+        // work order prints identically from either place. stopPropagation
+        // because the row itself is a toggle — see the click guard in
+        // toggle_ewo_items_row's binding.
+        this.$body.on('click', '.of-ewo-print-btn', (e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            of_print_ewo($(e.currentTarget).data('name'));
+        });
 
         // Uniform Embroidery Receive Click Handler
         this.$body.on('click', '.of-receive-btn', (e) => {
@@ -1398,10 +1484,11 @@ class OrderFlow {
 
         // Dynamic context-aware search placeholder
         const placeholders = {
-            tracker: __('Search Sales Order #, Customer, Item…'),
+            tracker: __('Search Sales Order #, Customer PO #, Customer, Item…'),
             purchase: __('Search Purchase Order #, Supplier, Sales Order, Item…'),
             jobwork: __('Search Job Work #, Supplier, Purchase Order, Sales Order…'),
             stock: __('Search item code, item name…'),
+            picklist: __('Search Pick List #, Customer, Sales Order, Item, Warehouse…'),
             billing: __('Search Sales Order #, Customer…'),
             accounts: __('Search Invoice #, Customer, Supplier, Sales Order…'),
             approval: __('Search Sales Order #, Customer…'),
@@ -1471,6 +1558,7 @@ class OrderFlow {
             purchase: 'erp_dacsinc_custom.order_flow_api.get_purchase_flow',
             jobwork:  'erp_dacsinc_custom.order_flow_api.get_jobwork_flow',
             stock:    'erp_dacsinc_custom.order_flow_api.get_stock_tracker',
+            picklist: 'erp_dacsinc_custom.order_flow_api.get_pick_list_flow',
             billing:  'erp_dacsinc_custom.order_flow_api.get_billing_flow',
             accounts: 'erp_dacsinc_custom.order_flow_api.get_accounts_flow',
             approval: 'erp_dacsinc_custom.order_flow_api.get_pending_approvals',
@@ -1503,6 +1591,7 @@ class OrderFlow {
 
     load_summary() {
         if (this.active === 'stock') return; // live report, no summary tiles
+        if (this.active === 'picklist') return; // counts render inline in the card header
         if (this.active === 'tracker') {
             frappe.call({
                 method: 'erp_dacsinc_custom.order_flow_api.get_summary',
@@ -1556,6 +1645,121 @@ class OrderFlow {
 
         this.$body.find('#of-summary').html(tiles);
         this.render_stage_counts(s);
+    }
+
+    /**
+     * "How much are you actually picking?" before a draft Pick List is
+     * submitted. Submitting sets each line's picked_qty and reserves that
+     * stock, so committing the full allocated qty on a bare confirm was wrong
+     * whenever less was physically picked.
+     *
+     * Quantities may only be REDUCED — update_and_submit_pick_list enforces
+     * the same ceiling server-side and names the offending item if exceeded,
+     * so this input is capped rather than being the only guard.
+     */
+    prompt_submit_pick_list(pl, $btn) {
+        const restore = () => $btn.prop('disabled', false)
+            .html(`<i class="fa fa-check"></i> ${__('Submit')}`);
+
+        frappe.call({
+            method: 'erp_dacsinc_custom.order_flow_api.get_pick_list_rows',
+            args: { pick_list: pl },
+            freeze: true,
+            freeze_message: __('Loading Pick List…'),
+        }).then(r => {
+            const rows = (r && r.message) || [];
+            if (!rows.length) {
+                frappe.msgprint(__('Pick List {0} has no item lines.', [pl]));
+                return;
+            }
+
+            const body = `
+                <p class="of-micro" style="margin:0 2px 10px; color:var(--text-muted);">
+                    ${__('Enter what was actually picked. Submitting reserves this stock and cannot be undone without cancelling. A qty can only be reduced, never raised above what was allocated.')}
+                </p>
+                <div class="of-scroll"><table class="of-table">
+                    <thead><tr>
+                        <th>${__('Item')}</th>
+                        <th>${__('Warehouse')}</th>
+                        <th class="text-right">${__('Allocated')}</th>
+                        <th class="text-right">${__('Picking now')}</th>
+                    </tr></thead>
+                    <tbody>${rows.map((x, i) => `
+                        <tr>
+                            <td>${of_esc(x.item_code)}${x.item_name && x.item_name !== x.item_code
+                                ? `<div class="of-micro text-muted">${of_esc(x.item_name)}</div>` : ''}</td>
+                            <td class="of-meta">${of_esc(x.warehouse || '—')}</td>
+                            <td class="text-right">${of_round2(x.qty)} ${of_esc(x.uom || x.stock_uom || '')}</td>
+                            <td class="text-right">
+                                <input type="number" class="form-control input-sm of-pick-qty"
+                                       data-idx="${i}" data-max="${flt_of(x.qty)}"
+                                       value="${of_round2(x.qty)}" min="0" max="${flt_of(x.qty)}" step="any"
+                                       style="width:96px; display:inline-block; text-align:right; font-weight:700;">
+                            </td>
+                        </tr>`).join('')}</tbody>
+                </table></div>`;
+
+            const dialog = new frappe.ui.Dialog({
+                title: __('Submit Pick List {0}', [pl]),
+                size: 'large',
+                fields: [{ fieldtype: 'HTML', fieldname: 'picking' }],
+                primary_action_label: __('Submit Pick List'),
+                primary_action: () => {
+                    const payload = [];
+                    let over = null;
+                    dialog.$wrapper.find('.of-pick-qty').each(function () {
+                        const $inp = $(this);
+                        const row = rows[parseInt($inp.data('idx'), 10)];
+                        const max = flt_of($inp.data('max'));
+                        const val = flt_of($inp.val());
+                        if (!row) return;
+                        if (val - max > 0.001) {
+                            over = { item: row.item_code, val: val, max: max };
+                            return false;
+                        }
+                        if (val > 0.001) {
+                            payload.push({ pick_list_item: row.pick_list_item, qty: val });
+                        }
+                    });
+
+                    if (over) {
+                        frappe.msgprint({
+                            title: __('Quantity too high'), indicator: 'red',
+                            message: __('{0}: only {1} was allocated to this line, but {2} was entered. A Pick List qty can only be reduced.',
+                                [over.item, over.max, over.val])
+                        });
+                        return;
+                    }
+                    if (!payload.length) {
+                        frappe.msgprint(__('Enter a picked qty on at least one line — a Pick List cannot be submitted with nothing picked.'));
+                        return;
+                    }
+
+                    dialog.hide();
+                    $btn.prop('disabled', true).html('<i class="fa fa-spinner fa-spin"></i>');
+                    frappe.call({
+                        method: 'erp_dacsinc_custom.custom_script.update_and_submit_pick_list',
+                        // qty_means:'picked' — the line keeps its allocated
+                        // qty and picked_qty records what was actually picked.
+                        args: { pick_list: pl, rows: payload, submit: 1, qty_means: 'picked' },
+                    }).then(() => {
+                        const total = payload.reduce((t, x) => t + flt_of(x.qty), 0);
+                        frappe.show_alert({
+                            message: __('Pick List {0} submitted — {1} picked.', [pl, of_round2(total)]),
+                            indicator: 'green'
+                        }, 6);
+                        this.refresh(true);
+                    }).catch(() => {
+                        // The server's own message already explains why.
+                        restore();
+                    });
+                },
+                secondary_action_label: __('Cancel'),
+                secondary_action: () => dialog.hide()
+            });
+            dialog.fields_dict.picking.$wrapper.html(body);
+            dialog.show();
+        }).catch(() => restore());
     }
 
     /** Put the live count on every "Filter by Stage" button. */
@@ -1951,16 +2155,43 @@ class OrderFlow {
             return `<div class="of-empty">${__('No items found.')}</div>`;
         }
         const is_mr = doctype === 'Material Request';
+        // "How much was ordered and how much has actually come back" is the
+        // question this toggle exists to answer — a bare Qty column can't.
+        // What that means differs per doctype (see _doc_item_progress), so
+        // the column is labelled from the row's own progress_label and a
+        // Receipt — where the row IS the arrival — shows no Pending at all
+        // rather than a made-up zero.
+        const progress_label = rows.find(r => r.progress_label)?.progress_label || __('Received');
+        const has_ordered = rows.some(r => r.ordered_qty != null);
+        const has_pending = rows.some(r => r.pending_qty != null);
+        const show_po_ordered = rows.some(r => r.po_ordered_qty != null);
+
+        const qty_cell = (v, tone) => {
+            if (v == null) return '<span class="of-val--zero">—</span>';
+            const n = of_round2(v);
+            if (!n) return '<span class="of-val--zero">0</span>';
+            return tone ? `<span style="color:${tone};font-weight:700;">${n}</span>` : `${n}`;
+        };
+
         const line = it => `<tr>
             <td>${of_esc(it.item_code)}${it.item_name && it.item_name !== it.item_code ? `<div class="of-micro text-muted">${of_esc(it.item_name)}</div>` : ''}</td>
-            <td>${of_round2(it.qty)}</td>
+            ${has_ordered ? `<td>${qty_cell(it.ordered_qty)}</td>` : ''}
+            ${show_po_ordered ? `<td>${qty_cell(it.po_ordered_qty)}</td>` : ''}
+            <td>${qty_cell(it.received_qty, of_num(it.received_qty) > 0 ? 'var(--of-green)' : null)}</td>
+            ${has_pending ? `<td>${qty_cell(it.pending_qty, of_num(it.pending_qty) > 0 ? 'var(--of-orange)' : null)}</td>` : ''}
             <td>${of_esc(it.uom || '')}</td>
             ${is_mr ? '' : `<td>${it.rate != null ? of_money(it.rate) : '—'}</td>`}
             <td>${of_esc(it.warehouse || '')}</td>
             <td>${it.role ? `<span class="of-chip">${of_esc(it.role)}</span>` : ''}</td>
         </tr>`;
+
         return `<div class="of-scroll"><table class="of-table">
-            <thead><tr><th>Item</th><th>Qty</th><th>UOM</th>${is_mr ? '' : '<th>Rate</th>'}<th>Warehouse</th><th></th></tr></thead>
+            <thead><tr><th>Item</th>
+                ${has_ordered ? `<th>${is_mr ? __('Requested') : __('Ordered')}</th>` : ''}
+                ${show_po_ordered ? `<th>${__('On PO')}</th>` : ''}
+                <th>${of_esc(progress_label)}</th>
+                ${has_pending ? `<th>${__('Pending')}</th>` : ''}
+                <th>UOM</th>${is_mr ? '' : '<th>Rate</th>'}<th>Warehouse</th><th></th></tr></thead>
             <tbody>${rows.map(line).join('')}</tbody>
         </table></div>`;
     }
@@ -2107,6 +2338,7 @@ class OrderFlow {
                 this._stock_items = (data && data.rows) || []; // for toggle_stock_wh_row's warehouse drill-down
                 html = this.stock_html(data);
             }
+            if (this.active === 'picklist') html = this.picklist_html(data);
             if (this.active === 'billing')  html = this.billing_html(data);
             if (this.active === 'accounts') html = this.accounts_html(data);
             if (this.active === 'approval') html = this.approval_html(data);
@@ -2290,6 +2522,10 @@ class OrderFlow {
                             <div class="of-meta" style="font-weight:500;">
                                 <a href="/app/customer/${encodeURIComponent(o.customer)}" target="_blank" style="color:inherit;">${of_customer_display(o.customer_name || o.customer, o.contact_person_name)}</a>
                             </div>
+                            ${o.po_no ? `
+                                <div class="of-micro" style="margin-top:2px;" title="${of_esc('Customer PO ' + o.po_no + (o.po_date ? ' dated ' + of_date(o.po_date) : '') + ' — the reference this customer uses for the order. Searchable from the box above.')}">
+                                    <i class="fa fa-file-text-o"></i> ${__('Cust PO')}: <strong>${of_esc(o.po_no)}</strong>${o.po_date ? `<span style="color:var(--text-light);"> &middot; ${of_date(o.po_date)}</span>` : ''}
+                                </div>` : ''}
                             ${o.custom_merchandiser_user ? `
                                 <div class="of-micro" style="margin-top:2px;color:var(--of-info);" title="Merchandiser assigned to this customer">
                                     <i class="fa fa-user"></i> ${of_esc(o.custom_merchandiser_name || o.custom_merchandiser_user)}
@@ -2308,6 +2544,11 @@ class OrderFlow {
                     ${st.secondary_action ? `
                         <div class="of-micro" style="margin-top:4px;color:var(--of-orange);font-weight:600;">
                             <i class="fa fa-file-text-o"></i> + Needs Invoice
+                        </div>` : ''}
+                    ${o.rm_ready_for_sco ? `
+                        <div class="of-micro" style="margin-top:4px;color:var(--of-purple);font-weight:700;"
+                             title="${of_esc('Raw material for ' + flt_of(o.rm_ready_fg_qty) + ' unit(s) is in stock at VV Puram now — a Subcontracting PO can be raised for it. Counted against stock actually on hand, so two orders are never told the same material is theirs.')}">
+                            <i class="fa fa-flask"></i> ${__('RM Ready — Make SCO PO')} (${flt_of(o.rm_ready_fg_qty)})
                         </div>` : ''}
                     ${rm_stage_note_html}
                 </td>
@@ -2368,8 +2609,14 @@ class OrderFlow {
     last_activity_html(o) {
         const label = o.last_event_label || o.last_event;
         const is_comment = o.last_event === 'Comment';
+        // Route by the doctype the document NAME belongs to, not by the
+        // event's display doctype: an embroidery / job-work event is keyed by
+        // the Purchase Order that raised it, so linking it as an Embroidery
+        // Work Order produced /app/embroidery-work-order/PUR-ORD-… — a dead
+        // link to a doctype that never had that name. See _EVENT_LINK_DOCTYPE.
+        const link_doctype = o.last_event_doc_doctype || o.last_event;
         const doc_link = (!is_comment && o.last_event_doc)
-            ? `<a href="/app/${of_route(o.last_event)}/${encodeURIComponent(o.last_event_doc)}" target="_blank">${of_esc(o.last_event_doc)}</a>`
+            ? `<a href="/app/${of_route(link_doctype)}/${encodeURIComponent(o.last_event_doc)}" target="_blank">${of_esc(o.last_event_doc)}</a>`
             : '';
 
         return `
@@ -3223,7 +3470,15 @@ class OrderFlow {
                 <td>${of_qty(e.received_qty, flt_of(e.received_qty) > 0 ? 'pos' : null)}</td>
                 <td>${of_qty(pending, pending > 0 ? 'warn' : null)}</td>
                 <td><span class="of-pill of-pill--planned">${of_esc(of_to_title_case(stage || e.status || ''))}</span></td>
-                <td class="of-ewo-action" data-po="${of_esc(e.purchase_order || '')}">${action_html}</td>
+                <td class="of-ewo-action" data-po="${of_esc(e.purchase_order || '')}">
+                    <div class="of-ewo-actions">
+                        ${action_html}
+                        <button class="of-btn of-ewo-print-btn" data-name="${of_esc(e.name)}"
+                                title="${__('Print work order')}">
+                            <i class="fa fa-print"></i>
+                        </button>
+                    </div>
+                </td>
             </tr>`;
         }).join('');
         const ewo_fp_rows = build_ewo(ewo_fp);
@@ -3481,6 +3736,91 @@ class OrderFlow {
         });
     }
 
+    // ── Tab: Pick Lists ──────────────────────────────────────────
+    // A draft Pick List holds no stock and delivers nothing until it is
+    // submitted — and until then the order behind it silently reads as
+    // unfulfilled everywhere else in this dashboard. This tab exists so a
+    // draft never sits forgotten: it lists the Pick Lists themselves (not
+    // the Sales Orders around them) and offers Submit right on the row.
+    picklist_html(data) {
+        data = data || {};
+        const rows_data = data.rows || [];
+        const m = data.metrics || {};
+        this.$body.find('#of-count').text(
+            data.total ? __('{0} pick list(s) match', [data.total]) : ''
+        );
+
+        const status_pill = (r) => {
+            const cls = of_num(r.docstatus) === 0 ? 'of-pill--draft'
+                : r.status === 'Completed' ? 'of-pill--ready'
+                : r.status === 'Cancelled' ? 'of-pill--blocked'
+                : r.status === 'Partly Delivered' ? 'of-pill--wait'
+                : 'of-pill--planned';
+            return `<span class="of-pill ${cls}">${of_esc(r.status || '')}</span>`;
+        };
+
+        const action_cell = (r) => {
+            if (r.next_action === 'submit') {
+                return `<button class="of-btn of-btn--primary of-pl-submit" data-pl="${of_esc(r.name)}"
+                            title="${__('Submit this Pick List')}"><i class="fa fa-check"></i> ${__('Submit')}</button>`;
+            }
+            if (r.next_action === 'deliver') {
+                return `<span class="of-micro" style="color:var(--of-orange);font-weight:600;">
+                    ${of_round2(r.pending_delivery_qty)} ${__('awaiting DN / SI')}</span>`;
+            }
+            return '<span class="of-val--zero">—</span>';
+        };
+
+        const rows = rows_data.map(r => {
+            const so_links = (r.sales_orders || []).map(so =>
+                `<a href="/app/sales-order/${encodeURIComponent(so)}" target="_blank">${of_esc(so)}</a>`
+            ).join(', ');
+            // A draft row's own picked_qty is still 0 until submit, so "Qty"
+            // shows what the list is FOR (qty) and "Picked" only becomes
+            // meaningful once submitted — showing 0 picked on a draft as if
+            // something had gone wrong is exactly the confusion to avoid.
+            const picked_cell = of_num(r.docstatus) === 0
+                ? `<span class="of-val--zero">${__('not yet')}</span>`
+                : of_round2(r.picked_qty);
+            return `<tr>
+                <td><a href="/app/pick-list/${encodeURIComponent(r.name)}" target="_blank"
+                       style="font-weight:700;">${of_esc(r.name)}</a>
+                    <div class="of-micro text-muted">${of_esc(r.purpose || '')}</div></td>
+                <td>${status_pill(r)}</td>
+                <td>${of_esc(r.customer_name || r.customer || '')}
+                    ${r.customer && r.customer_name && r.customer !== r.customer_name
+                        ? `<div class="of-micro text-muted">${of_esc(r.customer)}</div>` : ''}</td>
+                <td>${so_links || '<span class="of-val--zero">—</span>'}</td>
+                <td>${of_esc((r.warehouses || []).join(', ') || r.parent_warehouse || '')}</td>
+                <td>${of_num(r.distinct_items)}</td>
+                <td>${of_round2(r.total_qty)}</td>
+                <td>${picked_cell}</td>
+                <td>${of_round2(r.delivered_qty)}</td>
+                <td>${of_date(r.modified)}</td>
+                <td>${action_cell(r)}</td>
+            </tr>`;
+        }).join('');
+
+        const counts = `<span class="of-micro" style="font-weight:600;">
+            <span style="color:var(--of-orange);">${of_num(m.draft)} ${__('draft')}</span> ·
+            <span>${of_num(m.open)} ${__('open')}</span> ·
+            <span>${of_num(m.partly)} ${__('partly delivered')}</span>
+        </span>`;
+
+        return `
+            ${of_card('Pick Lists', 'hand-paper-o', `
+                <table class="of-table">
+                    <thead><tr>
+                        <th style="min-width:150px;">Pick List</th><th>Status</th>
+                        <th style="min-width:140px;">Customer</th><th>Sales Order</th>
+                        <th>Warehouse</th><th>Items</th><th>Qty</th><th>Picked</th>
+                        <th>Delivered</th><th>Last Activity</th><th>Action</th>
+                    </tr></thead>
+                    <tbody>${rows || of_empty_row(11)}</tbody>
+                </table>`, counts, of_pagination_html('picklist', null, data))}
+        `;
+    }
+
     billing_html(data) {
         data = data || {};
         const orders_env = data.orders || {};
@@ -3490,25 +3830,46 @@ class OrderFlow {
             orders_env.total ? __('{0} order(s) pending DN/SI', [orders_env.total]) : ''
         );
 
-        // Same stage object the Sales Tracker itself renders its action
-        // button from (o.stage — see tracker_html) — every row here is a
-        // Tracker row already filtered server-side to stage_key
-        // 'ready_to_deliver', so reusing it means this button can never
-        // offer an action that disagrees with what the Tracker itself
-        // would show for the same order.
+        // Same stage object the Sales Tracker itself renders its action button
+        // from (o.stage — see tracker_html), so an action shown here can never
+        // disagree with what the Tracker would show for the same order.
+        //
+        // But this tab exists for BILLING, and an order's billing need is not
+        // always its primary stage: a partly-delivered order's primary action
+        // is about the rest of the order (raise an MR, await stock) while the
+        // unbilled delivered qty rides along as secondary_action. Rendering the
+        // primary action alone put "Raise MR from SO" in the Action column of
+        // the Pending DN/SI tab while the invoice this tab is actually about
+        // had no button at all. So where a billing action exists, it leads
+        // here — the other action still shows underneath, since it is real work
+        // too, just not what this queue is for.
+        const btn_html = (act, o, extra_class) => `
+            <button class="of-btn ${act.action_btn_class || 'of-btn--primary'} of-action-btn ${extra_class || ''}"
+                    data-action="${act.action_type}"
+                    data-target="${act.target_doc || ''}"
+                    data-doctype="${act.target_doctype || ''}"
+                    data-so="${of_esc(o.name)}"
+                    data-customer="${of_esc(o.customer || '')}"
+                    data-customer-name="${of_esc(o.customer_name || '')}"
+                    data-route-lock="${of_esc(act.route_lock || '')}">
+                <i class="fa fa-${act.icon || 'arrow-right'}"></i> ${of_esc(act.action_label || 'Act')}
+            </button>`;
+
         const rows = orders.map(o => {
             const st = o.stage || {};
-            const action_html = (st.action_type && st.action_type !== 'none')
-                ? `<button class="of-btn ${st.action_btn_class || 'of-btn--primary'} of-action-btn"
-                        data-action="${st.action_type}"
-                        data-target="${st.target_doc || ''}"
-                        data-doctype="${st.target_doctype || ''}"
-                        data-so="${of_esc(o.name)}"
-                        data-customer="${of_esc(o.customer || '')}"
-                        data-customer-name="${of_esc(o.customer_name || '')}"
-                        data-route-lock="${of_esc(st.route_lock || '')}">
-                    <i class="fa fa-${st.icon || 'arrow-right'}"></i> ${of_esc(st.action_label || 'Act')}
-                </button>`
+            const sec = st.secondary_action;
+            const lead = (sec && sec.action_type) ? sec : st;
+            const trailing = (sec && sec.action_type) ? st : null;
+
+            const has_lead = lead.action_type && lead.action_type !== 'none';
+            const has_trailing = trailing && trailing.action_type && trailing.action_type !== 'none';
+
+            const action_html = has_lead
+                ? btn_html(lead, o) + (has_trailing
+                    ? `<div class="of-micro" style="margin-top:6px;color:var(--text-muted);">
+                           ${__('Also pending')}: ${of_esc(trailing.action_label || '')}
+                       </div>`
+                    : '')
                 : `<span class="of-micro" style="color:var(--of-green);font-weight:600;"><i class="fa fa-check-circle"></i> ${__('Done')}</span>`;
 
             return `<tr data-so="${of_esc(o.name)}" class="of-row-main">
@@ -3521,7 +3882,9 @@ class OrderFlow {
                 <td style="font-weight:700;">${of_money(o.grand_total, o.currency)}</td>
                 <td>${flt_of(o.per_delivered).toFixed(0)}%</td>
                 <td>${flt_of(o.per_billed).toFixed(0)}%</td>
-                <td><span class="of-pill ${st.badge_class || 'of-pill--wait'}">${of_esc(st.stage_label || '')}</span></td>
+                <td><span class="of-pill ${st.badge_class || 'of-pill--wait'}">${of_esc(st.stage_label || '')}</span>
+                    ${(sec && sec.action_type) ? `<div class="of-micro" style="margin-top:4px;color:var(--of-orange);font-weight:600;">
+                        <i class="fa fa-file-text-o"></i> ${__('Needs Invoice')}</div>` : ''}</td>
                 <td>${action_html}</td>
             </tr>`;
         }).join('');
@@ -4096,18 +4459,15 @@ class OrderFlow {
             }
         ];
 
-        if (res.workflow_state === "Pending Final Approval") {
-            fields.push({
-                fieldtype: 'Section Break',
-                label: __('Approval Settings')
-            });
-            fields.push({
-                fieldtype: 'Check',
-                fieldname: 'skip_delivery_note',
-                label: __('Skip Delivery Note (Direct Billing)'),
-                default: res.skip_delivery_note || 0
-            });
-        }
+        // No "Skip Delivery Note (Direct Billing)" control here. Approving a
+        // Sales Order is a verification step, not the place to decide how the
+        // order will eventually be shipped or billed. The field itself still
+        // exists on the Sales Order and everything downstream still honours it
+        // (the Direct Bill chip on this tab, the Sales Invoice's own
+        // delivery-note check in custom_script.py) — this dialog simply no
+        // longer sets it, and deliberately does not SEND it either, so an
+        // order that already has the flag keeps it through approval instead of
+        // being silently reset by an absent checkbox.
 
         const dialog = new frappe.ui.Dialog({
             title: __('Verify Customer Details - {0}', [so]),
@@ -4130,8 +4490,7 @@ class OrderFlow {
                         method: 'erp_dacsinc_custom.order_flow_api.approve_sales_order_with_comment',
                         args: {
                             sales_order: so,
-                            comment: values.skip_comment,
-                            skip_delivery_note: values.skip_delivery_note
+                            comment: values.skip_comment
                         },
                         error: enable_buttons
                     }).then(() => {
@@ -4160,8 +4519,7 @@ class OrderFlow {
                         tax_category: values.tax_category || null,
                         billing_address: values.billing_address || null,
                         shipping_address: values.shipping_address || null,
-                        contact_data: contact_data,
-                        skip_delivery_note: values.skip_delivery_note
+                        contact_data: contact_data
                     },
                     error: enable_buttons
                 }).then(() => {
@@ -4191,8 +4549,7 @@ class OrderFlow {
                     method: 'erp_dacsinc_custom.order_flow_api.approve_sales_order_with_comment',
                     args: {
                         sales_order: so,
-                        comment: values.skip_comment,
-                        skip_delivery_note: values.skip_delivery_note
+                        comment: values.skip_comment
                     },
                     error: enable_buttons
                 }).then(() => {
@@ -4496,6 +4853,22 @@ function of_to_title_case(str) {
     return str.toString()
         .replace(/_/g, ' ')
         .replace(/\b\w/g, c => c.toUpperCase());
+}
+
+// Print an Embroidery Work Order. Same doctype/format/letterhead arguments as
+// the Purchase Order form's own linked-documents table uses, so the document
+// prints identically wherever it is printed from — if the print format is ever
+// renamed, both call sites have to change together.
+function of_print_ewo(docname) {
+    if (!docname) return;
+    const url = `/api/method/frappe.utils.print_format.download_pdf?`
+        + `doctype=${encodeURIComponent('Embroidery Work Order')}`
+        + `&name=${encodeURIComponent(docname)}`
+        + `&format=${encodeURIComponent('Embroidery Work Order Print Format')}`
+        + `&no_letterhead=1`
+        + `&letterhead=${encodeURIComponent('No Letterhead')}`
+        + `&_lang=${frappe.boot.lang}`;
+    window.open(url, '_blank');
 }
 
 function of_esc(v) {

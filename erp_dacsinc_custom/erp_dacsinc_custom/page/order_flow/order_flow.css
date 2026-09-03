@@ -15,6 +15,19 @@
     --of-amber: #ff9800;
     --of-red: #dc3545;
     --of-purple: #6f42c1;
+    /* Embroidery. Was referenced by .of-stage-btn--emb.is-active and
+       .of-tile--emb but never defined: an undefined custom property with no
+       fallback makes the whole declaration invalid at computed-value time, so
+       `background: var(--of-pink)` fell back to transparent — while the base
+       .is-active rule's `color:#fff` still applied. The result was a white
+       label on a white card, i.e. an Embroidery chip that looked completely
+       blank whenever it was the selected filter (only its literal pink border
+       rendered). Pairs with the #c91a7d border already used there. */
+    --of-pink: #e83e8c;
+    /* Same story: order_flow.js colours the "Merchandiser Unassigned" icon
+       with var(--of-yellow), which silently fell back to the inherited text
+       colour. */
+    --of-yellow: #f0ad4e;
     --of-gold: #d97706;
     --of-gray: #6c757d;
 
@@ -1444,4 +1457,28 @@ td > .of-action-btn {
     .of-count { text-align: left; }
     .of-tabs { gap: 2px; }
     .of-tile { width: 92px; }
+}
+
+/* ── Embroidery row actions ──────────────────────────────────── */
+/* The row's own action (Receive / Close / Track) sits beside a print button.
+   Wraps rather than forcing the Action column wider, since these tables
+   already carry ten columns. */
+.of-ewo-actions {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    flex-wrap: wrap;
+    justify-content: center;
+}
+
+/* Icon-only, so it reads as secondary to the action next to it. */
+.of-ewo-print-btn {
+    padding: 0 8px;
+    min-width: 28px;
+    color: var(--text-muted);
+}
+
+.of-ewo-print-btn:hover {
+    color: var(--of-blue);
+    border-color: var(--of-blue);
 }

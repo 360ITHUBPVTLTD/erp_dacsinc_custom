@@ -1320,6 +1320,15 @@ def get_pending_so_with_material_stock(is_subcontracted=False):
     items = list(set(d.item_code for d in pending_orders))
     
     # --- 2. Global Inventory and All POs (JOIN with tabSupplier for the Name) ---
+    # Draft Purchase Orders count as coverage here, exactly as they already do
+    # in the Sales Order over-order guard (custom_script.get_so_item_commitment,
+    # `po.docstatus IN (0, 1)`). Counting only submitted POs made this dialog
+    # disagree with the guard that runs on save: it offered the full remaining
+    # qty even though a draft PO already held it, and saving the resulting PO
+    # was then rejected as over the Sales Order line's own need — an error
+    # about a document this dialog never mentioned. Each row carries its own
+    # `is_draft` so every figure derived from it can say which part is still
+    # only a draft rather than silently folding the two together.
     po_data = frappe.db.sql(f"""
         SELECT
             poi.parent as po_name,
@@ -1329,15 +1338,19 @@ def get_pending_so_with_material_stock(is_subcontracted=False):
             so.customer_name AS so_customer_name,
             poi.qty,
             poi.subcontracted_quantity,
+            po.docstatus,
             poi.{join_field} as item_code
         FROM `tabPurchase Order Item` poi
         JOIN `tabPurchase Order` po ON po.name = poi.parent
         LEFT JOIN `tabSupplier` sup ON po.supplier = sup.name
         LEFT JOIN `tabSales Order` so ON so.name = poi.sales_order
         WHERE poi.{join_field} IN %(items)s
-        AND po.docstatus = 1
+        AND po.docstatus IN (0, 1)
         AND po.status NOT IN ('Closed', 'Cancelled', 'Completed')
     """, {"items": items}, as_dict=True)
+
+    for p in po_data:
+        p.is_draft = 1 if cint(p.docstatus) == 0 else 0
 
     # A subcontracted PO row's own qty is a one-time commitment already spent
     # the moment ERPNext turns it into an SCO (subcontracted_quantity climbs
@@ -1398,6 +1411,29 @@ def get_pending_so_with_material_stock(is_subcontracted=False):
     for p in po_data:
         po_by_item[p.item_code].append(p)
 
+    # Qty already REQUESTED for these orders on a Material Request but not yet
+    # turned into a Purchase Order (qty - ordered_qty). Without this the
+    # dialog offered the full remaining qty for direct purchase even when an
+    # MR for it was already sitting open — confirmed live: an order 20 short
+    # with 10 on a PO and 10 open on a Material Request still offered 10 to
+    # buy here, and taking it would have left that MR's 10 stranded, open
+    # forever, having quietly ordered the same 10 twice. Only submitted MRs
+    # count: a draft one commits nothing.
+    mr_open_rows = frappe.db.sql("""
+        SELECT mri.sales_order, mri.item_code, mri.parent AS mr_name,
+               mr.status, (mri.qty - mri.ordered_qty) AS open_qty
+        FROM `tabMaterial Request Item` mri
+        JOIN `tabMaterial Request` mr ON mr.name = mri.parent
+        WHERE mr.docstatus = 1
+          AND (mri.qty - mri.ordered_qty) > 0
+          AND mri.sales_order IS NOT NULL AND mri.sales_order != ''
+    """, as_dict=True)
+    mr_open_by_so_item = defaultdict(lambda: {"qty": 0.0, "links": []})
+    for r in mr_open_rows:
+        entry = mr_open_by_so_item[(r.sales_order, r.item_code)]
+        entry["qty"] += flt(r.open_qty)
+        entry["links"].append({"id": r.mr_name, "status": r.status, "qty": flt(r.open_qty)})
+
     final_rows = []
 
     so_linked_po_tracker = defaultdict(float)
@@ -1428,24 +1464,39 @@ def get_pending_so_with_material_stock(is_subcontracted=False):
         rem_after_all_picks = max(0, req - pick_sub_for_this_row - pick_draft_for_this_row)
 
         # --- B. DISTRIBUTE LINKED POs ---
+        # Submitted POs are consumed BEFORE draft ones. Both cover the line, so
+        # the total is the same either way, but the order decides which part of
+        # the coverage gets reported as "still only a draft" — and the honest
+        # answer is whatever is left after the firm commitments are counted.
+        # Draft-first would understate it, making a line look firmly covered
+        # while the only thing holding the qty is a PO nobody has submitted.
         item_pos = po_by_item.get(it, [])
         this_so_pos = [p for p in item_pos if p.sales_order == so]
-        total_so_linked = sum(flt(p.qty) for p in this_so_pos)
-        
-        used_po_already = so_linked_po_tracker[(so, it)]
-        avail_linked_po = max(0, total_so_linked - used_po_already)
-        allocated_po = min(rem_after_all_picks, avail_linked_po)
-        
-        so_linked_po_tracker[(so, it)] += allocated_po
+        submitted_so_pos = [p for p in this_so_pos if not p.is_draft]
+        draft_so_pos = [p for p in this_so_pos if p.is_draft]
+
+        avail_submitted = max(0, sum(flt(p.qty) for p in submitted_so_pos)
+                              - so_linked_po_tracker[(so, it, 1)])
+        allocated_submitted = min(rem_after_all_picks, avail_submitted)
+        so_linked_po_tracker[(so, it, 1)] += allocated_submitted
+
+        avail_draft = max(0, sum(flt(p.qty) for p in draft_so_pos)
+                          - so_linked_po_tracker[(so, it, 0)])
+        allocated_draft = min(max(0, rem_after_all_picks - allocated_submitted), avail_draft)
+        so_linked_po_tracker[(so, it, 0)] += allocated_draft
+
+        allocated_po = allocated_submitted + allocated_draft
         row["linked_po_qty"] = allocated_po
-        
+        row["linked_po_draft_qty"] = allocated_draft
+
         # Here we use supplier_name and fallback to supplier_id. Zero-capacity
         # rows (a subcontracted PO already fully turned into an SCO, nothing
         # left to give) are left out — they're not open coverage anymore,
         # just history, and listing them as "linked" here reads as unclaimed
         # capacity that in fact no longer exists.
         row["linked_po_details"] = [
-            {"id": p.po_name, "sup": p.supplier_name or p.supplier_id, "qty": p.qty}
+            {"id": p.po_name, "sup": p.supplier_name or p.supplier_id, "qty": p.qty,
+             "draft": p.is_draft}
             for p in this_so_pos if flt(p.qty) > 0
         ]
 
@@ -1458,21 +1509,42 @@ def get_pending_so_with_material_stock(is_subcontracted=False):
         # through lets the dialog say which is which instead of just "Other".
         others = [p for p in item_pos if p.sales_order != so]
         row["other_po_qty"] = sum(flt(p.qty) for p in others)
+        row["other_po_draft_qty"] = sum(flt(p.qty) for p in others if p.is_draft)
         row["other_po_list"] = [
             {
                 "id": p.po_name, "sup": p.supplier_name or p.supplier_id, "qty": p.qty,
                 "sales_order": p.sales_order or None, "so_customer_name": p.so_customer_name,
+                "draft": p.is_draft,
             }
             for p in others
         ]
 
+        # --- C2. ALREADY ON AN OPEN MATERIAL REQUEST ---
+        # An open MR is a request that still has to become a Purchase Order.
+        # It is netted off here so this dialog can never offer the same qty
+        # for a second, direct purchase, and the MR itself is carried through
+        # so the row can say WHICH request already covers it — the right move
+        # for that qty is "Get Items from MR", not another PO.
+        mr_cover = mr_open_by_so_item.get((so, it), {"qty": 0.0, "links": []})
+        rem_after_po = max(0, rem_after_all_picks - allocated_po)
+        allocated_mr = min(rem_after_po, flt(mr_cover["qty"]))
+        row["mr_open_qty"] = allocated_mr
+        row["mr_open_details"] = mr_cover["links"] if allocated_mr > 0 else []
+
         # Nothing left to buy for this exact (Sales Order, item) line once
-        # picks and its own linked PO already cover it — leaving it in the
-        # dialog with a Final of 0 (checkbox permanently disabled anyway)
-        # just clutters the list with rows nobody can act on.
-        to_buy = max(0, rem_after_all_picks - allocated_po)
+        # picks, its own linked PO and any open Material Request already
+        # cover it — leaving it in the dialog with a Final of 0 (checkbox
+        # permanently disabled anyway) just clutters the list with rows
+        # nobody can act on.
+        to_buy = max(0, rem_after_po - allocated_mr)
         if to_buy <= 0:
             continue
+        # The one figure the row is actually offering to buy. Kept on the row
+        # so the overview can total THIS, rather than re-deriving a need from a
+        # shorter subtraction of its own — that second formula omitted draft
+        # picks and any open Material Request, so the overview announced 26
+        # still to buy above rows that between them offered 14.
+        row["to_buy"] = flt(to_buy, 2)
 
         # --- D. RM physical-stock check (subcontract/BOM rows only) ---
         # Hard block, no override: a BOM row this dialog would send on to
@@ -1490,11 +1562,19 @@ def get_pending_so_with_material_stock(is_subcontracted=False):
         final_rows.append(row)
 
     # --- 4. ITEM SUMMARY (GLOBAL) ---
-    item_summaries = defaultdict(lambda: {"qty_need": 0, "item_name": ""})
+    item_summaries = defaultdict(lambda: {"qty_need": 0, "item_name": "", "draft_po": 0.0, "draft_po_ids": []})
     for r in final_rows:
         it = r.item_code
         item_summaries[it]["item_name"] = r.item_name
-        item_summaries[it]["qty_need"] += max(0, (flt(r.qty) - flt(r.delivered_qty)) - r.pick_sub - r.linked_po_qty)
+        item_summaries[it]["qty_need"] += flt(r.to_buy)
+        # How much of this item's need is being held down by a PO that is
+        # still only a draft, and which POs those are — so the overview can
+        # say WHY a need reads lower than the orders on screen suggest,
+        # instead of just showing a smaller number.
+        item_summaries[it]["draft_po"] += flt(r.get("linked_po_draft_qty") or 0)
+        for p in (r.get("linked_po_details") or []):
+            if p.get("draft") and p["id"] not in item_summaries[it]["draft_po_ids"]:
+                item_summaries[it]["draft_po_ids"].append(p["id"])
 
     # Bulk-fetch stock + pick totals for every summarized item in one query
     # each, instead of one Bin lookup and one Pick List query per unique
@@ -1513,11 +1593,22 @@ def get_pending_so_with_material_stock(is_subcontracted=False):
     # dialog's qty-need math as a fake fractional shortage.
     summary_avail_map = {r.item_code: flt(r.actual_qty, 2) for r in summary_bin_rows}
 
+    # Only picks that are still HOLDING stock count. A submitted Pick List that
+    # has been delivered — or a Completed one, where the whole picked qty has
+    # gone out — is a finished transaction: the goods have left the warehouse
+    # and are already absent from "In Stock" above, so carrying their qty here
+    # showed a huge historical total beside a small live need and read as if
+    # hundreds of units were sitting reserved somewhere. Same rule the per-row
+    # figures already use (see pick_data_raw's picked_qty - delivered_qty and
+    # its Completed override); this summary was the one place still summing
+    # every Pick List ever raised.
     summary_pick_rows = frappe.db.sql("""
-        SELECT pli.item_code, SUM(pli.qty) as q, pl.docstatus
+        SELECT pli.item_code, pl.docstatus, pl.status AS pl_status,
+               SUM(pli.qty) AS draft_qty,
+               SUM(GREATEST(IFNULL(pli.picked_qty, 0) - IFNULL(pli.delivered_qty, 0), 0)) AS held_qty
         FROM `tabPick List Item` pli JOIN `tabPick List` pl ON pl.name = pli.parent
         WHERE pli.item_code IN %s AND pl.docstatus != 2
-        GROUP BY pli.item_code, pl.docstatus
+        GROUP BY pli.item_code, pl.docstatus, pl.status
     """, (summary_items,), as_dict=True)
     summary_picks_by_item = defaultdict(list)
     for p in summary_pick_rows:
@@ -1530,8 +1621,11 @@ def get_pending_so_with_material_stock(is_subcontracted=False):
 
         summ_list.append({
             "item_code": it, "item_name": data["item_name"], "total_need": data["qty_need"], "avail": avail,
-            "draft_picks": sum(p.q for p in global_picks if p.docstatus == 0),
-            "sub_picks": sum(p.q for p in global_picks if p.docstatus == 1),
+            "draft_picks": flt(sum(flt(p.draft_qty) for p in global_picks if p.docstatus == 0), 2),
+            "sub_picks": flt(sum(flt(p.held_qty) for p in global_picks
+                                 if p.docstatus == 1 and p.pl_status != "Completed"), 2),
+            "draft_po_qty": flt(data["draft_po"], 2),
+            "draft_po_ids": data["draft_po_ids"],
         })
 
     return {"item_summary": sorted(summ_list, key=lambda x: x['total_need'], reverse=True), "sales_orders": final_rows}
@@ -2004,7 +2098,9 @@ def get_pending_so_with_raw_materials_summary():
     
     stock_map = {}           # Physical Stock
     incoming_po_map = {}     # General incoming POs (Net pending)
+    incoming_po_draft_map = {}   # ...of which is still on a DRAFT PO
     so_linked_po_map = {}    # Specific SO-Linked POs (Net pending)
+    so_linked_po_draft_map = {}  # ...of which is still on a DRAFT PO
     existing_po_refs = {}    # Links for UI
     mr_pending_map = {}      # General pending MRs (Net pending)
     so_linked_mr_map = {}    # Specific SO-Linked MRs (Net pending)
@@ -2015,6 +2111,7 @@ def get_pending_so_with_raw_materials_summary():
     # turns out empty, since the per-so_item loop further down reads them
     # unconditionally for every row.
     total_so_linked_po_by_item = {}
+    total_so_linked_po_draft_by_item = {}
     total_so_linked_mr_by_item = {}
 
     if all_material_codes:
@@ -2068,17 +2165,30 @@ def get_pending_so_with_raw_materials_summary():
             rm_tuple = tuple(all_bom_item_codes)
             
             # 1. General Incoming Quantity
+            # Draft Purchase Orders are counted as incoming, the same rule the
+            # Sales Order over-order guard already applies (see
+            # custom_script.get_so_item_commitment) — a draft PO for this raw
+            # material is qty already committed, and re-suggesting it here is
+            # exactly how the same material ends up ordered twice. The draft
+            # share is aggregated separately (never folded into the total) so
+            # every coverage figure downstream can name it as a draft.
             incoming_data = frappe.db.sql("""
-                SELECT poi.item_code, SUM(poi.qty - COALESCE(poi.received_qty, 0)) AS net_pending
+                SELECT poi.item_code, po.docstatus,
+                       SUM(poi.qty - COALESCE(poi.received_qty, 0)) AS net_pending
                 FROM `tabPurchase Order Item` poi 
                 JOIN `tabPurchase Order` po ON poi.parent = po.name
                 WHERE poi.item_code IN %s 
-                  AND po.docstatus = 1 AND po.status NOT IN ('Closed', 'Cancelled', 'Completed') 
+                  AND po.docstatus IN (0, 1) AND po.status NOT IN ('Closed', 'Cancelled', 'Completed') 
                   AND po.company = %s
                   AND (poi.qty - COALESCE(poi.received_qty, 0)) > 0
-                GROUP BY poi.item_code
+                GROUP BY poi.item_code, po.docstatus
             """, (rm_tuple, company), as_dict=True)
-            incoming_po_map = {r['item_code']: flt(r['net_pending'], 2) for r in incoming_data}
+            for r in incoming_data:
+                incoming_po_map[r['item_code']] = flt(
+                    incoming_po_map.get(r['item_code'], 0.0) + flt(r['net_pending']), 2)
+                if cint(r['docstatus']) == 0:
+                    incoming_po_draft_map[r['item_code']] = flt(
+                        incoming_po_draft_map.get(r['item_code'], 0.0) + flt(r['net_pending']), 2)
 
             # 2. Linked SO Quantity (Via Custom Table `Purchase Order Raw Material Source`)
             #    We approximate pending link by joining PO Status. 
@@ -2087,6 +2197,7 @@ def get_pending_so_with_raw_materials_summary():
                 SELECT 
                     rmb.source_sales_order, 
                     rmb.raw_material_item, 
+                    po.docstatus,
                     SUM(
                         IF(poi.qty > 0, 
                            (rmb.order_for_rm * ((poi.qty - COALESCE(poi.received_qty, 0)) / poi.qty)), 
@@ -2096,29 +2207,37 @@ def get_pending_so_with_raw_materials_summary():
                 JOIN `tabPurchase Order` po ON rmb.parent = po.name
                 JOIN `tabPurchase Order Item` poi ON (po.name = poi.parent AND rmb.raw_material_item = poi.item_code)
                 WHERE rmb.raw_material_item IN %s
-                  AND po.docstatus = 1 AND po.status NOT IN ('Closed', 'Cancelled', 'Completed')
-                GROUP BY rmb.source_sales_order, rmb.raw_material_item
+                  AND po.docstatus IN (0, 1) AND po.status NOT IN ('Closed', 'Cancelled', 'Completed')
+                GROUP BY rmb.source_sales_order, rmb.raw_material_item, po.docstatus
             """, (rm_tuple,), as_dict=1)
             
             for row in linked_data:
-                so_linked_po_map[(row['source_sales_order'], row['raw_material_item'])] = flt(row['net_linked_pending'], 2)
+                key = (row['source_sales_order'], row['raw_material_item'])
+                so_linked_po_map[key] = flt(
+                    so_linked_po_map.get(key, 0.0) + flt(row['net_linked_pending']), 2)
+                if cint(row['docstatus']) == 0:
+                    so_linked_po_draft_map[key] = flt(
+                        so_linked_po_draft_map.get(key, 0.0) + flt(row['net_linked_pending']), 2)
 
             # 3. Existing PO Links (for UI) — carries the supplier name too,
             # not just the bare PO name, so the dialog can actually say WHO
             # this raw material is already on order with instead of just a
             # PO number with nothing to identify it by at a glance.
             po_refs = frappe.db.sql("""
-                SELECT DISTINCT po.name, poi.item_code, po.supplier, sup.supplier_name, poi.sales_order
+                SELECT DISTINCT po.name, poi.item_code, po.supplier, sup.supplier_name, poi.sales_order,
+                       po.docstatus
                 FROM `tabPurchase Order Item` poi
                 JOIN `tabPurchase Order` po ON poi.parent = po.name
                 LEFT JOIN `tabSupplier` sup ON po.supplier = sup.name
-                WHERE poi.item_code IN %s AND po.docstatus = 1 AND po.status NOT IN ('Closed', 'Cancelled', 'Completed')
+                WHERE poi.item_code IN %s AND po.docstatus IN (0, 1)
+                  AND po.status NOT IN ('Closed', 'Cancelled', 'Completed')
             """, (rm_tuple,), as_dict=True)
             for ref in po_refs:
                 existing_po_refs.setdefault(ref['item_code'], []).append({
                     "name": ref['name'],
                     "supplier": ref['supplier_name'] or ref['supplier'],
                     "sales_order": ref['sales_order'] or None,
+                    "docstatus": cint(ref['docstatus']),
                 })
 
             # 4. Pending Material Requests for these raw materials — the
@@ -2161,6 +2280,9 @@ def get_pending_so_with_raw_materials_summary():
             total_so_linked_po_by_item = {}
             for (_so, _item), _qty in so_linked_po_map.items():
                 total_so_linked_po_by_item[_item] = total_so_linked_po_by_item.get(_item, 0.0) + _qty
+            total_so_linked_po_draft_by_item = {}
+            for (_so, _item), _qty in so_linked_po_draft_map.items():
+                total_so_linked_po_draft_by_item[_item] = total_so_linked_po_draft_by_item.get(_item, 0.0) + _qty
             total_so_linked_mr_by_item = {}
             for (_so, _item), _qty in so_linked_mr_map.items():
                 total_so_linked_mr_by_item[_item] = total_so_linked_mr_by_item.get(_item, 0.0) + _qty
@@ -2175,18 +2297,33 @@ def get_pending_so_with_raw_materials_summary():
     # plain-purchase flow above, is never populated for these rows).
     # ------------------------------------------------------------------
     in_production_map = {}
+    in_production_draft_map = {}
+    in_production_draft_refs = {}
     if all_finished_good_codes:
         so_ids_for_prod = tuple({item['sales_order'] for item in so_items}) or ("",)
         fg_in_prod = frappe.db.sql("""
-             SELECT poi.sales_order, poi.fg_item, SUM(poi.fg_item_qty) as qty
+             SELECT poi.sales_order, poi.fg_item, po.name AS po_name, po.docstatus,
+                    SUM(poi.fg_item_qty) as qty
              FROM `tabPurchase Order Item` poi
              JOIN `tabPurchase Order` po ON poi.parent = po.name
-             WHERE po.docstatus = 1 AND po.is_subcontracted = 1
+             WHERE po.docstatus IN (0, 1) AND po.is_subcontracted = 1
                AND po.status NOT IN ('Closed', 'Cancelled')
                AND poi.sales_order IN %s AND poi.fg_item IN %s AND poi.fg_item_qty > 0
-             GROUP BY poi.sales_order, poi.fg_item
+             GROUP BY poi.sales_order, poi.fg_item, po.name, po.docstatus
         """, (so_ids_for_prod, tuple(all_finished_good_codes)), as_dict=1)
-        in_production_map = {(r['sales_order'], r['fg_item']): flt(r['qty'], 2) for r in fg_in_prod}
+        # Submitted and draft are kept as two separate figures, never summed
+        # into one. This note is informational (qty_awaiting_pick is driven by
+        # live stock, not by "was a PO raised"), and a draft subcontract PO is
+        # a materially weaker signal than a submitted one — reporting them as a
+        # single number would quietly promote an unsubmitted PO to a firm
+        # commitment in the reader's eyes.
+        for r in fg_in_prod:
+            key = (r['sales_order'], r['fg_item'])
+            if cint(r['docstatus']) == 0:
+                in_production_draft_map[key] = flt(in_production_draft_map.get(key, 0.0) + flt(r['qty']), 2)
+                in_production_draft_refs.setdefault(key, []).append(r['po_name'])
+            else:
+                in_production_map[key] = flt(in_production_map.get(key, 0.0) + flt(r['qty']), 2)
 
 
     # 3b. Bulk-fetch Pick List data for every pending SO line in one query,
@@ -2250,6 +2387,8 @@ def get_pending_so_with_raw_materials_summary():
         # Available FGs
         so_item['available_fg_stock'] = stock_map.get(item_code, 0)
         so_item['fg_in_production'] = already_subcontracted
+        so_item['fg_in_production_draft'] = in_production_draft_map.get((sales_order, item_code), 0)
+        so_item['fg_in_production_draft_pos'] = in_production_draft_refs.get((sales_order, item_code), [])
         so_item['picked_submitted'] = picked_submitted
         so_item['picked_draft'] = picked_draft
         so_item['qty_awaiting_pick'] = qty_awaiting_pick
@@ -2276,6 +2415,17 @@ def get_pending_so_with_raw_materials_summary():
             # every other order that happened to need the same raw material.
             unallocated_pending = max(0, total_pending - total_so_linked_po_by_item.get(rm_code, 0))
 
+            # The draft slice of each of those two figures. Clamped to its own
+            # parent so it can never claim more than the coverage it is part
+            # of — these are reported alongside the totals purely so the
+            # dialog can say "N of this is only on a draft PO", never as an
+            # extra deduction of their own.
+            linked_pending_draft = min(linked_pending,
+                                       so_linked_po_draft_map.get((sales_order, rm_code), 0))
+            unallocated_pending_draft = min(unallocated_pending, max(
+                0, incoming_po_draft_map.get(rm_code, 0)
+                - total_so_linked_po_draft_by_item.get(rm_code, 0)))
+
             # Same shape as the PO figures above, for Material Requests —
             # an MR already raised for this RM covers part of the need too.
             linked_mr_pending = so_linked_mr_map.get((sales_order, rm_code), 0)
@@ -2289,7 +2439,9 @@ def get_pending_so_with_raw_materials_summary():
                 "bom_qty_per_unit": flt(rm['stock_qty_per_unit']),
                 "available_qty": stock_map.get(rm_code, 0),        # Only Real Warehouse Stock
                 "ordered_linked_qty": linked_pending,              # Only unreceived specific POs
+                "ordered_linked_draft_qty": linked_pending_draft,  # ...still on a DRAFT PO
                 "incoming_general_qty": unallocated_pending,       # Only unreceived general POs
+                "incoming_general_draft_qty": unallocated_pending_draft,  # ...still on a DRAFT PO
                 "mr_linked_qty": linked_mr_pending,                # Only open specific MRs
                 "mr_general_qty": unallocated_mr_pending,          # Only open general MRs
                 "existing_po_list": existing_po_refs.get(rm_code, []),
@@ -4876,22 +5028,7 @@ def get_panel_work_summary(po_name):
     active_processes = []
     for p in ewos:
         if p.name in active_ewo_names: 
-            p_items = proc_map.get(p.name, [])
-            parts = []
-            for pi in p_items:
-                sent = int(pi.ordered_qty)
-                rec = int(pi.received_qty or 0)
-                
-                status_color = "#e67e22" if rec < sent else "#28a745"
-                status_label = f"Partial ({rec}/{sent})" if 0 < rec < sent else (f"<b>✔ Recv ({rec})</b>" if rec >= sent else "Waiting")
-                
-                html_block = f"""<div style='border-left:3px solid {status_color}; padding-left:6px; margin-bottom:3px;'>
-                    <div style='font-weight:600;font-size:11px;'>{pi.item_name}</div>
-                    <div style='font-size:10px;color:#666;'>Qty: {sent} | <span style='color:{status_color}'>{status_label}</span></div>
-                </div>"""
-                parts.append(html_block)
-            
-            p['details_html'] = "".join(parts) if parts else "-"
+            p['details_html'] = ewo_items_progress_html(proc_map.get(p.name, []))
             # --- ADDED: Attach images to each active process ---
             p['images'] = images_dict.get(p.name, [])
             # ----------------------------------------------------
@@ -5184,22 +5321,7 @@ def get_po_full_piece_summary(po_name):
     # 5. HTML Details for Dashboard
     active_processes = []
     for p in ewos:
-        p_items = proc_map.get(p.name, [])
-        parts = []
-        for pi in p_items:
-            sent = int(pi.ordered_qty)
-            rec = int(pi.received_qty or 0)
-            
-            # Status colors
-            if rec >= sent:
-                status = f"<span class='text-success font-weight-bold'>✓ Recv: {rec}</span>"
-            else:
-                status = f"<span class='text-info'>In Work: {sent}</span>"
-            
-            # Clean layout for the table cell
-            parts.append(f"<div style='border-bottom:1px dashed #eee; margin-bottom:2px;'><b>{pi.item_name}</b> {status}</div>")
-        
-        p['details_html'] = "".join(parts) if parts else "-"
+        p['details_html'] = ewo_items_progress_html(proc_map.get(p.name, []))
         active_processes.append(p)
 
     return { "all_items": processed_items, "active_processes": active_processes }
@@ -5260,9 +5382,9 @@ def get_full_piece_summary(sco_name):
 
     # Add HTML details for active processes
     for proc in active_processes:
-        items = frappe.get_all("Embroidery Work Order Item", filters={"parent": proc.name}, fields=["item_name", "ordered_qty"])
-        details_html = "<ul class='pl-3 mb-0'>" + "".join([f"<li><b>{i.item_name}:</b> {int(i.ordered_qty)} pcs</li>" for i in items]) + "</ul>"
-        proc["details_html"] = details_html
+        items = frappe.get_all("Embroidery Work Order Item", filters={"parent": proc.name},
+                               fields=["item_name", "ordered_qty", "received_qty"])
+        proc["details_html"] = ewo_items_progress_html(items)
 
     return {
         "available_items": summary_items,
@@ -5630,6 +5752,42 @@ def create_full_piece_send(items_data, supplier, sco_name=None, po_name=None, no
 
 
 
+def ewo_items_progress_html(items):
+    """
+    Item-wise "sent vs received" for the Panel / Full Piece job-work panels.
+
+    Every one of those panels answers the same question — how much of each
+    item went to the jobber and how much has actually come back — and each
+    used to phrase it differently: one showed only the sent qty, another only
+    a balance, another only the received qty once complete, so the same
+    situation read three different ways depending on which panel you opened.
+    This is the single rendering they all use now.
+
+    `items` rows need item_name / ordered_qty / received_qty (the Embroidery
+    Work Order Item fields).
+    """
+    parts = []
+    for it in items or []:
+        sent = flt(it.get("ordered_qty"))
+        rec = flt(it.get("received_qty"))
+        bal = max(0, sent - rec)
+        if bal <= 0 and sent > 0:
+            color, state = "#28a745", "Complete"
+        elif rec > 0:
+            color, state = "#e67e22", f"Bal {flt(bal, 2):g}"
+        else:
+            color, state = "#6c757d", "Awaiting"
+        parts.append(
+            f"<div style='border-left:3px solid {color}; padding-left:6px; margin-bottom:3px;'>"
+            f"<div style='font-weight:600;font-size:11px;'>{frappe.utils.escape_html(it.get('item_name') or '')}</div>"
+            f"<div style='font-size:10px;color:#666;'>"
+            f"Sent {flt(sent, 2):g} &middot; Received <b style='color:{color};'>{flt(rec, 2):g}</b>"
+            f" &middot; <span style='color:{color};font-weight:700;'>{state}</span>"
+            f"</div></div>"
+        )
+    return "".join(parts) if parts else "-"
+
+
 @frappe.whitelist()
 def get_full_piece_dashboard_data(po_name):
     """
@@ -5710,14 +5868,7 @@ def get_full_piece_dashboard_data(po_name):
             e["full_piece_jobber_name"] = supplier_map.get(e.full_piece_jobber, e.full_piece_jobber)
             e["panel_jobber_name"] = supplier_map.get(e.panel_jobber, e.panel_jobber)
             if e.work_type == 'Full Piece Job Work':
-                p_items = items_by_parent.get(e.name, [])
-                parts = []
-                for itm in p_items:
-                    bal = flt(itm.ordered_qty) - flt(itm.received_qty)
-                    clr = "#28a745" if bal <= 0 else "#e67e22"
-                    parts.append(f"<div><b>{itm.item_name}</b>: {int(itm.ordered_qty)} | <span style='color:{clr}; font-weight:700;'>{ 'Done' if bal <= 0 else f'Bal {int(bal)}'}</span></div>")
-                
-                e["details_html"] = "".join(parts) if parts else "-"
+                e["details_html"] = ewo_items_progress_html(items_by_parent.get(e.name, []))
                 
                 # ATTACH FILES HERE for JavaScript to display
                 e["images"] = image_map.get(e.name, [])
@@ -5957,10 +6108,16 @@ import frappe
 from frappe.utils import flt
 
 @frappe.whitelist()
-def get_mr_suggestions_for_po():
+def get_mr_suggestions_for_po(purchase_order=None):
     """ 
     Traces unfulfilled Material Requests, their origin Sales Orders (and Customers), 
     and previously created Purchase Orders (and Suppliers).
+
+    `purchase_order` is the draft this dialog is being opened FROM, when it has
+    been saved at least once. Its own rows are part of the already-ordered
+    total like any other draft PO's, but they are flagged `is_current` so the
+    dialog can say "this PO" instead of listing the document the user is
+    looking at as an unexplained third party holding the qty.
     """
     # Fetch unfulfilled Purchase Material Request items linked to Sales Orders
     data = frappe.db.sql("""
@@ -5993,11 +6150,181 @@ def get_mr_suggestions_for_po():
     for row in data:
         # TRACING: Find existing POs and their Suppliers already created from this specific line
         row['previous_po_history'] = frappe.db.sql("""
-            SELECT po.name as po_id, po.supplier_name 
+            SELECT po.name as po_id, po.supplier_name, po.docstatus,
+                   poi.qty AS po_qty
             FROM `tabPurchase Order Item` poi
             JOIN `tabPurchase Order` po ON poi.parent = po.name
-            WHERE poi.material_request_item = %s 
+            WHERE poi.material_request_item = %s
               AND po.docstatus < 2
         """, (row.mr_item_id), as_dict=True)
+        for p in row['previous_po_history']:
+            p['is_draft'] = 1 if cint(p.docstatus) == 0 else 0
+            p['is_current'] = 1 if (purchase_order and p.po_id == purchase_order) else 0
+
+        # Material Request Item.ordered_qty only moves when a Purchase Order is
+        # SUBMITTED. A DRAFT Purchase Order already covering this line leaves it
+        # untouched, so the line still reads as fully pending, gets offered for
+        # ordering all over again, and submitting both POs then trips ERPNext's
+        # own over-limit check ("This document is over limit by Qty ... Are you
+        # making another Purchase Order against the same Material Request
+        # Item?") — the raw core error the user hits with no way to see what
+        # caused it. Same root cause as the duplicate Pick List bug: a
+        # cumulative counter that only moves on submit is never proof that
+        # nothing more is already committed.
+        #
+        # Summing the live PO rows directly (draft AND submitted) is the whole
+        # picture, so it REPLACES child.ordered_qty rather than adding to it —
+        # adding would double-count every submitted PO.
+        row['already_ordered_qty'] = flt(sum(flt(p.po_qty) for p in row['previous_po_history']), 2)
+        # The draft share of that total, reported separately so the dialog can
+        # explain a reduced "Net Due" by naming the draft PO holding it — a
+        # deduction against a document that has not been submitted is the one
+        # the user is most likely to want to check (or finish) rather than
+        # simply trust.
+        row['draft_ordered_qty'] = flt(
+            sum(flt(p.po_qty) for p in row['previous_po_history'] if p['is_draft']), 2)
+        row['pending_qty'] = max(0, flt(row.mr_total_qty) - row['already_ordered_qty'])
+        row['fully_ordered'] = row['pending_qty'] <= 0.01
 
     return data
+
+# --------------------------------------------------------------------------
+# Price Check (custom_price_check_html on the Purchase Order form)
+# --------------------------------------------------------------------------
+
+PO_PRICE_CHECK_ROLE_FIELD = "po_price_check_roles"
+
+
+def can_see_po_price_check(user=None):
+    """
+    Whether `user` may see the Price Check table.
+
+    Unlike the Order Flow tabs, an EMPTY role list here means NOBODY. What a
+    supplier charges — and what rivals charge for the same item — is a
+    deliberate disclosure, so this defaults to hidden and has to be switched
+    on for named roles in Admin Settings. Administrator and the app's admin
+    roles always see it, the same bypass the dashboard uses so the feature can
+    never become unadministrable.
+    """
+    from erp_dacsinc_custom.order_flow_permissions import is_admin
+
+    user = user or frappe.session.user
+    if is_admin(user):
+        return True
+    try:
+        settings = frappe.get_cached_doc("Admin Settings")
+        allowed = {d.role for d in (settings.get(PO_PRICE_CHECK_ROLE_FIELD) or []) if d.role}
+    except Exception:
+        frappe.log_error(title="PO Price Check: could not read role config",
+                         message=frappe.get_traceback())
+        return False
+    if not allowed:
+        return False
+    return bool(allowed & set(frappe.get_roles(user)))
+
+
+@frappe.whitelist()
+def get_po_price_check(purchase_order=None, items=None, supplier=None, price_list=None, company=None):
+    """
+    Per item on a Purchase Order: the buying price list rate, what THIS
+    supplier last charged, and what OTHER suppliers last charged — so the rate
+    being entered can be judged against the alternatives instead of taken on
+    trust.
+
+    Works for an unsaved form too: pass `items` (a JSON list of item codes)
+    with `supplier`, rather than a saved `purchase_order` name.
+
+    "Last charged" is read from SUBMITTED Purchase Orders only. A draft is
+    somebody's proposal, not evidence of a price ever agreed, and quoting it
+    back as history would make a typo look like a precedent.
+    """
+    if not can_see_po_price_check():
+        # Not an error — the caller is a form that simply renders nothing.
+        return {"allowed": False, "rows": []}
+
+    if purchase_order:
+        po = frappe.get_doc("Purchase Order", purchase_order)
+        po.check_permission("read")
+        item_codes = [i.item_code for i in po.items if i.item_code]
+        supplier = supplier or po.supplier
+        price_list = price_list or po.buying_price_list
+        company = company or po.company
+    else:
+        if isinstance(items, str):
+            items = json.loads(items or "[]")
+        item_codes = [i for i in (items or []) if i]
+
+    item_codes = list(dict.fromkeys(item_codes))
+    if not item_codes:
+        return {"allowed": True, "rows": []}
+
+    price_list = price_list or frappe.db.get_single_value("Buying Settings", "buying_price_list") \
+        or "Standard Buying"
+
+    # 1. Price list rate. A supplier-specific Item Price wins over the generic
+    #    one for the same list — that is what ERPNext itself applies.
+    pl_rates, pl_supplier_rates = {}, {}
+    for r in frappe.db.sql("""
+        SELECT item_code, supplier, price_list_rate, uom, currency
+        FROM `tabItem Price`
+        WHERE item_code IN %(items)s AND price_list = %(pl)s AND IFNULL(buying, 0) = 1
+          AND (valid_from IS NULL OR valid_from <= %(today)s)
+          AND (valid_upto IS NULL OR valid_upto >= %(today)s)
+    """, {"items": tuple(item_codes), "pl": price_list, "today": nowdate()}, as_dict=True):
+        if r.supplier:
+            if r.supplier == supplier:
+                pl_supplier_rates[r.item_code] = r
+        else:
+            pl_rates.setdefault(r.item_code, r)
+
+    # 2. Last submitted rate per (item, supplier), newest first.
+    history = defaultdict(list)
+    for r in frappe.db.sql("""
+        SELECT poi.item_code, po.supplier, sup.supplier_name, poi.rate, poi.qty,
+               po.transaction_date, po.name AS po_name, po.currency
+        FROM `tabPurchase Order Item` poi
+        JOIN `tabPurchase Order` po ON po.name = poi.parent
+        LEFT JOIN `tabSupplier` sup ON sup.name = po.supplier
+        WHERE poi.item_code IN %(items)s AND po.docstatus = 1 AND poi.rate > 0
+        ORDER BY po.transaction_date DESC, po.creation DESC
+    """, {"items": tuple(item_codes)}, as_dict=True):
+        history[r.item_code].append(r)
+
+    rows = []
+    for code in item_codes:
+        seen_suppliers, this_supplier, others = set(), None, []
+        for h in history.get(code, []):
+            if h.supplier in seen_suppliers:
+                continue          # only each supplier's most recent rate
+            seen_suppliers.add(h.supplier)
+            entry = {
+                "supplier": h.supplier, "supplier_name": h.supplier_name or h.supplier,
+                "rate": flt(h.rate), "qty": flt(h.qty),
+                "date": h.transaction_date, "purchase_order": h.po_name,
+                "currency": h.currency,
+            }
+            if supplier and h.supplier == supplier:
+                this_supplier = entry
+            else:
+                others.append(entry)
+
+        pl_row = pl_supplier_rates.get(code) or pl_rates.get(code)
+        other_rates = [flt(o["rate"]) for o in others]
+        # Cheapest first. The list is truncated for display, so the order it is
+        # sorted in decides WHICH suppliers survive that cut — sorting by rate
+        # means the ones worth seeing are the ones kept, rather than whichever
+        # happened to be billed most recently.
+        others.sort(key=lambda o: flt(o["rate"]))
+        rows.append({
+            "item_code": code,
+            "item_name": frappe.db.get_value("Item", code, "item_name") or code,
+            "price_list": price_list,
+            "price_list_rate": flt(pl_row.price_list_rate) if pl_row else None,
+            "price_list_is_supplier_specific": bool(pl_supplier_rates.get(code)),
+            "this_supplier": this_supplier,
+            "other_suppliers": others[:4],
+            "other_supplier_count": len(others),
+            "best_other_rate": min(other_rates) if other_rates else None,
+        })
+
+    return {"allowed": True, "supplier": supplier, "price_list": price_list, "rows": rows}

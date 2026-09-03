@@ -1,104 +1,95 @@
+// Same rule as delivery_note.js: a Sales Invoice Item row that came from
+// another document is a RECORD of what that document committed, not a place to
+// renegotiate it. Editing qty or rate here desyncs the row from the Sales
+// Order line it bills against and the Delivery Note it invoices, breaking the
+// delivered / billed reconciliation the Order Flow dashboard reads.
+//
+// The lock condition and the field list live in ONE place each, because the
+// four surfaces below (inline cell edit, row refresh, the form-level pass and
+// the expanded-row render) all have to apply the same rule.
+
+// Verified against the doctype: Sales Invoice Item carries so_detail /
+// sales_order (Sales Order) and dn_detail / delivery_note (Delivery Note).
+// It has NO pick-list field at all — a stock-updating invoice reaches its qty
+// through the Pick List selection step that builds it, never through a link
+// on the row.
+const SI_LINK_FIELDS = ['so_detail', 'sales_order', 'dn_detail', 'delivery_note'];
+
+const SI_LOCKED_FIELDS = [
+	'qty', 'rate', 'price_list_rate', 'amount', 'item_code', 'warehouse',
+	'uom', 'conversion_factor', 'discount_percentage', 'discount_amount'
+];
+
+function si_row_is_linked(doc) {
+	return !!(doc && SI_LINK_FIELDS.some(f => doc[f]));
+}
+
+function si_apply_row_locks(row) {
+	if (!row || !row.doc) return;
+	const locked = si_row_is_linked(row.doc);
+	SI_LOCKED_FIELDS.forEach(f => row.toggle_editable(f, !locked));
+}
+
 frappe.ui.form.on('Sales Invoice', {
 	setup: function(frm) {
 		if (frm.fields_dict.items && frm.fields_dict.items.grid) {
-			// Override edit_cell to block inline editing of rate/price_list_rate/
-			// amount (linked to a Sales Order line) and qty/item_code/warehouse (an
-			// Update Stock invoice against a Sales Order — in this company's
-			// flow the only way to reach one is create_dn_or_si_from_pick_lists,
-			// mapped straight from a Pick List's own reservation; editing it
-			// here only desyncs this row from what's actually reserved,
-			// silently breaking picked_qty vs delivered_qty reconciliation
-			// everywhere the Order Flow dashboard depends on it. Use the Pick
-			// List itself to change any of this).
-			// amount is locked alongside rate (not qty) — it's qty * rate, and
-			// editing amount directly would just back-derive a different rate.
-			let old_edit_cell = frm.fields_dict.items.grid.edit_cell;
-			frm.fields_dict.items.grid.edit_cell = function(row, fieldname) {
-				if (row && row.doc) {
-					if (['rate', 'price_list_rate', 'amount'].includes(fieldname) && row.doc.so_detail) {
-						return; // Block editing
-					}
-					if (['qty', 'item_code', 'warehouse'].includes(fieldname) && frm.doc.update_stock && row.doc.so_detail) {
-						return; // Block editing
-					}
+			// Declarative per-row lock, evaluated by the grid itself on every
+			// render.
+			const lock_expr = 'eval: ' + SI_LINK_FIELDS.map(f => 'doc.' + f).join(' || ');
+			(frm.fields_dict.items.grid.docfields || []).forEach(df => {
+				if (SI_LOCKED_FIELDS.includes(df.fieldname)) {
+					df.read_only_depends_on = lock_expr;
 				}
-				return old_edit_cell.apply(this, arguments);
-			};
+			});
+			SI_LOCKED_FIELDS.forEach(f => {
+				const df = frappe.meta.get_docfield('Sales Invoice Item', f, frm.doc.name);
+				if (df) df.read_only_depends_on = lock_expr;
+				const meta_df = frappe.meta.get_docfield('Sales Invoice Item', f);
+				if (meta_df) meta_df.read_only_depends_on = lock_expr;
+			});
 
-			// Keep existing row refresh logic as backup
 			let old_on_row_refresh = frm.fields_dict.items.grid.on_row_refresh;
 			frm.fields_dict.items.grid.on_row_refresh = function(row) {
 				if (old_on_row_refresh) {
 					old_on_row_refresh(row);
 				}
-				const stock_row_locked = !!(frm.doc.update_stock && row.doc.so_detail);
-				row.toggle_enable('rate', !row.doc.so_detail);
-				row.toggle_enable('price_list_rate', !row.doc.so_detail);
-				row.toggle_enable('amount', !row.doc.so_detail);
-				row.toggle_enable('qty', !stock_row_locked);
-				row.toggle_enable('item_code', !stock_row_locked);
-				row.toggle_enable('warehouse', !stock_row_locked);
+				si_apply_row_locks(row);
 			};
 		}
 	},
 	onload: function(frm) {
-		frm.trigger('make_pick_list_rows_read_only_if_linked');
+		frm.trigger('make_linked_rows_read_only');
 	},
 	refresh: function(frm) {
-		frm.trigger('make_pick_list_rows_read_only_if_linked');
+		frm.trigger('make_linked_rows_read_only');
 	},
-	make_pick_list_rows_read_only_if_linked: function(frm) {
+	make_linked_rows_read_only: function(frm) {
 		if (frm.fields_dict.items && frm.fields_dict.items.grid) {
-			frm.fields_dict.items.grid.grid_rows.forEach(row => {
-				const stock_row_locked = !!(frm.doc.update_stock && row.doc.so_detail);
-				row.toggle_enable('rate', !row.doc.so_detail);
-				row.toggle_enable('price_list_rate', !row.doc.so_detail);
-				row.toggle_enable('amount', !row.doc.so_detail);
-				row.toggle_enable('qty', !stock_row_locked);
-				row.toggle_enable('item_code', !stock_row_locked);
-				row.toggle_enable('warehouse', !stock_row_locked);
-			});
+			(frm.fields_dict.items.grid.grid_rows || []).forEach(si_apply_row_locks);
 		}
 	}
 });
 
 frappe.ui.form.on('Sales Invoice Item', {
-	items_add: function(frm, cdt, cdn) {
-		frm.trigger('make_pick_list_rows_read_only_if_linked');
-	},
-	so_detail: function(frm, cdt, cdn) {
-		frm.trigger('make_pick_list_rows_read_only_if_linked');
-	},
-	rate: function(frm, cdt, cdn) {
-		frm.trigger('make_pick_list_rows_read_only_if_linked');
-	},
-	price_list_rate: function(frm, cdt, cdn) {
-		frm.trigger('make_pick_list_rows_read_only_if_linked');
-	},
-	amount: function(frm, cdt, cdn) {
-		frm.trigger('make_pick_list_rows_read_only_if_linked');
-	},
-	qty: function(frm, cdt, cdn) {
-		frm.trigger('make_pick_list_rows_read_only_if_linked');
-	},
-	item_code: function(frm, cdt, cdn) {
-		frm.trigger('make_pick_list_rows_read_only_if_linked');
-	},
+	items_add: function(frm, cdt, cdn) { frm.trigger('make_linked_rows_read_only'); },
+	so_detail: function(frm, cdt, cdn) { frm.trigger('make_linked_rows_read_only'); },
+	sales_order: function(frm, cdt, cdn) { frm.trigger('make_linked_rows_read_only'); },
+	dn_detail: function(frm, cdt, cdn) { frm.trigger('make_linked_rows_read_only'); },
+	delivery_note: function(frm, cdt, cdn) { frm.trigger('make_linked_rows_read_only'); },
+	rate: function(frm, cdt, cdn) { frm.trigger('make_linked_rows_read_only'); },
+	price_list_rate: function(frm, cdt, cdn) { frm.trigger('make_linked_rows_read_only'); },
+	amount: function(frm, cdt, cdn) { frm.trigger('make_linked_rows_read_only'); },
+	qty: function(frm, cdt, cdn) { frm.trigger('make_linked_rows_read_only'); },
+	item_code: function(frm, cdt, cdn) { frm.trigger('make_linked_rows_read_only'); },
+
+	// The expanded row form renders its own controls from the grid's field
+	// definitions, so read_only has to be set on the row form controls too.
 	form_render: function(frm, cdt, cdn) {
-		let row = frappe.get_doc(cdt, cdn);
-		const rate_locked = !!row.so_detail;
-		const stock_row_locked = !!(frm.doc.update_stock && row.so_detail);
-		frm.fields_dict.items.grid.get_field('rate').df.read_only = rate_locked ? 1 : 0;
-		frm.fields_dict.items.grid.get_field('price_list_rate').df.read_only = rate_locked ? 1 : 0;
-		frm.fields_dict.items.grid.get_field('amount').df.read_only = rate_locked ? 1 : 0;
-		frm.fields_dict.items.grid.get_field('qty').df.read_only = stock_row_locked ? 1 : 0;
-		frm.fields_dict.items.grid.get_field('item_code').df.read_only = stock_row_locked ? 1 : 0;
-		frm.fields_dict.items.grid.get_field('warehouse').df.read_only = stock_row_locked ? 1 : 0;
-		frm.fields_dict.items.grid.refresh_field('rate');
-		frm.fields_dict.items.grid.refresh_field('price_list_rate');
-		frm.fields_dict.items.grid.refresh_field('amount');
-		frm.fields_dict.items.grid.refresh_field('qty');
-		frm.fields_dict.items.grid.refresh_field('item_code');
-		frm.fields_dict.items.grid.refresh_field('warehouse');
+		const grid = frm.fields_dict.items && frm.fields_dict.items.grid;
+		const grid_row = grid && grid.get_row(cdn);
+		if (grid_row) {
+			si_apply_row_locks(grid_row);
+		}
 	}
 });
+
