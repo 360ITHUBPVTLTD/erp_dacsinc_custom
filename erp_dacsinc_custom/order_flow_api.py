@@ -2922,17 +2922,28 @@ def _doc_item_progress(doctype, item):
         }
 
     if doctype == "Sales Invoice":
-        delivered = flt(item.get("delivered_qty"))
+        delivered = flt(item.get("qty"))
         return {
-            "ordered_qty": ordered, "received_qty": delivered,
-            "pending_qty": max(0.0, ordered - delivered),
+            "ordered_qty": ordered,
+            "received_qty": delivered,
+            "pending_qty": 0.0,
             "progress_label": "Delivered",
         }
 
-    # Purchase Order and Purchase Invoice both track arrivals in received_qty.
+    if doctype == "Purchase Invoice":
+        received = flt(item.get("qty"))
+        return {
+            "ordered_qty": ordered,
+            "received_qty": received,
+            "pending_qty": 0.0,
+            "progress_label": "Received",
+        }
+
+    # Purchase Order tracks arrivals in received_qty.
     received = flt(item.get("received_qty"))
     return {
-        "ordered_qty": ordered, "received_qty": received,
+        "ordered_qty": ordered,
+        "received_qty": received,
         "pending_qty": max(0.0, ordered - received),
         "progress_label": "Received",
     }

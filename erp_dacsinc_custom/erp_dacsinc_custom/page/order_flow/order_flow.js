@@ -2181,7 +2181,6 @@ class OrderFlow {
             ${has_pending ? `<td>${qty_cell(it.pending_qty, of_num(it.pending_qty) > 0 ? 'var(--of-orange)' : null)}</td>` : ''}
             <td>${of_esc(it.uom || '')}</td>
             ${is_mr ? '' : `<td>${it.rate != null ? of_money(it.rate) : '—'}</td>`}
-            <td>${of_esc(it.warehouse || '')}</td>
             <td>${it.role ? `<span class="of-chip">${of_esc(it.role)}</span>` : ''}</td>
         </tr>`;
 
@@ -2191,7 +2190,7 @@ class OrderFlow {
                 ${show_po_ordered ? `<th>${__('On PO')}</th>` : ''}
                 <th>${of_esc(progress_label)}</th>
                 ${has_pending ? `<th>${__('Pending')}</th>` : ''}
-                <th>UOM</th>${is_mr ? '' : '<th>Rate</th>'}<th>Warehouse</th><th></th></tr></thead>
+                <th>UOM</th>${is_mr ? '' : '<th>Rate</th>'}<th></th></tr></thead>
             <tbody>${rows.map(line).join('')}</tbody>
         </table></div>`;
     }
@@ -2283,11 +2282,10 @@ class OrderFlow {
                 }).then(r => {
                     const rows = r.message || [];
                     $panel.html(rows.length ? `<div class="of-scroll"><table class="of-table">
-                        <thead><tr><th>Date</th><th>Qty Received</th><th>Warehouse</th><th>Stock Entry</th></tr></thead>
+                        <thead><tr><th>Date</th><th>Qty Received</th><th>Stock Entry</th></tr></thead>
                         <tbody>${rows.map(rc => `<tr>
                             <td>${of_date(rc.date)}</td>
                             <td>${of_round2(rc.qty)}</td>
-                            <td>${of_esc(rc.to_warehouse || '')}</td>
                             <td>${rc.stock_entry
                                 ? `<a href="/app/stock-entry/${encodeURIComponent(rc.stock_entry)}" target="_blank">${of_esc(rc.stock_entry)}</a>`
                                 : '—'}</td>
