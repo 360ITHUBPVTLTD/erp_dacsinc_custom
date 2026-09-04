@@ -1018,12 +1018,14 @@ def _get_tracker_rows(days=120, search=None, scope="open", merchandiser=None, ap
 
 @frappe.whitelist()
 def get_sales_tracker(days=120, search=None, scope="open", stage_filter=None, merchandiser=None,
-                       approval_stage=None, page=1, page_size=100):
+                       approval_stage=None, page=1, page_size=100, so_page=1, so_page_size=100,
+                       mr_page=1, mr_page_size=100):
     """
     Paginated view over _get_tracker_rows, with `stage_filter` applied in
     Python (stage is a computed field, not a column — see
     _compute_stage_info) before slicing to the requested page. `total` is
     the count AFTER stage_filter, matching what the pagination bar shows.
+    Also fetches material_requests for the Material Request subtab in Sales Tracker.
     """
     _guard()
     _guard_tab("tracker")
@@ -1056,10 +1058,10 @@ def get_sales_tracker(days=120, search=None, scope="open", stage_filter=None, me
             rows = [o for o in rows if o.get("stage", {}).get("stage_key") == stage_filter]
 
     total = len(rows)
-    page = max(1, cint(page))
-    page_size = cint(page_size) or 100
-    start = (page - 1) * page_size
-    page_rows = rows[start:start + page_size]
+    effective_page = max(1, cint(so_page or page))
+    effective_page_size = cint(so_page_size or page_size) or 100
+    start = (effective_page - 1) * effective_page_size
+    page_rows = rows[start:start + effective_page_size]
 
     # Bulk-fetched only for the page actually being returned, not the full
     # (possibly thousands-long, pre-pagination) `rows` list above.
@@ -1067,12 +1069,49 @@ def get_sales_tracker(days=120, search=None, scope="open", stage_filter=None, me
     for o in page_rows:
         o["contact_person_name"] = contact_map.get(o.get("customer"), "")
 
+    mr_conditions = ["mr.docstatus < 2", "mr.transaction_date >= %(from_date)s", _NOT_DISABLED_SO]
+    mr_params = {"from_date": _from_date(days)}
+    if scope == "open":
+        mr_conditions.append("mr.status NOT IN ('Received', 'Stopped', 'Cancelled')")
+        mr_conditions.append("(mri.sales_order IS NULL OR mri.sales_order = '' OR so.status NOT IN ('Closed', 'Completed', 'Cancelled'))")
+    elif scope == "mine":
+        mr_conditions.append("mr.owner = %(me)s")
+        mr_params["me"] = frappe.session.user
+
+    if search:
+        for idx, word in enumerate(search.strip().split()):
+            param_key = f"q_{idx}"
+            mr_conditions.append(f"(mr.name LIKE %({param_key})s OR mri.sales_order LIKE %({param_key})s OR mri.item_code LIKE %({param_key})s)")
+            mr_params[param_key] = f"%{word}%"
+
+    if is_scoped_to_own_customers("tracker"):
+        mr_params["merch_scope"] = frappe.session.user
+        mr_conditions.append("cust.custom_merchandiser_user = %(merch_scope)s")
+
+    material_requests = _paged_query(f"""
+        SELECT mr.name, mr.transaction_date, mr.schedule_date, mr.material_request_type,
+               mr.status, mr.docstatus, mr.per_ordered, mr.per_received,
+               GROUP_CONCAT(DISTINCT mri.sales_order ORDER BY mri.sales_order SEPARATOR ', ') AS sales_orders,
+               GROUP_CONCAT(DISTINCT so.customer_name ORDER BY so.customer_name SEPARATOR ', ') AS so_customer_names,
+               COUNT(DISTINCT mri.item_code) AS item_count,
+               SUM(mri.qty) AS qty, SUM(mri.ordered_qty) AS ordered_qty
+        FROM `tabMaterial Request Item` mri
+        JOIN `tabMaterial Request` mr ON mr.name = mri.parent
+        LEFT JOIN `tabSales Order` so ON so.name = mri.sales_order
+        LEFT JOIN `tabCustomer` cust ON cust.name = so.customer
+        WHERE {' AND '.join(mr_conditions)}
+        GROUP BY mr.name, mr.transaction_date, mr.schedule_date, mr.material_request_type,
+                 mr.status, mr.docstatus, mr.per_ordered, mr.per_received
+        ORDER BY mr.transaction_date DESC
+    """, mr_params, mr_page, mr_page_size)
+
     return {
         "rows": page_rows,
         "total": total,
-        "page": page,
-        "page_size": page_size,
+        "page": effective_page,
+        "page_size": effective_page_size,
         "truncated": full["truncated"],
+        "material_requests": material_requests,
     }
 
 
@@ -2013,23 +2052,6 @@ def get_purchase_flow(days=120, search=None, scope="open", merchandiser=None,
         ORDER BY posting_date DESC
     """, params, receipt_page, receipt_page_size)
 
-    material_requests = _paged_query(f"""
-        SELECT mr.name, mr.transaction_date, mr.schedule_date, mr.material_request_type,
-               mr.status, mr.docstatus, mr.per_ordered, mr.per_received,
-               GROUP_CONCAT(DISTINCT mri.sales_order ORDER BY mri.sales_order SEPARATOR ', ') AS sales_orders,
-               GROUP_CONCAT(DISTINCT so.customer_name ORDER BY so.customer_name SEPARATOR ', ') AS so_customer_names,
-               COUNT(DISTINCT mri.item_code) AS item_count,
-               SUM(mri.qty) AS qty, SUM(mri.ordered_qty) AS ordered_qty
-        FROM `tabMaterial Request Item` mri
-        JOIN `tabMaterial Request` mr ON mr.name = mri.parent
-        LEFT JOIN `tabSales Order` so ON so.name = mri.sales_order
-        LEFT JOIN `tabCustomer` cust ON cust.name = so.customer
-        WHERE {' AND '.join(mr_conditions)}
-        GROUP BY mr.name, mr.transaction_date, mr.schedule_date, mr.material_request_type,
-                 mr.status, mr.docstatus, mr.per_ordered, mr.per_received
-        ORDER BY mr.transaction_date DESC
-    """, params, mr_page, mr_page_size)
-
     draft_pis = frappe.db.sql("""
         SELECT pii.purchase_order, pi.name
         FROM `tabPurchase Invoice Item` pii
@@ -2045,24 +2067,6 @@ def get_purchase_flow(days=120, search=None, scope="open", merchandiser=None,
         p["draft_invoice"] = po_draft_pi.get(p.name)
     for p in bill_orders["rows"]:
         p["draft_invoice"] = po_draft_pi.get(p.name)
-
-    # Summary-tile aggregates over every matching row, not just the page
-    # being displayed — these used to be computed client-side from the
-    # already-fetched (once capped at 300, now one page of) rows, which
-    # would have quietly gone from "approximate at 300+" to "only this
-    # page" the moment real pagination replaced that cap.
-    pending_mrs = frappe.db.sql(f"""
-        SELECT COUNT(*) FROM (
-            SELECT mr.name, SUM(mri.qty) AS total_qty, SUM(mri.ordered_qty) AS total_ordered
-            FROM `tabMaterial Request Item` mri
-            JOIN `tabMaterial Request` mr ON mr.name = mri.parent
-            LEFT JOIN `tabSales Order` so ON so.name = mri.sales_order
-            LEFT JOIN `tabCustomer` cust ON cust.name = so.customer
-            WHERE {' AND '.join(mr_conditions)}
-            GROUP BY mr.name
-            HAVING total_qty - total_ordered > 0
-        ) t
-    """, params)[0][0]
 
     po_agg = frappe.db.sql(f"""
         SELECT
@@ -2080,12 +2084,10 @@ def get_purchase_flow(days=120, search=None, scope="open", merchandiser=None,
     """, params, as_dict=1)[0]
 
     return {
-        "material_requests": material_requests,
         "purchase_orders": purchase_orders,
         "receipts": receipts,
         "bill_orders": bill_orders,
         "metrics": {
-            "pending_mrs": cint(pending_mrs),
             "open_pos": cint(po_agg.open_count),
             "total_ordered": flt(po_agg.total_ordered),
         },

@@ -75,8 +75,8 @@ const OF_TAB_FILTERS = {
     // Lists Sales Orders, with a Document Flow column covering every document
     // raised against them — so the whole journey belongs on this tab.
     tracker:  { doctypes: null },
-    // Lists Material Requests, Purchase Orders, receipts and draft supplier bills.
-    purchase: { doctypes: ['Material Request', 'Purchase Order', 'Purchase Receipt', 'Purchase Invoice'] },
+    // Lists Purchase Orders, receipts and draft supplier bills.
+    purchase: { doctypes: ['Purchase Order', 'Purchase Receipt', 'Purchase Invoice'] },
     // Lists subcontract POs, embroidery work orders and their receipts.
     jobwork:  { doctypes: ['Purchase Order', 'Job Work (Subcontract)', 'Embroidery Work Order', 'Subcontracting Receipt'] },
     // Lists customer invoices, supplier bills and jobber bills.
@@ -139,7 +139,8 @@ class OrderFlow {
         // for any user whose landing tab happens to be Tracker.
         this.active = null;
         this.allowed_tabs = [];
-        this.pur_subtab = 'mr'; // 'mr' | 'po' | 'receipt' | 'bill'
+        this.tracker_subtab = 'so'; // 'so' | 'mr'
+        this.pur_subtab = 'po'; // 'po' | 'receipt' | 'bill'
         this.job_subtab = 'po'; // 'po' | 'receipt'
         this.acc_subtab = 'receivables'; // 'receivables' | 'supplier' | 'jobber'
         this.approval_subtab = 'merchandiser'; // 'merchandiser' | 'unassigned' | 'final'
@@ -153,17 +154,18 @@ class OrderFlow {
         this.uniform_status_filter = ''; // Embroidery Transfers tab only — see #of-uniform-status
         this.stock_warehouse_filter = ''; // Stock Tracker tab only — see #of-stock-warehouse
 
-        // Per-tab pagination state. A tab whose data is one list (tracker,
-        // stock, billing, approval, uniform) tracks a single {page,
-        // page_size}; a tab whose response carries several independently-
-        // paginated sub-lists (purchase: mr/po/receipt; jobwork:
-        // po/receipt/ewo; accounts: sales/supplier/jobber) tracks one such
-        // object per sub-list, keyed the same way the server's response is
-        // — see build_pagination_args/reset_all_pagination below.
+        // Per-tab pagination state. A tab whose data is one list (stock,
+        // billing, approval, uniform) tracks a single {page, page_size};
+        // a tab whose response carries several independently-paginated sub-lists
+        // (tracker: so/mr; purchase: po/receipt/bill; jobwork: po/receipt/ewo;
+        // accounts: sales/supplier/jobber) tracks one such object per sub-list,
+        // keyed the same way the server's response is — see build_pagination_args/reset_all_pagination below.
         this.pagination = {
-            tracker: { page: 1, page_size: 100 },
-            purchase: {
+            tracker: {
+                so: { page: 1, page_size: 100 },
                 mr: { page: 1, page_size: 100 },
+            },
+            purchase: {
                 po: { page: 1, page_size: 100 },
                 receipt: { page: 1, page_size: 100 },
                 bill: { page: 1, page_size: 100 },
@@ -457,17 +459,25 @@ class OrderFlow {
             this.switch_tab(tab);
         });
 
-        // Purchase Flow, Job Work and Approvals Sub-Tab Switcher
+        // Sales Tracker, Purchase Flow, Job Work and Approvals Sub-Tab Switcher
         this.$body.on('click', '.of-subtab[data-subtab]', (e) => {
             const $btn = $(e.currentTarget);
             const sub = $btn.data('subtab');
             const parent_tab = this.active;
             
-            if (parent_tab === 'purchase') {
+            if (parent_tab === 'tracker') {
+                this.tracker_subtab = sub;
+                this.$body.find('#of-panel-tracker .of-subtab').removeClass('is-active')
+                    .filter(`[data-subtab="${sub}"]`).addClass('is-active');
+                this.$body.find('#of-stage-bar').toggleClass('of-hidden', sub !== 'so');
+                ['so', 'mr'].forEach(s => {
+                    this.$body.find(`#of-tracker-sec-${s}`).toggleClass('of-hidden', s !== sub);
+                });
+            } else if (parent_tab === 'purchase') {
                 this.pur_subtab = sub;
                 this.$body.find('#of-panel-purchase .of-subtab').removeClass('is-active')
                     .filter(`[data-subtab="${sub}"]`).addClass('is-active');
-                ['mr', 'po', 'receipt', 'bill'].forEach(s => {
+                ['po', 'receipt', 'bill'].forEach(s => {
                     this.$body.find(`#of-pur-sec-${s}`).toggleClass('of-hidden', s !== sub);
                 });
             } else if (parent_tab === 'jobwork') {
@@ -1473,7 +1483,7 @@ class OrderFlow {
         OF_TABS.forEach(t => {
             this.$body.find(`#of-panel-${t.key}`).toggleClass('of-hidden', t.key !== tab);
         });
-        this.$body.find('#of-stage-bar').toggleClass('of-hidden', tab !== 'tracker');
+        this.$body.find('#of-stage-bar').toggleClass('of-hidden', tab !== 'tracker' || this.tracker_subtab === 'mr');
         this.$body.find('#of-approval-stage').toggle(tab === 'approval');
         this.$body.find('#of-uniform-status').toggle(tab === 'uniform');
         this.$body.find('#of-stock-warehouse').toggle(tab === 'stock');
@@ -1777,16 +1787,12 @@ class OrderFlow {
 
     render_purchase_summary(data) {
         // Totals come from the server now (each sub-list's own `.total`,
-        // plus the dedicated `metrics` aggregate) — computed over every
-        // matching row, not just whichever page happens to be displayed.
+        // plus the dedicated `metrics` aggregate).
         const m = data.metrics || {};
-        const mr_total = (data.material_requests || {}).total || 0;
         const po_total = (data.purchase_orders || {}).total || 0;
         const rc_total = (data.receipts || {}).total || 0;
 
         this.$body.find('#of-summary-purchase').html(of_stat_strip([
-            { label: __('Pending MRs'), value: m.pending_mrs || 0, tone: 'amber', hint: 'Material Requests waiting to be ordered' },
-            { label: __('Total MRs'), value: mr_total, tone: 'info', hint: 'Total active Material Requests' },
             { label: __('Active POs'), value: m.open_pos || 0, tone: 'gold', hint: 'Purchase Orders waiting for receipt' },
             { label: __('Total POs'), value: po_total, tone: 'info', hint: 'Total active Purchase Orders' },
             { label: __('Total Receipts'), value: rc_total, tone: 'green', hint: 'Total Purchase/Subcontracting Receipts' },
@@ -2360,23 +2366,48 @@ class OrderFlow {
     tracker_html(data) {
         data = data || {};
         const orders = data.rows || [];
+        const mrs_env = data.material_requests || {};
+        const mrs = mrs_env.rows || [];
+        const subtab = this.tracker_subtab || 'so';
+
         this.$body.find('#of-count').text(
-            data.total ? __('{0} order(s) match', [data.total]) : ''
+            subtab === 'so'
+                ? (data.total ? __('{0} order(s) match', [data.total]) : '')
+                : __('{0} Material Requests', [mrs_env.total || 0])
         );
-        const truncated_note = data.truncated ? `
+
+        const truncated_note = (subtab === 'so' && data.truncated) ? `
             <div class="of-truncated-note"><i class="fa fa-exclamation-triangle"></i>
                 ${__('Too many matching orders to compute stages for all of them — showing the most recent 5,000. Narrow the search or date range to see the rest.')}
             </div>` : '';
 
-        // True only for a user whose SOLE reason for seeing this tab is the
-        // Merchandiser User role (see is_scoped_to_own_customers on the
-        // server) — someone who ALSO holds a broader role such as Production
-        // Manager keeps the full view and its action buttons, since that
-        // role's own reason for being here is company-wide visibility. The
-        // server already scopes the row list itself (get_sales_tracker); here
-        // the "Action Required" column drops its buttons to match: view only,
-        // no way to act on someone else's workflow step from this tab.
         const view_only = !!(this.perms && this.perms.tracker_scoped_to_own_customers);
+
+        const mr_rows = mrs.map(m => {
+            const pending = flt_of(m.qty) - flt_of(m.ordered_qty);
+            return `<tr class="of-doc-row">
+                <td><i class="fa fa-caret-right of-doc-items-toggle" data-doctype="Material Request" data-docname="${of_esc(m.name)}" style="cursor:pointer;margin-right:4px;color:var(--text-light);"></i>
+                    <a href="/app/material-request/${encodeURIComponent(m.name)}" target="_blank" style="font-weight:700;">${of_esc(m.name)}</a>
+                    <div class="of-micro">${of_esc(m.material_request_type || '')}</div></td>
+                <td>${of_so_links(m.sales_orders)}
+                    ${m.so_customer_names ? `<div class="of-micro text-muted">${of_esc(m.so_customer_names)}</div>` : ''}</td>
+                <td class="of-meta">${of_date(m.transaction_date)}
+                    <div class="of-micro">by ${of_date(m.schedule_date)}</div></td>
+                <td>${of_qty(m.qty)}<div class="of-micro">${of_num(m.item_count)} item(s)</div></td>
+                <td>${of_qty(m.ordered_qty, 'info')}</td>
+                <td>${of_qty(pending, pending > 0 ? 'warn' : null)}</td>
+                <td>${of_doc_status(m.status)}</td>
+                <td>
+                    ${flt_of(m.docstatus) === 0
+                        ? `<span class="of-micro" style="color:var(--of-orange);font-weight:600;" title="A Purchase Order can only be made from a submitted Material Request">
+                            <i class="fa fa-exclamation-triangle"></i> Submit MR first</span>`
+                        : pending > 0
+                            ? `<button class="of-btn of-btn--primary of-action-btn" data-action="make_po_from_mr" data-target="${m.name}">
+                                <i class="fa fa-shopping-cart"></i> Order PO</button>`
+                            : '<span class="of-micro" style="color:var(--of-green);font-weight:600;">Ordered</span>'}
+                </td>
+            </tr>`;
+        }).join('');
 
         const rows = orders.map(o => {
             const c = o.counts || {};
@@ -2404,12 +2435,6 @@ class OrderFlow {
                 return `<span class="of-micro of-link-flow" data-doctype="${doctype}" data-docs="${docs_data}" style="display:inline-block;white-space:nowrap;margin:1px 3px 1px 0;color:var(--of-info);font-weight:600;cursor:pointer;text-decoration:underline;" title="Click to view linked ${label}"><b>${n}</b> ${label}</span>`;
             }).join('');
 
-            // Raw-material-tier procurement (MR/PO/Receipt for a BOM component,
-            // never the SO's own sold item — see rm_counts/rm_mrs/rm_pos/rm_receipts
-            // from get_sales_tracker) shown as its own wave, entirely separate from
-            // the chain above: it must never be mistaken for progress on the item
-            // actually sold on this order, and it never drives Current Stage /
-            // Action Required (see _compute_stage_info on the server).
             const rm_c = o.rm_counts || {};
             const rm_chain_items = [
                 ['MR', rm_c['Material Request'], o.rm_mrs, 'Material Request'],
@@ -2429,13 +2454,6 @@ class OrderFlow {
                     }).join('')}
                 </div>` : '';
 
-            // A short note under the main "Current Stage" pill so the RM
-            // pipeline is visible right where the user is already looking —
-            // without it, an order sitting at "Newly Created" because its own
-            // sold item has no MR/PO yet looks like nothing is happening, even
-            // though raw material for it is already being procured. Precedence
-            // (Received > Ordered > Requested) mirrors how far along that
-            // pipeline actually is, same idea as the main stage's own hierarchy.
             let rm_stage_note_html = '';
             if (rm_chain_items.length) {
                 const has_recv = rm_chain_items.some(([label]) => label === 'Recv');
@@ -2448,7 +2466,6 @@ class OrderFlow {
                     </div>`;
             }
 
-            // Action Button HTML
             let action_btn_html = '';
             if (view_only) {
                 action_btn_html = st.action_type && st.action_type !== 'none'
@@ -2470,12 +2487,6 @@ class OrderFlow {
                 action_btn_html = `<span class="of-micro" style="color:var(--of-green);font-weight:600;"><i class="fa fa-check-circle"></i> Completed</span>`;
             }
 
-            // A secondary action is a genuinely SEPARATE, both-need-doing
-            // item (e.g. an earlier batch already delivered and unbilled,
-            // while the primary action above is about the rest of the
-            // order still being picked/sourced) — never an alternative to
-            // the primary, so it's labelled "Also Pending", not paired with
-            // an "or" the way two competing routes would be.
             if (st.secondary_action && st.secondary_action.action_type && !view_only) {
                 const sec = st.secondary_action;
                 action_btn_html += `
@@ -2493,13 +2504,6 @@ class OrderFlow {
                     </div>`;
             }
 
-            // "What's left, overall" for this order — the same three zones
-            // the Sales Order's own Item Stock & Action Plan widget already
-            // totals per line (its "To complete this order" banner), so this
-            // never needs opening the widget just to see whether anything is
-            // still genuinely short. The primary/secondary actions above
-            // already cover ready-to-ship and needs-invoice; this is purely
-            // the one zone neither of them represents.
             if (flt_of(o.shortfall_qty) > 0.01 && !view_only) {
                 action_btn_html += `
                     <div class="of-micro" style="margin-top:6px;color:var(--of-red);font-weight:600;" title="${of_esc('Still not delivered or picked on this order — see the Item Stock & Action Plan below for which item and why.')}">
@@ -2570,34 +2574,59 @@ class OrderFlow {
             <!-- Live Activity Notifications -->
             ${this.activity_stream_html('tracker')}
 
-            <!-- Top Summary Cards (Interactive Stage Number Cards) -->
-            <div class="of-summary" id="of-summary-tracker"></div>
-            ${truncated_note}
+            <!-- Sales Tracker Sub-Tab Navigation Bar -->
+            <div class="of-subtabs" style="margin-bottom:12px;">
+                <button class="of-subtab ${subtab === 'so' ? 'is-active' : ''}" data-subtab="so">
+                    <i class="fa fa-list-ul" style="color:var(--of-blue);"></i> Sales Orders
+                </button>
+                <button class="of-subtab ${subtab === 'mr' ? 'is-active' : ''}" data-subtab="mr">
+                    <i class="fa fa-file-text-o" style="color:var(--of-purple);"></i> Material Requests
+                </button>
+            </div>
 
-            <!-- Sales Order Action Tracker Table -->
-            <div class="of-card">
-                <div class="of-card__head">
-                    <i class="fa fa-tasks"></i> Sales Order Stage &amp; Required Action Plan
-                    <small>Clear next action button for every order</small>
+            <!-- Subtab Sections -->
+            <div id="of-tracker-sec-so" class="${subtab !== 'so' ? 'of-hidden' : ''}">
+                <!-- Top Summary Cards (Interactive Stage Number Cards) -->
+                <div class="of-summary" id="of-summary-tracker"></div>
+                ${truncated_note}
+
+                <!-- Sales Order Action Tracker Table -->
+                <div class="of-card">
+                    <div class="of-card__head">
+                        <i class="fa fa-tasks"></i> Sales Order Stage &amp; Required Action Plan
+                        <small>Clear next action button for every order</small>
+                    </div>
+                    <div class="of-scroll-hint"><i class="fa fa-arrows-h"></i> ${__('Scroll sideways to see every column')}</div>
+                    <div class="of-scroll">
+                        <table class="of-table of-table--tracker">
+                            <thead><tr>
+                                <th style="width:18%;">Sales Order &amp; Customer</th>
+                                <th style="width:9%;">Dates</th>
+                                <th style="width:14%;">Current Stage</th>
+                                <th style="width:15%;">Action Required</th>
+                                <th style="width:14%;">Document Flow</th>
+                                <th style="width:9%;">Delivery</th>
+                                <th style="width:9%;">Billing</th>
+                                <th style="width:12%;">Last Activity</th>
+                            </tr></thead>
+                            <tbody>${rows || `<tr><td colspan="8" class="of-empty">
+                                 <i class="fa fa-inbox"></i>No orders match the selected stage filter.</td></tr>`}</tbody>
+                        </table>
+                    </div>
+                    ${of_pagination_html('tracker', 'so', data)}
                 </div>
-                <div class="of-scroll-hint"><i class="fa fa-arrows-h"></i> ${__('Scroll sideways to see every column')}</div>
-                <div class="of-scroll">
-                    <table class="of-table of-table--tracker">
-                        <thead><tr>
-                            <th style="width:18%;">Sales Order &amp; Customer</th>
-                            <th style="width:9%;">Dates</th>
-                            <th style="width:14%;">Current Stage</th>
-                            <th style="width:15%;">Action Required</th>
-                            <th style="width:14%;">Document Flow</th>
-                            <th style="width:9%;">Delivery</th>
-                            <th style="width:9%;">Billing</th>
-                            <th style="width:12%;">Last Activity</th>
-                        </tr></thead>
-                        <tbody>${rows || `<tr><td colspan="8" class="of-empty">
-                             <i class="fa fa-inbox"></i>No orders match the selected stage filter.</td></tr>`}</tbody>
-                    </table>
-                </div>
-                ${of_pagination_html('tracker', null, data)}
+            </div>
+
+            <div id="of-tracker-sec-mr" class="${subtab !== 'mr' ? 'of-hidden' : ''}">
+                ${of_card('Material Requests', 'file-text-o', `
+                    <table class="of-table">
+                        <thead><tr><th style="min-width:170px;">Material Request</th><th>Sales Order</th><th>Dates</th>
+                            <th>Requested</th><th>Ordered</th><th>Not ordered</th><th>Status</th><th>Action</th></tr></thead>
+                        <tbody>${mr_rows || of_empty_row(8)}</tbody>
+                    </table>`,
+                    `<a class="of-btn of-btn--primary" href="/app/material-request/new" target="_blank">
+                        <i class="fa fa-plus"></i> ${__('Create Material Request')}
+                    </a>`, of_pagination_html('tracker', 'mr', mrs_env))}
             </div>`;
     }
 
@@ -2963,42 +2992,14 @@ class OrderFlow {
     // ── Tab 2: purchase ──────────────────────────────────────────
     purchase_html(data) {
         data = data || {};
-        const mrs_env = data.material_requests || {};
         const pos_env = data.purchase_orders || {};
         const rcs_env = data.receipts || {};
         const bill_env = data.bill_orders || {};
-        const mrs = mrs_env.rows || [];
         const pos = pos_env.rows || [];
         const rcs = rcs_env.rows || [];
         const pos_need_bill = bill_env.rows || [];
-        this.$body.find('#of-count').text(__('{0} MR · {1} PO · {2} receipts · {3} need bill',
-            [mrs_env.total || 0, pos_env.total || 0, rcs_env.total || 0, bill_env.total || 0]));
-
-        const mr_rows = mrs.map(m => {
-            const pending = flt_of(m.qty) - flt_of(m.ordered_qty);
-            return `<tr class="of-doc-row">
-                <td><i class="fa fa-caret-right of-doc-items-toggle" data-doctype="Material Request" data-docname="${of_esc(m.name)}" style="cursor:pointer;margin-right:4px;color:var(--text-light);"></i>
-                    <a href="/app/material-request/${encodeURIComponent(m.name)}" target="_blank" style="font-weight:700;">${of_esc(m.name)}</a>
-                    <div class="of-micro">${of_esc(m.material_request_type || '')}</div></td>
-                <td>${of_so_links(m.sales_orders)}
-                    ${m.so_customer_names ? `<div class="of-micro text-muted">${of_esc(m.so_customer_names)}</div>` : ''}</td>
-                <td class="of-meta">${of_date(m.transaction_date)}
-                    <div class="of-micro">by ${of_date(m.schedule_date)}</div></td>
-                <td>${of_qty(m.qty)}<div class="of-micro">${of_num(m.item_count)} item(s)</div></td>
-                <td>${of_qty(m.ordered_qty, 'info')}</td>
-                <td>${of_qty(pending, pending > 0 ? 'warn' : null)}</td>
-                <td>${of_doc_status(m.status)}</td>
-                <td>
-                    ${flt_of(m.docstatus) === 0
-                        ? `<span class="of-micro" style="color:var(--of-orange);font-weight:600;" title="A Purchase Order can only be made from a submitted Material Request">
-                            <i class="fa fa-exclamation-triangle"></i> Submit MR first</span>`
-                        : pending > 0
-                            ? `<button class="of-btn of-btn--primary of-action-btn" data-action="make_po_from_mr" data-target="${m.name}">
-                                <i class="fa fa-shopping-cart"></i> Order PO</button>`
-                            : '<span class="of-micro" style="color:var(--of-green);font-weight:600;">Ordered</span>'}
-                </td>
-            </tr>`;
-        }).join('');
+        this.$body.find('#of-count').text(__('{0} PO · {1} receipts · {2} need bill',
+            [pos_env.total || 0, rcs_env.total || 0, bill_env.total || 0]));
 
         const po_rows = pos.map(p => `
             <tr class="of-doc-row">
@@ -3054,11 +3055,6 @@ class OrderFlow {
             </tr>`).join('');
 
         const rc_rows = rcs.map(r => {
-            // Every Subcontracting Receipt this app creates immediately gets a
-            // mapped Purchase Receipt (create_receipt_documents in
-            // purchase_order.py) — that's the document actually worked from
-            // day to day, so link straight to it instead of the SCR when one
-            // exists.
             const open_doctype = (r.doctype === 'Subcontracting Receipt' && r.linked_pr) ? 'Purchase Receipt' : r.doctype;
             const open_name = (r.doctype === 'Subcontracting Receipt' && r.linked_pr) ? r.linked_pr : r.name;
             return `
@@ -3080,7 +3076,7 @@ class OrderFlow {
             </tr>`;
         }).join('');
 
-        const subtab = this.pur_subtab || 'mr';
+        const subtab = this.pur_subtab || 'po';
 
         return `
             <!-- Live Activity Notifications -->
@@ -3091,9 +3087,6 @@ class OrderFlow {
 
             <!-- Purchase Flow Sub-Tab Navigation Bar -->
             <div class="of-subtabs">
-                <button class="of-subtab ${subtab === 'mr' ? 'is-active' : ''}" data-subtab="mr">
-                    <i class="fa fa-file-text-o" style="color:var(--of-purple);"></i> MR
-                </button>
                 <button class="of-subtab ${subtab === 'po' ? 'is-active' : ''}" data-subtab="po">
                     <i class="fa fa-shopping-cart" style="color:var(--of-blue);"></i> POs
                 </button>
@@ -3106,18 +3099,6 @@ class OrderFlow {
             </div>
 
             <!-- Subtab Sections -->
-            <div id="of-pur-sec-mr" class="${subtab !== 'mr' ? 'of-hidden' : ''}">
-                ${of_card('Material Requests', 'file-text-o', `
-                    <table class="of-table">
-                        <thead><tr><th style="min-width:170px;">Material Request</th><th>Sales Order</th><th>Dates</th>
-                            <th>Requested</th><th>Ordered</th><th>Not ordered</th><th>Status</th><th>Action</th></tr></thead>
-                        <tbody>${mr_rows || of_empty_row(8)}</tbody>
-                    </table>`,
-                    `<a class="of-btn of-btn--primary" href="/app/material-request/new" target="_blank">
-                        <i class="fa fa-plus"></i> ${__('Create Material Request')}
-                    </a>`, of_pagination_html('purchase', 'mr', mrs_env))}
-            </div>
-
             <div id="of-pur-sec-po" class="${subtab !== 'po' ? 'of-hidden' : ''}">
                 ${of_card('Purchase Orders', 'shopping-cart', `
                     <table class="of-table">
