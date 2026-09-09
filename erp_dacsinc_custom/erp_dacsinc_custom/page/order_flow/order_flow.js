@@ -1039,6 +1039,8 @@ class OrderFlow {
                             const drafts = draft_res.message || {};
 
                             frappe.require('/assets/erp_dacsinc_custom/js/sales_order.js', () => {
+                                /*
+                                // ORIGINAL CODE (commented out as per requirement - always create DN instead of choice/SI):
                                 if (route_lock === 'dn') {
                                     show_bulk_dn_si_modal(mock_frm, pls, 'Delivery Note', 0, drafts.draft_dns || []);
                                 } else if (route_lock === 'si') {
@@ -1059,6 +1061,10 @@ class OrderFlow {
                                     });
                                     choice.show();
                                 }
+                                */
+
+                                // Always create Delivery Note directly:
+                                show_bulk_dn_si_modal(mock_frm, pls, 'Delivery Note', 0, drafts.draft_dns || []);
                             });
                         });
                     }
