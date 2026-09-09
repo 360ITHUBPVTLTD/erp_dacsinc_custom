@@ -1497,14 +1497,18 @@ def _compute_primary_stage_info(order):
             elif _so_has_submitted_stock_si(order["name"]):
                 route_lock = "si"
 
-            if route_lock == "si":
-                label = "Create Sales Invoice (Update Stock)" if is_fully_picked else "Create Sales Invoice (Update Stock, Partial)"
-                icon = "file-text-o"
-            else:
-                label = "Create DN / SI" if not route_lock else "Create Delivery Note"
-                if not is_fully_picked:
-                    label += " (Partial)"
-                icon = "truck"
+            # Commented out as per requirement: always force Delivery Note creation instead of SI with Update Stock
+            # if route_lock == "si":
+            #     label = "Create Sales Invoice (Update Stock)" if is_fully_picked else "Create Sales Invoice (Update Stock, Partial)"
+            #     icon = "file-text-o"
+            # else:
+            #     label = "Create DN / SI" if not route_lock else "Create Delivery Note"
+            #     if not is_fully_picked:
+            #         label += " (Partial)"
+            #     icon = "truck"
+
+            label = "Create Delivery Note" if is_fully_picked else "Create Delivery Note (Partial)"
+            icon = "truck"
 
             if is_fully_picked:
                 return {
