@@ -12,7 +12,9 @@ Subcontracting/Embroidery → Pick List → Delivery Note → Invoice.
   Orders**, **Pending Final SO Approval** (renamed from the older
   "Unassigned Order(s)" / "Pending Final Approval" labels — the
   `workflow_state` *values* compared in code were left untouched, only the
-  user-facing labels changed).
+  user-facing labels changed), and a view-only **Other Merchandisers'
+  Orders** sub-tab for viewers who are neither the assigned merchandiser nor
+  a final approver (see below).
 - **Sales Tracker** — all orders, their current stage and next action.
 - **Pick Lists** — the Pick Lists themselves (see below).
 - **Purchase Flow**, **Job Work**, **Stock Tracker**, **Pending DN/SI**,
@@ -432,6 +434,100 @@ existing, intentionally different rule (`is_merchandiser_user()`, not
 merchandiser assigned yet, not just the viewer's own, so a merchandiser can
 still claim and approve a brand-new customer's first order) — left as-is,
 not unified into the others.
+
+## SO Approvals: a fourth sub-tab for viewers who are neither the merchandiser nor a final approver
+
+`approval_html` (client) buckets each row it gets back from `get_pending_
+approvals` into a sub-tab purely client-side — the server has already
+decided *which rows* a viewer may see; this bucketing only decides *which
+sub-tab* each visible row lands in. Three kinds of viewer exist:
+
+- A plain Merchandiser User — scoped server-side to their own customers
+  (`get_pending_approvals` adds the SQL condition below), and client-side to
+  `o.custom_merchandiser_user === current_user` in the **Pending Approval**
+  bucket.
+- A final approver/admin (`this.perms.is_final_approver`) — sees every
+  merchandiser-assigned order via "Merchandiser Queue (Track)" (same
+  sub-tab, different label).
+- Everyone else who can see this tab at all (`of_tab_approval_roles`) but is
+  neither of the above — an operational role like Operation Team (Operation
+  Manager Corporate, Store Operation Manager, Sales Manager, Accounts
+  Manager/User). The server sends them every order unscoped; they land in a
+  fourth bucket/sub-tab, **"Other Merchandisers' Orders"**, listing every
+  merchandiser-assigned order not already covered by Pending Approval or
+  Unassigned. It is deliberately **view-only** — the Actions column reads
+  "View only — not your queue" instead of Approve/Reject buttons, since this
+  cohort isn't the merchandiser and can't final-approve either.
+
+**Which bucket a viewer falls into is NOT a bare "do they hold Merchandiser
+User" role check** — that role can be combined with a broader operational
+role (Operation Team, Sales Manager, ...) for someone who does both jobs,
+and naively treating them as a plain merchandiser hid every order with a
+merchandiser assigned from them entirely (confirmed live: both "Pending
+Approval" and "Merchandiser Unassigned Orders" read `(0)` for such a user,
+despite orders existing). Both the client and server key off the exact same
+`is_scoped_to_own_customers("approval")` used everywhere else in this file
+(see "Merchandiser scoping now covers every tab that can show it" above) —
+`get_order_flow_permissions()` exposes it to the client as
+`approval_scoped_to_own_customers`, mirroring how `tracker_scoped_to_own_
+customers` already works for Tracker. Only someone whose *sole* reason for
+seeing this tab is Merchandiser User is scoped down; a combined-role user
+sees everything, same as every other tab already handles it.
+
+Each row in the "Other Merchandisers' Orders" sub-tab also shows **"Created
+by: `<name>`"** under the existing "Merchandiser: `<name>`" line — the point
+of this sub-tab being visible at all is situational awareness ("who's this
+customer's merchandiser, and who actually raised this particular order"),
+and those two can differ (an admin creating an order on a merchandiser's
+behalf, for example). `get_pending_approvals` joins `tabUser` on `so.owner`
+to resolve that name (`creator_name`), the same way it already did for the
+merchandiser.
+
+**The same "combined role" gap existed one level deeper, outside this page
+entirely.** `custom_script.py`'s `has_sales_order_permission` / `get_sales_
+order_permission_query_conditions` / `has_customer_permission` / `get_
+customer_permission_query_conditions` — the actual Frappe `has_permission`
+and `permission_query_conditions` hooks for Sales Order and Customer,
+wired in `hooks.py`, and the reason those doctypes are scoped for a
+merchandiser *anywhere* in Desk, not just on this page — used the same
+blunt `is_merchandiser_user()` check. Confirmed live: a combined-role user
+was denied access to a Sales Order **they themselves had just created**,
+because its customer's assigned merchandiser was someone else and
+`is_merchandiser_user()` had no way to know the viewer's other role already
+grants Sales Order access company-wide. Fixed with a new
+`is_scoped_merchandiser_for_doctype(doctype, user)` in `order_flow_api.py`,
+the same "is Merchandiser User their only reason" idea as `is_scoped_to_
+own_customers`, but keyed off the doctype's own configured roles
+(`frappe.permissions.get_doctype_roles`) rather than an Order Flow tab's
+Admin Settings role list — appropriate here since these hooks govern access
+everywhere, not just within this page.
+
+**A Sales Order's own creator may approve it at the merchandiser stage,
+even for a customer whose merchandiser is someone else** — confirmed as a
+deliberate business decision, for a user who places an order on a
+merchandiser's behalf (e.g. an operational role, not the merchandiser
+themselves). Fixing the two permission hooks above was necessary but not
+sufficient: Frappe's own workflow engine independently refuses ANY
+transition where the acting user is also the document's owner
+(`has_approval_access` in `frappe/model/workflow.py`, "Self approval is not
+allowed") unless that specific Workflow Transition row has
+`allow_self_approval` set — regardless of role. `setup_sales_order_workflow`
+now sets it on both the "Draft → Pending Merchandiser Approval" transition
+(`approve_sales_orders` auto-submits a Draft through this transition, as
+the same acting user, immediately before applying "Approve" — so without it
+here too, a creator's approval attempt fails one step earlier than expected)
+and the "Pending Merchandiser Approval → Pending Final Approval" ("Approve")
+transitions. Deliberately **not** set on the separate "Pending Final
+Approval → Approved" transitions — final approval still requires someone
+other than the order's creator. Applied to an existing site via the
+`allow_so_creator_self_approval` patch (`setup_sales_order_workflow(force=
+True)` rebuilds the live Workflow document from these definitions).
+
+Client-side, `approval_html`'s "Other Merchandisers' Orders" sub-tab shows
+Approve/Reject buttons instead of "View only" for exactly the rows where
+`o.owner === current_user` and the order hasn't already reached Pending
+Final Approval (past the merchandiser stage this tab's Approve action
+handles) — every other row in that sub-tab stays view-only.
 
 ## Sales Tracker hides what Pending DN/SI hides
 

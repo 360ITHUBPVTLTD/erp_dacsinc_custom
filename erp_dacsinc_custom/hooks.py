@@ -61,7 +61,8 @@ doctype_js = {
 	"BOM": "public/js/bom.js",
 	"Sales Invoice": "public/js/sales_invoice.js",
 	"Delivery Note": "public/js/delivery_note.js",
-	"Pick List": "public/js/pick_list.js"
+	"Pick List": "public/js/pick_list.js",
+	"Customer": "public/js/customer.js"
 }
 doctype_list_js = {
 	"Lead": "public/js/lead_list.js",
@@ -144,12 +145,12 @@ doctype_list_js = {
 
 permission_query_conditions = {
     "Sales Order": "erp_dacsinc_custom.custom_script.get_sales_order_permission_query_conditions",
-    "Customer": "erp_dacsinc_custom.custom_script.get_customer_permission_query_conditions",
+    # "Customer": "erp_dacsinc_custom.custom_script.get_customer_permission_query_conditions",
 }
 
 has_permission = {
     "Sales Order": "erp_dacsinc_custom.custom_script.has_sales_order_permission",
-    "Customer": "erp_dacsinc_custom.custom_script.has_customer_permission",
+    # "Customer": "erp_dacsinc_custom.custom_script.has_customer_permission",
 }
 
 

@@ -495,6 +495,42 @@ def is_merchandiser_user(user=None):
     )
 
 
+def is_scoped_merchandiser_for_doctype(doctype, user=None):
+    """
+    True if `user`'s ONLY reason for having read access to `doctype` is the
+    Merchandiser User role — i.e. none of their other roles are granted read
+    on it via the Role Permission Manager (DocPerm/Custom DocPerm).
+
+    "Merchandiser User" can be combined with a broader operational role
+    (Operation Team, Sales Manager, ...) for someone who does both jobs, and
+    that role's own reason for having doctype access is company-wide
+    visibility — narrowing them to their own customers here would take away
+    access their OTHER role legitimately grants. Confirmed live:
+    has_sales_order_permission denied a user their OWN just-created Sales
+    Order because is_merchandiser_user() alone doesn't know about that
+    combination — the customer's real merchandiser was someone else, and
+    the fact that the viewer also holds a broader role that grants Sales
+    Order access company-wide was never consulted.
+
+    Mirrors order_flow_permissions.is_scoped_to_own_customers, but keyed off
+    the doctype's own configured roles (frappe.permissions.get_doctype_roles)
+    rather than the Order Flow page's Admin Settings tab-role lists — Sales
+    Order/Customer visibility outside that page is governed by the standard
+    Role Permission Manager, not that config. "All" is excluded from the
+    "other role" check for the same reason is_scoped_to_own_customers
+    excludes it — every user holds it, so counting it would silently defeat
+    scoping for every plain merchandiser.
+    """
+    if not is_merchandiser_user(user):
+        return False
+
+    from frappe.permissions import get_doctype_roles
+
+    roles = set(frappe.get_roles(user or frappe.session.user))
+    other_roles = set(get_doctype_roles(doctype, "read")) - {"Merchandiser User", "All"}
+    return not (roles & other_roles)
+
+
 def claim_customer_merchandiser(customer, user=None):
     """
     Give an unowned Customer to `user` as its merchandiser, if that is allowed.
@@ -3276,7 +3312,17 @@ def get_pending_approvals(search=None, merchandiser=None, approval_stage=None, p
         conditions.append("cust.custom_merchandiser_user = %(me)s")
         params["me"] = merchandiser
     else:
-        if is_merchandiser_user() and not is_final_approver:
+        # is_scoped_to_own_customers (not the blunter is_merchandiser_user)
+        # so someone who holds Merchandiser User alongside a broader
+        # operational role that also grants this tab (Operation Team, Sales
+        # Manager, ...) is correctly left unscoped here, same as every other
+        # tab already does — confirmed live: a user with both roles saw
+        # every merchandiser-assigned order vanish from both the "Pending
+        # Approval" and "Merchandiser Unassigned Orders" sub-tabs, because
+        # the SQL below silently excluded them at the query level while the
+        # client bucketing separately (and correctly) treated them as
+        # someone who should see everything.
+        if is_scoped_to_own_customers("approval") and not is_final_approver:
             conditions.append("(cust.custom_merchandiser_user = %(me)s OR cust.custom_merchandiser_user IS NULL OR cust.custom_merchandiser_user = '')")
             params["me"] = frappe.session.user
         
@@ -3296,6 +3342,7 @@ def get_pending_approvals(search=None, merchandiser=None, approval_stage=None, p
                so.workflow_state, so.grand_total, so.currency, so.owner, so.modified,
                cust.custom_merchandiser_user,
                u.full_name AS custom_merchandiser_name,
+               owner_u.full_name AS creator_name,
                (SELECT content FROM `tabComment`
                 WHERE reference_doctype = 'Sales Order' AND reference_name = so.name
                   AND (content LIKE '%%Rejected%%' OR content LIKE '%%Rejection%%')
@@ -3303,6 +3350,7 @@ def get_pending_approvals(search=None, merchandiser=None, approval_stage=None, p
         FROM `tabSales Order` so
         LEFT JOIN `tabCustomer` cust ON cust.name = so.customer
         LEFT JOIN `tabUser` u ON u.name = cust.custom_merchandiser_user
+        LEFT JOIN `tabUser` owner_u ON owner_u.name = so.owner
         WHERE {' AND '.join(conditions)}
         ORDER BY so.modified DESC
     """, params, page, page_size)
@@ -3515,6 +3563,24 @@ def reject_sales_orders(sales_orders, comment):
         add_custom_workflow_comment(doc.doctype, doc.name, "Rejected", comment)
 
 
+def _drop_stale_contact_links(cont):
+    """
+    Remove any `links` row (Dynamic Link) whose target document no longer
+    exists — e.g. a Lead that was later deleted without also cleaning up
+    the Contact it once pointed at. Frappe's own link validation refuses to
+    save a Contact carrying a dangling reference ("Could not find Link
+    Name: ..."), so without this, an action that has nothing to do with
+    that stale link (approving a Sales Order, which re-saves the customer's
+    primary contact along the way) fails on data the approval step never
+    touched. Confirmed live: DAC-CID-0032's primary contact "Parth Mehta"
+    still carried a `links` row to Lead DAC-LEAD-0059, deleted at some
+    point after that Lead was converted to a Customer.
+    """
+    stale = [d for d in cont.links if not frappe.db.exists(d.link_doctype, d.link_name)]
+    for d in stale:
+        cont.links.remove(d)
+
+
 @frappe.whitelist()
 def save_and_approve_sales_order(sales_order, gstin=None, gst_category=None, tax_category=None, billing_address=None, shipping_address=None, contact_data=None, skip_delivery_note=None):
     _guard()
@@ -3575,7 +3641,8 @@ def save_and_approve_sales_order(sales_order, gstin=None, gst_category=None, tax
                     })
                 else:
                     cont.email_ids[0].email_id = contact_dict.get("email")
-                    
+
+            _drop_stale_contact_links(cont)
             cont.save(ignore_permissions=True)
             cont_name = cont.name
             
@@ -3685,11 +3752,19 @@ def setup_sales_order_workflow(force=False):
     workflow.append("states", {"state": "Approved", "doc_status": 1, "allow_edit": "System Manager"})
     workflow.append("states", {"state": "Rejected", "doc_status": 0, "allow_edit": "All"})
     
+    # allow_self_approval=1 here too: approve_sales_orders() auto-submits a
+    # Draft straight through this transition before applying "Approve" in
+    # the very same call, as the very same acting user — so when that user
+    # is also the order's creator (see the Approve transitions below), this
+    # earlier step would already trip Frappe's "Self approval is not
+    # allowed" guard before ever reaching Approve. This transition alone
+    # only enters the approval queue; it grants no approval by itself.
     workflow.append("transitions", {
         "state": "Draft",
         "action": "Submit for Merchandiser Approval",
         "next_state": "Pending Merchandiser Approval",
-        "allowed": "All"
+        "allowed": "All",
+        "allow_self_approval": 1
     })
     workflow.append("transitions", {
         "state": "Draft",
@@ -3697,11 +3772,24 @@ def setup_sales_order_workflow(force=False):
         "next_state": "Rejected",
         "allowed": "All"
     })
+    # allow_self_approval=1 on the Approve transition only (not Reject —
+    # rejecting your own order needs no such exception): the creator of a
+    # Sales Order may push it through the merchandiser-approval step
+    # themselves even when its customer's assigned merchandiser is someone
+    # else — e.g. an operational user who places an order on a
+    # merchandiser's behalf. Without this, Frappe's own workflow engine
+    # (has_approval_access in frappe/model/workflow.py) throws "Self
+    # approval is not allowed" for anyone whose own Sales Order this is,
+    # regardless of role. This is a deliberate exception, confirmed with the
+    # business: only the merchandiser-approval Approve transitions get it —
+    # the separate Pending Final Approval stage's Approve transitions do
+    # NOT, so final approval still requires someone other than the creator.
     workflow.append("transitions", {
         "state": "Pending Merchandiser Approval",
         "action": "Approve",
         "next_state": "Pending Final Approval",
-        "allowed": "Merchandiser User"
+        "allowed": "Merchandiser User",
+        "allow_self_approval": 1
     })
     workflow.append("transitions", {
         "state": "Pending Merchandiser Approval",
@@ -3716,7 +3804,8 @@ def setup_sales_order_workflow(force=False):
         "state": "Pending Merchandiser Approval",
         "action": "Approve",
         "next_state": "Pending Final Approval",
-        "allowed": "Sales Order Final Approver"
+        "allowed": "Sales Order Final Approver",
+        "allow_self_approval": 1
     })
     workflow.append("transitions", {
         "state": "Pending Merchandiser Approval",
