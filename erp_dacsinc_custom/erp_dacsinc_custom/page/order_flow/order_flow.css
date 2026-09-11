@@ -926,6 +926,13 @@ td > .of-action-btn {
     color: var(--text-light);
 }
 
+/* "+N more" / "Show less" toggle for a collapsed of_links list */
+.of-links-toggle {
+    font-size: 11px;
+    font-weight: 600;
+    color: var(--of-info);
+}
+
 /* ── Pills ───────────────────────────────────────────────────── */
 .of-pill {
     display: inline-block;

@@ -679,6 +679,19 @@ class OrderFlow {
             this.refresh(true);
         });
 
+        // "+N more" toggle for a collapsed Sales Order / Purchase Order link
+        // list (see of_links) — a plain visibility flip, not a re-render, so
+        // it can't disturb whatever row it lives in.
+        this.$body.on('click', '.of-links-toggle', (e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            const $toggle = $(e.currentTarget);
+            const $extra = $toggle.closest('td').find('.of-links-extra');
+            const expanded = $extra.is(':visible');
+            $extra.toggle(!expanded);
+            $toggle.text(expanded ? $toggle.data('more-label') : $toggle.data('less-label'));
+        });
+
         // Submit a draft Pick List straight from the Pick Lists tab — the
         // whole point of that tab is not having to open each one. Reuses the
         // same server method the Sales Order widget submits through
@@ -5203,11 +5216,23 @@ function of_doc_status(status) {
     return `<span class="of-pill of-pill--${kind}">${of_esc(of_to_title_case(status))}</span>`;
 }
 
+// Past a handful of linked documents (a Material Request pulling from a
+// dozen Sales Orders is common), listing every one of them one-per-line
+// blows out the row height. Show the first OF_LINKS_VISIBLE and collapse
+// the rest behind a "+N more" toggle instead.
+const OF_LINKS_VISIBLE = 3;
 function of_links(list, doctype) {
     if (!list) return '<span class="of-val--zero">—</span>';
-    return String(list).split(',').map(s => s.trim()).filter(Boolean).map(n =>
-        `<div><a href="/app/${of_route(doctype)}/${encodeURIComponent(n)}" target="_blank">${of_esc(n)}</a></div>`
-    ).join('') || '<span class="of-val--zero">—</span>';
+    const names = String(list).split(',').map(s => s.trim()).filter(Boolean);
+    if (!names.length) return '<span class="of-val--zero">—</span>';
+
+    const link = n => `<div><a href="/app/${of_route(doctype)}/${encodeURIComponent(n)}" target="_blank">${of_esc(n)}</a></div>`;
+    if (names.length <= OF_LINKS_VISIBLE) return names.map(link).join('');
+
+    const extra_count = names.length - OF_LINKS_VISIBLE;
+    return `${names.slice(0, OF_LINKS_VISIBLE).map(link).join('')}
+        <div class="of-links-extra" style="display:none;">${names.slice(OF_LINKS_VISIBLE).map(link).join('')}</div>
+        <div><a href="#" class="of-links-toggle" data-more-label="+${extra_count} more" data-less-label="Show less">+${extra_count} more</a></div>`;
 }
 function of_so_links(list) { return of_links(list, 'Sales Order'); }
 function of_po_links(list) { return of_links(list, 'Purchase Order'); }
