@@ -61,7 +61,8 @@ doctype_js = {
 	"BOM": "public/js/bom.js",
 	"Sales Invoice": "public/js/sales_invoice.js",
 	"Delivery Note": "public/js/delivery_note.js",
-	"Pick List": "public/js/pick_list.js"
+	"Pick List": "public/js/pick_list.js",
+	"Task": "public/js/task.js"
 }
 doctype_list_js = {
 	"Lead": "public/js/lead_list.js",
