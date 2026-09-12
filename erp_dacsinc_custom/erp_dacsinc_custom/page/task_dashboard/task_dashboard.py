@@ -1,5 +1,5 @@
 import frappe
-from frappe.utils import getdate, nowdate, flt, date_diff, formatdate
+from frappe.utils import getdate, nowdate, flt, date_diff, formatdate, now_datetime
 import json
 from frappe.custom.doctype.custom_field.custom_field import create_custom_fields
 
@@ -10,19 +10,23 @@ UNRESTRICTED_TASK_ROLES = {"Administrator", "System Manager", "Admin", "HR Manag
 def has_unrestricted_task_access(user=None):
     """
     Checks whether the specified user has company-wide unrestricted Task viewing permissions.
+    Returns True for Administrator or any user having a role containing 'admin' or in UNRESTRICTED_TASK_ROLES.
     """
     user = user or frappe.session.user
     if user == "Administrator":
         return True
     user_roles = set(frappe.get_roles(user))
+    if any("admin" in str(r).lower() for r in user_roles):
+        return True
     return bool(user_roles.intersection(UNRESTRICTED_TASK_ROLES))
 
 
 @frappe.whitelist()
-def get_task_dashboard_data(filters=None):
+def get_task_dashboard_data(filters=None, page=1, page_length=20, sort_by=None, sort_order=None):
     """
-    Fetches aggregated summary counts and filtered task records for the Task Dashboard.
+    Fetches aggregated summary counts and paginated/sorted task records for the Task Dashboard.
     Scopes tasks automatically to the logged-in user unless they have unrestricted manager/admin roles.
+    By default, shows overdue, open, and in progress tasks.
     """
     if isinstance(filters, str):
         try:
@@ -72,17 +76,31 @@ def get_task_dashboard_data(filters=None):
         params["task_owner"] = filters["task_owner"]
 
     # Filter: Priority
-    if filters.get("priority") and filters.get("priority") != "All":
+    if filters.get("priority") and filters.get("priority") not in ["All", ""]:
         conditions.append("priority = %(priority)s")
         params["priority"] = filters["priority"]
 
-    # Filter: Status / Overdue
-    status_filter = filters.get("status")
-    if status_filter and status_filter != "All":
+    # Filter: Status / Overdue (Default to active: open, in progress, overdue)
+    status_filter = filters.get("status") if filters and "status" in filters else "active"
+    if status_filter in ["active", "Open, Working & Overdue", "Open, In Progress & Overdue"]:
+        if not is_unrestricted and not filters.get("task_owner"):
+            conditions.append("((status IN ('Open', 'Working') AND task_owner = %(current_user)s) OR (exp_end_date < %(today)s AND status NOT IN ('Completed', 'Cancelled') AND task_owner = %(current_user)s) OR custom_red_flag = 1)")
+        else:
+            conditions.append("(status IN ('Open', 'Working') OR (exp_end_date < %(today)s AND status NOT IN ('Completed', 'Cancelled')))")
+    elif status_filter and status_filter not in ["All", ""]:
         if status_filter == "Overdue":
-            conditions.append("exp_end_date < %(today)s AND status NOT IN ('Completed', 'Cancelled')")
+            if not is_unrestricted and not filters.get("task_owner"):
+                conditions.append("exp_end_date < %(today)s AND status NOT IN ('Completed', 'Cancelled') AND task_owner = %(current_user)s")
+            else:
+                conditions.append("exp_end_date < %(today)s AND status NOT IN ('Completed', 'Cancelled')")
         elif status_filter == "RedFlag":
             conditions.append("custom_red_flag = 1")
+        elif status_filter in ["Open", "Working"]:
+            if not is_unrestricted and not filters.get("task_owner"):
+                conditions.append("status = %(status)s AND task_owner = %(current_user)s")
+            else:
+                conditions.append("status = %(status)s")
+            params["status"] = status_filter
         else:
             conditions.append("status = %(status)s")
             params["status"] = status_filter
@@ -106,25 +124,88 @@ def get_task_dashboard_data(filters=None):
     if active_tab == "red_flag":
         conditions.append("custom_red_flag = 1")
     elif active_tab == "overdue":
-        conditions.append("exp_end_date < %(today)s AND status NOT IN ('Completed', 'Cancelled')")
+        if not is_unrestricted and not filters.get("task_owner"):
+            conditions.append("exp_end_date < %(today)s AND status NOT IN ('Completed', 'Cancelled') AND task_owner = %(current_user)s")
+        else:
+            conditions.append("exp_end_date < %(today)s AND status NOT IN ('Completed', 'Cancelled')")
 
     where_clause = " AND ".join(conditions)
 
     # Check optional custom columns
     extra_cols = []
-    for col in ["custom_dependency_on", "custom_red_flag_due_date", "custom_opening_notes", "custom_red_flag_raised_by"]:
+    for col in ["custom_dependency_on", "custom_red_flag_due_date", "custom_opening_notes", "custom_red_flag_raised_by", "custom_red_flag_closing_notes", "completed_by", "completed_on"]:
         if frappe.db.has_column("Task", col):
             extra_cols.append(col)
     extra_select = (",\n            " + ",\n            ".join(extra_cols)) if extra_cols else ""
 
     # -------------------------------------------------------------
-    # 2. Fetch Tasks Data
+    # 2. Sorting and Pagination
     # -------------------------------------------------------------
+    sort_by = filters.get("sort_by") or sort_by
+    sort_order = "DESC" if str(filters.get("sort_order") or sort_order or "").upper() == "DESC" else "ASC"
+
+    SORT_COLUMNS = {
+        "subject": "subject",
+        "task_owner": "task_owner",
+        "status": "status",
+        "priority": """CASE priority 
+            WHEN 'Urgent' THEN 1 
+            WHEN 'High' THEN 2 
+            WHEN 'Medium' THEN 3 
+            WHEN 'Low' THEN 4 
+            ELSE 5 
+        END""",
+        "exp_start_date": "exp_start_date",
+        "exp_end_date": "exp_end_date",
+        "creation": "creation",
+        "modified": "modified"
+    }
+
+    if sort_by and sort_by in SORT_COLUMNS and sort_by != "default":
+        col_expr = SORT_COLUMNS[sort_by]
+        if sort_by in ["exp_start_date", "exp_end_date"]:
+            null_clause = f"CASE WHEN {sort_by} IS NULL OR {sort_by} = '' THEN 1 ELSE 0 END ASC, "
+            order_by_clause = f"custom_red_flag DESC, {null_clause} {sort_by} {sort_order}, creation DESC"
+        else:
+            order_by_clause = f"custom_red_flag DESC, {col_expr} {sort_order}, creation DESC"
+    else:
+        # By default: Red flag tasks first, then recently created tasks in the beginning
+        order_by_clause = """
+            custom_red_flag DESC,
+            creation DESC,
+            modified DESC
+        """
+
+    try:
+        page = max(1, int(filters.get("page") or page or 1))
+    except Exception:
+        page = 1
+
+    try:
+        page_length = max(1, min(100, int(filters.get("page_size") or filters.get("page_length") or page_length or 20)))
+    except Exception:
+        page_length = 20
+
+    offset = (page - 1) * page_length
+    params["page_length"] = page_length
+    params["offset"] = offset
+
+    # Total matching tasks count for pagination
+    total_tasks_count = frappe.db.sql(f"""
+        SELECT COUNT(*)
+        FROM `tabTask`
+        WHERE {where_clause}
+    """, params)[0][0] or 0
+
+    total_pages = (total_tasks_count + page_length - 1) // page_length if total_tasks_count > 0 else 1
+
+    # Fetch Tasks Data
     tasks = frappe.db.sql(f"""
         SELECT 
             name,
             subject,
             task_owner,
+            owner,
             status,
             priority,
             type,
@@ -137,25 +218,23 @@ def get_task_dashboard_data(filters=None):
             custom_red_flag,
             project,
             description,
+            creation,
             modified{extra_select}
         FROM `tabTask`
         WHERE {where_clause}
-        ORDER BY 
-            custom_red_flag DESC,
-            CASE priority 
-                WHEN 'Urgent' THEN 1 
-                WHEN 'High' THEN 2 
-                WHEN 'Medium' THEN 3 
-                WHEN 'Low' THEN 4 
-                ELSE 5 
-            END,
-            exp_end_date ASC,
-            modified DESC
-        LIMIT 300
+        ORDER BY {order_by_clause}
+        LIMIT %(page_length)s OFFSET %(offset)s
     """, params, as_dict=True)
+
+    user_roles = frappe.get_roles(current_user)
+    is_admin = "System Manager" in user_roles or current_user == "Administrator"
 
     # Calculate additional dynamic fields for UI
     for task in tasks:
+        # Strictly only the current task_owner can act on the task (even Administrator cannot act unless assigned as task_owner)
+        task["can_edit_action"] = bool(
+            task.get("task_owner") and task["task_owner"] == current_user
+        )
         task["is_overdue"] = False
         task["due_status_text"] = ""
         task["due_status_class"] = "text-muted"
@@ -203,17 +282,36 @@ def get_task_dashboard_data(filters=None):
 
     summary_where = " AND ".join(summary_conditions)
 
-    summary_data = frappe.db.sql(f"""
-        SELECT
-            COUNT(*) as total_tasks,
-            SUM(CASE WHEN status = 'Open' THEN 1 ELSE 0 END) as open_tasks,
-            SUM(CASE WHEN status = 'Working' THEN 1 ELSE 0 END) as in_progress_tasks,
-            SUM(CASE WHEN status = 'Completed' THEN 1 ELSE 0 END) as completed_tasks,
-            SUM(CASE WHEN exp_end_date < %(today)s AND status NOT IN ('Completed', 'Cancelled') THEN 1 ELSE 0 END) as overdue_tasks,
-            SUM(CASE WHEN custom_red_flag = 1 THEN 1 ELSE 0 END) as red_flag_tasks
-        FROM `tabTask`
-        WHERE {summary_where}
-    """, summary_params, as_dict=True)
+    if is_unrestricted and not filters.get("task_owner"):
+        # For admin and roles containing admin: show all tasks in open, working, overdue counts
+        summary_data = frappe.db.sql(f"""
+            SELECT
+                COUNT(*) as total_tasks,
+                SUM(CASE WHEN status = 'Open' THEN 1 ELSE 0 END) as open_tasks,
+                SUM(CASE WHEN status = 'Working' THEN 1 ELSE 0 END) as in_progress_tasks,
+                SUM(CASE WHEN status = 'Completed' THEN 1 ELSE 0 END) as completed_tasks,
+                SUM(CASE WHEN exp_end_date < %(today)s AND status NOT IN ('Completed', 'Cancelled') THEN 1 ELSE 0 END) as overdue_tasks,
+                SUM(CASE WHEN custom_red_flag = 1 THEN 1 ELSE 0 END) as red_flag_tasks
+            FROM `tabTask`
+            WHERE {summary_where}
+        """, summary_params, as_dict=True)
+    else:
+        # For other users (or when filtering by specific task_owner):
+        # Only count tasks where the user is currently the task_owner
+        user_for_owner_counts = filters.get("task_owner") or current_user
+        summary_params["user_for_owner_counts"] = user_for_owner_counts
+
+        summary_data = frappe.db.sql(f"""
+            SELECT
+                COUNT(*) as total_tasks,
+                SUM(CASE WHEN status = 'Open' AND task_owner = %(user_for_owner_counts)s THEN 1 ELSE 0 END) as open_tasks,
+                SUM(CASE WHEN status = 'Working' AND task_owner = %(user_for_owner_counts)s THEN 1 ELSE 0 END) as in_progress_tasks,
+                SUM(CASE WHEN status = 'Completed' AND (task_owner = %(user_for_owner_counts)s OR completed_by = %(user_for_owner_counts)s) THEN 1 ELSE 0 END) as completed_tasks,
+                SUM(CASE WHEN exp_end_date < %(today)s AND status NOT IN ('Completed', 'Cancelled') AND task_owner = %(user_for_owner_counts)s THEN 1 ELSE 0 END) as overdue_tasks,
+                SUM(CASE WHEN custom_red_flag = 1 THEN 1 ELSE 0 END) as red_flag_tasks
+            FROM `tabTask`
+            WHERE {summary_where}
+        """, summary_params, as_dict=True)
 
     summary = summary_data[0] if summary_data else {
         "total_tasks": 0,
@@ -234,6 +332,10 @@ def get_task_dashboard_data(filters=None):
 
     return {
         "tasks": tasks,
+        "total_count": total_tasks_count,
+        "page": page,
+        "page_length": page_length,
+        "total_pages": total_pages,
         "summary": summary,
         "user_info": user_info,
         "is_unrestricted": is_unrestricted
@@ -396,14 +498,46 @@ def toggle_red_flag(task_name, red_flag, dependency_on=None, due_date=None, open
     return {"task_name": task_name, "custom_red_flag": val}
 
 @frappe.whitelist()
-def update_task_status(task_name, status):
+def update_task_status(task_name, status, closing_notes=None, completion_notes=None):
     """
-    Quick status update from the slide-over preview drawer.
+    Status update from Task Dashboard or slide-over drawer.
+    Enforces permission: only the current task_owner (or System Manager) can perform actions.
+    If the task has an active Red Flag and status is being set to Completed,
+    it requires closing_notes, resolves the red flag, and completes the task.
     """
     if not task_name or not status:
         frappe.throw("Task ID and Status are required")
 
-    frappe.db.set_value("Task", task_name, "status", status, update_modified=True)
+    task = frappe.get_doc("Task", task_name)
+    current_user = frappe.session.user
+    user_roles = frappe.get_roles(current_user)
+    is_current_owner = bool(task.task_owner and task.task_owner == current_user)
+
+    if not is_current_owner:
+        frappe.throw(f"You do not have permission to update task {task_name}. Only the currently assigned Task Owner ({task.task_owner or 'Unassigned'}) can take action.")
+
+    if status == "Completed" and getattr(task, "custom_red_flag", 0):
+        if not closing_notes or not str(closing_notes).strip():
+            frappe.throw("This task has an active Red Flag. Please provide Closing Notes to resolve the Red Flag before completing the task.")
+        toggle_red_flag(task_name, 0, closing_notes=closing_notes)
+        task.reload()
+
+    meta = frappe.get_meta("Task")
+    update_dict = {"status": status}
+    if status == "Completed":
+        update_dict["progress"] = 100
+        update_dict["completed_by"] = current_user
+        update_dict["completed_on"] = now_datetime()
+        if meta.has_field("custom_completion_notes") and completion_notes:
+            update_dict["custom_completion_notes"] = completion_notes
+    elif status in ["Open", "Working"] and task.status in ["Completed", "Cancelled"]:
+        update_dict["progress"] = 0
+        update_dict["completed_by"] = None
+        update_dict["completed_on"] = None
+    elif status == "Cancelled":
+        update_dict["progress"] = 0
+
+    frappe.db.set_value("Task", task_name, update_dict, update_modified=True)
     frappe.db.commit()
 
     return {"task_name": task_name, "status": status}

@@ -24,10 +24,17 @@ class TaskPipelineDashboard {
         this.summary = {};
         this.search_timeout = null;
 
+        this.page_number = 1;
+        this.page_size = 20;
+        this.total_count = 0;
+        this.total_pages = 1;
+        this.sort_by = 'default';
+        this.sort_order = 'desc';
+
         this.filters = {
             task_owner: '',
-            status: 'All',
-            priority: 'All',
+            status: 'active',
+            priority: '',
             from_date: '',
             to_date: '',
             search_text: '',
@@ -83,6 +90,11 @@ class TaskPipelineDashboard {
                             <span>${__('Completed')}</span>
                             <span class="node-count" id="node-count-completed">0</span>
                         </div>
+                            <div class="flow-step-node node-overdue" data-step-type="tab" data-target="overdue" data-status="Overdue" title="${__('Filter Overdue Tasks')}">
+                            <i class="fa fa-clock-o"></i>
+                            <span>${__('Overdue')}</span>
+                            <span class="node-count" id="node-count-overdue">0</span>
+                        </div>
                     </div>
 
                     <div class="flow-alerts-group">
@@ -90,12 +102,6 @@ class TaskPipelineDashboard {
                             <i class="fa fa-flag"></i>
                             <span>${__('Red Flag')}</span>
                             <span class="node-count" id="node-count-redflag">0</span>
-                        </div>
-
-                        <div class="alert-flow-node alert-node-overdue" data-step-type="tab" data-target="overdue" data-status="All" title="${__('Filter Overdue Tasks')}">
-                            <i class="fa fa-clock-o"></i>
-                            <span>${__('Overdue')}</span>
-                            <span class="node-count" id="node-count-overdue">0</span>
                         </div>
                     </div>
                 </div>
@@ -132,14 +138,19 @@ class TaskPipelineDashboard {
                 <div class="workspace-table-card">
                     <div class="table-top-meta">
                         <span id="pipe-results-count">0 tasks</span>
-                        </div>
+                    </div>
                     <div id="pipe-table-container">
                         <div class="text-center text-muted" style="padding: 40px;">
                             <i class="fa fa-spinner fa-spin fa-2x"></i>
                             <p style="margin-top: 10px;">${__('Loading tasks...')}</p>
                         </div>
                     </div>
+                    <div id="pipe-pagination-container"></div>
                 </div>
+
+                <!-- 4. Slide-Over Detail Drawer & Backdrop -->
+                <div id="pipe-drawer-overlay" class="pipe-drawer-overlay"></div>
+                <div id="pipe-task-drawer" class="pipe-task-drawer"></div>
             </div>
         `);
     }
@@ -156,6 +167,7 @@ class TaskPipelineDashboard {
                 change: () => {
                     this.filters.task_owner = this.owner_field.get_value() || '';
                     this.update_owner_buttons();
+                    this.page_number = 1;
                     this.refresh();
                 }
             },
@@ -174,12 +186,13 @@ class TaskPipelineDashboard {
                 this.owner_field.set_value('');
                 this.filters.task_owner = '';
                 this.update_owner_buttons();
+                this.page_number = 1;
                 this.refresh();
             });
         }
         this.update_owner_buttons();
 
-        // Status Filter
+        // Status Filter (Defaults to Overdue, Open, and In Progress tasks)
         this.status_field = frappe.ui.form.make_control({
             parent: this.page.body.find('#pipe-ctrl-status'),
             df: {
@@ -187,7 +200,7 @@ class TaskPipelineDashboard {
                 fieldname: 'status',
                 placeholder: __('Status'),
                 options: [
-                    { label: __('All'), value: 'All' },
+                    { label: '', value: '' },
                     { label: __('Open'), value: 'Open' },
                     { label: __('Working'), value: 'Working' },
                     { label: __('Pending Review'), value: 'Pending Review' },
@@ -195,9 +208,10 @@ class TaskPipelineDashboard {
                     { label: __('Completed'), value: 'Completed' },
                     { label: __('Cancelled'), value: 'Cancelled' }
                 ],
-                default: 'All',
+                default: 'active',
                 change: () => {
-                    this.filters.status = this.status_field.get_value() || 'All';
+                    this.filters.status = this.status_field.get_value() || '';
+                    this.page_number = 1;
                     this.refresh();
                 }
             },
@@ -212,15 +226,16 @@ class TaskPipelineDashboard {
                 fieldname: 'priority',
                 placeholder: __('Priority'),
                 options: [
-                    { label: __('All'), value: 'All' },
+                    { label: '', value: '' },
                     { label: __('Urgent'), value: 'Urgent' },
                     { label: __('High'), value: 'High' },
                     { label: __('Medium'), value: 'Medium' },
                     { label: __('Low'), value: 'Low' }
                 ],
-                default: 'All',
+                default: '',
                 change: () => {
-                    this.filters.priority = this.priority_field.get_value() || 'All';
+                    this.filters.priority = this.priority_field.get_value() || '';
+                    this.page_number = 1;
                     this.refresh();
                 }
             },
@@ -243,6 +258,7 @@ class TaskPipelineDashboard {
                         this.filters.from_date = '';
                         this.filters.to_date = '';
                     }
+                    this.page_number = 1;
                     this.refresh();
                 }
             },
@@ -274,6 +290,7 @@ class TaskPipelineDashboard {
             const val = $(this).val();
             me.search_timeout = setTimeout(() => {
                 me.filters.search_text = val;
+                me.page_number = 1;
                 me.refresh();
             }, 250);
         });
@@ -288,8 +305,15 @@ class TaskPipelineDashboard {
 
             me.current_tab = targetTab;
             me.filters.tab = targetTab;
+            me.page_number = 1;
 
-            if (targetStatus && targetStatus !== 'All') {
+            if (targetTab === 'overdue') {
+                me.status_field.set_value('Overdue');
+                me.filters.status = 'Overdue';
+            } else if (targetTab === 'red_flag') {
+                me.status_field.set_value('All');
+                me.filters.status = 'All';
+            } else if (targetStatus && targetStatus !== 'All') {
                 me.status_field.set_value(targetStatus);
                 me.filters.status = targetStatus;
             } else {
@@ -307,6 +331,7 @@ class TaskPipelineDashboard {
 
             const scope = $(this).data('scope') || 'all';
             me.filters.scope = scope;
+            me.page_number = 1;
             me.refresh();
         });
 
@@ -315,10 +340,13 @@ class TaskPipelineDashboard {
             this.page.body.find('#pipe-search-input').val('');
             this.owner_field.set_value('');
             this.update_owner_buttons();
-            this.status_field.set_value('All');
-            this.priority_field.set_value('All');
+            this.status_field.set_value('');
+            this.priority_field.set_value('');
             this.date_range_field.set_value('');
             this.current_tab = 'all';
+            this.sort_by = 'default';
+            this.sort_order = 'desc';
+            this.page_number = 1;
 
             this.page.body.find('.flow-step-node, .alert-flow-node').removeClass('is-active');
             this.page.body.find('.scope-pill-btn').removeClass('is-active');
@@ -326,8 +354,8 @@ class TaskPipelineDashboard {
 
             this.filters = {
                 task_owner: '',
-                status: 'All',
-                priority: 'All',
+                status: '',
+                priority: '',
                 from_date: '',
                 to_date: '',
                 search_text: '',
@@ -337,8 +365,148 @@ class TaskPipelineDashboard {
             this.refresh();
         });
 
+        // Table Column Header Sorting
+        this.page.body.on('click', '.sortable-col', function () {
+            const col = $(this).data('col');
+            if (!col) return;
+            if (me.sort_by === col) {
+                me.sort_order = me.sort_order === 'asc' ? 'desc' : 'asc';
+            } else {
+                me.sort_by = col;
+                me.sort_order = 'asc';
+            }
+            me.page_number = 1;
+            me.refresh();
+        });
 
-        // Inline Red Flag Toggle
+        // Pagination: Page Number Click
+        this.page.body.on('click', '.pagination-btn[data-page]', function () {
+            const p = parseInt($(this).data('page'));
+            if (p && p !== me.page_number) {
+                me.page_number = p;
+                me.refresh();
+            }
+        });
+
+        // Pagination: Prev Button Click
+        this.page.body.on('click', '.pagination-prev', function () {
+            if (me.page_number > 1) {
+                me.page_number--;
+                me.refresh();
+            }
+        });
+
+        // Pagination: Next Button Click
+        this.page.body.on('click', '.pagination-next', function () {
+            if (me.page_number < me.total_pages) {
+                me.page_number++;
+                me.refresh();
+            }
+        });
+
+        // Pagination: Page Size Change
+        this.page.body.on('change', '#pipe-page-size', function () {
+            const size = parseInt($(this).val()) || 20;
+            me.page_size = size;
+            me.page_number = 1;
+            me.refresh();
+        });
+
+        // Toggle Actions dropdown menu with smart positioning
+        this.page.body.on('click', '.btn-task-actions-dropdown', function (e) {
+            e.preventDefault();
+            e.stopPropagation();
+            const $btn = $(this);
+            const $wrap = $btn.closest('.task-actions-dropdown-wrap');
+            const isOpen = $wrap.hasClass('open') || $wrap.hasClass('show');
+
+            // Close all open dropdowns first
+            $('.task-actions-dropdown-wrap').removeClass('open show dropup');
+            $('.task-actions-menu').removeClass('show').hide();
+
+            if (!isOpen) {
+                $wrap.addClass('open show');
+                const $menu = $wrap.find('.task-actions-menu');
+                $menu.addClass('show').show();
+
+                // Smart positioning: flip upwards if dropdown would clip past viewport bottom
+                const offset = $btn.offset();
+                const menuHeight = $menu.outerHeight() || 160;
+                const windowHeight = $(window).height();
+                const scrollTop = $(window).scrollTop();
+                if (offset.top + menuHeight + 40 > scrollTop + windowHeight) {
+                    $wrap.addClass('dropup');
+                } else {
+                    $wrap.removeClass('dropup');
+                }
+            }
+        });
+
+        // Close dropdown when clicking anywhere outside
+        $(document).off('click.task_actions_menu').on('click.task_actions_menu', function (e) {
+            if (!$(e.target).closest('.task-actions-dropdown-wrap').length) {
+                $('.task-actions-dropdown-wrap').removeClass('open show dropup');
+                $('.task-actions-menu').removeClass('show').hide();
+            }
+        });
+
+        // Close dropdown when clicking an action item
+        this.page.body.on('click', '.task-actions-menu a', function () {
+            $('.task-actions-dropdown-wrap').removeClass('open show dropup');
+            $('.task-actions-menu').removeClass('show').hide();
+        });
+
+        // Quick Action: Mark Task as Completed
+        this.page.body.on('click', '.btn-action-complete', function (e) {
+            e.preventDefault();
+            e.stopPropagation();
+            const taskName = $(this).data('task-name');
+            me.handle_complete_task(taskName);
+        });
+
+        // Quick Action: Set Task to Working
+        this.page.body.on('click', '.btn-action-working', function (e) {
+            e.preventDefault();
+            e.stopPropagation();
+            const taskName = $(this).data('task-name');
+            me.handle_working_task(taskName);
+        });
+
+        // Quick Action: Cancel Task
+        this.page.body.on('click', '.btn-action-cancel', function (e) {
+            e.preventDefault();
+            e.stopPropagation();
+            const taskName = $(this).data('task-name');
+            me.handle_cancel_task(taskName);
+        });
+
+        // Quick Action: Reopen Task
+        this.page.body.on('click', '.btn-action-reopen', function (e) {
+            e.preventDefault();
+            e.stopPropagation();
+            const taskName = $(this).data('task-name');
+            me.handle_reopen_task(taskName);
+        });
+
+
+        // Quick Action: Raise Red Flag
+        this.page.body.on('click', '.btn-action-raise-redflag', function (e) {
+            e.preventDefault();
+            e.stopPropagation();
+            const taskName = $(this).data('task-name');
+            const redFlagDueDate = $(this).data('due-date') || '';
+            me.show_red_flag_dialog(taskName, redFlagDueDate);
+        });
+
+        // Quick Action: Resolve Red Flag
+        this.page.body.on('click', '.btn-action-resolve-redflag, .badge-redflag-tag', function (e) {
+            e.preventDefault();
+            e.stopPropagation();
+            const taskName = $(this).data('task-name');
+            me.show_resolve_red_flag_dialog(taskName);
+        });
+
+        // Inline Red Flag Toggle fallback
         this.page.body.on('click', '.btn-flag-switch', function (e) {
             e.preventDefault();
             e.stopPropagation();
@@ -348,13 +516,475 @@ class TaskPipelineDashboard {
             const redFlagDueDate = btn.data('due-date') || '';
 
             if (currentVal === 0) {
-                // Open modal dialog to capture mandatory Red Flag details
                 me.show_red_flag_dialog(taskName, redFlagDueDate);
             } else {
-                // Open modal dialog to capture mandatory Closing Notes
                 me.show_resolve_red_flag_dialog(taskName);
             }
         });
+
+        // -------------------------------------------------------------
+        // Slide-Over Detail Drawer Events
+        // -------------------------------------------------------------
+
+        // Close Drawer Button & Dark Overlay
+        this.page.body.on('click', '.btn-drawer-close, #pipe-drawer-overlay', function () {
+            me.close_drawer();
+        });
+
+        // Keyboard Escape Key to close drawer
+        $(document).off('keydown.task_drawer').on('keydown.task_drawer', function (e) {
+            if (e.key === 'Escape' && me.drawer_open) {
+                me.close_drawer();
+            }
+        });
+
+        // Drawer Action: Raise Red Flag
+        this.page.body.on('click', '.btn-drawer-raise-redflag', function (e) {
+            e.preventDefault();
+            const taskName = $(this).data('task-name');
+            const dueDate = $(this).data('due-date') || '';
+            me.show_red_flag_dialog(taskName, dueDate);
+        });
+
+        // Drawer Action: Resolve Red Flag
+        this.page.body.on('click', '.btn-drawer-resolve-redflag', function (e) {
+            e.preventDefault();
+            const taskName = $(this).data('task-name');
+            me.show_resolve_red_flag_dialog(taskName);
+        });
+
+        // Drawer Action: Complete Task
+        this.page.body.on('click', '.btn-drawer-complete', function (e) {
+            e.preventDefault();
+            const taskName = $(this).data('task-name');
+            me.handle_complete_task(taskName);
+        });
+
+        // Drawer Action: Set Task to Working
+        this.page.body.on('click', '.btn-drawer-working', function (e) {
+            e.preventDefault();
+            const taskName = $(this).data('task-name');
+            me.handle_working_task(taskName);
+        });
+
+        // Drawer Action: Cancel Task
+        this.page.body.on('click', '.btn-drawer-cancel', function (e) {
+            e.preventDefault();
+            const taskName = $(this).data('task-name');
+            me.handle_cancel_task(taskName);
+        });
+
+        // Drawer Action: Reopen Task
+        this.page.body.on('click', '.btn-drawer-reopen', function (e) {
+            e.preventDefault();
+            const taskName = $(this).data('task-name');
+            me.handle_reopen_task(taskName);
+        });
+    }
+
+    open_drawer(taskName) {
+        const task = (this.tasks || []).find(t => t.name === taskName);
+        if (!task) return;
+        this.current_drawer_task = task;
+        this.drawer_open = true;
+        this.render_drawer(task);
+        this.page.body.find('#pipe-drawer-overlay').addClass('is-open');
+        this.page.body.find('#pipe-task-drawer').addClass('is-open');
+    }
+
+    close_drawer() {
+        this.drawer_open = false;
+        this.current_drawer_task = null;
+        this.page.body.find('#pipe-drawer-overlay').removeClass('is-open');
+        this.page.body.find('#pipe-task-drawer').removeClass('is-open');
+    }
+
+    render_drawer(task) {
+        const isFlagged = Boolean(task.custom_red_flag);
+        const isCompleted = ['Completed', 'Cancelled'].includes(task.status);
+        const statusBadge = this.get_status_badge(task.status, task.is_overdue);
+        const priorityBadge = this.get_priority_badge(task.priority);
+        const ownerChip = this.get_owner_chip(task.task_owner);
+        const startDate = this.format_date(task.exp_start_date);
+        const endDate = this.format_date(task.exp_end_date);
+
+        const isCurrentOwner = Boolean(task.task_owner && task.task_owner === frappe.session.user);
+        const canAct = Boolean(
+            task.can_edit_action !== undefined
+                ? task.can_edit_action
+                : isCurrentOwner
+        );
+
+        // Action Bar Buttons inside Drawer
+        let drawerActionButtons = '';
+        if (canAct) {
+            // Only current task owner or admin can resolve red flag or transition status
+            if (isFlagged) {
+                drawerActionButtons += `
+                    <button class="btn-drawer-action btn-drawer-resolve-redflag" data-task-name="${task.name}">
+                        <i class="fa fa-flag"></i> ${__('Resolve Red Flag')}
+                    </button>
+                `;
+            } else if (!isCompleted) {
+                drawerActionButtons += `
+                    <button class="btn-drawer-action btn-drawer-raise-redflag" data-task-name="${task.name}" data-due-date="${task.exp_end_date || ''}">
+                        <i class="fa fa-flag-o"></i> ${__('Raise Red Flag')}
+                    </button>
+                `;
+            }
+
+            if (['Open', 'Overdue'].includes(task.status)) {
+                drawerActionButtons += `
+                    <button class="btn-drawer-action btn-drawer-working" data-task-name="${task.name}">
+                        <i class="fa fa-bolt"></i> ${__('Working')}
+                    </button>
+                    <button class="btn-drawer-action btn-drawer-complete" data-task-name="${task.name}">
+                        <i class="fa fa-check"></i> ${__('Completed')}
+                    </button>
+                    <button class="btn-drawer-action btn-drawer-cancel" data-task-name="${task.name}">
+                        <i class="fa fa-ban"></i> ${__('Cancelled')}
+                    </button>
+                `;
+            } else if (task.status === 'Working') {
+                drawerActionButtons += `
+                    <button class="btn-drawer-action btn-drawer-complete" data-task-name="${task.name}">
+                        <i class="fa fa-check"></i> ${__('Completed')}
+                    </button>
+                    <button class="btn-drawer-action btn-drawer-cancel" data-task-name="${task.name}">
+                        <i class="fa fa-ban"></i> ${__('Cancelled')}
+                    </button>
+                `;
+            } else if (task.status === 'Cancelled') {
+                drawerActionButtons += `
+                    <button class="btn-drawer-action btn-drawer-reopen" data-task-name="${task.name}">
+                        <i class="fa fa-undo"></i> ${__('Reopen')}
+                    </button>
+                `;
+            } else if (task.status === 'Completed') {
+                drawerActionButtons += `
+                    <button class="btn-drawer-action btn-drawer-working" data-task-name="${task.name}">
+                        <i class="fa fa-bolt"></i> ${__('Working')}
+                    </button>
+                    <button class="btn-drawer-action btn-drawer-reopen" data-task-name="${task.name}">
+                        <i class="fa fa-undo"></i> ${__('Reopen (Open)')}
+                    </button>
+                    <button class="btn-drawer-action btn-drawer-cancel" data-task-name="${task.name}">
+                        <i class="fa fa-ban"></i> ${__('Cancelled')}
+                    </button>
+                `;
+            }
+        } else {
+            // Non-current owner: Cannot change status or resolve, but CAN Raise Red Flag
+            if (!isFlagged && !isCompleted) {
+                drawerActionButtons += `
+                    <button class="btn-drawer-action btn-drawer-raise-redflag" data-task-name="${task.name}" data-due-date="${task.exp_end_date || ''}">
+                        <i class="fa fa-flag-o"></i> ${__('Raise Red Flag')}
+                    </button>
+                `;
+            }
+        }
+
+        // Red Flag Details Card
+        let redFlagCardHtml = '';
+        if (isFlagged) {
+            const depOn = task.custom_dependency_on || '—';
+            const depDueDate = task.custom_red_flag_due_date ? this.format_date(task.custom_red_flag_due_date) : '—';
+            const raisedBy = task.custom_red_flag_raised_by || '—';
+            const notes = task.custom_opening_notes || '';
+
+            redFlagCardHtml = `
+                <div class="drawer-redflag-card">
+                    <div class="drawer-redflag-header">
+                        <span class="drawer-redflag-title">
+                            <i class="fa fa-flag"></i> ${__('Critical Red Flag Active')}
+                        </span>
+                        ${canAct ? `
+                            <button class="btn btn-xs btn-danger btn-drawer-resolve-redflag" data-task-name="${task.name}" style="font-size: 11px; padding: 2px 8px;">
+                                ${__('Resolve')}
+                            </button>
+                        ` : ''}
+                    </div>
+                    <div class="drawer-redflag-grid">
+                        <div>
+                            <div class="drawer-redflag-item-label">${__('Dependency On')}</div>
+                            <div class="drawer-redflag-item-val">${frappe.utils.escape_html(depOn)}</div>
+                        </div>
+                        <div>
+                            <div class="drawer-redflag-item-label">${__('Due Date')}</div>
+                            <div class="drawer-redflag-item-val text-danger font-weight-bold">${depDueDate}</div>
+                        </div>
+                        <div style="grid-column: span 2;">
+                            <div class="drawer-redflag-item-label">${__('Raised By')}</div>
+                            <div class="drawer-redflag-item-val">${frappe.utils.escape_html(raisedBy)}</div>
+                        </div>
+                    </div>
+                    ${notes ? `
+                        <div class="drawer-redflag-notes">
+                            <div class="drawer-redflag-item-label" style="margin-bottom: 3px;">${__('Description / Notes')}</div>
+                            <div>${frappe.utils.escape_html(notes)}</div>
+                        </div>
+                    ` : ''}
+                </div>
+            `;
+        }
+
+        const html = `
+            <!-- Header -->
+            <div class="drawer-header">
+                <div class="drawer-header-left">
+                    <a href="/app/task/${task.name}" class="drawer-task-id-badge" target="_blank" title="${__('Open Full Form')}">
+                        <i class="fa fa-external-link"></i> ${task.name}
+                    </a>
+                    ${statusBadge}
+                    ${priorityBadge}
+                </div>
+                <button class="btn-drawer-close" title="${__('Close')}">
+                    <i class="fa fa-times"></i>
+                </button>
+            </div>
+
+            <!-- Quick Action Bar -->
+            ${drawerActionButtons ? `
+                <div class="drawer-action-bar">
+                    ${drawerActionButtons}
+                </div>
+            ` : ''}
+
+            <!-- Scrollable Body Content -->
+            <div class="drawer-body">
+                ${redFlagCardHtml}
+
+                <div>
+                    <h2 class="drawer-subject-title">${frappe.utils.escape_html(task.subject || task.name)}</h2>
+                </div>
+
+                <!-- Meta Attributes Grid -->
+                <div class="drawer-meta-grid">
+                    <div>
+                        <div class="drawer-meta-item-label">${__('Task Owner')}</div>
+                        <div class="drawer-meta-item-value">${ownerChip}</div>
+                    </div>
+                    <div>
+                        <div class="drawer-meta-item-label">${__('Project')}</div>
+                        <div class="drawer-meta-item-value">${task.project ? `<i class="fa fa-briefcase text-muted"></i> ${frappe.utils.escape_html(task.project)}` : '<span class="text-muted">—</span>'}</div>
+                    </div>
+                    <div>
+                        <div class="drawer-meta-item-label">${__('Start Date')}</div>
+                        <div class="drawer-meta-item-value">${startDate || '<span class="text-muted">—</span>'}</div>
+                    </div>
+                    <div>
+                        <div class="drawer-meta-item-label">${__('End Date')}</div>
+                        <div class="drawer-meta-item-value">
+                            ${endDate || '<span class="text-muted">—</span>'}
+                            ${task.due_status_text ? `<div class="${task.is_overdue ? 'text-danger font-weight-bold' : 'text-muted'}" style="font-size: 11px; margin-top: 2px;">${task.due_status_text}</div>` : ''}
+                        </div>
+                    </div>
+                    ${task.expected_time ? `
+                        <div>
+                            <div class="drawer-meta-item-label">${__('Expected Time')}</div>
+                            <div class="drawer-meta-item-value">${task.expected_time} hrs</div>
+                        </div>
+                    ` : ''}
+                    ${task.type ? `
+                        <div>
+                            <div class="drawer-meta-item-label">${__('Type')}</div>
+                            <div class="drawer-meta-item-value">${frappe.utils.escape_html(task.type)}</div>
+                        </div>
+                    ` : ''}
+                </div>
+
+                <!-- Description Section -->
+                <div>
+                    <div class="drawer-section-title">
+                        <i class="fa fa-align-left text-muted"></i> ${__('Description')}
+                    </div>
+                    <div class="drawer-desc-content">
+                        ${task.description ? frappe.utils.strip_html(task.description) : '<span class="text-muted" style="font-style: italic;">No description provided.</span>'}
+                    </div>
+                </div>
+            </div>
+
+            <!-- Footer Link -->
+            <div class="drawer-footer">
+                <a href="/app/task/${task.name}" class="btn btn-default btn-xs" target="_blank">
+                    <i class="fa fa-external-link"></i> ${__('Open Task Form')}
+                </a>
+            </div>
+        `;
+
+        this.page.body.find('#pipe-task-drawer').html(html);
+    }
+
+    handle_complete_task(taskName) {
+        const me = this;
+        const task = (this.tasks || []).find(t => t.name === taskName) || this.current_drawer_task;
+        const isFlagged = Boolean(task && task.custom_red_flag);
+
+        const fields = [];
+
+        if (isFlagged) {
+            fields.push({
+                fieldtype: 'HTML',
+                options: `
+                    <div style="margin-bottom: 12px; font-size: 13px; line-height: 1.45; border-left: 4px solid #ef4444; background: #fef2f2; color: #991b1b; padding: 10px 14px; border-radius: 4px;">
+                        <div style="font-weight: 700; margin-bottom: 3px;">
+                            <i class="fa fa-flag" style="color: #ef4444; margin-right: 5px;"></i>${__('Active Red Flag Detected')}
+                        </div>
+                        <div>${__('This task has an active Red Flag. Please provide mandatory Closing Notes to resolve the Red Flag before completing the task.')}</div>
+                    </div>
+                `
+            });
+            fields.push({
+                label: __('Red Flag Closing Notes'),
+                fieldname: 'closing_notes',
+                fieldtype: 'Small Text',
+                reqd: 1,
+                placeholder: __('Describe how the red flag / blocker was resolved...')
+            });
+        }
+
+        fields.push({
+            label: __('Completion Notes'),
+            fieldname: 'completion_notes',
+            fieldtype: 'Small Text',
+            reqd: 1,
+            placeholder: __('Provide completion notes...')
+        });
+
+        const dialog = new frappe.ui.Dialog({
+            title: __('Complete Task — {0}', [taskName]),
+            fields: fields,
+            primary_action_label: isFlagged ? __('Resolve & Mark as Completed') : __('Mark as Completed'),
+            primary_action: (values) => {
+                if (isFlagged && (!values.closing_notes || !values.closing_notes.trim())) {
+                    frappe.msgprint({
+                        title: __('Closing Notes Required'),
+                        indicator: 'orange',
+                        message: __('Please provide mandatory <b>Red Flag Closing Notes</b>.')
+                    });
+                    return;
+                }
+                if (!values.completion_notes || !values.completion_notes.trim()) {
+                    frappe.msgprint({
+                        title: __('Completion Notes Required'),
+                        indicator: 'orange',
+                        message: __('Please provide mandatory <b>Completion Notes</b> to complete this task.')
+                    });
+                    return;
+                }
+
+                frappe.call({
+                    method: 'erp_dacsinc_custom.erp_dacsinc_custom.page.task_dashboard.task_dashboard.update_task_status',
+                    args: {
+                        task_name: taskName,
+                        status: 'Completed',
+                        closing_notes: values.closing_notes || '',
+                        completion_notes: values.completion_notes
+                    },
+                    freeze: true,
+                    freeze_message: __('Completing Task...'),
+                    callback: (r) => {
+                        dialog.hide();
+                        if (r.message) {
+                            frappe.show_alert({
+                                message: isFlagged
+                                    ? __('✅ Red Flag resolved and Task {0} marked as Completed', [taskName])
+                                    : __('✅ Task {0} marked as Completed', [taskName]),
+                                indicator: 'green'
+                            }, 3);
+                            if (me.drawer_open) me.close_drawer();
+                            me.refresh();
+                        }
+                    }
+                });
+            }
+        });
+
+        dialog.show();
+    }
+
+    handle_working_task(taskName) {
+        const me = this;
+        frappe.confirm(
+            __('Are you sure you want to mark this task <b>{0}</b> as Working?', [taskName]),
+            () => {
+                frappe.call({
+                    method: 'erp_dacsinc_custom.erp_dacsinc_custom.page.task_dashboard.task_dashboard.update_task_status',
+                    args: {
+                        task_name: taskName,
+                        status: 'Working'
+                    },
+                    freeze: true,
+                    freeze_message: __('Marking Task as Working...'),
+                    callback: (r) => {
+                        if (r.message) {
+                            frappe.show_alert({
+                                message: __('Task {0} marked as Working', [taskName]),
+                                indicator: 'green'
+                            }, 3);
+                            if (me.drawer_open) me.close_drawer();
+                            me.refresh();
+                        }
+                    }
+                });
+            }
+        );
+    }
+
+    handle_cancel_task(taskName) {
+        const me = this;
+        frappe.confirm(
+            __('Are you sure you want to Cancel this task <b>{0}</b>?', [taskName]),
+            () => {
+                frappe.call({
+                    method: 'erp_dacsinc_custom.erp_dacsinc_custom.page.task_dashboard.task_dashboard.update_task_status',
+                    args: {
+                        task_name: taskName,
+                        status: 'Cancelled'
+                    },
+                    freeze: true,
+                    freeze_message: __('Cancelling Task...'),
+                    callback: (r) => {
+                        if (r.message) {
+                            frappe.show_alert({
+                                message: __('Task {0} Cancelled', [taskName]),
+                                indicator: 'orange'
+                            }, 3);
+                            if (me.drawer_open) me.close_drawer();
+                            me.refresh();
+                        }
+                    }
+                });
+            }
+        );
+    }
+
+    handle_reopen_task(taskName) {
+        const me = this;
+        frappe.confirm(
+            __('Do you want to reopen this task <b>{0}</b>?', [taskName]),
+            () => {
+                frappe.call({
+                    method: 'erp_dacsinc_custom.erp_dacsinc_custom.page.task_dashboard.task_dashboard.update_task_status',
+                    args: {
+                        task_name: taskName,
+                        status: 'Open'
+                    },
+                    freeze: true,
+                    freeze_message: __('Reopening Task...'),
+                    callback: (r) => {
+                        if (r.message) {
+                            frappe.show_alert({
+                                message: __('Task {0} reopened', [taskName]),
+                                indicator: 'blue'
+                            }, 3);
+                            if (me.drawer_open) me.close_drawer();
+                            me.refresh();
+                        }
+                    }
+                });
+            }
+        );
     }
 
     show_resolve_red_flag_dialog(taskName) {
@@ -397,6 +1027,7 @@ class TaskPipelineDashboard {
                                 message: __('Red Flag resolved for task {0}', [taskName]),
                                 indicator: 'green'
                             }, 3);
+                            if (me.drawer_open) me.close_drawer();
                             me.refresh();
                         }
                     }
@@ -464,6 +1095,7 @@ class TaskPipelineDashboard {
                                 message: __('Task {0} marked as Red Flag', [taskName]),
                                 indicator: 'red'
                             }, 3);
+                            if (me.drawer_open) me.close_drawer();
                             me.refresh();
                         }
                     }
@@ -486,14 +1118,25 @@ class TaskPipelineDashboard {
     refresh() {
         frappe.call({
             method: 'erp_dacsinc_custom.erp_dacsinc_custom.page.task_dashboard.task_dashboard.get_task_dashboard_data',
-            args: { filters: this.filters },
+            args: {
+                filters: this.filters,
+                page: this.page_number,
+                page_length: this.page_size,
+                sort_by: this.sort_by,
+                sort_order: this.sort_order
+            },
             freeze: false,
             callback: (r) => {
                 if (r.message) {
                     this.tasks = r.message.tasks || [];
+                    this.total_count = r.message.total_count || 0;
+                    this.page_number = r.message.page || 1;
+                    this.page_size = r.message.page_length || 20;
+                    this.total_pages = r.message.total_pages || 1;
                     this.summary = r.message.summary || {};
                     this.update_pipeline_counts(this.summary);
                     this.render_table(this.tasks);
+                    this.render_pagination();
                 }
             }
         });
@@ -522,11 +1165,38 @@ class TaskPipelineDashboard {
         }
     }
 
+    format_date(val) {
+        if (!val) return '<span class="text-muted">-</span>';
+        if (typeof moment !== 'undefined') {
+            const d = moment(val);
+            if (d.isValid()) {
+                return `
+                    <div class="task-date-val">${d.format('DD-MMM-YYYY')}</div>
+                    <div class="task-day-val text-muted">(${d.format('dddd')})</div>
+                `;
+            }
+        }
+        return `<div>${frappe.datetime.str_to_user(val) || '-'}</div>`;
+    }
+
+    get_sort_icon(col) {
+        if (this.sort_by !== col) {
+            return 'fa-sort sort-neutral';
+        }
+        return this.sort_order === 'asc' ? 'fa-sort-asc sort-active' : 'fa-sort-desc sort-active';
+    }
+
     render_table(tasks) {
         const container = this.page.body.find('#pipe-table-container');
         const countDisplay = this.page.body.find('#pipe-results-count');
 
-        countDisplay.text(`${tasks ? tasks.length : 0} tasks found`);
+        const startIdx = this.total_count === 0 ? 0 : (this.page_number - 1) * this.page_size + 1;
+        const endIdx = Math.min(this.total_count, this.page_number * this.page_size);
+        if (this.total_count === 0) {
+            countDisplay.text(__('0 tasks found'));
+        } else {
+            countDisplay.text(__('Showing {0} - {1} of {2} tasks', [startIdx, endIdx, this.total_count]));
+        }
 
         if (!tasks || tasks.length === 0) {
             container.html(`
@@ -541,35 +1211,112 @@ class TaskPipelineDashboard {
 
         const rows = tasks.map(task => {
             const isFlagged = Boolean(task.custom_red_flag);
-            const isCompletedOrCancelled = ['Completed', 'Cancelled'].includes(task.status);
-            const flagBtn = (!isFlagged && isCompletedOrCancelled) ? '' : `
-                <button class="btn-flag-switch ${isFlagged ? 'is-flagged' : ''}" 
-                        data-task-name="${task.name}" 
-                        data-flagged="${isFlagged ? 1 : 0}" 
-                        data-due-date="${task.custom_red_flag_due_date || ''}"
-                        title="${isFlagged ? __('Remove Red Flag') : __('Mark as Red Flag')}">
-                    <i class="fa ${isFlagged ? 'fa-flag' : 'fa-flag-o'}"></i>
-                </button>
-            `;
-
+            const isCompleted = ['Completed', 'Cancelled'].includes(task.status);
             const cleanDesc = this.get_clean_description(task.description);
             const priorityBadge = this.get_priority_badge(task.priority);
             const statusBadge = this.get_status_badge(task.status, task.is_overdue);
             const ownerChip = this.get_owner_chip(task.task_owner);
 
-            const progress = Math.min(100, Math.max(0, parseInt(task.progress) || 0));
-            const progressCompleteClass = progress === 100 ? 'is-done' : '';
+            const startDate = this.format_date(task.exp_start_date);
+            const endDate = this.format_date(task.exp_end_date);
 
-            const startDate = task.exp_start_date ? frappe.datetime.str_to_user(task.exp_start_date) : '-';
-            const endDate = task.exp_end_date ? frappe.datetime.str_to_user(task.exp_end_date) : '-';
+            const isCurrentOwner = Boolean(task.task_owner && task.task_owner === frappe.session.user);
+            const canAct = Boolean(
+                task.can_edit_action !== undefined
+                    ? task.can_edit_action
+                    : isCurrentOwner
+            );
+
+            // User-friendly Actions Dropdown (Only current task owner or admin can act)
+            let actionBtnsHtml = '';
+
+            if (canAct) {
+                let menuItems = '';
+
+                if (['Open', 'Overdue'].includes(task.status)) {
+                    menuItems += `
+                        <li><a href="#" class="btn-action-working" data-task-name="${task.name}"><i class="fa fa-bolt text-primary"></i> ${__('Working')}</a></li>
+                        <li><a href="#" class="btn-action-complete" data-task-name="${task.name}"><i class="fa fa-check text-success"></i> ${__('Completed')}</a></li>
+                        <li class="divider"></li>
+                        <li><a href="#" class="btn-action-cancel" data-task-name="${task.name}"><i class="fa fa-ban text-danger"></i> ${__('Cancelled')}</a></li>
+                    `;
+                } else if (task.status === 'Working') {
+                    menuItems += `
+                        <li><a href="#" class="btn-action-complete" data-task-name="${task.name}"><i class="fa fa-check text-success"></i> ${__('Completed')}</a></li>
+                        <li class="divider"></li>
+                        <li><a href="#" class="btn-action-cancel" data-task-name="${task.name}"><i class="fa fa-ban text-danger"></i> ${__('Cancelled')}</a></li>
+                    `;
+                } else if (task.status === 'Cancelled') {
+                    menuItems += `
+                        <li><a href="#" class="btn-action-reopen" data-task-name="${task.name}"><i class="fa fa-undo text-primary"></i> ${__('Reopen')}</a></li>
+                    `;
+                } else if (task.status === 'Completed') {
+                    menuItems += `
+                        <li><a href="#" class="btn-action-working" data-task-name="${task.name}"><i class="fa fa-bolt text-primary"></i> ${__('Working')}</a></li>
+                        <li><a href="#" class="btn-action-reopen" data-task-name="${task.name}"><i class="fa fa-undo text-info"></i> ${__('Reopen (Open)')}</a></li>
+                        <li class="divider"></li>
+                        <li><a href="#" class="btn-action-cancel" data-task-name="${task.name}"><i class="fa fa-ban text-danger"></i> ${__('Cancelled')}</a></li>
+                    `;
+                } else {
+                    menuItems += `
+                        <li><a href="#" class="btn-action-working" data-task-name="${task.name}"><i class="fa fa-bolt text-primary"></i> ${__('Working')}</a></li>
+                        <li><a href="#" class="btn-action-complete" data-task-name="${task.name}"><i class="fa fa-check text-success"></i> ${__('Completed')}</a></li>
+                        <li class="divider"></li>
+                        <li><a href="#" class="btn-action-cancel" data-task-name="${task.name}"><i class="fa fa-ban text-danger"></i> ${__('Cancelled')}</a></li>
+                    `;
+                }
+
+                // Dynamic Red Flag Action inside the dropdown based on task state
+                if (isFlagged) {
+                    menuItems += `
+                        <li class="divider"></li>
+                        <li><a href="#" class="btn-action-resolve-redflag" data-task-name="${task.name}"><i class="fa fa-flag text-muted"></i> ${__('Resolve Red Flag')}</a></li>
+                    `;
+                } else if (!isCompleted) {
+                    menuItems += `
+                        <li class="divider"></li>
+                        <li><a href="#" class="btn-action-raise-redflag" data-task-name="${task.name}" data-due-date="${task.exp_end_date || ''}"><i class="fa fa-flag-o"></i> ${__('Raise Red Flag')}</a></li>
+                    `;
+                }
+
+                actionBtnsHtml = `
+                    <div class="dropdown task-actions-dropdown-wrap">
+                        <button class="btn btn-default btn-xs btn-task-actions-dropdown ${isFlagged ? 'btn-actions-has-flag' : ''}" type="button" aria-haspopup="true" aria-expanded="false">
+                            ${isFlagged ? '<i class="fa fa-flag text-danger mr-1"></i>' : ''}<span>${__('Actions')}</span> <i class="fa fa-caret-down ml-1"></i>
+                        </button>
+                        <ul class="dropdown-menu dropdown-menu-right task-actions-menu">
+                            ${menuItems}
+                        </ul>
+                    </div>
+                `;
+            } else {
+                // Non-current owner (viewers, former owners): Actions button is NOT visible.
+                // Allow them to Raise Red Flag if not flagged and not completed.
+                if (!isFlagged && !isCompleted) {
+                    actionBtnsHtml = `
+                        <button type="button" class="btn-action-raise-redflag" data-task-name="${task.name}" data-due-date="${task.exp_end_date || ''}" title="${__('Raise Red Flag')}">
+                            <i class="fa fa-flag-o"></i> <span>${__('Raise Red Flag')}</span>
+                        </button>
+                    `;
+                } else if (isFlagged) {
+                    actionBtnsHtml = `
+                        <span class="badge-redflag-tag" title="${__('Critical Red Flag Active')}">
+                            <i class="fa fa-flag"></i> ${__('Flagged')}
+                        </span>
+                    `;
+                }
+            }
+
+            if (!actionBtnsHtml.trim()) {
+                actionBtnsHtml = `<span class="text-muted" style="font-size: 13px; font-weight: 500;">—</span>`;
+            }
 
             return `
-                <tr class="${isFlagged ? 'row-redflag-alert' : ''}">
-                    <td class="text-center" style="width: 38px;">${flagBtn}</td>
+                <tr class="${isFlagged ? 'row-redflag-alert' : ''}" data-task-name="${task.name}">
                     <td>
                         <div class="task-subject-cell">
                             <div class="task-subject-row">
-                                <a href="/app/task/${task.name}" class="task-title-link">
+                                <a href="/app/task/${task.name}" target="_blank" rel="noopener noreferrer" class="task-title-link" title="${__('Open {0} in new tab', [task.name])}">
                                     ${frappe.utils.escape_html(task.subject || task.name)}
                                 </a>
                                 ${task.project ? `<span class="task-project-tag"><i class="fa fa-briefcase"></i> ${frappe.utils.escape_html(task.project)}</span>` : ''}
@@ -586,15 +1333,12 @@ class TaskPipelineDashboard {
                     <td>${priorityBadge}</td>
                     <td class="text-nowrap">${startDate}</td>
                     <td class="text-nowrap">
-                        <div>${endDate}</div>
+                        ${endDate}
                         ${task.due_status_text ? `<div class="timeline-urgent-badge ${task.is_overdue ? 'text-danger font-weight-bold' : 'text-muted'}">${task.due_status_text}</div>` : ''}
                     </td>
-                    <td>
-                        <div class="progress-clean-box">
-                            <div class="progress-clean-track">
-                                <div class="progress-clean-bar ${progressCompleteClass}" style="width: ${progress}%;"></div>
-                            </div>
-                            <span class="progress-clean-pct">${progress}%</span>
+                    <td class="text-center task-actions-cell">
+                        <div class="task-action-btn-group">
+                            ${actionBtnsHtml}
                         </div>
                     </td>
                 </tr>
@@ -605,20 +1349,109 @@ class TaskPipelineDashboard {
             <table class="table pipeline-table">
                 <thead>
                     <tr>
-                        <th class="text-center" style="width: 38px;"><i class="fa fa-flag-o" title="${__('Red Flag')}"></i></th>
                         <th>${__('Subject')}</th>
-                        <th>${__('Task Owner')}</th>
-                        <th>${__('Status')}</th>
-                        <th>${__('Priority')}</th>
-                        <th>${__('Start Date')}</th>
-                        <th>${__('End Date')}</th>
-                        <th>${__('Progress')}</th>
+                        <th class="sortable-col ${this.sort_by === 'task_owner' ? 'is-sorted' : ''}" data-col="task_owner">
+                            <div class="th-sort-wrapper">
+                                <span>${__('Task Owner')}</span>
+                                <i class="fa ${this.get_sort_icon('task_owner')}"></i>
+                            </div>
+                        </th>
+                        <th class="sortable-col ${this.sort_by === 'status' ? 'is-sorted' : ''}" data-col="status">
+                            <div class="th-sort-wrapper">
+                                <span>${__('Status')}</span>
+                                <i class="fa ${this.get_sort_icon('status')}"></i>
+                            </div>
+                        </th>
+                        <th class="sortable-col ${this.sort_by === 'priority' ? 'is-sorted' : ''}" data-col="priority">
+                            <div class="th-sort-wrapper">
+                                <span>${__('Priority')}</span>
+                                <i class="fa ${this.get_sort_icon('priority')}"></i>
+                            </div>
+                        </th>
+                        <th class="sortable-col ${this.sort_by === 'exp_start_date' ? 'is-sorted' : ''}" data-col="exp_start_date">
+                            <div class="th-sort-wrapper">
+                                <span>${__('Start Date')}</span>
+                                <i class="fa ${this.get_sort_icon('exp_start_date')}"></i>
+                            </div>
+                        </th>
+                        <th class="sortable-col ${this.sort_by === 'exp_end_date' ? 'is-sorted' : ''}" data-col="exp_end_date">
+                            <div class="th-sort-wrapper">
+                                <span>${__('End Date')}</span>
+                                <i class="fa ${this.get_sort_icon('exp_end_date')}"></i>
+                            </div>
+                        </th>
+                        <th class="text-center" style="min-width: 135px;">${__('Actions')}</th>
                     </tr>
                 </thead>
                 <tbody>
                     ${rows}
                 </tbody>
             </table>
+        `);
+    }
+
+    render_pagination() {
+        const $container = this.page.body.find('#pipe-pagination-container');
+        if (!this.total_count || this.total_count <= 0) {
+            $container.empty();
+            return;
+        }
+
+        const totalPages = this.total_pages || 1;
+        const currentPage = this.page_number || 1;
+
+        // Generate pagination buttons
+        let pageButtons = [];
+        const maxVisible = 5;
+        let startPage = Math.max(1, currentPage - 2);
+        let endPage = Math.min(totalPages, startPage + maxVisible - 1);
+
+        if (endPage - startPage < maxVisible - 1) {
+            startPage = Math.max(1, endPage - maxVisible + 1);
+        }
+
+        if (startPage > 1) {
+            pageButtons.push(`<button class="pagination-btn" data-page="1">1</button>`);
+            if (startPage > 2) {
+                pageButtons.push(`<span class="pagination-ellipsis">...</span>`);
+            }
+        }
+
+        for (let p = startPage; p <= endPage; p++) {
+            pageButtons.push(`
+                <button class="pagination-btn ${p === currentPage ? 'is-active' : ''}" data-page="${p}">${p}</button>
+            `);
+        }
+
+        if (endPage < totalPages) {
+            if (endPage < totalPages - 1) {
+                pageButtons.push(`<span class="pagination-ellipsis">...</span>`);
+            }
+            pageButtons.push(`<button class="pagination-btn" data-page="${totalPages}">${totalPages}</button>`);
+        }
+
+        $container.html(`
+            <div class="table-bottom-pagination">
+                <div class="pagination-size-selector">
+                    <span>${__('Rows per page:')}</span>
+                    <select class="pagination-size-select" id="pipe-page-size">
+                        <option value="10" ${this.page_size === 10 ? 'selected' : ''}>10</option>
+                        <option value="20" ${this.page_size === 20 ? 'selected' : ''}>20</option>
+                        <option value="50" ${this.page_size === 50 ? 'selected' : ''}>50</option>
+                        <option value="100" ${this.page_size === 100 ? 'selected' : ''}>100</option>
+                    </select>
+                </div>
+
+                <div class="pagination-nav">
+                    <button class="pagination-btn pagination-prev" ${currentPage <= 1 ? 'disabled' : ''} title="${__('Previous Page')}">
+                        <i class="fa fa-chevron-left"></i>
+                    </button>
+                    ${pageButtons.join('')}
+                    <button class="pagination-btn pagination-next" ${currentPage >= totalPages ? 'disabled' : ''} title="${__('Next Page')}">
+                        <i class="fa fa-chevron-right"></i>
+                    </button>
+                </div>
+            </div>
         `);
     }
 
