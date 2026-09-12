@@ -679,6 +679,19 @@ class OrderFlow {
             this.refresh(true);
         });
 
+        // "+N more" toggle for a collapsed Sales Order / Purchase Order link
+        // list (see of_links) — a plain visibility flip, not a re-render, so
+        // it can't disturb whatever row it lives in.
+        this.$body.on('click', '.of-links-toggle', (e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            const $toggle = $(e.currentTarget);
+            const $extra = $toggle.closest('td').find('.of-links-extra');
+            const expanded = $extra.is(':visible');
+            $extra.toggle(!expanded);
+            $toggle.text(expanded ? $toggle.data('more-label') : $toggle.data('less-label'));
+        });
+
         // Submit a draft Pick List straight from the Pick Lists tab — the
         // whole point of that tab is not having to open each one. Reuses the
         // same server method the Sales Order widget submits through
@@ -1039,6 +1052,8 @@ class OrderFlow {
                             const drafts = draft_res.message || {};
 
                             frappe.require('/assets/erp_dacsinc_custom/js/sales_order.js', () => {
+                                /*
+                                // ORIGINAL CODE (commented out as per requirement - always create DN instead of choice/SI):
                                 if (route_lock === 'dn') {
                                     show_bulk_dn_si_modal(mock_frm, pls, 'Delivery Note', 0, drafts.draft_dns || []);
                                 } else if (route_lock === 'si') {
@@ -1059,6 +1074,10 @@ class OrderFlow {
                                     });
                                     choice.show();
                                 }
+                                */
+
+                                // Always create Delivery Note directly:
+                                show_bulk_dn_si_modal(mock_frm, pls, 'Delivery Note', 0, drafts.draft_dns || []);
                             });
                         });
                     }
@@ -4092,27 +4111,46 @@ class OrderFlow {
         const my_approvals = [];
         const unassigned_approvals = [];
         const final_approvals = [];
+        const other_merchandiser_approvals = [];
 
-        const is_merchandiser = frappe.user_roles.includes("Merchandiser User") && !frappe.user_roles.includes("System Manager") && current_user !== "Administrator";
         const can_final = !!(this.perms && this.perms.is_final_approver);
+        // Mirrors get_pending_approvals()'s own is_scoped_to_own_customers
+        // check server-side — NOT a bare "do I hold Merchandiser User" role
+        // check, since that role can be combined with a broader operational
+        // one (Operation Team, Sales Manager, ...) for someone who does
+        // both jobs; that combination must NOT be scoped down, same as
+        // every other tab already handles it.
+        const is_scoped_merchandiser = !!(this.perms && this.perms.approval_scoped_to_own_customers);
+        // Neither scoped to their own customers nor a final approver (who
+        // already tracks every merchandiser via "Merchandiser Queue") — an
+        // operational role that can see this tab (of_tab_approval_roles)
+        // but has no merchandiser scoping of their own. The server returns
+        // them every order unscoped; without a bucket of their own, every
+        // order that already has a merchandiser assigned (i.e. isn't
+        // waiting to be claimed) matched neither "Pending Approval" (not
+        // theirs) nor "Unassigned" and simply disappeared from the tab.
+        const is_other_viewer = !is_scoped_merchandiser && !can_final;
 
         // An order sits in exactly one bucket, by the step it is actually waiting on.
-        //   Pending Approval — waiting on ME as the customer's merchandiser
-        //   Unassigned          — no merchandiser on the customer yet
-        //   Pending Final       — merchandiser is done; waiting on a final approver
+        //   Pending Approval          — waiting on ME as the customer's merchandiser
+        //   Unassigned                — no merchandiser on the customer yet
+        //   Pending Final             — merchandiser is done; waiting on a final approver
+        //   Other Merchandisers'      — has a merchandiser, but not me, and I can't final-approve either
         // An order already at "Pending Final Approval" is NOT waiting on the
         // merchandiser, so it must not appear under "Pending Approval".
         orders.forEach(o => {
             if (o.workflow_state === 'Pending Final Approval') {
                 final_approvals.push(o);
             }
-            
+
             if (!o.custom_merchandiser_user) {
                 if (o.workflow_state !== 'Pending Final Approval') {
                     unassigned_approvals.push(o);
                 }
             } else if (can_final || o.custom_merchandiser_user === current_user) {
                 my_approvals.push(o);
+            } else if (is_other_viewer) {
+                other_merchandiser_approvals.push(o);
             }
         });
 
@@ -4124,12 +4162,18 @@ class OrderFlow {
             sub = 'merchandiser';
             this.approval_subtab = 'merchandiser';
         }
+        if (sub === 'other' && !is_other_viewer) {
+            sub = 'merchandiser';
+            this.approval_subtab = 'merchandiser';
+        }
 
         let active_orders = [];
         if (sub === 'merchandiser') {
             active_orders = my_approvals;
         } else if (sub === 'unassigned') {
             active_orders = unassigned_approvals;
+        } else if (sub === 'other') {
+            active_orders = is_other_viewer ? other_merchandiser_approvals : [];
         } else {
             active_orders = can_final ? final_approvals : [];
         }
@@ -4171,6 +4215,11 @@ class OrderFlow {
                         <i class="fa fa-user" style="color:#007bff;"></i> Merchandiser: <b>${of_esc(o.custom_merchandiser_name || o.custom_merchandiser_user)}</b>
                     </div>
                     ` : ''}
+                    ${sub === 'other' && o.owner ? `
+                    <div class="of-micro text-muted" style="margin-top: 3px; font-weight: 500;">
+                        <i class="fa fa-pencil" style="color:#888;"></i> Created by: <b>${of_esc(o.creator_name || o.owner)}</b>
+                    </div>
+                    ` : ''}
                     ${o.items_list ? `
                     <div style="margin-top: 6px; display: inline-flex; align-items: center; background-color: #f4f6f8; border: 1px solid #d1d8dd; border-radius: 4px; padding: 2px 8px; font-size: 11px; color: #555; max-width: 100%; box-sizing: border-box;">
                         <i class="fa fa-cube" style="margin-right: 5px; color: #888;"></i>
@@ -4196,7 +4245,11 @@ class OrderFlow {
                     <span class="of-val" style="font-weight: 700;">${of_money(o.grand_total, o.currency)}</span>
                 </td>
                 <td style="text-align: center;">
-                    ${o.workflow_state === 'Pending Final Approval' && sub === 'merchandiser' ? `
+                    ${sub === 'other' && !(o.owner === current_user && o.workflow_state !== 'Pending Final Approval') ? `
+                    <span class="text-muted" style="font-size:12px; font-weight:500;">
+                        <i class="fa fa-eye"></i> ${__('View only — not your queue')}
+                    </span>
+                    ` : o.workflow_state === 'Pending Final Approval' && sub === 'merchandiser' ? `
                     <span class="text-muted" style="font-size:12px; font-weight:500;">
                         <i class="fa fa-clock-o"></i> ${__('Waiting for Final Approval')}
                     </span>
@@ -4230,6 +4283,10 @@ class OrderFlow {
                 <button class="of-subtab ${sub === 'final' ? 'is-active' : ''}" data-subtab="final">
                     <i class="fa fa-check-circle" style="color:var(--of-green);"></i> 3. Pending Final SO Approval (${final_approvals.length})
                 </button>` : ''}
+                ${is_other_viewer ? `
+                <button class="of-subtab ${sub === 'other' ? 'is-active' : ''}" data-subtab="other">
+                    <i class="fa fa-eye" style="color:var(--of-blue);"></i> 3. Other Merchandisers' Orders (${other_merchandiser_approvals.length})
+                </button>` : ''}
             </div>
 
             <!-- Table Card -->
@@ -4239,6 +4296,7 @@ class OrderFlow {
                         <i class="fa fa-check-square-o"></i> ${
                             sub === 'merchandiser' ? (can_final ? __('Merchandiser Queue (Track)') : __('Pending Approval')) :
                             sub === 'unassigned' ? __('Merchandiser Unassigned Orders (Approve & Claim)') :
+                            sub === 'other' ? __("Other Merchandisers' Orders") :
                             __('Pending Final SO Approval')
                         }
                     </div>
@@ -5158,11 +5216,23 @@ function of_doc_status(status) {
     return `<span class="of-pill of-pill--${kind}">${of_esc(of_to_title_case(status))}</span>`;
 }
 
+// Past a handful of linked documents (a Material Request pulling from a
+// dozen Sales Orders is common), listing every one of them one-per-line
+// blows out the row height. Show the first OF_LINKS_VISIBLE and collapse
+// the rest behind a "+N more" toggle instead.
+const OF_LINKS_VISIBLE = 3;
 function of_links(list, doctype) {
     if (!list) return '<span class="of-val--zero">—</span>';
-    return String(list).split(',').map(s => s.trim()).filter(Boolean).map(n =>
-        `<div><a href="/app/${of_route(doctype)}/${encodeURIComponent(n)}" target="_blank">${of_esc(n)}</a></div>`
-    ).join('') || '<span class="of-val--zero">—</span>';
+    const names = String(list).split(',').map(s => s.trim()).filter(Boolean);
+    if (!names.length) return '<span class="of-val--zero">—</span>';
+
+    const link = n => `<div><a href="/app/${of_route(doctype)}/${encodeURIComponent(n)}" target="_blank">${of_esc(n)}</a></div>`;
+    if (names.length <= OF_LINKS_VISIBLE) return names.map(link).join('');
+
+    const extra_count = names.length - OF_LINKS_VISIBLE;
+    return `${names.slice(0, OF_LINKS_VISIBLE).map(link).join('')}
+        <div class="of-links-extra" style="display:none;">${names.slice(OF_LINKS_VISIBLE).map(link).join('')}</div>
+        <div><a href="#" class="of-links-toggle" data-more-label="+${extra_count} more" data-less-label="Show less">+${extra_count} more</a></div>`;
 }
 function of_so_links(list) { return of_links(list, 'Sales Order'); }
 function of_po_links(list) { return of_links(list, 'Purchase Order'); }

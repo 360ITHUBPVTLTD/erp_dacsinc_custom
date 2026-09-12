@@ -10045,29 +10045,34 @@ def on_update_quotation(doc, method):
 
 
 def get_sales_order_permission_query_conditions(user):
+    from erp_dacsinc_custom.order_flow_api import is_scoped_merchandiser_for_doctype
+
     if not user:
         user = frappe.session.user
-    
-    # Check if user has "Merchandiser User" role and lacks administrator roles
-    roles = frappe.get_roles(user)
-    if "Merchandiser User" in roles and "System Manager" not in roles and "Administrator" not in roles:
+
+    # is_scoped_merchandiser_for_doctype (not a bare role check): a user who
+    # holds Merchandiser User alongside a broader role that also grants
+    # Sales Order read (Operation Team, Sales Manager, ...) must not be
+    # narrowed down — that combination needs the same company-wide
+    # visibility their other role already grants everywhere else.
+    if is_scoped_merchandiser_for_doctype("Sales Order", user):
         # Filter to only show orders belonging to customers assigned to this merchandiser
         return """exists (
-            select name from tabCustomer cust 
-            where cust.name = `tabSales Order`.customer 
+            select name from tabCustomer cust
+            where cust.name = `tabSales Order`.customer
             and cust.custom_merchandiser_user = {0}
         )""".format(frappe.db.escape(user))
-    
+
     return ""
 
 
 def has_sales_order_permission(doc, ptype=None, user=None):
-    from erp_dacsinc_custom.order_flow_api import is_merchandiser_user
+    from erp_dacsinc_custom.order_flow_api import is_scoped_merchandiser_for_doctype
 
     if not user:
         user = frappe.session.user
 
-    if is_merchandiser_user(user):
+    if is_scoped_merchandiser_for_doctype("Sales Order", user):
         customer_merchandiser = frappe.db.get_value("Customer", doc.customer, "custom_merchandiser_user")
         if customer_merchandiser and customer_merchandiser != user:
             return False
@@ -10076,23 +10081,23 @@ def has_sales_order_permission(doc, ptype=None, user=None):
 
 
 def get_customer_permission_query_conditions(user=None):
-    from erp_dacsinc_custom.order_flow_api import is_merchandiser_user
+    from erp_dacsinc_custom.order_flow_api import is_scoped_merchandiser_for_doctype
 
     if not user:
         user = frappe.session.user
 
-    if is_merchandiser_user(user):
+    if is_scoped_merchandiser_for_doctype("Customer", user):
         return "`tabCustomer`.custom_merchandiser_user = {0}".format(frappe.db.escape(user))
     return ""
 
 
 def has_customer_permission(doc, ptype=None, user=None):
-    from erp_dacsinc_custom.order_flow_api import is_merchandiser_user
+    from erp_dacsinc_custom.order_flow_api import is_scoped_merchandiser_for_doctype
 
     if not user:
         user = frappe.session.user
 
-    if is_merchandiser_user(user):
+    if is_scoped_merchandiser_for_doctype("Customer", user):
         if doc.custom_merchandiser_user and doc.custom_merchandiser_user != user:
             return False
 
