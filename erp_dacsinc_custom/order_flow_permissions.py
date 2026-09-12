@@ -272,6 +272,12 @@ def get_order_flow_permissions():
         # get_sales_tracker() filters by this same function, so the client's
         # button-hiding and the server's row-scoping can never disagree.
         "tracker_scoped_to_own_customers": is_scoped_to_own_customers("tracker", tab_roles=tab_roles),
+        # Same idea for SO Approvals: get_pending_approvals() gates its own
+        # SQL scoping on this exact function, so the client's sub-tab
+        # bucketing (Pending Approval / mine vs. Other Merchandisers'
+        # Orders / everyone else's) can never disagree with what the server
+        # actually sent back.
+        "approval_scoped_to_own_customers": is_scoped_to_own_customers("approval", tab_roles=tab_roles),
     }
 
 

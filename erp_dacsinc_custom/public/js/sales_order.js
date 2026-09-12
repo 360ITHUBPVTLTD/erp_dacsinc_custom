@@ -1452,7 +1452,13 @@ function generate_stock_overview_table(frm, callback) {
                         });
                     });
                 }
-
+//  ${eligible_pls.length > 0 && so_route_lock !== 'dn' ? `
+//                         <button class="so-btn so-btn--primary" id="btn-bulk-create-si" style="margin-left:6px;"
+//                                 title="SI (Update Stock) from Pick Lists">
+//                             <i class="fa fa-file-text-o"></i> Create SI
+//                             ${unique_draft_sis.size ? `<span class="so-chip" style="background:var(--so-orange); margin-left:4px;">${unique_draft_sis.size} draft</span>` : ''}
+//                         </button>
+//                     ` : ''}
                 const dn_names = so_get_all_submitted_dn_names(frm);
                 const pending_rm_count = (frm.doc.docstatus === 1) ? so_collect_pending_rm(frm).length : 0;
                 const pending_fg_count = (frm.doc.docstatus === 1) ? so_collect_pending_fg(frm).length : 0;
@@ -1474,13 +1480,9 @@ function generate_stock_overview_table(frm, callback) {
                             ${unique_draft_dns.size ? `<span class="so-chip" style="background:var(--so-orange); margin-left:4px;">${unique_draft_dns.size} draft</span>` : ''}
                         </button>
                     ` : ''}
-                    ${eligible_pls.length > 0 && so_route_lock !== 'dn' ? `
-                        <button class="so-btn so-btn--primary" id="btn-bulk-create-si" style="margin-left:6px;"
-                                title="SI (Update Stock) from Pick Lists">
-                            <i class="fa fa-file-text-o"></i> Create SI
-                            ${unique_draft_sis.size ? `<span class="so-chip" style="background:var(--so-orange); margin-left:4px;">${unique_draft_sis.size} draft</span>` : ''}
-                        </button>
-                    ` : ''}
+                   
+                   
+                    
                     ${pending_rm_count > 0 ? `
                         <button class="so-btn so-btn--warning" id="btn-create-mr-all-rm" style="margin-left:6px;"
                                 title="Raw materials of the BOM items">
@@ -1511,11 +1513,14 @@ function generate_stock_overview_table(frm, callback) {
                         show_bulk_dn_si_modal(frm, eligible_pls, 'Delivery Note', already_processed_count, Array.from(unique_draft_dns));
                     });
                 }
+                /*
+                // ORIGINAL CODE (commented out as per requirement - no bulk SI from pick list button handler):
                 if (eligible_pls.length > 0 && so_route_lock !== 'dn') {
                     $bulk_btn.find('#btn-bulk-create-si').on('click', () => {
                         show_bulk_dn_si_modal(frm, eligible_pls, 'Sales Invoice', already_processed_count, Array.from(unique_draft_sis));
                     });
                 }
+                */
                 if (pending_rm_count > 0) {
                     $bulk_btn.find('#btn-create-mr-all-rm').on('click', () => {
                         so_make_rm_material_request_all(frm);
@@ -2990,6 +2995,13 @@ function so_create_dn_from_pick_lists(so_name, selected, all_pending) {
  * already committed away from.
  */
 function so_prompt_dn_or_si(so_name, sales_order_item, item_code, pick_list, picked_qty, route_lock, pair_key) {
+    const cached = pair_key ? get_cached_stock_row(pair_key) : null;
+    const pending_pls = ((cached && cached.picked_for_this_so_details) || [])
+        .filter(p => flt(p.docstatus) === 1 && flt(p.picked_qty) - flt(p.delivered_qty) > 0.001)
+        .map(p => ({ name: p.pick_list_name, pending: flt(p.picked_qty) - flt(p.delivered_qty) }));
+
+    /*
+    // ORIGINAL CODE (commented out as per requirement - always force Delivery Note creation):
     const options = [];
     if (route_lock !== 'si') options.push('Delivery Note');
     if (route_lock !== 'dn') options.push('Sales Invoice (Update Stock)');
@@ -2999,19 +3011,6 @@ function so_prompt_dn_or_si(so_name, sales_order_item, item_code, pick_list, pic
         return;
     }
 
-    // A Delivery Note is mapped from ONE Pick List, but the qty offered here
-    // is everything still undelivered across ALL of them. With more than one
-    // pick list holding stock, the two are different numbers — so the pick
-    // list being shipped is an explicit choice, and the qty shown is that
-    // pick list's own pending amount rather than a total the DN can't deliver.
-    const cached = pair_key ? get_cached_stock_row(pair_key) : null;
-    const pending_pls = ((cached && cached.picked_for_this_so_details) || [])
-        .filter(p => flt(p.docstatus) === 1 && flt(p.picked_qty) - flt(p.delivered_qty) > 0.001)
-        .map(p => ({ name: p.pick_list_name, pending: flt(p.picked_qty) - flt(p.delivered_qty) }));
-
-    // The Delivery Note route asks which Pick List to ship (the mapper takes
-    // one at a time); the Sales Invoice route is a qty, since it isn't built
-    // from a Pick List at all. So the qty field only belongs to the SI route.
     frappe.prompt([
         {
             fieldtype: 'Select', fieldname: 'route', label: __('Proceed with'),
@@ -3050,6 +3049,25 @@ function so_prompt_dn_or_si(so_name, sales_order_item, item_code, pick_list, pic
         }
         so_make_sales_invoice_with_stock(so_name, sales_order_item, item_code, values.qty);
     }, __(so_dn_si_action_label(route_lock)), __('Continue'));
+    */
+
+    // Always create Delivery Note directly:
+    const pl_names = pending_pls.length ? pending_pls.map(p => p.name)
+        : (pick_list ? [pick_list] : []);
+    const qty_by_name = {};
+    pending_pls.forEach(p => { qty_by_name[p.name] = p.pending; });
+
+    so_pick_source_docs({
+        doctype: 'Pick List',
+        names: pl_names,
+        multi: true,
+        qty_by_name: qty_by_name,
+        title: __('Create Delivery Note — select Pick List(s)'),
+        hint: __('{0} is picked in total across {1} Pick List(s), all selected. Untick any you want to leave for a later Delivery Note — whatever you leave out stays outstanding.',
+            [flt(picked_qty), pl_names.length]),
+        confirm_label: __('Create Delivery Note'),
+        on_confirm: (selected) => so_create_dn_from_pick_lists(so_name, selected, pending_pls),
+    });
 }
 
 // The direct-billing alternative to Delivery Note: a Sales Invoice with
@@ -4568,15 +4586,23 @@ function so_shortfall_actions(d, so_nm, ic_arg, pair_key, qty, submitted, allow_
 // can never drift out of sync with what route is actually locked in.
 function so_dn_si_action_label(route_lock, qty) {
     const suffix = (qty != null) ? ` (${flt(qty)})` : '';
+    /*
+    // ORIGINAL CODE (commented out as per requirement - always use Delivery Note):
     if (route_lock === 'dn') return `Create Delivery Note${suffix}`;
     if (route_lock === 'si') return `Create Sales Invoice (Update Stock)${suffix}`;
     return `Create DN / SI${suffix}`;
+    */
+    return `Create Delivery Note${suffix}`;
 }
 
 function so_dn_si_status_label(route_lock) {
+    /*
+    // ORIGINAL CODE (commented out as per requirement - always use Delivery Note):
     if (route_lock === 'dn') return 'Ready — Delivery Note';
     if (route_lock === 'si') return 'Ready — Sales Invoice';
     return 'Ready for DN / SI';
+    */
+    return 'Ready — Delivery Note';
 }
 
 // A Next Action command button. `primary` marks the one step that moves
