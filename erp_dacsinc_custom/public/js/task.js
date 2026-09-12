@@ -1,16 +1,50 @@
 frappe.ui.form.on('Task', {
     refresh(frm) {
+        frm._previous_status = frm.doc.status;
         frm.trigger('update_red_flag_ui_state');
         frm.trigger('render_red_flag_banner');
     },
 
     onload(frm) {
+        frm._previous_status = frm.doc.status;
         frm.trigger('update_red_flag_ui_state');
         frm.trigger('render_red_flag_banner');
     },
 
     status(frm) {
         frm.trigger('update_red_flag_ui_state');
+        if (frm.doc.status === 'Completed' && frm.doc.custom_red_flag) {
+            frappe.msgprint({
+                title: __('Resolve Red Flag Required'),
+                indicator: 'orange',
+                message: __('This task has an active Red Flag. You must resolve the Red Flag with Closing Notes before completing the task.')
+            });
+            // Revert status so form cannot be saved as Completed with an active Red Flag
+            frm.set_value('status', frm._previous_status || 'Working');
+            frm.trigger('prompt_resolve_red_flag');
+        } else if (frm.doc.status !== 'Completed') {
+            frm._previous_status = frm.doc.status;
+        }
+    },
+
+    before_save(frm) {
+        if (frm.doc.status === 'Completed' && frm.doc.custom_red_flag) {
+            frappe.validated = false;
+            frappe.throw({
+                title: __('Active Red Flag'),
+                message: __('Cannot complete Task with an active Red Flag. Please resolve the Red Flag with closing notes first.')
+            });
+        }
+    },
+
+    validate(frm) {
+        if (frm.doc.status === 'Completed' && frm.doc.custom_red_flag) {
+            frappe.validated = false;
+            frappe.throw({
+                title: __('Active Red Flag'),
+                message: __('Cannot complete Task with an active Red Flag. Please resolve the Red Flag with closing notes first.')
+            });
+        }
     },
 
     update_red_flag_ui_state(frm) {
@@ -248,6 +282,9 @@ frappe.ui.form.on('Task', {
                     frm.set_value('custom_red_flag', 1);
                 }
                 frm.doc.custom_red_flag = 1;
+                if (frm.doc.status === 'Completed') {
+                    frm.set_value('status', frm._previous_status || 'Working');
+                }
                 frm.trigger('update_red_flag_ui_state');
                 frm.trigger('render_red_flag_banner');
             }

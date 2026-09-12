@@ -249,6 +249,9 @@ doc_events = {
         "on_update_after_submit": "erp_dacsinc_custom.bom_events.on_update_after_submit",
         "on_cancel": "erp_dacsinc_custom.bom_events.on_cancel"
     },
+    "Task": {
+        "validate": "erp_dacsinc_custom.custom_script.validate_task_red_flag"
+    },
     "Purchase Receipt": {
         "on_submit": "erp_dacsinc_custom.purchase_order.create_putaway_picklist",
         "on_update": "erp_dacsinc_custom.order_flow_api.broadcast_order_flow_change",
