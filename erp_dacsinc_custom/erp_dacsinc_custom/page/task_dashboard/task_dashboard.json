@@ -1,0 +1,19 @@
+{
+    "content": null,
+    "creation": "2026-09-07 16:14:44.463752",
+    "docstatus": 0,
+    "doctype": "Page",
+    "idx": 0,
+    "modified": "2026-09-07 16:14:44.463752",
+    "modified_by": "Administrator",
+    "module": "Erp Dacsinc Custom",
+    "name": "task-dashboard",
+    "owner": "Administrator",
+    "page_name": "task-dashboard",
+    "roles": [],
+    "script": null,
+    "standard": "Yes",
+    "style": null,
+    "system_page": 0,
+    "title": "Task Dashboard"
+}
