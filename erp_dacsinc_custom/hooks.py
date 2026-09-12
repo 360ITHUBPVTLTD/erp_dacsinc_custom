@@ -62,7 +62,7 @@ doctype_js = {
 	"Sales Invoice": "public/js/sales_invoice.js",
 	"Delivery Note": "public/js/delivery_note.js",
 	"Pick List": "public/js/pick_list.js",
-	"Customer": "public/js/customer.js"
+	"Task": "public/js/task.js"
 }
 doctype_list_js = {
 	"Lead": "public/js/lead_list.js",
@@ -248,6 +248,9 @@ doc_events = {
         "on_submit": "erp_dacsinc_custom.bom_events.after_submit",
         "on_update_after_submit": "erp_dacsinc_custom.bom_events.on_update_after_submit",
         "on_cancel": "erp_dacsinc_custom.bom_events.on_cancel"
+    },
+    "Task": {
+        "validate": "erp_dacsinc_custom.custom_script.validate_task_red_flag"
     },
     "Purchase Receipt": {
         "on_submit": "erp_dacsinc_custom.purchase_order.create_putaway_picklist",

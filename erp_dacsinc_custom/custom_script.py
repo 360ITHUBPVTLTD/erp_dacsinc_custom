@@ -2,6 +2,18 @@ import frappe
 
 
 
+def validate_task_red_flag(doc, method=None):
+    """
+    Enforce that a Task cannot be marked as Completed while an active Red Flag exists.
+    The Red Flag must be resolved with closing notes before completing the task.
+    """
+    if doc.status == "Completed" and getattr(doc, "custom_red_flag", 0):
+        frappe.throw(
+            frappe._("Cannot complete Task with an active Red Flag. Please resolve the Red Flag with closing notes before completing the task."),
+            title=frappe._("Active Red Flag")
+        )
+
+
 def copy_custom_fields(doc, method):
     if doc.custom_tax_rate:
         update_tax_child(doc)
