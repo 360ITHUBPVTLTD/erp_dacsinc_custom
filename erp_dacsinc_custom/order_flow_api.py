@@ -3304,28 +3304,17 @@ def get_pending_approvals(search=None, merchandiser=None, approval_stage=None, p
             conditions.append("so.workflow_state = %(approval_stage)s")
             params["approval_stage"] = approval_stage
 
-    settings = frappe.get_single("Admin Settings")
-    final_users = [d.user for d in settings.sales_order_final_approval or []]
-    is_final_approver = frappe.session.user in final_users or "System Manager" in frappe.get_roles() or frappe.session.user == "Administrator"
-
     if merchandiser:
+        # Explicit "filter to this one merchandiser" (e.g. a final
+        # approver's Merchandiser Queue dropdown) — unrelated to per-viewer
+        # scoping, which no longer applies on this tab at all: see
+        # is_scoped_to_own_customers()'s "approval" exemption. Every viewer
+        # who can open this tab gets every pending order; the client buckets
+        # its own into "Pending Approval" and everyone else's, read-only,
+        # into "Other Merchandisers' Orders".
         conditions.append("cust.custom_merchandiser_user = %(me)s")
         params["me"] = merchandiser
-    else:
-        # is_scoped_to_own_customers (not the blunter is_merchandiser_user)
-        # so someone who holds Merchandiser User alongside a broader
-        # operational role that also grants this tab (Operation Team, Sales
-        # Manager, ...) is correctly left unscoped here, same as every other
-        # tab already does — confirmed live: a user with both roles saw
-        # every merchandiser-assigned order vanish from both the "Pending
-        # Approval" and "Merchandiser Unassigned Orders" sub-tabs, because
-        # the SQL below silently excluded them at the query level while the
-        # client bucketing separately (and correctly) treated them as
-        # someone who should see everything.
-        if is_scoped_to_own_customers("approval") and not is_final_approver:
-            conditions.append("(cust.custom_merchandiser_user = %(me)s OR cust.custom_merchandiser_user IS NULL OR cust.custom_merchandiser_user = '')")
-            params["me"] = frappe.session.user
-        
+
     if search:
         for idx, word in enumerate(search.strip().split()):
             param_key = f"q_{idx}"
@@ -3480,25 +3469,60 @@ def add_custom_workflow_comment(ref_doctype, ref_name, label, detail_comment=Non
     comment.insert(ignore_permissions=True)
 
 
+def _guard_can_approve_or_reject(doc):
+    """
+    Mirrors the client's own gating in approval_html(): a final approver
+    (or System Manager/Administrator) may act on any Sales Order at any
+    approval stage — the entire point of "Merchandiser Queue (Track)".
+    Below Pending Final Approval, everyone else may act only on their own
+    customer's orders, an unclaimed customer's (so they can claim it), or
+    an order they created themselves — the same "a creator may approve
+    their own order on a merchandiser's behalf" rule
+    setup_sales_order_workflow's allow_self_approval exists for (see
+    docs/order-flow-dashboard.md, "SO Approvals: a fourth sub-tab..."),
+    which the client's own Approve/Reject-vs-view-only split in the "Other
+    Merchandisers' Orders" sub-tab already assumes. Self-approval is NOT
+    honored at Pending Final Approval — that stage still requires someone
+    other than the order's creator, same as the workflow transitions
+    themselves only grant allow_self_approval below that stage.
+
+    Enforced here, not left to the UI hiding the button: now that
+    get_pending_approvals() shows every viewer every other merchandiser's
+    pending orders too (see is_scoped_to_own_customers()'s "approval"
+    exemption), the button being hidden client-side for "Other
+    Merchandisers' Orders" is no longer the only thing stopping a
+    merchandiser from calling this directly on an order that isn't theirs.
+    """
+    settings = frappe.get_single("Admin Settings")
+    allowed_final_users = [d.user for d in settings.sales_order_final_approval or []]
+    if "System Manager" in frappe.get_roles() or frappe.session.user == "Administrator" \
+            or frappe.session.user in allowed_final_users:
+        return
+
+    if doc.workflow_state == "Pending Final Approval":
+        frappe.throw(_("You are not authorized to perform Final Approval for Sales Order {0}.").format(doc.name))
+
+    if doc.owner == frappe.session.user:
+        return
+
+    merchandiser = frappe.db.get_value("Customer", doc.customer, "custom_merchandiser_user")
+    if merchandiser and merchandiser != frappe.session.user:
+        frappe.throw(_("You are not authorized to act on Sales Order {0} — it belongs to a different merchandiser.").format(doc.name))
+
+
 @frappe.whitelist()
 def approve_sales_orders(sales_orders):
     _guard()
     import json
     if isinstance(sales_orders, str):
         sales_orders = json.loads(sales_orders)
-        
-    settings = frappe.get_single("Admin Settings")
-    allowed_final_users = [d.user for d in settings.sales_order_final_approval or []]
-    is_admin_or_system_mgr = "System Manager" in frappe.get_roles() or frappe.session.user == "Administrator"
-    
+
     for so_name in sales_orders:
         doc = frappe.get_doc("Sales Order", so_name)
         state_before = doc.workflow_state or "Draft"
-        
-        if doc.workflow_state == "Pending Final Approval":
-            if frappe.session.user not in allowed_final_users and not is_admin_or_system_mgr:
-                frappe.throw(_("You are not authorized to perform Final Approval for Sales Order {0}.").format(so_name))
-        
+
+        _guard_can_approve_or_reject(doc)
+
         if state_before in ("Draft", "", "Rejected"):
             # Transition from Draft/Rejected to Pending Merchandiser Approval first
             frappe.model.workflow.apply_workflow(doc, "Submit for Merchandiser Approval")
@@ -3542,7 +3566,8 @@ def reject_sales_orders(sales_orders, comment):
         
     for so_name in sales_orders:
         doc = frappe.get_doc("Sales Order", so_name)
-        
+        _guard_can_approve_or_reject(doc)
+
         transitions = frappe.model.workflow.get_transitions(doc)
         action = None
         for t in transitions:

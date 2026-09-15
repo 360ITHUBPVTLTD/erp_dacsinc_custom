@@ -4115,20 +4115,21 @@ class OrderFlow {
 
         const can_final = !!(this.perms && this.perms.is_final_approver);
         // Mirrors get_pending_approvals()'s own is_scoped_to_own_customers
-        // check server-side — NOT a bare "do I hold Merchandiser User" role
-        // check, since that role can be combined with a broader operational
-        // one (Operation Team, Sales Manager, ...) for someone who does
-        // both jobs; that combination must NOT be scoped down, same as
-        // every other tab already handles it.
+        // check server-side. Always false for the approval tab now — Sales
+        // Order approval visibility is deliberately company-wide, so even a
+        // plain Merchandiser User with no other role gets every order back
+        // from the server, unscoped (see that function's "approval"
+        // exemption) — kept as its own named check rather than inlining
+        // `false` so the two can never silently drift apart again.
         const is_scoped_merchandiser = !!(this.perms && this.perms.approval_scoped_to_own_customers);
-        // Neither scoped to their own customers nor a final approver (who
-        // already tracks every merchandiser via "Merchandiser Queue") — an
-        // operational role that can see this tab (of_tab_approval_roles)
-        // but has no merchandiser scoping of their own. The server returns
-        // them every order unscoped; without a bucket of their own, every
-        // order that already has a merchandiser assigned (i.e. isn't
-        // waiting to be claimed) matched neither "Pending Approval" (not
-        // theirs) nor "Unassigned" and simply disappeared from the tab.
+        // Everyone who isn't the final approver (who already tracks every
+        // merchandiser via "Merchandiser Queue") gets a read-only view of
+        // every order that already has a merchandiser assigned but isn't
+        // theirs — otherwise such an order matched neither "Pending
+        // Approval" (not theirs) nor "Unassigned" and simply disappeared
+        // from the tab. The tab itself only renders when this bucket is
+        // non-empty (see show_other_tab below) — no reason to show an
+        // always-(0) tab to someone with no colleagues' orders to review.
         const is_other_viewer = !is_scoped_merchandiser && !can_final;
 
         // An order sits in exactly one bucket, by the step it is actually waiting on.
@@ -4162,7 +4163,12 @@ class OrderFlow {
             sub = 'merchandiser';
             this.approval_subtab = 'merchandiser';
         }
-        if (sub === 'other' && !is_other_viewer) {
+        // The tab itself only ever appears when there's something in it (see
+        // the subtab strip below) — so landing on 'other' with nothing to
+        // show (already cleared, or nobody else's orders exist right now)
+        // must bounce back the same way an unpermitted tab does.
+        const show_other_tab = is_other_viewer && other_merchandiser_approvals.length > 0;
+        if (sub === 'other' && !show_other_tab) {
             sub = 'merchandiser';
             this.approval_subtab = 'merchandiser';
         }
@@ -4283,7 +4289,7 @@ class OrderFlow {
                 <button class="of-subtab ${sub === 'final' ? 'is-active' : ''}" data-subtab="final">
                     <i class="fa fa-check-circle" style="color:var(--of-green);"></i> 3. Pending Final SO Approval (${final_approvals.length})
                 </button>` : ''}
-                ${is_other_viewer ? `
+                ${show_other_tab ? `
                 <button class="of-subtab ${sub === 'other' ? 'is-active' : ''}" data-subtab="other">
                     <i class="fa fa-eye" style="color:var(--of-blue);"></i> 3. Other Merchandisers' Orders (${other_merchandiser_approvals.length})
                 </button>` : ''}

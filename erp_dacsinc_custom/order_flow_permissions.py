@@ -193,7 +193,19 @@ def is_scoped_to_own_customers(tab, user=None, tab_roles=None):
     defeat scoping for every merchandiser the moment it appears anywhere —
     confirmed live: with All present, is_scoped_to_own_customers("accounts")
     returned False for a user whose only role was Merchandiser User.
+
+    "approval" is deliberately exempt outright, for every user, regardless
+    of role combination: Sales Order approval visibility was made
+    company-wide so a plain Merchandiser User (no second tab-granting role)
+    still sees every other merchandiser's pending orders, read-only, under
+    "Other Merchandisers' Orders" whenever any exist. This only widens what
+    a merchandiser can SEE — who may actually approve/reject a given order
+    is still gated separately, by that order's own customer's
+    custom_merchandiser_user, in approve_sales_orders/reject_sales_orders.
     """
+    if tab == "approval":
+        return False
+
     user = user or frappe.session.user
     if is_admin(user):
         return False
