@@ -4121,18 +4121,16 @@ class OrderFlow {
         // both jobs; that combination must NOT be scoped down, same as
         // every other tab already handles it.
         const is_scoped_merchandiser = !!(this.perms && this.perms.approval_scoped_to_own_customers);
-        // Anyone who isn't a final approver (they already track every
-        // merchandiser via "Merchandiser Queue") gets the fourth bucket —
-        // but it means two different things, matching what the server sent:
-        //   scoped merchandiser  → only the orders THEY raised for someone
-        //                          else's customer (theirs to chase, and
-        //                          theirs to approve as the creator)
-        //   operational role     → every merchandiser-assigned order that
-        //                          isn't already in one of the buckets
-        //                          above, read-only, for awareness
-        // Without this bucket such an order matched neither "Pending
-        // Approval" (not theirs) nor "Unassigned", and simply vanished.
-        const is_other_viewer = !can_final;
+        // Neither scoped to their own customers nor a final approver (who
+        // already tracks every merchandiser via "Merchandiser Queue") — an
+        // operational role that can see this tab (of_tab_approval_roles)
+        // but has no merchandiser scoping of their own. The server returns
+        // them every order unscoped; without a bucket of their own, every
+        // order that already has a merchandiser assigned (i.e. isn't
+        // waiting to be claimed) matched neither "Pending Approval" (not
+        // theirs) nor "Unassigned" and simply disappeared from the tab.
+        const is_other_viewer = !is_scoped_merchandiser && !can_final;
+        const show_other_tab = !can_final;
 
         // An order sits in exactly one bucket, by the step it is actually waiting on.
         //   Pending Approval          — waiting on ME as the customer's merchandiser
@@ -4141,13 +4139,6 @@ class OrderFlow {
         //   Other Merchandisers'      — has a merchandiser, but not me, and I can't final-approve either
         // An order already at "Pending Final Approval" is NOT waiting on the
         // merchandiser, so it must not appear under "Pending Approval".
-        //
-        // A scoped merchandiser only ever belongs in that last bucket for an
-        // order they raised themselves — they have no business reviewing a
-        // colleague's whole order book. The server already filters to match
-        // (get_pending_approvals's `so.owner` clause); repeating the rule
-        // here keeps the two from silently drifting apart, exactly as
-        // approval_scoped_to_own_customers exists to prevent.
         orders.forEach(o => {
             if (o.workflow_state === 'Pending Final Approval') {
                 final_approvals.push(o);
@@ -4159,7 +4150,11 @@ class OrderFlow {
                 }
             } else if (can_final || o.custom_merchandiser_user === current_user) {
                 my_approvals.push(o);
-            } else if (is_other_viewer && (!is_scoped_merchandiser || o.owner === current_user)) {
+            } else if (is_scoped_merchandiser) {
+                if (o.owner === current_user) {
+                    other_merchandiser_approvals.push(o);
+                }
+            } else if (is_other_viewer) {
                 other_merchandiser_approvals.push(o);
             }
         });
@@ -4172,11 +4167,6 @@ class OrderFlow {
             sub = 'merchandiser';
             this.approval_subtab = 'merchandiser';
         }
-        // The tab itself only ever appears when there's something in it (see
-        // the subtab strip below) — so landing on 'other' with nothing to
-        // show (already cleared, or nobody else's orders exist right now)
-        // must bounce back the same way an unpermitted tab does.
-        const show_other_tab = is_other_viewer && other_merchandiser_approvals.length > 0;
         if (sub === 'other' && !show_other_tab) {
             sub = 'merchandiser';
             this.approval_subtab = 'merchandiser';
@@ -4188,7 +4178,7 @@ class OrderFlow {
         } else if (sub === 'unassigned') {
             active_orders = unassigned_approvals;
         } else if (sub === 'other') {
-            active_orders = is_other_viewer ? other_merchandiser_approvals : [];
+            active_orders = show_other_tab ? other_merchandiser_approvals : [];
         } else {
             active_orders = can_final ? final_approvals : [];
         }

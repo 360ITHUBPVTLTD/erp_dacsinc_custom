@@ -193,12 +193,6 @@ def is_scoped_to_own_customers(tab, user=None, tab_roles=None):
     defeat scoping for every merchandiser the moment it appears anywhere —
     confirmed live: with All present, is_scoped_to_own_customers("accounts")
     returned False for a user whose only role was Merchandiser User.
-
-    On "approval" specifically, being scoped no longer means "you only ever
-    see your own customers": a scoped merchandiser also gets back the orders
-    they raised THEMSELVES for someone else's customer, which is what the
-    "Other Merchandisers' Orders" sub-tab shows them. See
-    get_pending_approvals() and docs/order-flow-dashboard.md.
     """
     user = user or frappe.session.user
     if is_admin(user):

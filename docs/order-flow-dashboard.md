@@ -373,11 +373,11 @@ responsibility.
 
 `is_scoped_to_own_customers(tab)` (order_flow_permissions.py) used to only be
 called from Tracker. It's now called from Purchase, Job Work, Accounts, and
-Billing too (Approval uses it as well, with one extra clause — see below),
-so a plain Merchandiser User (no other tab-granting role) sees only the
-Purchase Orders/Material Requests/Receipts/Embroidery Work Orders/Invoices
-tied to their own customers' Sales Orders, the same way Tracker already
-scoped Sales Orders themselves.
+Billing too (Approval has its own separate, deliberately different
+mechanism — see below), so a plain Merchandiser User (no other tab-granting
+role) sees only the Purchase Orders/Material Requests/Receipts/Embroidery
+Work Orders/Invoices tied to their own customers' Sales Orders, the same way
+Tracker already scoped Sales Orders themselves.
 
 **How the SQL scoping actually works, since most of these are aggregated,
 not one-row-per-Sales-Order queries.** Purchase/Job Work/the Purchase-Invoice
@@ -428,67 +428,51 @@ coherent question to ask of it. Embroidery Transfers
 (`get_embroidery_transfers`, `uniform_transfer_api.py`) queries `Uniform
 Embroidery Transfer` directly, a doctype with no `sales_order` or `customer`
 field whatsoever — a warehouse-to-warehouse stock move, structurally
-decoupled from any order.
+decoupled from any order. Approval (`get_pending_approvals`) keeps its own
+existing, intentionally different rule (`is_merchandiser_user()`, not
+`is_scoped_to_own_customers` — also matches customers with **no**
+merchandiser assigned yet, not just the viewer's own, so a merchandiser can
+still claim and approve a brand-new customer's first order) — left as-is,
+not unified into the others.
 
-**Approval scopes on the same rule but with a wider WHERE clause:**
-`get_pending_approvals` calls the very same `is_scoped_to_own_customers
-("approval")`, but a scoped merchandiser's SQL matches four things, not
-one — their own customers' orders, customers with **no** merchandiser
-assigned yet (so they can claim and approve a brand-new customer's first
-order), and **any order they raised themselves** (`so.owner = %(me)s`)
-even when that customer belongs to a colleague. That last clause is what
-fills the "Other Merchandisers' Orders" sub-tab for them; see "SO
-Approvals: a fourth sub-tab..." below.
-
-## SO Approvals: a fourth sub-tab, and what it means for each kind of viewer
+## SO Approvals: a fourth sub-tab for viewers who are neither the merchandiser nor a final approver
 
 `approval_html` (client) buckets each row it gets back from `get_pending_
 approvals` into a sub-tab purely client-side — the server has already
 decided *which rows* a viewer may see; this bucketing only decides *which
 sub-tab* each visible row lands in. Three kinds of viewer exist:
 
-- A scoped merchandiser (Merchandiser User is their *only* reason for
-  seeing this tab) — their own customers' orders land in **Pending
-  Approval** (`o.custom_merchandiser_user === current_user`); orders they
-  raised themselves for a customer belonging to a colleague land in
-  **Other Merchandisers' Orders**. They never see a colleague's order that
-  they did not create — not in any bucket, and not in the server payload
-  at all.
+- A plain Merchandiser User — scoped server-side to their own customers
+  (`get_pending_approvals` adds the SQL condition below), and client-side to
+  `o.custom_merchandiser_user === current_user` in the **Pending Approval**
+  bucket.
 - A final approver/admin (`this.perms.is_final_approver`) — sees every
   merchandiser-assigned order via "Merchandiser Queue (Track)" (same
-  sub-tab as Pending Approval, different label), with full Approve/Reject
-  access to any of them. No "Other Merchandisers' Orders" sub-tab: they
-  get "Pending Final SO Approval" in that slot instead.
+  sub-tab, different label).
 - Everyone else who can see this tab at all (`of_tab_approval_roles`) but is
   neither of the above — an operational role like Operation Team (Operation
   Manager Corporate, Store Operation Manager, Sales Manager, Accounts
-  Manager/User), including someone who *combines* one of those with
-  Merchandiser User. The server sends them every order unscoped, and
-  everything not already bucketed lands in **Other Merchandisers'
-  Orders**, read-only — the Actions column reads "View only — not your
-  queue" instead of Approve/Reject buttons (except for the creator
-  self-approval carve-out below).
+  Manager/User). The server sends them every order unscoped; they land in a
+  fourth bucket/sub-tab, **"Other Merchandisers' Orders"**, listing every
+  merchandiser-assigned order not already covered by Pending Approval or
+  Unassigned. It is deliberately **view-only** — the Actions column reads
+  "View only — not your queue" instead of Approve/Reject buttons, since this
+  cohort isn't the merchandiser and can't final-approve either.
 
-**So the sub-tab means two different things depending on who is looking**,
-and both sides implement the same split so they cannot drift: server-side
-via the `so.owner = %(me)s` clause in `get_pending_approvals` (above),
-client-side via `is_other_viewer && (!is_scoped_merchandiser || o.owner
-=== current_user)` in `approval_html`. For a scoped merchandiser it is
-"orders I raised for someone else's customer" — actionable, since the
-creator self-approval rule below lets them approve exactly those. For an
-operational role it is "every merchandiser's pending orders" — awareness
-only. A merchandiser deliberately does **not** get visibility into a
-colleague's order book just by holding Merchandiser User; only a second,
-broader `of_tab_approval_roles` role grants that, the same way every other
-tab already works.
-
-**The "Other Merchandisers' Orders" tab itself only renders when that
-bucket is non-empty** — `show_other_tab = is_other_viewer &&
-other_merchandiser_approvals.length > 0` in `approval_html`, so a
-merchandiser who hasn't raised anything for a colleague's customer doesn't
-see an always-`(0)` tab cluttering the sub-tab strip. Landing on `other`
-via a stale `approval_subtab` after the bucket has since emptied bounces
-back to `merchandiser`, the same way an unpermitted sub-tab already does.
+**Which bucket a viewer falls into is NOT a bare "do they hold Merchandiser
+User" role check** — that role can be combined with a broader operational
+role (Operation Team, Sales Manager, ...) for someone who does both jobs,
+and naively treating them as a plain merchandiser hid every order with a
+merchandiser assigned from them entirely (confirmed live: both "Pending
+Approval" and "Merchandiser Unassigned Orders" read `(0)` for such a user,
+despite orders existing). Both the client and server key off the exact same
+`is_scoped_to_own_customers("approval")` used everywhere else in this file
+(see "Merchandiser scoping now covers every tab that can show it" above) —
+`get_order_flow_permissions()` exposes it to the client as
+`approval_scoped_to_own_customers`, mirroring how `tracker_scoped_to_own_
+customers` already works for Tracker. Only someone whose *sole* reason for
+seeing this tab is Merchandiser User is scoped down; a combined-role user
+sees everything, same as every other tab already handles it.
 
 Each row in the "Other Merchandisers' Orders" sub-tab also shows **"Created
 by: `<name>`"** under the existing "Merchandiser: `<name>`" line — the point
@@ -544,20 +528,6 @@ Approve/Reject buttons instead of "View only" for exactly the rows where
 `o.owner === current_user` and the order hasn't already reached Pending
 Final Approval (past the merchandiser stage this tab's Approve action
 handles) — every other row in that sub-tab stays view-only.
-
-**`approve_sales_orders`/`reject_sales_orders` enforce this same rule
-server-side**, via a shared `_guard_can_approve_or_reject(doc)`: a final
-approver/admin may act on any order at any stage; below Pending Final
-Approval, everyone else may act only on their own customer's order, an
-unclaimed customer's (to claim it), or an order they created themselves
-(the self-approval carve-out above) — Pending Final Approval itself never
-honors self-approval, matching the workflow transitions' own `allow_self_
-approval` scope. This was previously enforced only by the UI hiding the
-button: the merchandiser-approval stage had no ownership check at all, and
-`reject_sales_orders` had none whatsoever, so any caller who knew an order
-name could approve or reject it straight through the whitelisted method.
-The SQL scoping above made that hard to reach by accident but was never a
-substitute for actually checking.
 
 ## Sales Tracker hides what Pending DN/SI hides
 
