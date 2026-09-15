@@ -3322,7 +3322,7 @@ def get_pending_approvals(search=None, merchandiser=None, approval_stage=None, p
         # the SQL below silently excluded them at the query level while the
         # client bucketing separately (and correctly) treated them as
         # someone who should see everything.
-        if is_scoped_to_own_customers("approval") and not is_final_approver:
+        if not is_final_approver:
             conditions.append("(cust.custom_merchandiser_user = %(me)s OR cust.custom_merchandiser_user IS NULL OR cust.custom_merchandiser_user = '' OR so.owner = %(me)s)")
             params["me"] = frappe.session.user
         

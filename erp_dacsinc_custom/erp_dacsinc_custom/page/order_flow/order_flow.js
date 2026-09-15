@@ -4142,12 +4142,8 @@ class OrderFlow {
         orders.forEach(o => {
             if (o.workflow_state === 'Pending Final Approval') {
                 final_approvals.push(o);
-            }
-
-            if (!o.custom_merchandiser_user) {
-                if (o.workflow_state !== 'Pending Final Approval') {
-                    unassigned_approvals.push(o);
-                }
+            } else if (!o.custom_merchandiser_user) {
+                unassigned_approvals.push(o);
             } else if (can_final || o.custom_merchandiser_user === current_user) {
                 my_approvals.push(o);
             } else if (o.owner === current_user) {
