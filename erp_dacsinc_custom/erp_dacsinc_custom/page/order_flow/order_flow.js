@@ -3903,7 +3903,7 @@ class OrderFlow {
         `;
     }
 
-    accounts_html(data) {
+    accounts_html(data) {   
         data = data || {};
         const sis_env = data.sales_invoices || {};
         const sups_env = data.supplier_invoices || {};
