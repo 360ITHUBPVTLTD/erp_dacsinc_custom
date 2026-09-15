@@ -4150,11 +4150,7 @@ class OrderFlow {
                 }
             } else if (can_final || o.custom_merchandiser_user === current_user) {
                 my_approvals.push(o);
-            } else if (is_scoped_merchandiser) {
-                if (o.owner === current_user) {
-                    other_merchandiser_approvals.push(o);
-                }
-            } else if (is_other_viewer) {
+            } else if (o.owner === current_user) {
                 other_merchandiser_approvals.push(o);
             }
         });
