@@ -4140,13 +4140,16 @@ class OrderFlow {
         // An order already at "Pending Final Approval" is NOT waiting on the
         // merchandiser, so it must not appear under "Pending Approval".
         orders.forEach(o => {
+            const is_my_assigned = !!(o.custom_merchandiser_user && current_user && o.custom_merchandiser_user.toLowerCase() === current_user.toLowerCase());
+            const is_created_by_me = !!(o.owner && current_user && o.owner.toLowerCase() === current_user.toLowerCase());
+
             if (o.workflow_state === 'Pending Final Approval') {
                 final_approvals.push(o);
             } else if (!o.custom_merchandiser_user) {
                 unassigned_approvals.push(o);
-            } else if (o.custom_merchandiser_user === current_user) {
+            } else if (is_my_assigned) {
                 my_approvals.push(o);
-            } else if (o.owner === current_user) {
+            } else if (is_created_by_me) {
                 other_merchandiser_approvals.push(o);
             }
         });

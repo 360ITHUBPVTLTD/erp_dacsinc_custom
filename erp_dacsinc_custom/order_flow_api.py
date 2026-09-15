@@ -3312,7 +3312,12 @@ def get_pending_approvals(search=None, merchandiser=None, approval_stage=None, p
         conditions.append("cust.custom_merchandiser_user = %(me)s")
         params["me"] = merchandiser
     else:
-        clause = ["cust.custom_merchandiser_user = %(me)s", "cust.custom_merchandiser_user IS NULL", "cust.custom_merchandiser_user = ''", "so.owner = %(me)s"]
+        clause = [
+            "LOWER(cust.custom_merchandiser_user) = LOWER(%(me)s)",
+            "cust.custom_merchandiser_user IS NULL",
+            "cust.custom_merchandiser_user = ''",
+            "LOWER(so.owner) = LOWER(%(me)s)"
+        ]
         if is_final_approver:
             clause.append("so.workflow_state = 'Pending Final Approval'")
         conditions.append(f"({' OR '.join(clause)})")
