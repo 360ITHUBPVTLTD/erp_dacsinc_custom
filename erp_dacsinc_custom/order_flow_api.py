@@ -3312,19 +3312,11 @@ def get_pending_approvals(search=None, merchandiser=None, approval_stage=None, p
         conditions.append("cust.custom_merchandiser_user = %(me)s")
         params["me"] = merchandiser
     else:
-        # is_scoped_to_own_customers (not the blunter is_merchandiser_user)
-        # so someone who holds Merchandiser User alongside a broader
-        # operational role that also grants this tab (Operation Team, Sales
-        # Manager, ...) is correctly left unscoped here, same as every other
-        # tab already does — confirmed live: a user with both roles saw
-        # every merchandiser-assigned order vanish from both the "Pending
-        # Approval" and "Merchandiser Unassigned Orders" sub-tabs, because
-        # the SQL below silently excluded them at the query level while the
-        # client bucketing separately (and correctly) treated them as
-        # someone who should see everything.
-        if not is_final_approver:
-            conditions.append("(cust.custom_merchandiser_user = %(me)s OR cust.custom_merchandiser_user IS NULL OR cust.custom_merchandiser_user = '' OR so.owner = %(me)s)")
-            params["me"] = frappe.session.user
+        clause = ["cust.custom_merchandiser_user = %(me)s", "cust.custom_merchandiser_user IS NULL", "cust.custom_merchandiser_user = ''", "so.owner = %(me)s"]
+        if is_final_approver:
+            clause.append("so.workflow_state = 'Pending Final Approval'")
+        conditions.append(f"({' OR '.join(clause)})")
+        params["me"] = frappe.session.user
         
     if search:
         for idx, word in enumerate(search.strip().split()):

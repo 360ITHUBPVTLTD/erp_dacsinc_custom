@@ -4144,7 +4144,7 @@ class OrderFlow {
                 final_approvals.push(o);
             } else if (!o.custom_merchandiser_user) {
                 unassigned_approvals.push(o);
-            } else if (can_final || o.custom_merchandiser_user === current_user) {
+            } else if (o.custom_merchandiser_user === current_user) {
                 my_approvals.push(o);
             } else if (o.owner === current_user) {
                 other_merchandiser_approvals.push(o);
@@ -4159,10 +4159,6 @@ class OrderFlow {
             sub = 'merchandiser';
             this.approval_subtab = 'merchandiser';
         }
-        if (sub === 'other' && !show_other_tab) {
-            sub = 'merchandiser';
-            this.approval_subtab = 'merchandiser';
-        }
 
         let active_orders = [];
         if (sub === 'merchandiser') {
@@ -4170,7 +4166,7 @@ class OrderFlow {
         } else if (sub === 'unassigned') {
             active_orders = unassigned_approvals;
         } else if (sub === 'other') {
-            active_orders = show_other_tab ? other_merchandiser_approvals : [];
+            active_orders = other_merchandiser_approvals;
         } else {
             active_orders = can_final ? final_approvals : [];
         }
@@ -4271,18 +4267,17 @@ class OrderFlow {
             <!-- Sub-Tab Navigation Bar -->
             <div class="of-subtabs">
                 <button class="of-subtab ${sub === 'merchandiser' ? 'is-active' : ''}" data-subtab="merchandiser">
-                    <i class="fa fa-user" style="color:var(--of-blue);"></i> ${can_final ? '1. Merchandiser Queue (Track)' : '1. Pending Approval'} (${my_approvals.length})
+                    <i class="fa fa-user" style="color:var(--of-blue);"></i> 1. Pending Approval (${my_approvals.length})
                 </button>
                 <button class="of-subtab ${sub === 'unassigned' ? 'is-active' : ''}" data-subtab="unassigned">
                     <i class="fa fa-users" style="color:var(--of-yellow);"></i> 2. Merchandiser Unassigned Orders (${unassigned_approvals.length})
                 </button>
-                ${can_final ? `
-                <button class="of-subtab ${sub === 'final' ? 'is-active' : ''}" data-subtab="final">
-                    <i class="fa fa-check-circle" style="color:var(--of-green);"></i> 3. Pending Final SO Approval (${final_approvals.length})
-                </button>` : ''}
-                ${show_other_tab ? `
                 <button class="of-subtab ${sub === 'other' ? 'is-active' : ''}" data-subtab="other">
                     <i class="fa fa-eye" style="color:var(--of-blue);"></i> 3. Other Merchandisers' Orders (${other_merchandiser_approvals.length})
+                </button>
+                ${can_final ? `
+                <button class="of-subtab ${sub === 'final' ? 'is-active' : ''}" data-subtab="final">
+                    <i class="fa fa-check-circle" style="color:var(--of-green);"></i> 4. Pending Final SO Approval (${final_approvals.length})
                 </button>` : ''}
             </div>
 
