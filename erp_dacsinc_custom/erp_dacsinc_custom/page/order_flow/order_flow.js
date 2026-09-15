@@ -4115,22 +4115,24 @@ class OrderFlow {
 
         const can_final = !!(this.perms && this.perms.is_final_approver);
         // Mirrors get_pending_approvals()'s own is_scoped_to_own_customers
-        // check server-side. Always false for the approval tab now — Sales
-        // Order approval visibility is deliberately company-wide, so even a
-        // plain Merchandiser User with no other role gets every order back
-        // from the server, unscoped (see that function's "approval"
-        // exemption) — kept as its own named check rather than inlining
-        // `false` so the two can never silently drift apart again.
+        // check server-side — NOT a bare "do I hold Merchandiser User" role
+        // check, since that role can be combined with a broader operational
+        // one (Operation Team, Sales Manager, ...) for someone who does
+        // both jobs; that combination must NOT be scoped down, same as
+        // every other tab already handles it.
         const is_scoped_merchandiser = !!(this.perms && this.perms.approval_scoped_to_own_customers);
-        // Everyone who isn't the final approver (who already tracks every
-        // merchandiser via "Merchandiser Queue") gets a read-only view of
-        // every order that already has a merchandiser assigned but isn't
-        // theirs — otherwise such an order matched neither "Pending
-        // Approval" (not theirs) nor "Unassigned" and simply disappeared
-        // from the tab. The tab itself only renders when this bucket is
-        // non-empty (see show_other_tab below) — no reason to show an
-        // always-(0) tab to someone with no colleagues' orders to review.
-        const is_other_viewer = !is_scoped_merchandiser && !can_final;
+        // Anyone who isn't a final approver (they already track every
+        // merchandiser via "Merchandiser Queue") gets the fourth bucket —
+        // but it means two different things, matching what the server sent:
+        //   scoped merchandiser  → only the orders THEY raised for someone
+        //                          else's customer (theirs to chase, and
+        //                          theirs to approve as the creator)
+        //   operational role     → every merchandiser-assigned order that
+        //                          isn't already in one of the buckets
+        //                          above, read-only, for awareness
+        // Without this bucket such an order matched neither "Pending
+        // Approval" (not theirs) nor "Unassigned", and simply vanished.
+        const is_other_viewer = !can_final;
 
         // An order sits in exactly one bucket, by the step it is actually waiting on.
         //   Pending Approval          — waiting on ME as the customer's merchandiser
@@ -4139,6 +4141,13 @@ class OrderFlow {
         //   Other Merchandisers'      — has a merchandiser, but not me, and I can't final-approve either
         // An order already at "Pending Final Approval" is NOT waiting on the
         // merchandiser, so it must not appear under "Pending Approval".
+        //
+        // A scoped merchandiser only ever belongs in that last bucket for an
+        // order they raised themselves — they have no business reviewing a
+        // colleague's whole order book. The server already filters to match
+        // (get_pending_approvals's `so.owner` clause); repeating the rule
+        // here keeps the two from silently drifting apart, exactly as
+        // approval_scoped_to_own_customers exists to prevent.
         orders.forEach(o => {
             if (o.workflow_state === 'Pending Final Approval') {
                 final_approvals.push(o);
@@ -4150,7 +4159,7 @@ class OrderFlow {
                 }
             } else if (can_final || o.custom_merchandiser_user === current_user) {
                 my_approvals.push(o);
-            } else if (is_other_viewer) {
+            } else if (is_other_viewer && (!is_scoped_merchandiser || o.owner === current_user)) {
                 other_merchandiser_approvals.push(o);
             }
         });

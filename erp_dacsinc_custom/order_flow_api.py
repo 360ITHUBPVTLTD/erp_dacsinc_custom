@@ -3304,16 +3304,38 @@ def get_pending_approvals(search=None, merchandiser=None, approval_stage=None, p
             conditions.append("so.workflow_state = %(approval_stage)s")
             params["approval_stage"] = approval_stage
 
+    settings = frappe.get_single("Admin Settings")
+    final_users = [d.user for d in settings.sales_order_final_approval or []]
+    is_final_approver = frappe.session.user in final_users or "System Manager" in frappe.get_roles() or frappe.session.user == "Administrator"
+
     if merchandiser:
-        # Explicit "filter to this one merchandiser" (e.g. a final
-        # approver's Merchandiser Queue dropdown) — unrelated to per-viewer
-        # scoping, which no longer applies on this tab at all: see
-        # is_scoped_to_own_customers()'s "approval" exemption. Every viewer
-        # who can open this tab gets every pending order; the client buckets
-        # its own into "Pending Approval" and everyone else's, read-only,
-        # into "Other Merchandisers' Orders".
         conditions.append("cust.custom_merchandiser_user = %(me)s")
         params["me"] = merchandiser
+    else:
+        # is_scoped_to_own_customers (not the blunter is_merchandiser_user)
+        # so someone who holds Merchandiser User alongside a broader
+        # operational role that also grants this tab (Operation Team, Sales
+        # Manager, ...) is correctly left unscoped here, same as every other
+        # tab already does — confirmed live: a user with both roles saw
+        # every merchandiser-assigned order vanish from both the "Pending
+        # Approval" and "Merchandiser Unassigned Orders" sub-tabs, because
+        # the SQL below silently excluded them at the query level while the
+        # client bucketing separately (and correctly) treated them as
+        # someone who should see everything.
+        #
+        # `so.owner = %(me)s` is the one deliberate widening: an order the
+        # viewer raised themselves for a customer whose merchandiser is
+        # someone else stays visible to them (it lands in "Other
+        # Merchandisers' Orders", where they can still approve it — see the
+        # creator self-approval rule in _guard_can_approve_or_reject).
+        # Without it, a merchandiser lost sight of an order they had just
+        # created the moment its customer belonged to a colleague.
+        if is_scoped_to_own_customers("approval") and not is_final_approver:
+            conditions.append("""(cust.custom_merchandiser_user = %(me)s
+                                  OR cust.custom_merchandiser_user IS NULL
+                                  OR cust.custom_merchandiser_user = ''
+                                  OR so.owner = %(me)s)""")
+            params["me"] = frappe.session.user
 
     if search:
         for idx, word in enumerate(search.strip().split()):
