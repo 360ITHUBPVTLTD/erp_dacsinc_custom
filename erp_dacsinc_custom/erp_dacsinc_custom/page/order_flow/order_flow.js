@@ -4189,8 +4189,8 @@ class OrderFlow {
             }
 
             const is_admin = frappe.user_roles.includes("System Manager") || current_user === "Administrator";
-            const is_owner = current_user === o.owner;
-            const is_assigned_merchandiser = current_user === o.custom_merchandiser_user;
+            const is_owner = !!(current_user && o.owner && current_user.toLowerCase() === o.owner.toLowerCase());
+            const is_assigned_merchandiser = !!(current_user && o.custom_merchandiser_user && current_user.toLowerCase() === o.custom_merchandiser_user.toLowerCase());
             const show_rejection_reason = is_admin || is_owner || is_assigned_merchandiser;
 
             return `
@@ -4241,7 +4241,7 @@ class OrderFlow {
                     <span class="of-val" style="font-weight: 700;">${of_money(o.grand_total, o.currency)}</span>
                 </td>
                 <td style="text-align: center;">
-                    ${sub === 'other' && !(o.owner === current_user && o.workflow_state !== 'Pending Final Approval') ? `
+                    ${sub === 'other' && !(is_owner && o.workflow_state !== 'Pending Final Approval') ? `
                     <span class="text-muted" style="font-size:12px; font-weight:500;">
                         <i class="fa fa-eye"></i> ${__('View only — not your queue')}
                     </span>
