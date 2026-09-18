@@ -737,7 +737,7 @@ function generate_stock_overview_table(frm, callback) {
                             <th style="width:18%; min-width:190px;">Item</th>
                             <th style="width:7%;">Required</th>
                             <th style="width:7%;">Delivered</th>
-                            <th style="width:11%;">Available Stock</th>
+                            <th style="width:11%;" title="Stock of this row's own item (the finished good being sold) — not its raw material. A BOM item can show 0 here while its raw material is ready for a Subcontract PO; see the RM Ready indicator on the Sales Tracker.">Available Stock (FG)</th>
                             <th style="width:13%;" title="Pending Purchase Orders, Embroidery Work Orders and Material Requests">Incoming</th>
                             <th style="width:9%;">Picked (This SO)</th>
                             <th style="width:11%;">Picked (Others)</th>
@@ -1360,10 +1360,15 @@ function generate_stock_overview_table(frm, callback) {
             eligible_for_picking = (frm.doc.docstatus === 1) && (total_bulk_qty > 0);
 
             const $bulk_btn = container.find('#bulk-pick-action-btn');
+            // Filled in by the get_rm_ready_bom_items call below, then the
+            // button row is re-rendered. Deliberately the SERVER's list, not a
+            // client-side per-row stock test — see so_show_spo_multi_prompt.
+            let spo_ready_items = [];
             const render_create_btn = () => {
                 const dn_names = so_get_all_submitted_dn_names(frm);
                 const pending_rm_count = (frm.doc.docstatus === 1) ? so_collect_pending_rm(frm).length : 0;
                 const pending_fg_count = (frm.doc.docstatus === 1) ? so_collect_pending_fg(frm).length : 0;
+                const spo_ready_count = (frm.doc.docstatus === 1) ? spo_ready_items.length : 0;
                 $bulk_btn.html(`
                     <button class="so-btn so-btn--primary" id="btn-create-bulk-picklist" ${!eligible_for_picking ? 'disabled' : ''}
                             title="${eligible_for_picking ? 'Pick every pickable line' : 'Nothing pickable yet'}">
@@ -1381,6 +1386,12 @@ function generate_stock_overview_table(frm, callback) {
                             <i class="fa fa-cube"></i> Finished Item MR · ${pending_fg_count}
                         </button>
                     ` : ''}
+                    ${spo_ready_count > 0 ? `
+                        <button class="so-btn so-btn--primary" id="btn-create-spo-all" style="margin-left:6px;"
+                                title="BOM items whose raw material is in stock now">
+                            <i class="fa fa-cogs"></i> Subcontract PO · ${spo_ready_count}
+                        </button>
+                    ` : ''}
                     ${dn_names.length > 0 ? `
                         <button class="so-btn so-btn--primary" id="btn-create-si-all-dns" style="margin-left:6px;"
                                 title="One SI from all submitted DNs">
@@ -1388,6 +1399,11 @@ function generate_stock_overview_table(frm, callback) {
                         </button>
                     ` : ''}
                 `);
+                if (spo_ready_count > 0) {
+                    $bulk_btn.find('#btn-create-spo-all').on('click', () => {
+                        window.so_show_spo_multi_prompt(frm.doc.name, spo_ready_items);
+                    });
+                }
                 if (eligible_for_picking) {
                     $bulk_btn.find('#btn-create-bulk-picklist').on('click', () => {
                         create_pick_list_for_bulk(frm, bulk_items, total_bulk_qty);
@@ -1409,6 +1425,22 @@ function generate_stock_overview_table(frm, callback) {
                     });
                 }
             };
+
+            // Which BOM items could go out on a Subcontract PO right now.
+            // Fetched rather than derived client-side because the answer
+            // depends on allocating one pool of raw material across every
+            // competing line (see _rm_ready_for_sco). Re-renders the button
+            // row on arrival; a failure just leaves the button off rather
+            // than blocking the rest of the widget.
+            if (frm.doc.docstatus === 1) {
+                frappe.call({
+                    method: 'erp_dacsinc_custom.order_flow_api.get_rm_ready_bom_items',
+                    args: { sales_order: frm.doc.name }
+                }).then(r => {
+                    spo_ready_items = r.message || [];
+                    if (spo_ready_items.length) render_create_btn();
+                }).catch(() => { /* button simply stays hidden */ });
+            }
 
             // This is the one place that manages picking for the whole order —
             // if Pick Lists already exist (from auto-creation on submit, or an
@@ -3716,6 +3748,261 @@ function so_make_rm_material_request(so_name, item_code, qty, uom, warehouse) {
         }
     );
 }
+
+/**
+ * Multi-item Subcontract PO prompt — the common-button counterpart to
+ * so_make_subcontract_po's single row.
+ *
+ * `items` comes from order_flow_api.get_rm_ready_bom_items, NEVER from a
+ * client-side readiness check: so_rm_physically_in_stock tests one row at a
+ * time against current stock, so two rows sharing a raw material would each
+ * independently look ready off the same fabric. The server's list is
+ * allocation-aware (see _rm_ready_for_sco) and is the same set the Sales
+ * Tracker's "RM Ready" badge counts, so both surfaces offer exactly the
+ * same items.
+ *
+ * Shared with the Order Flow dashboard, which frappe.require()s this file
+ * and calls straight through — same reason so_show_mapped_doc_preview is
+ * exposed the same way.
+ */
+window.so_show_spo_multi_prompt = function (sales_order, items, on_done) {
+    items = (items || []).filter(it => flt(it.qty) > 0);
+    if (!items.length) {
+        frappe.msgprint({
+            title: __('Nothing ready for a Subcontract PO'),
+            message: __('No BOM item on this order has its raw material fully in stock yet.'),
+            indicator: 'orange'
+        });
+        return;
+    }
+
+    const fmt = n => {
+        const v = flt(n);
+        return (Math.abs(v - Math.round(v)) < 0.0005) ? String(Math.round(v)) : v.toFixed(2);
+    };
+
+    const row_html = (it, i) => {
+        const uom = it.uom || '';
+        // Everything already accounted for on this SO line, so the cap is
+        // explainable rather than a number the user has to take on trust.
+        const meta = [
+            it.bom_no ? `${__('BOM')}: ${esc(it.bom_no)}` : '',
+            `${__('Ordered')} ${fmt(it.so_qty)}`,
+            flt(it.delivered_qty) > 0 ? `${__('delivered')} ${fmt(it.delivered_qty)}` : '',
+            flt(it.already_qty) > 0 ? `${__('already on SCO')} ${fmt(it.already_qty)}` : ''
+        ].filter(Boolean).join(' · ');
+
+        const rm = (it.rm || []).map(r => `
+            <div class="spo-rm-line">
+                <span class="spo-rm-name">${esc(r.item_name || r.item_code)}</span>
+                <span class="spo-rm-num">${fmt(r.qty_per_fg)} ${esc(r.uom || '')} / ${__('unit')}</span>
+                <span class="spo-rm-num">${__('needs')} <b>${fmt(r.required)}</b></span>
+                <span class="spo-rm-num spo-ok">${__('in stock')} ${fmt(r.available)}</span>
+            </div>`).join('');
+
+        return `
+        <tr data-i="${i}">
+            <td class="spo-c"><input type="checkbox" class="spo-pick" data-i="${i}" checked></td>
+            <td>
+                <div class="spo-item">${esc(it.item_code)}</div>
+                ${it.item_name && it.item_name !== it.item_code
+                    ? `<div class="spo-sub">${esc(it.item_name)}</div>` : ''}
+                ${meta ? `<div class="spo-sub">${meta}</div>` : ''}
+                ${rm ? `
+                    <div class="spo-rm-toggle" data-i="${i}">
+                        <i class="fa fa-flask"></i> ${__('Raw material')} (${(it.rm || []).length})
+                        <i class="fa fa-caret-down"></i>
+                    </div>
+                    <div class="spo-rm" data-i="${i}" style="display:none;">${rm}</div>` : ''}
+            </td>
+            <td class="spo-r"><span class="spo-cap">${fmt(it.qty)}</span>
+                ${uom ? `<div class="spo-sub">${esc(uom)}</div>` : ''}</td>
+            <td class="spo-r">
+                <input type="number" class="spo-qty" data-i="${i}"
+                       value="${fmt(it.qty)}" min="0" max="${flt(it.qty)}" step="any">
+                <div class="spo-err" data-i="${i}"></div>
+            </td>
+            <td class="spo-wh">${esc(it.warehouse || '')}</td>
+        </tr>`;
+    };
+
+    const dialog = new frappe.ui.Dialog({
+        title: __('Create Subcontract PO — {0}', [sales_order]),
+        size: 'large',
+        fields: [{ fieldtype: 'HTML', fieldname: 'picker' }],
+        primary_action_label: __('Create Subcontract PO'),
+        primary_action: () => {
+            const chosen = [];
+            let bad = false;
+            dialog.$wrapper.find('.spo-pick:checked').each((n, el) => {
+                const i = $(el).data('i');
+                const it = items[i];
+                const qty = flt(dialog.$wrapper.find(`.spo-qty[data-i="${i}"]`).val());
+                if (!(qty > 0) || qty > flt(it.qty) + 0.0005) { bad = true; return; }
+                chosen.push({ item_code: it.item_code, qty: qty });
+            });
+            if (bad) {
+                frappe.msgprint(__('Fix the highlighted quantities first.'));
+                return;
+            }
+            if (!chosen.length) {
+                frappe.msgprint(__('Select at least one item.'));
+                return;
+            }
+            dialog.hide();
+            frappe.call({
+                method: 'erp_dacsinc_custom.custom_script.make_subcontract_purchase_orders_bulk',
+                args: { sales_order: sales_order, items: chosen },
+                freeze: true,
+                freeze_message: __('Building Subcontract PO…'),
+                callback: (r) => {
+                    if (!r.message) return;   // server threw; Frappe has shown the reason
+                    frappe.model.sync(r.message);
+                    // Unsaved draft — a new tab has no access to this tab's
+                    // client-side cache and would render blank.
+                    frappe.set_route('Form', r.message.doctype, r.message.name);
+                    frappe.show_alert({
+                        message: __('Pick the supplier, check the rates, then save.'),
+                        indicator: 'blue'
+                    }, 7);
+                    if (on_done) on_done(r.message);
+                }
+            });
+        },
+        secondary_action_label: __('Cancel'),
+        secondary_action: () => dialog.hide()
+    });
+
+    // Fully self-contained styling: this dialog opens from the Sales Order
+    // form AND from the Order Flow dashboard, which load different
+    // stylesheets — leaning on either page's table classes left it unstyled
+    // on one and with unreadable headers on the other. Colours come from
+    // Frappe's own desk variables so it follows the active theme.
+    dialog.fields_dict.picker.$wrapper.html(`
+        <style>
+            .spo-wrap { font-size: 13px; color: var(--text-color, #1f272e); }
+            .spo-note {
+                display: flex; gap: 8px; align-items: flex-start;
+                margin-bottom: 12px; padding: 10px 12px; border-radius: 8px;
+                background: var(--bg-light-gray, #f4f5f6);
+                color: var(--text-muted, #6c7680); line-height: 1.5; font-size: 12px;
+            }
+            .spo-card {
+                border: 1px solid var(--border-color, #e2e6e9);
+                border-radius: 8px; overflow: hidden;
+            }
+            .spo-tbl { width: 100%; border-collapse: collapse; }
+            .spo-tbl th, .spo-tbl td { padding: 10px 12px; text-align: left; vertical-align: top; }
+            .spo-tbl thead th {
+                font-size: 11px; font-weight: 600; text-transform: uppercase;
+                letter-spacing: .04em; white-space: nowrap;
+                color: var(--text-muted, #6c7680);
+                background: var(--bg-light-gray, #f4f5f6);
+                border-bottom: 1px solid var(--border-color, #e2e6e9);
+            }
+            .spo-tbl tbody td { border-bottom: 1px solid var(--border-color, #e2e6e9); }
+            .spo-tbl tbody tr:last-child td { border-bottom: 0; }
+            .spo-tbl tbody tr:hover { background: var(--bg-light-gray, #fafbfc); }
+            .spo-c { width: 42px; text-align: center !important; }
+            .spo-r { text-align: right !important; white-space: nowrap; }
+            th.spo-r { text-align: right !important; }
+            .spo-wh { width: 170px; color: var(--text-muted, #6c7680); }
+            .spo-item { font-weight: 600; }
+            .spo-sub { font-size: 11px; color: var(--text-muted, #6c7680); margin-top: 3px; line-height: 1.45; }
+            .spo-cap { font-weight: 600; }
+            .spo-qty {
+                width: 88px; text-align: right; padding: 5px 8px; font-size: 13px;
+                border: 1px solid var(--border-color, #d1d8dd); border-radius: 6px;
+                background: var(--control-bg, #fff); color: inherit;
+            }
+            .spo-qty:focus { outline: none; border-color: var(--primary, #2490ef); }
+            .spo-qty.is-bad { border-color: var(--red-500, #e24c4c); background: var(--red-50, #fff5f5); }
+            .spo-err { font-size: 10px; color: var(--red-500, #e24c4c); margin-top: 3px; min-height: 12px; }
+            .spo-tbl input[type="checkbox"] { margin: 2px 0 0; cursor: pointer; }
+            .spo-rm-toggle {
+                display: inline-flex; gap: 5px; align-items: center; cursor: pointer;
+                margin-top: 6px; font-size: 11px; font-weight: 600;
+                color: var(--primary, #2490ef);
+            }
+            .spo-rm { margin-top: 6px; padding: 8px 10px; border-radius: 6px;
+                      background: var(--bg-light-gray, #f7f8f9); }
+            .spo-rm-line {
+                display: flex; flex-wrap: wrap; gap: 10px; align-items: baseline;
+                font-size: 11px; padding: 3px 0; color: var(--text-muted, #6c7680);
+            }
+            .spo-rm-name { min-width: 130px; font-weight: 600; color: var(--text-color, #1f272e); }
+            .spo-rm-num { white-space: nowrap; }
+            .spo-ok { color: var(--green-600, #28a745); }
+            .spo-foot {
+                display: flex; justify-content: space-between; align-items: center;
+                margin-top: 10px; font-size: 12px; color: var(--text-muted, #6c7680);
+            }
+            .spo-foot b { color: var(--text-color, #1f272e); }
+        </style>
+        <div class="spo-wrap">
+            <div class="spo-note">
+                <i class="fa fa-info-circle" style="margin-top:2px;"></i>
+                <span>${__('Raw material for these items is in stock. Order the full quantity, or lower it to order part now — the rest stays available later.')}</span>
+            </div>
+            <div class="spo-card">
+                <table class="spo-tbl">
+                    <thead><tr>
+                        <th class="spo-c"><input type="checkbox" class="spo-pick-all" checked></th>
+                        <th>${__('Item')}</th>
+                        <th class="spo-r">${__('Can Make')}</th>
+                        <th class="spo-r">${__('Qty to Order')}</th>
+                        <th>${__('Warehouse')}</th>
+                    </tr></thead>
+                    <tbody>${items.map(row_html).join('')}</tbody>
+                </table>
+            </div>
+            <div class="spo-foot">
+                <span>${__('Lower a qty for a partial Subcontract PO.')}</span>
+                <span class="spo-summary"></span>
+            </div>
+        </div>`);
+
+    const $w = dialog.$wrapper;
+    const refresh_summary = () => {
+        let n = 0, total = 0, bad = false;
+        $w.find('.spo-pick:checked').each((i, el) => {
+            const idx = $(el).data('i');
+            const $q = $w.find(`.spo-qty[data-i="${idx}"]`);
+            const qty = flt($q.val());
+            const cap = flt(items[idx].qty);
+            const invalid = !(qty > 0) || qty > cap + 0.0005;
+            $q.toggleClass('is-bad', invalid);
+            $w.find(`.spo-err[data-i="${idx}"]`).text(
+                invalid ? (qty > cap ? __('max {0}', [fmt(cap)]) : __('must be > 0')) : '');
+            if (invalid) bad = true; else { n += 1; total += qty; }
+        });
+        // Unchecked rows must never keep a stale error showing.
+        $w.find('.spo-pick:not(:checked)').each((i, el) => {
+            const idx = $(el).data('i');
+            $w.find(`.spo-qty[data-i="${idx}"]`).removeClass('is-bad');
+            $w.find(`.spo-err[data-i="${idx}"]`).text('');
+        });
+        $w.find('.spo-summary').html(n
+            ? __('{0} item(s) · total qty <b>{1}</b>', [n, fmt(total)])
+            : __('Nothing selected'));
+        dialog.get_primary_btn().prop('disabled', bad || n === 0);
+    };
+
+    $w.find('.spo-pick-all').on('change', function () {
+        $w.find('.spo-pick').prop('checked', $(this).is(':checked'));
+        refresh_summary();
+    });
+    $w.on('change input', '.spo-qty', refresh_summary);
+    $w.on('change', '.spo-pick', refresh_summary);
+    $w.on('click', '.spo-rm-toggle', function () {
+        const i = $(this).data('i');
+        $w.find(`.spo-rm[data-i="${i}"]`).toggle();
+    });
+
+    refresh_summary();
+    dialog.show();
+};
+
 
 /**
  * Subcontracting Purchase Order for a BOM / job-work finished good.

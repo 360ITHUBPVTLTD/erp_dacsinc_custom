@@ -4423,45 +4423,23 @@ def check_bom_raw_materials_in_stock(bom_no, qty_needed, bom_cache=None):
     return (len(shortages) == 0), shortages
 
 
-@frappe.whitelist()
-def make_subcontract_purchase_order(sales_order, item_code, qty=None):
+def _resolve_subcontract_service_and_supplier(item_code):
     """
-    (Called from the Sales Order stock widget → Next Action → "Subcontract PO")
-
-    Builds — but does NOT save — a subcontracting Purchase Order in the shape this
-    company already uses: is_subcontracted = 1, a service item on the row, the
-    finished good in fg_item, and the Sales Order carried through so the widget can
-    track it as incoming stock.
+    Service item + supplier for a subcontract PO line covering `item_code`.
 
     The service item is looked up from Subcontracting BOM first — ERPNext's own
     finished-good -> service-item mapping (Subcontracting BOM list), which needs
     no prior Purchase Order to exist at all. Only if this finished good has no
     Subcontracting BOM configured does it fall back to mining the most recent
     subcontracted PO for this finished good, then the last one used anywhere.
+    Throws if no service item can be resolved at all — a subcontract PO line
+    with no service item is not a valid document to hand back to the caller.
+
+    Factored out of make_subcontract_purchase_order so
+    make_subcontract_purchase_orders_bulk (several finished goods, possibly
+    several different suppliers, in one action) resolves each line exactly
+    the same way as the single-item path always has.
     """
-    so = frappe.get_doc("Sales Order", sales_order)
-    so.check_permission("read")
-
-    so_row = next((i for i in so.items if (i.item_code or "").strip() == (item_code or "").strip()), None)
-    if not so_row:
-        frappe.throw(_("{0} is not on Sales Order {1}.").format(item_code, sales_order))
-
-    qty = flt(qty) or max(0, flt(so_row.qty) - flt(so_row.delivered_qty)) or flt(so_row.qty)
-
-    # Hard block, no override: raw materials must be physically in stock
-    # before a Subcontract PO can be raised for this item — a pending MR/PO
-    # for the shortfall is not enough (see check_bom_raw_materials_in_stock).
-    is_fulfilled, shortages = check_bom_raw_materials_in_stock(so_row.bom_no, qty)
-    if not is_fulfilled:
-        shortage_lines = "<br>".join(
-            _("{0} — needs {1:.2f} {2}, only {3:.2f} in stock").format(
-                s["item_code"], s["required_qty"], s["uom"], s["available_qty"])
-            for s in shortages
-        )
-        frappe.throw(_(
-            "Cannot create a Subcontract PO for {0}: raw materials are not physically in stock yet.<br>{1}"
-        ).format(item_code, shortage_lines))
-
     service_item = None
     supplier = None
 
@@ -4506,33 +4484,175 @@ def make_subcontract_purchase_order(sales_order, item_code, qty=None):
             "Purchase Order manually first — either way, this button will reuse it next time."
         ).format(item_code))
 
+    return service_item, supplier
+
+
+def _build_subcontract_po_line(item_code, fg_qty, schedule_date, sales_order, so_item, warehouse):
+    """One Purchase Order Item row for a subcontract PO covering `item_code`,
+    with its own resolved service item — shared shape between the single-item
+    and bulk creation paths."""
+    service_item, supplier = _resolve_subcontract_service_and_supplier(item_code)
     svc = frappe.db.get_value("Item", service_item, ["stock_uom", "purchase_uom"], as_dict=True) or {}
     uom = svc.get("purchase_uom") or svc.get("stock_uom") or "Nos"
+    return supplier, {
+        "item_code": service_item,
+        "fg_item": item_code,
+        "fg_item_qty": fg_qty,
+        "qty": fg_qty,
+        "uom": uom,
+        "stock_uom": svc.get("stock_uom") or uom,
+        "conversion_factor": 1,
+        "schedule_date": schedule_date,
+        "sales_order": sales_order,
+        "sales_order_item": so_item,
+        "warehouse": warehouse,
+    }
+
+
+@frappe.whitelist()
+def make_subcontract_purchase_order(sales_order, item_code, qty=None):
+    """
+    (Called from the Sales Order stock widget → Next Action → "Subcontract PO")
+
+    Builds — but does NOT save — a subcontracting Purchase Order in the shape this
+    company already uses: is_subcontracted = 1, a service item on the row, the
+    finished good in fg_item, and the Sales Order carried through so the widget can
+    track it as incoming stock. See make_subcontract_purchase_orders_bulk for the
+    Sales Tracker's multi-item variant of this same action.
+    """
+    so = frappe.get_doc("Sales Order", sales_order)
+    so.check_permission("read")
+
+    so_row = next((i for i in so.items if (i.item_code or "").strip() == (item_code or "").strip()), None)
+    if not so_row:
+        frappe.throw(_("{0} is not on Sales Order {1}.").format(item_code, sales_order))
+
+    qty = flt(qty) or max(0, flt(so_row.qty) - flt(so_row.delivered_qty)) or flt(so_row.qty)
+
+    # Hard block, no override: raw materials must be physically in stock
+    # before a Subcontract PO can be raised for this item — a pending MR/PO
+    # for the shortfall is not enough (see check_bom_raw_materials_in_stock).
+    is_fulfilled, shortages = check_bom_raw_materials_in_stock(so_row.bom_no, qty)
+    if not is_fulfilled:
+        shortage_lines = "<br>".join(
+            _("{0} — needs {1:.2f} {2}, only {3:.2f} in stock").format(
+                s["item_code"], s["required_qty"], s["uom"], s["available_qty"])
+            for s in shortages
+        )
+        frappe.throw(_(
+            "Cannot create a Subcontract PO for {0}: raw materials are not physically in stock yet.<br>{1}"
+        ).format(item_code, shortage_lines))
 
     po = frappe.new_doc("Purchase Order")
     po.company = so.company
     po.is_subcontracted = 1
     po.transaction_date = frappe.utils.nowdate()
     po.schedule_date = so.delivery_date or frappe.utils.add_days(frappe.utils.nowdate(), 7)
-    if supplier:
-        po.supplier = supplier
     if getattr(so, "currency", None):
         po.currency = so.currency
 
-    po.append("items", {
-        "item_code": service_item,
-        "fg_item": item_code,
-        "fg_item_qty": qty,
-        "qty": qty,
-        "uom": uom,
-        "stock_uom": svc.get("stock_uom") or uom,
-        "conversion_factor": 1,
-        "schedule_date": po.schedule_date,
-        "sales_order": sales_order,
-        "sales_order_item": so_row.name,
-        "warehouse": so_row.warehouse or so.set_warehouse,
-    })
+    supplier, line = _build_subcontract_po_line(
+        item_code, qty, po.schedule_date, sales_order, so_row.name, so_row.warehouse or so.set_warehouse)
+    if supplier:
+        po.supplier = supplier
+    po.append("items", line)
 
+    po.run_method("set_missing_values")
+    return po.as_dict()
+
+
+@frappe.whitelist()
+def make_subcontract_purchase_orders_bulk(sales_order, items):
+    """
+    (Called from the Sales Tracker → Action Required → "Create Subcontract PO",
+    when more than one of this Sales Order's own BOM items has its raw
+    material ready — see get_rm_ready_bom_items in order_flow_api.py.)
+
+    Builds — but does NOT save — ONE subcontracting Purchase Order carrying
+    a line per selected finished good, in the same document shape
+    make_subcontract_purchase_order builds for a single item.
+
+    The supplier is deliberately left BLANK for the user to choose on the
+    draft. The single-item path guesses one from the most recent
+    subcontracted PO for that finished good, which is a reasonable guess for
+    one item but a misleading one here: several items can each have a
+    different "last supplier", and silently picking one of them (or splitting
+    the selection across several POs to honour all of them) decides for the
+    user something they are about to set anyway. Only the service item is
+    resolved per line, since a subcontract PO row is not valid without one.
+
+    `items` is [{"item_code": str, "qty": float}, ...]. A qty BELOW the
+    ready cap is fine and expected — raising a Subcontract PO for part of
+    what is currently possible is a normal thing to want, and the remainder
+    stays claimable later because _rm_ready_for_sco nets off whatever an
+    earlier partial PO already committed (`already`). A qty ABOVE the cap is
+    refused: less raw material than that is on the shelf, and the cap is
+    already net of what other lines and other orders have claimed.
+
+    Every entry is re-checked here against a FRESH call to
+    get_rm_ready_bom_items, never trusted as still valid from whenever the
+    prompt was opened — stock (or another user's PO) can move in between,
+    and this is the same allocation-aware check the prompt's own item list
+    came from, not a second independent one that could disagree with it.
+    """
+    import json
+    from erp_dacsinc_custom.order_flow_api import get_rm_ready_bom_items
+
+    if isinstance(items, str):
+        items = json.loads(items)
+    if not items:
+        frappe.throw(_("Select at least one item."))
+
+    so = frappe.get_doc("Sales Order", sales_order)
+    so.check_permission("read")
+
+    ready_by_code = {i["item_code"]: i for i in get_rm_ready_bom_items(sales_order)}
+
+    chosen = []
+    for row in items:
+        item_code = row.get("item_code")
+        info = ready_by_code.get(item_code)
+        if not info:
+            frappe.throw(_(
+                "Raw material for {0} is no longer fully available — refresh and try again."
+            ).format(item_code))
+
+        # An omitted qty means "all of it"; an explicitly-sent 0 is an error.
+        # `flt(x) or cap` would silently turn that 0 into a full-qty PO.
+        raw_qty = row.get("qty")
+        qty = flt(info["qty"]) if raw_qty in (None, "") else flt(raw_qty)
+        if qty <= 0:
+            frappe.throw(_("Row for {0}: qty must be greater than zero.").format(item_code))
+        # Compared at 3dp, the same precision get_rm_ready_bom_items rounds
+        # its cap to — otherwise re-sending the exact cap the prompt just
+        # displayed could fail on a float remainder.
+        if flt(qty, 3) > flt(info["qty"], 3):
+            frappe.throw(_(
+                "Row for {0}: only {1} can be subcontracted right now (raw material on hand), not {2}."
+            ).format(item_code, flt(info["qty"], 3), flt(qty, 3)))
+
+        chosen.append((info, qty))
+
+    schedule_date = so.delivery_date or frappe.utils.add_days(frappe.utils.nowdate(), 7)
+
+    po = frappe.new_doc("Purchase Order")
+    po.company = so.company
+    po.is_subcontracted = 1
+    po.transaction_date = frappe.utils.nowdate()
+    po.schedule_date = schedule_date
+    if getattr(so, "currency", None):
+        po.currency = so.currency
+
+    for info, qty in chosen:
+        _supplier, line = _build_subcontract_po_line(
+            info["item_code"], qty, schedule_date, sales_order,
+            info["so_item"], info.get("warehouse"))
+        po.append("items", line)
+
+    # Still required even with no supplier set — it does not throw, and
+    # without it each row's `rate` stays None rather than 0.0, which makes
+    # the draft unsaveable ("Rate cannot be zero") even after the user picks
+    # a supplier. With it, ERPNext's own pricing resolves the rate on save.
     po.run_method("set_missing_values")
     return po.as_dict()
 
@@ -8691,6 +8811,65 @@ def validate_material_request_no_bom_items(doc, method):
                 ),
                 title=_("Validation Error"),
             )
+
+
+def clear_po_from_warehouse_when_same_as_target(doc, method=None):
+    """
+    Drop a Purchase Order row's Source Warehouse (`from_warehouse`) when it
+    is the same as that row's target warehouse, before ERPNext validates it.
+
+    `buying_controller.validate_from_warehouse` throws "Row #N: Accepted
+    Warehouse and Supplier Warehouse cannot be same" for exactly that
+    combination — and rightly so, since moving stock from a warehouse to
+    itself means nothing. The problem is where the value comes from: an MR
+    carrying a stale, invisible `from_warehouse` (see
+    clear_mr_from_warehouse_unless_transfer) hands it straight to the PO via
+    get_mapped_doc, so a Purchase Order that the user never typed a source
+    warehouse into refuses to save.
+
+    Clearing it on the MR only helps MRs saved from then on — a Material
+    Request that is already submitted is never re-saved, so every one
+    already in the database would still block PO creation. This is the
+    safety net that makes those work, and it is safe precisely because the
+    only case it touches is the meaningless one ERPNext was about to reject
+    anyway. A genuine source warehouse, different from the target, is left
+    completely alone.
+
+    Runs as before_validate so it lands before the controller's own
+    validate() gets to validate_from_warehouse.
+    """
+    for row in doc.get("items") or []:
+        if row.get("from_warehouse") and row.get("from_warehouse") == row.get("warehouse"):
+            row.from_warehouse = None
+
+
+def clear_mr_from_warehouse_unless_transfer(doc, method=None):
+    """
+    A Source Warehouse (`from_warehouse`) only means anything on a Material
+    Transfer. On every other request type the field is merely HIDDEN — its
+    `depends_on` is eval:parent.material_request_type == "Material Transfer",
+    and depends_on hides a field without ever clearing what is stored in it.
+
+    So an MR that was a Material Transfer for even a moment (or had the type
+    switched after rows were added) keeps a `from_warehouse` nobody can see
+    on the form. make_purchase_order then copies it onto the Purchase Order
+    Item — get_mapped_doc carries same-named fields across by default, and
+    `from_warehouse` is not in the explicit field_map precisely because
+    nobody expected it to be set — where buying_controller's
+    validate_from_warehouse throws "Row #N: Accepted Warehouse and Supplier
+    Warehouse cannot be same" as soon as it equals the row's target
+    warehouse. The PO is then impossible to create from an MR that looks
+    completely normal on screen.
+
+    Clearing it here, at the source, keeps what is stored equal to what the
+    form actually shows, so the invisible value can never reach a PO.
+    """
+    if doc.material_request_type == "Material Transfer":
+        return
+
+    for row in doc.items:
+        if row.get("from_warehouse"):
+            row.from_warehouse = None
 
 
 import frappe

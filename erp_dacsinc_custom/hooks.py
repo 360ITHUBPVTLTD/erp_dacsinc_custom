@@ -268,6 +268,11 @@ doc_events = {
         "on_update": "erp_dacsinc_custom.custom_customer.update_customer_sharing"
     },
     "Purchase Order": {
+        # before_validate, so it lands before buying_controller's own
+        # validate_from_warehouse — it clears a source warehouse that merely
+        # equals the target, which is the form a stale Material Request value
+        # arrives in and the only form ERPNext would reject anyway.
+        "before_validate": "erp_dacsinc_custom.custom_script.clear_po_from_warehouse_when_same_as_target",
         "validate": [
             "erp_dacsinc_custom.custom_script.validate_non_zero_rate",
             "erp_dacsinc_custom.custom_script.guard_po_item_not_over_so_need",
@@ -284,6 +289,13 @@ doc_events = {
         "on_update": "erp_dacsinc_custom.custom_script.share_notification_settings"
     },
     "Material Request": {
+        # A hidden-but-still-stored Source Warehouse on a non-transfer MR is
+        # what makes "Accepted Warehouse and Supplier Warehouse cannot be
+        # same" fire later, on the PO made from it. Must be before_validate:
+        # Material Request extends BuyingController too, so the controller's
+        # own validate_from_warehouse would throw on the equal-warehouse case
+        # before a plain "validate" hook ever ran.
+        "before_validate": "erp_dacsinc_custom.custom_script.clear_mr_from_warehouse_unless_transfer",
         "validate": [
             "erp_dacsinc_custom.custom_script.validate_material_request_no_bom_items",
             # Mirrors guard_po_item_not_over_so_need — without it the

@@ -1095,9 +1095,36 @@ class OrderFlow {
                     confirm_label: __('Create Purchase Order')
                 });
             } else if (action === 'make_mr' && so) {
-                // Opens the existing Sales Order (a Material Request is
-                // raised from there) — same new-tab treatment.
-                window.open(frappe.utils.get_form_link('Sales Order', so), '_blank');
+                // "Create Subcontract PO" / "Raise MR / Subcontract PO" both
+                // land here. If any BOM item on this order has its raw
+                // material in stock right now, offer those directly instead
+                // of bouncing the user to the Sales Order to hunt for the
+                // per-row button — the whole point of this column is that
+                // the next action is one click. Anything NOT in that list
+                // (plain trade items, or BOM items still short) still needs
+                // the order's own widget, so with nothing ready this falls
+                // back to exactly the old behaviour.
+                frappe.call({
+                    method: 'erp_dacsinc_custom.order_flow_api.get_rm_ready_bom_items',
+                    args: { sales_order: so },
+                    freeze: true,
+                    freeze_message: __('Checking raw material…')
+                }).then(r => {
+                    const ready = (r && r.message) || [];
+                    if (!ready.length) {
+                        window.open(frappe.utils.get_form_link('Sales Order', so), '_blank');
+                        return;
+                    }
+                    frappe.require('/assets/erp_dacsinc_custom/js/sales_order.js', () => {
+                        if (typeof window.so_show_spo_multi_prompt !== 'function') {
+                            window.open(frappe.utils.get_form_link('Sales Order', so), '_blank');
+                            return;
+                        }
+                        window.so_show_spo_multi_prompt(so, ready, () => this.refresh(true));
+                    });
+                }).catch(() => {
+                    window.open(frappe.utils.get_form_link('Sales Order', so), '_blank');
+                });
             }
         });
 
@@ -2569,7 +2596,7 @@ class OrderFlow {
                     ${o.rm_ready_for_sco ? `
                         <div class="of-micro" style="margin-top:4px;color:var(--of-purple);font-weight:700;"
                              title="${of_esc('Raw material for ' + flt_of(o.rm_ready_fg_qty) + ' unit(s) is in stock at VV Puram now — a Subcontracting PO can be raised for it. Counted against stock actually on hand, so two orders are never told the same material is theirs.')}">
-                            <i class="fa fa-flask"></i> ${__('RM Ready — Make SCO PO')} (${flt_of(o.rm_ready_fg_qty)})
+                            ${__('RM Ready — Make SCO PO')} (${flt_of(o.rm_ready_fg_qty)})
                         </div>` : ''}
                     ${rm_stage_note_html}
                 </td>
@@ -3024,7 +3051,8 @@ class OrderFlow {
             <tr class="of-doc-row">
                 <td><i class="fa fa-caret-right of-doc-items-toggle" data-doctype="Purchase Order" data-docname="${of_esc(p.name)}" style="cursor:pointer;margin-right:4px;color:var(--text-light);"></i>
                     <a href="/app/purchase-order/${encodeURIComponent(p.name)}" target="_blank" style="font-weight:700;">${of_esc(p.name)}</a>
-                    ${flt_of(p.is_subcontracted) === 1 ? '<div><span class="of-chip">Subcontract</span></div>' : ''}</td>
+                    ${flt_of(p.is_subcontracted) === 1 ? '<div><span class="of-chip">Subcontract</span></div>' : ''}
+                    ${of_order_confirmation_html(p)}</td>
                 <td style="text-align:left;">
                     <a href="/app/supplier/${encodeURIComponent(p.supplier)}" target="_blank" style="font-weight:600;">${of_esc(p.supplier_name || p.supplier || '')}</a>
                 </td>
@@ -3047,7 +3075,8 @@ class OrderFlow {
         const bill_rows = pos_need_bill.map(p => `
             <tr class="of-doc-row">
                 <td><i class="fa fa-caret-right of-doc-items-toggle" data-doctype="Purchase Order" data-docname="${of_esc(p.name)}" style="cursor:pointer;margin-right:4px;color:var(--text-light);"></i>
-                    <a href="/app/purchase-order/${encodeURIComponent(p.name)}" target="_blank" style="font-weight:700;">${of_esc(p.name)}</a></td>
+                    <a href="/app/purchase-order/${encodeURIComponent(p.name)}" target="_blank" style="font-weight:700;">${of_esc(p.name)}</a>
+                    ${of_order_confirmation_html(p)}</td>
                 <td style="text-align:left;">
                     <a href="/app/supplier/${encodeURIComponent(p.supplier)}" target="_blank" style="font-weight:600;">${of_esc(p.supplier_name || p.supplier || '')}</a>
                 </td>
@@ -5231,6 +5260,14 @@ function of_links(list, doctype) {
 }
 function of_so_links(list) { return of_links(list, 'Sales Order'); }
 function of_po_links(list) { return of_links(list, 'Purchase Order'); }
+
+// The supplier's own order confirmation reference for a PO, shown right
+// under the PO id — most POs never get one, so this renders nothing rather
+// than an empty "Order Conf: —" line cluttering every row.
+function of_order_confirmation_html(p) {
+    if (!p.order_confirmation_no) return '';
+    return `<div class="of-micro text-muted">${__('Order Conf')}: ${of_esc(p.order_confirmation_no)}${p.order_confirmation_date ? ` (${of_date(p.order_confirmation_date)})` : ''}</div>`;
+}
 
 /**
  * One quiet summary row for a tab's secondary numbers (Purchase/Job Work/

@@ -793,7 +793,7 @@ def _get_tracker_rows(days=120, search=None, scope="open", merchandiser=None, ap
         # the standard "Raise MR from SO" / subcontract-PO flows always do).
         o["rm_ready_for_sco"] = False
         o["rm_ready_fg_qty"] = 0.0
-        o["rm_ready_items"] = 0
+        o["rm_ready_items"] = []
         o["rm_counts"] = {}
         o["rm_mrs"] = []
         o["rm_pos"] = []
@@ -1162,9 +1162,14 @@ _FLAG_FILTERS = ("rm_ready_for_sco",)
 
 def _rm_ready_for_sco(order_names):
     """
-    {so_name: {"fg_qty": x, "items": n}} for orders whose raw material has
+    {so_name: {"fg_qty": x, "items": [{"item_code", "item_name", "so_item",
+    "bom_no", "qty", "warehouse"}, ...]}} for orders whose raw material has
     ARRIVED — i.e. a Subcontracting PO can be raised right now, from stock on
-    hand, for finished-good qty that is not already on one.
+    hand, for finished-good qty that is not already on one. `items` is the
+    exact set the "Create Subcontract PO" multi-select prompt offers (see
+    get_rm_ready_bom_items) — the same allocation this function already did
+    for the tracker's "RM Ready" badge, not a second, independent check that
+    could disagree with it.
 
     Stock is ALLOCATED as it goes, not merely compared. check_bom_raw_materials_in_stock
     documents that each of its calls is an independent snapshot against current
@@ -1173,7 +1178,9 @@ def _rm_ready_for_sco(order_names):
     covers 2. Here the same working stock map is decremented as each candidate
     claims it, so the count only ever promises stock that exists. Candidates
     are taken earliest-delivery-first (then by name, so the result is stable
-    between loads rather than shuffling with row order).
+    between loads rather than shuffling with row order) — for two candidates
+    on the SAME order, that tie-breaks to SO Item row order, so if two lines
+    compete for the same raw material, only the earlier one is ever offered.
 
     "Physically in stock" matches the rule used everywhere else in this app: a
     pending Material Request or Purchase Order for the shortfall does not
@@ -1186,7 +1193,8 @@ def _rm_ready_for_sco(order_names):
 
     candidates = frappe.db.sql("""
         SELECT soi.parent AS sales_order, soi.name AS so_item, soi.item_code,
-               soi.bom_no, soi.qty, soi.delivered_qty,
+               soi.bom_no, soi.qty, soi.delivered_qty, soi.warehouse,
+               soi.uom, soi.stock_uom,
                COALESCE(so.delivery_date, so.transaction_date) AS due
         FROM `tabSales Order Item` soi
         JOIN `tabSales Order` so ON so.name = soi.parent
@@ -1223,6 +1231,8 @@ def _rm_ready_for_sco(order_names):
             continue
         boms[bom_no] = [
             {"item_code": bi.item_code,
+             "item_name": bi.item_name or bi.item_code,
+             "uom": bi.stock_uom or bi.uom,
              "qty_per_fg": flt(bi.stock_qty) if bi.stock_qty else flt(bi.qty)}
             for bi in bom_doc.items
         ]
@@ -1253,14 +1263,68 @@ def _rm_ready_for_sco(order_names):
         if any(flt(stock.get(code, 0)) + 0.001 < qty for code, qty in need.items()):
             continue
 
+        # Snapshot what this candidate is actually consuming BEFORE the
+        # working map is decremented, so the prompt can show the real
+        # "needed vs on hand" per raw material rather than what is left over
+        # after this item already claimed its share.
+        rm_detail = [{
+            "item_code": rm["item_code"],
+            "item_name": rm.get("item_name") or rm["item_code"],
+            "uom": rm.get("uom") or "",
+            "qty_per_fg": flt(rm["qty_per_fg"], 4),
+            "required": flt(flt(rm["qty_per_fg"]) * remaining, 3),
+            "available": flt(stock.get(rm["item_code"], 0), 3),
+        } for rm in rm_lines]
+
         for code, qty in need.items():
             stock[code] = flt(stock.get(code, 0)) - qty
 
-        entry = ready.setdefault(c.sales_order, {"fg_qty": 0.0, "items": 0})
+        entry = ready.setdefault(c.sales_order, {"fg_qty": 0.0, "items": []})
         entry["fg_qty"] = flt(entry["fg_qty"] + remaining, 3)
-        entry["items"] += 1
+        entry["items"].append({
+            "item_code": c.item_code,
+            "so_item": c.so_item,
+            "bom_no": c.bom_no,
+            # `qty` is the CAP — the most that can be raised right now. The
+            # prompt lets the user dial it down for a partial PO; the
+            # remainder stays claimable later, because `already` above nets
+            # off whatever an earlier partial PO already committed.
+            "qty": flt(remaining, 3),
+            "so_qty": flt(c.qty, 3),
+            "delivered_qty": flt(c.delivered_qty, 3),
+            "already_qty": flt(already.get(c.so_item, 0), 3),
+            "uom": c.uom or c.stock_uom or "",
+            "warehouse": c.warehouse,
+            "rm": rm_detail,
+        })
+
+    if ready:
+        item_names = {
+            r.name: r.item_name for r in frappe.db.sql("""
+                SELECT name, item_name FROM `tabItem` WHERE name IN %(items)s
+            """, {"items": tuple({i["item_code"] for e in ready.values() for i in e["items"]})}, as_dict=True)
+        }
+        for entry in ready.values():
+            for item in entry["items"]:
+                item["item_name"] = item_names.get(item["item_code"]) or item["item_code"]
 
     return ready
+
+
+@frappe.whitelist()
+def get_rm_ready_bom_items(sales_order):
+    """
+    Backs the "Create Subcontract PO" multi-select prompt (Sales Tracker →
+    Action Required): which of this Sales Order's own BOM items can have a
+    Subcontract PO raised for them RIGHT NOW, with the qty that's actually
+    covered. A thin, fresh-snapshot wrapper over _rm_ready_for_sco, not a
+    second independent stock check — so the prompt can never offer an item
+    the tracker's own "RM Ready" badge disagrees with, and can never offer
+    two items that are only jointly satisfiable off the same raw material
+    (see that function's item-ordering note).
+    """
+    frappe.get_doc("Sales Order", sales_order).check_permission("read")
+    return _rm_ready_for_sco([sales_order]).get(sales_order, {}).get("items", [])
 
 
 def _billable_delivery_notes(sales_order):
@@ -1956,7 +2020,7 @@ def get_purchase_flow(days=120, search=None, scope="open", merchandiser=None,
             param_key = f"q_{idx}"
             conditions.append(f"""(po.name LIKE %({param_key})s OR po.supplier LIKE %({param_key})s
                                   OR sup.supplier_name LIKE %({param_key})s OR poi.sales_order LIKE %({param_key})s
-                                  OR poi.item_code LIKE %({param_key})s)""")
+                                  OR poi.item_code LIKE %({param_key})s OR po.order_confirmation_no LIKE %({param_key})s)""")
             params[param_key] = f"%{word}%"
     # A plain Merchandiser User only sees the lines of a PO/MR/Receipt that
     # are for their own customers — same is_scoped_to_own_customers guard as
@@ -1978,6 +2042,7 @@ def get_purchase_flow(days=120, search=None, scope="open", merchandiser=None,
         SELECT po.name, po.transaction_date, po.schedule_date, po.status, po.docstatus,
                po.supplier, sup.supplier_name, po.is_subcontracted, po.currency,
                po.per_received, po.per_billed, po.grand_total,
+               po.order_confirmation_no, po.order_confirmation_date,
                GROUP_CONCAT(DISTINCT poi.sales_order ORDER BY poi.sales_order SEPARATOR ', ') AS sales_orders,
                GROUP_CONCAT(DISTINCT so.customer_name ORDER BY so.customer_name SEPARATOR ', ') AS so_customer_names,
                COUNT(DISTINCT poi.item_code) AS item_count,
@@ -1991,7 +2056,8 @@ def get_purchase_flow(days=120, search=None, scope="open", merchandiser=None,
         WHERE {' AND '.join(conditions)}
         GROUP BY po.name, po.transaction_date, po.schedule_date, po.status, po.docstatus,
                  po.supplier, sup.supplier_name, po.is_subcontracted, po.currency,
-                 po.per_received, po.per_billed, po.grand_total
+                 po.per_received, po.per_billed, po.grand_total,
+                 po.order_confirmation_no, po.order_confirmation_date
         ORDER BY po.transaction_date DESC, po.name DESC
     """, params, po_page, po_page_size)
 
@@ -2003,6 +2069,7 @@ def get_purchase_flow(days=120, search=None, scope="open", merchandiser=None,
         SELECT po.name, po.transaction_date, po.schedule_date, po.status, po.docstatus,
                po.supplier, sup.supplier_name, po.is_subcontracted, po.currency,
                po.per_received, po.per_billed, po.grand_total,
+               po.order_confirmation_no, po.order_confirmation_date,
                GROUP_CONCAT(DISTINCT poi.sales_order ORDER BY poi.sales_order SEPARATOR ', ') AS sales_orders,
                GROUP_CONCAT(DISTINCT so.customer_name ORDER BY so.customer_name SEPARATOR ', ') AS so_customer_names,
                COUNT(DISTINCT poi.item_code) AS item_count,
@@ -2016,7 +2083,8 @@ def get_purchase_flow(days=120, search=None, scope="open", merchandiser=None,
         WHERE {' AND '.join(conditions + ["po.per_received >= 100", "po.per_billed < 100"])}
         GROUP BY po.name, po.transaction_date, po.schedule_date, po.status, po.docstatus,
                  po.supplier, sup.supplier_name, po.is_subcontracted, po.currency,
-                 po.per_received, po.per_billed, po.grand_total
+                 po.per_received, po.per_billed, po.grand_total,
+                 po.order_confirmation_no, po.order_confirmation_date
         ORDER BY po.transaction_date DESC, po.name DESC
     """, params, bill_page, bill_page_size)
 

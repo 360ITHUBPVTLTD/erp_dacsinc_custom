@@ -71,6 +71,45 @@ Note when testing this: saving **Admin Settings commits** (its `on_update`
 regenerates a derived Custom Role), so a `frappe.db.rollback()` will NOT undo
 a role change made in a test.
 
+## A non-transfer MR must not carry a Source Warehouse
+
+`Material Request Item.from_warehouse` ("Source Warehouse") only means
+anything on a **Material Transfer**. Its `depends_on` is
+`eval:parent.material_request_type == "Material Transfer"` — and `depends_on`
+*hides* a field, it never clears what is already stored in it. So an MR that
+was a Material Transfer for even a moment, or had its type switched after
+rows were added, keeps a `from_warehouse` that nobody can see on the form.
+
+That invisible value is not harmless. `make_purchase_order` maps MR → PO
+with `get_mapped_doc`, which copies same-named fields across by default, and
+`from_warehouse` is absent from the explicit `field_map` precisely because
+nobody expected it to be set. It lands on the Purchase Order Item, where
+`buying_controller.validate_from_warehouse` throws **"Row #N: Accepted
+Warehouse and Supplier Warehouse cannot be same"** the moment it equals that
+row's target warehouse — leaving an MR that looks completely normal on
+screen but cannot be converted to a PO at all.
+
+Two hooks, because one is not enough:
+
+- `clear_mr_from_warehouse_unless_transfer` — a Material Request
+  **`before_validate`** hook, clearing `from_warehouse` on every row of any
+  non-transfer MR, so what is stored matches what the form actually shows.
+  It must be `before_validate`, not `validate`: Material Request extends
+  `BuyingController` too, so the controller's own `validate_from_warehouse`
+  rejects an equal-warehouse row *before* a plain `validate` hook would
+  ever run, turning a cleanable value into a hard save error.
+- `clear_po_from_warehouse_when_same_as_target` — a Purchase Order
+  **`before_validate`** hook, dropping `from_warehouse` when it equals that
+  row's own target warehouse.
+
+The PO-side one is what actually rescues **existing** data. Cleaning the MR
+only helps MRs saved from that point on, and a Material Request that is
+already submitted is never re-saved — so every MR already carrying the
+stale value would still refuse to become a PO. It is safe precisely because
+the only case it touches is the meaningless one (a move from a warehouse to
+itself) that ERPNext was about to reject anyway; a genuine source warehouse
+that differs from the target is left alone.
+
 ## Neither a PO nor an MR may exceed the Sales Order line's own need
 
 The cap applies to **both** documents, or it isn't a cap: blocking it only on
@@ -795,6 +834,84 @@ restate that row rather than double it.
 material replaces that item's own trace lines and leaves every other item's
 alone, where clearing the whole table discarded the trace for rows a different
 dialog had added.
+
+## Raising a Subcontract PO for several items at once
+
+A Subcontract PO used to be strictly one finished good at a time: the Item
+Stock & Action Plan's per-row "Subcontract PO" button, calling
+`make_subcontract_purchase_order(sales_order, item_code, qty)`. Two surfaces
+now offer the same action for **every** item on the order whose raw material
+is in stock, via one multi-select prompt:
+
+- **Sales Tracker → Action Required → "Create Subcontract PO"**
+  (`order_flow.js`, the `make_mr` action). It used to just open the Sales
+  Order and leave the user to find the per-row button.
+- **Item Stock & Action Plan → "Subcontract PO · N"**, alongside the
+  existing "Raw Material MR · N" / "Finished Item MR · N" bulk buttons.
+
+Both call `order_flow_api.get_rm_ready_bom_items(sales_order)` for the item
+list and open the same dialog, `window.so_show_spo_multi_prompt` in
+`sales_order.js` (exposed on `window` for the dashboard to reuse, the same
+way `so_show_mapped_doc_preview` already is). With nothing ready, both fall
+back to their old behaviour rather than showing an empty prompt.
+
+**The offered list comes from the server, never from a client-side stock
+test.** `so_rm_physically_in_stock` checks one row at a time against current
+stock, so two rows consuming the same fabric would each independently look
+ready off the same quantity. `get_rm_ready_bom_items` is a thin wrapper over
+`_rm_ready_for_sco` (order_flow_api.py), which allocates one working stock
+map across every competing line and decrements it as each claims its share —
+so the prompt offers exactly what the Sales Tracker's own "RM Ready" badge
+counts, and can never offer two items that are only *individually*
+satisfiable. Where two lines on one order compete, the earlier SO Item row
+wins (the candidate ordering tie-breaks on `soi.idx`); the loser simply
+isn't offered until more material arrives.
+
+**Quantities are editable, and capped.** Each row's `qty` from
+`get_rm_ready_bom_items` is a **cap** — the most that can go out right now,
+already net of what is delivered, what an earlier Subcontract PO committed
+(`already_qty`), and what competing lines have claimed from the same raw
+material. The prompt pre-fills the cap and lets it be lowered for a partial
+PO; the remainder stays claimable next time, because `_rm_ready_for_sco`
+nets off the new PO's `fg_item_qty` on the following pass (verified: a line
+of 200 with 50 ordered re-offers exactly 150, with `already_qty` 50).
+`make_subcontract_purchase_orders_bulk` re-checks every qty server-side
+against a fresh cap and refuses anything above it, at or below zero.
+An *omitted* qty means "all of it"; an explicitly-sent `0` is an error, not
+a silent fall-through to the cap.
+
+Each row also carries the detail needed to choose that qty: `so_qty`,
+`delivered_qty`, `already_qty`, `uom`, and an `rm` breakdown of every raw
+material with `qty_per_fg`, `required` for the capped qty, and `available`
+on hand — snapshotted **before** the working stock map is decremented, so
+it shows what this item actually consumes rather than what is left after it
+claimed its share.
+
+**One draft PO, with the supplier deliberately left blank.**
+`make_subcontract_purchase_orders_bulk(sales_order, item_codes)` builds a
+single Purchase Order carrying a line per selected finished good. It
+resolves each line's *service item* through the same
+`_resolve_subcontract_service_and_supplier` fallback chain the single-item
+path uses (Subcontracting BOM → most recent subcontracted PO for that FG →
+last one used anywhere), because a subcontract row is not valid without one
+— but it does **not** apply that function's supplier guess. Guessing a
+supplier from "whoever did this finished good last" is defensible for one
+item and misleading for several, each of which can have a different last
+supplier; the user picks it on the draft. The single-item path still
+auto-fills it, unchanged.
+
+`set_missing_values()` still runs despite there being no supplier. It does
+not throw, and skipping it leaves each row's `rate` as `None` rather than
+`0.0` — which makes the draft unsaveable ("Rate cannot be zero for Item
+…") even after a supplier is chosen. With it, ERPNext's own pricing
+resolves the rate on save. Like the single-item path, this builds but never
+saves.
+
+`item_codes` is re-checked against a fresh `get_rm_ready_bom_items` inside
+that call, never trusted from whenever the prompt was opened — stock (or
+someone else's PO) can move in between, and re-using the same
+allocation-aware source is what stops that check disagreeing with the list
+the user was shown.
 
 ## The three raw-material "fetch" surfaces
 
