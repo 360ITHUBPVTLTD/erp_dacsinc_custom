@@ -3257,7 +3257,17 @@ def get_item_stock_details_bulk(item_bom_pairs, sales_order_name):
 
         # 9. Shortfall & RM Logic
         truly_available_fg = max(0, total_available_stock - picked_for_others_qty - draft_qty_for_others)
-        pending_fg_for_so = max(0, required_qty - delivered_qty)
+        # Qty already picked for THIS order counts as produced. Picking moves
+        # it out of total_available_stock, so without this an order whose
+        # goods are fully picked and sitting ready for a Delivery Note reads
+        # as if every unit still had to be manufactured — and its BOM then
+        # reports a full raw-material Shortage on an order that is about to
+        # ship (confirmed live: 25 of 25 picked, "Ready — Delivery Note", and
+        # the Raw Material Pipeline still demanding 56.25 Meter). Submitted
+        # picks only; a draft Pick List has committed nothing and can still be
+        # deleted. picked_sub_undelivered is already capped at what the line
+        # still owes, so it can never double-count with delivered_qty.
+        pending_fg_for_so = max(0, required_qty - delivered_qty - picked_sub_undelivered)
         fg_shortfall = max(0, pending_fg_for_so - truly_available_fg)
         
         rm_procurement_status = {
@@ -8811,6 +8821,131 @@ def validate_material_request_no_bom_items(doc, method):
                 ),
                 title=_("Validation Error"),
             )
+
+
+def _subcontract_transfer_sales_order(doc):
+    """The Sales Order a 'Send to Subcontractor' transfer is working for,
+    via Subcontracting Order -> Purchase Order -> sales_order. None when the
+    chain is missing or the PO spans several orders (attributing it to one of
+    them would silently move another order's raw material)."""
+    if not doc.get("subcontracting_order"):
+        return None
+    po = frappe.db.get_value("Subcontracting Order", doc.subcontracting_order, "purchase_order")
+    if not po:
+        return None
+    orders = frappe.db.sql_list("""
+        SELECT DISTINCT sales_order FROM `tabPurchase Order Item`
+        WHERE parent = %s AND IFNULL(sales_order, '') != ''
+    """, po)
+    return orders[0] if len(orders) == 1 else None
+
+
+def flag_subcontract_rm_borrowing(doc, method=None):
+    """
+    before_submit on Stock Entry: work out whether this subcontracting
+    transfer is about to consume raw material that belongs to a DIFFERENT
+    Sales Order, and stash what it found for record_subcontract_rm_borrowing
+    to write down once the submit succeeds.
+
+    Deliberately does NOT block. Borrowing is a real and sometimes necessary
+    thing to do — confirmed live, where 62 units of Fabric blue had already
+    gone out this way. What caused the damage was not the borrowing, it was
+    that the lending order only found out when its own production had nothing
+    to work with. So this makes it loud, not impossible.
+
+    Runs before_submit so the pools still reflect the pre-transfer position;
+    by on_submit the stock ledger has already moved and every row would look
+    like it came from somewhere else.
+    """
+    if doc.get("purpose") != "Send to Subcontractor":
+        return
+
+    from erp_dacsinc_custom.order_flow_api import (
+        _rm_stock_pools, _rm_available_for, _rm_borrowable_from)
+
+    sales_order = _subcontract_transfer_sales_order(doc)
+    if not sales_order:
+        return
+
+    rows = [d for d in doc.get("items") or [] if d.get("item_code") and flt(d.get("qty")) > 0]
+    if not rows:
+        return
+
+    warehouse = rows[0].get("s_warehouse") or "VV Puram - IND"
+    pools = _rm_stock_pools({d.item_code for d in rows}, warehouse)
+
+    borrowed = []
+    for d in rows:
+        pool = pools.get(d.item_code)
+        own = _rm_available_for(pool, sales_order)
+        short = flt(d.qty) - own
+        if short <= 0.001:
+            continue
+        lenders = _rm_borrowable_from(pool, sales_order)
+        borrowed.append({
+            "item_code": d.item_code,
+            "qty": flt(d.qty, 3),
+            "own": flt(own, 3),
+            "short": flt(short, 3),
+            "lenders": lenders,
+        })
+
+    doc._rm_borrowed = borrowed
+    if not borrowed:
+        return
+
+    lines = "<br>".join(
+        _("{0}: sending {1}, only {2} is this order's own — {3} borrowed{4}").format(
+            b["item_code"], b["qty"], b["own"], b["short"],
+            (" " + _("from") + " " + ", ".join(
+                f"{so} ({qty})" for so, qty in sorted(b["lenders"].items()))) if b["lenders"] else ""
+        ) for b in borrowed
+    )
+    frappe.msgprint(
+        _("This transfer uses raw material bought for other Sales Orders:<br>{0}<br><br>"
+          "It will go ahead, and a note will be added to every order involved so the "
+          "lending order knows to re-order.").format(lines),
+        title=_("Borrowing raw material"), indicator="orange")
+
+
+def record_subcontract_rm_borrowing(doc, method=None):
+    """
+    on_submit on Stock Entry: leave the borrow on the record — on the order
+    that took the material and on each order it came from, so the shortfall
+    surfaces at re-order time instead of at the jobber's door. Never allowed
+    to fail the submit; the stock has already moved by this point and losing
+    the transfer over a comment would be worse than losing the note.
+    """
+    borrowed = getattr(doc, "_rm_borrowed", None)
+    if not borrowed:
+        return
+
+    sales_order = _subcontract_transfer_sales_order(doc)
+    if not sales_order:
+        return
+
+    try:
+        taken = "<br>".join(
+            _("{0}: {1} borrowed (own share {2}) on {3}").format(
+                b["item_code"], b["short"], b["own"], doc.name)
+            for b in borrowed
+        )
+        frappe.get_doc("Sales Order", sales_order).add_comment("Info", taken)
+
+        by_lender = {}
+        for b in borrowed:
+            for lender in b["lenders"]:
+                by_lender.setdefault(lender, []).append(b)
+        for lender, items in by_lender.items():
+            lines = "<br>".join(
+                _("{0}: lent to {1} on {2} — re-order to cover it").format(
+                    b["item_code"], sales_order, doc.name)
+                for b in items
+            )
+            frappe.get_doc("Sales Order", lender).add_comment("Info", lines)
+    except Exception:
+        frappe.log_error(title=f"Could not record RM borrowing for {doc.name}",
+                          message=frappe.get_traceback())
 
 
 def clear_po_from_warehouse_when_same_as_target(doc, method=None):
