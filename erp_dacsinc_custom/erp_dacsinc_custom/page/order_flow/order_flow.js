@@ -2490,7 +2490,7 @@ class OrderFlow {
 
             const rm_chain_html = rm_chain_items.length ? `
                 <div class="of-rm-chain" title="${of_esc('Requests and purchase orders raised for the raw materials needed to make this item. Shown here separately from the order’s own delivery progress.')}">
-                    <i class="fa fa-flask" style="color:var(--of-purple);"></i>
+                    
                     <span style="font-weight:700;color:var(--of-purple);">RM:</span>
                     ${rm_chain_items.map(([label, n, docs, doctype]) => {
                         const docs_data = doctype === 'Receipt'
@@ -2508,7 +2508,7 @@ class OrderFlow {
                 rm_stage_note_html = `
                     <div class="of-micro of-rm-note" style="margin-top:4px;color:var(--of-purple);font-weight:600;"
                          title="Raw materials for this item are being requested or purchased. This order's stage above updates once the item itself is ready to pick or deliver.">
-                        <i class="fa fa-flask"></i> ${rm_note_text}
+                         ${rm_note_text}
                     </div>`;
             }
 
