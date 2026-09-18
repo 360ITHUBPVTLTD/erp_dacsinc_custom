@@ -3220,7 +3220,10 @@ def create_material_request_for_shortage(purchase_order_name, materials_for_mr_c
         if shortage > 0:
             shortage_items.append({
                 "item_code": item_data['item_code'],
-                "qty": shortage
+                "qty": shortage,
+                # Raised to cover a BOM shortage, and these rows carry no
+                # sales_order for set_procurement_purpose to infer from.
+                "custom_procurement_purpose": "Raw Material"
             })
 
     if not shortage_items:
@@ -4038,10 +4041,33 @@ def create_putaway_picklist(doc, method=None):
 
             # If the PO doesn't have the link, we must find it manually in the SO
             if not so_item_id:
+                # ...but NOT when what arrived is raw material. A raw-material
+                # purchase carries the Sales Order it is for while leaving
+                # sales_order_item empty (that field points at a SOLD line,
+                # and raw material is not one) — so this fallback would match
+                # it to a sold line purely on item code and auto-create a
+                # Pick List to DELIVER material that was bought to be
+                # consumed by a BOM. Confirmed live: a label received through
+                # an RM MR -> PO -> PR chain produced a draft Pick List
+                # against the Sales Order that was supposed to consume it.
+                #
+                # An explicit sales_order_item above is always trusted, so an
+                # item that is genuinely both sold AND used as raw material on
+                # the same order still gets its Pick List when the purchase
+                # actually named the sold line.
+                if frappe.db.sql("""
+                    SELECT 1 FROM `tabSales Order Item` soi
+                    JOIN `tabBOM Item` bi ON bi.parent = soi.bom_no
+                    WHERE soi.parent = %s AND bi.item_code = %s
+                      AND IFNULL(soi.bom_no, '') != ''
+                    LIMIT 1
+                """, (po_data.sales_order, final_item_code)):
+                    continue
+
                 so_item_id = frappe.db.get_value(
                     "Sales Order Item",
                     {
-                        "parent": po_data.sales_order, 
+                        "parent": po_data.sales_order,
                         "item_code": final_item_code
                     },
                     "name"

@@ -2625,6 +2625,7 @@ def get_item_stock_details_bulk(item_bom_pairs, sales_order_name):
                 pri.item_name,
                 pri.sales_order_item,
                 pri.bom,
+                pri.custom_procurement_purpose AS procurement_purpose,
                 # Fetch supplier NAME from linked Purchase Order
                 (SELECT sup.supplier_name
                  FROM `tabPurchase Order` po
@@ -2652,6 +2653,7 @@ def get_item_stock_details_bulk(item_bom_pairs, sales_order_name):
                 poi.sales_order_item,
                 scri.bom,
                 # Fetch supplier NAME from the Subcontracting Receipt
+                NULL AS procurement_purpose,
                 (SELECT sup.supplier_name FROM `tabSupplier` sup WHERE sup.name = scr.supplier) AS supplier
             FROM `tabSubcontracting Receipt Item` scri
             JOIN `tabSubcontracting Receipt` scr ON scri.parent = scr.name
@@ -2664,7 +2666,26 @@ def get_item_stock_details_bulk(item_bom_pairs, sales_order_name):
         """, {"so_name": sales_order_name, "item": item_code}, as_dict=1)
 
         completed_receipt_docs = []
+        # Raw material received against this order is NOT supply for the line
+        # that SELLS this item. Both look identical from the receipt alone —
+        # no sales_order_item, no bom — so a sold line with no BOM counted
+        # every RM purchase as its own incoming stock (confirmed live on
+        # SAL-ORD-2026-00137: Fabric blue bought as raw material showed as
+        # "20 For This SO / 20 Received" against the 33 Meter sold line).
+        # Procurement Purpose settles it where it is set; where it is blank
+        # (rows predating the field) fall back to the same test the RM
+        # allocation uses — is this item a BOM component on this order.
         for r in raw_completed_receipts:
+            if (r.get("procurement_purpose") or "") == "Raw Material":
+                continue
+            if not r.get("procurement_purpose") and not r.sales_order_item and not bom_no:
+                if frappe.db.sql("""
+                    SELECT 1 FROM `tabSales Order Item` soi
+                    JOIN `tabBOM Item` bi ON bi.parent = soi.bom_no
+                    WHERE soi.parent = %s AND bi.item_code = %s
+                      AND IFNULL(soi.bom_no, '') != '' LIMIT 1
+                """, (sales_order_name, item_code)):
+                    continue
             if r.sales_order_item:
                 if r.sales_order_item in so_item_names:
                     completed_receipt_docs.append(r)
@@ -3318,11 +3339,16 @@ def get_item_stock_details_bulk(item_bom_pairs, sales_order_name):
                         #   ship — exactly the wrong signal.
                         "rm_needed_for_shortfall": fg_shortfall * qty_per_fg,
                         "rm_required_total": required_qty * qty_per_fg, "rm_available_stock": 0,
+                        # Allocation breakdown, filled in below — see the
+                        # _rm_stock_pools call. rm_available_stock is what THIS
+                        # order may draw; these say where that number came from.
+                        "rm_total_stock": 0, "rm_own_earmark": 0, "rm_free_stock": 0,
+                        "rm_picked_elsewhere": 0, "rm_sell_committed": 0, "rm_held_by": {},
                         "rm_stock_breakdown": [],
                         "rm_pending_so_linked_total": 0, "rm_pending_mr_total": 0,
                         "rm_transferred_to_sc_total": 0, "rm_transferred_to_other_so_total": 0,
                         "rm_shortfall_total": 0,
-                        "po_documents": [], "mr_documents": [], "transfer_documents": []
+                        "po_documents": [], "mr_documents": [], "sourced_mr_documents": [], "transfer_documents": []
                     }
                 
                 # if rm_codes:
@@ -3355,12 +3381,41 @@ def get_item_stock_details_bulk(item_bom_pairs, sales_order_name):
                     # the FG stock above (see main_warehouse note there); the
                     # unfiltered per-warehouse rows are kept as rm_stock_breakdown
                     # so the UI can still show where else an RM sits.
-                    stock_data = frappe.db.sql("""SELECT item_code, SUM(actual_qty) as qty FROM `tabBin` WHERE item_code IN %s AND actual_qty > 0 AND warehouse = %s GROUP BY item_code""", (tuple(rm_codes), main_warehouse), as_dict=1)
-                    for s in stock_data:
+                    # What this order may actually DRAW, not the warehouse
+                    # total. Reading the Bin total here is what made this table
+                    # say "Materials Covered" on an order whose Subcontract PO
+                    # prompt was, at the same moment, refusing the same item for
+                    # lack of material — the stock was real but belonged to
+                    # other orders (confirmed live on SAL-ORD-2026-00133:
+                    # 20 Fabric blue in the warehouse, 4 of it actually this
+                    # order's to use). Same _rm_stock_pools the readiness check
+                    # and the prompt use, so all three now agree by construction.
+                    from erp_dacsinc_custom.order_flow_api import (
+                        _rm_stock_pools, _rm_available_for, _rm_borrowable_from)
+                    rm_pools = _rm_stock_pools(set(rm_codes), main_warehouse)
+                    for code in rm_codes:
+                        if code not in rm_map:
+                            continue
+                        pool = rm_pools.get(code) or {}
                         # Rounded to 2dp for the same reason as total_available_stock
                         # above — a raw conversion remainder (13.999 against a
                         # needed 14.0) must not read as a real shortfall.
-                        if s.item_code in rm_map: rm_map[s.item_code]["rm_available_stock"] = flt(s.qty, 2)
+                        rm_map[code]["rm_available_stock"] = flt(
+                            _rm_available_for(pool, sales_order_name), 2)
+                        # Kept alongside so the UI can show the whole picture
+                        # rather than one number with no explanation: what is
+                        # physically there, which part is this order's own, and
+                        # who is holding the rest.
+                        rm_map[code]["rm_total_stock"] = flt(pool.get("physical", 0), 2)
+                        rm_map[code]["rm_own_earmark"] = flt(
+                            (pool.get("earmarked") or {}).get(sales_order_name, 0), 2)
+                        rm_map[code]["rm_free_stock"] = flt(max(0.0, pool.get("free", 0)), 2)
+                        rm_map[code]["rm_picked_elsewhere"] = flt(pool.get("picked", 0), 2)
+                        rm_map[code]["rm_sell_committed"] = flt(pool.get("sell_committed", 0), 2)
+                        rm_map[code]["rm_held_by"] = {
+                            so: flt(q, 2) for so, q in
+                            (_rm_borrowable_from(pool, sales_order_name) or {}).items()
+                        }
 
                     all_wh_stock_data = frappe.db.sql("""SELECT item_code, warehouse, actual_qty FROM `tabBin` WHERE item_code IN %s AND actual_qty > 0 ORDER BY actual_qty DESC""", (tuple(rm_codes),), as_dict=1)
                     for s in all_wh_stock_data:
@@ -3397,6 +3452,13 @@ def get_item_stock_details_bulk(item_bom_pairs, sales_order_name):
                             # 0.444444, ordered 0.444) doesn't count as "still pending".
                             if flt(pending_mr, 3) > 0:
                                 rm_map[d.item_code]["mr_documents"] = d.mr_list.split(",") if d.mr_list else []
+                            # Kept regardless of whether anything is still pending, as
+                            # the trace of WHERE this material was requested from. Shown
+                            # muted and separately from the live references above, so a
+                            # fully-ordered MR reads as history ("via MAT-MR-…") rather
+                            # than as an outstanding request.
+                            rm_map[d.item_code]["sourced_mr_documents"] = (
+                                d.mr_list.split(",") if d.mr_list else [])
 
                     # Draft MRs commit nothing yet (mirrors draft_purchase_orders
                     # for finished goods below) — but the "Material Request"
@@ -4359,7 +4421,7 @@ def create_pick_list_for_items(sales_order, items=None):
     return {"created": created}
 
 
-def check_bom_raw_materials_in_stock(bom_no, qty_needed, bom_cache=None):
+def check_bom_raw_materials_in_stock(bom_no, qty_needed, bom_cache=None, sales_order=None):
     """
     True only if every raw material in `bom_no` has enough qty physically in
     tabBin at the main stock warehouse (VV Puram - IND — same scoping, and
@@ -4414,20 +4476,36 @@ def check_bom_raw_materials_in_stock(bom_no, qty_needed, bom_cache=None):
             })
         cache[bom_no] = rm_lines
 
+    # With a Sales Order in hand, "available" means what THAT order may draw —
+    # its own earmarked material plus genuinely free stock — not the warehouse
+    # total. Reading the Bin total is what let the Sales Tracker offer "Create
+    # Subcontract PO" on an order whose own Raw Material Pipeline said
+    # Shortage on the same screen (confirmed on SAL-ORD-2026-00130: 20 fabric
+    # red on hand, 0 of it this order's to use). Callers with no Sales Order
+    # keep the old warehouse-total behaviour.
+    pools = {}
+    if sales_order:
+        from erp_dacsinc_custom.order_flow_api import _rm_stock_pools, _rm_available_for
+        pools = _rm_stock_pools({rm["item_code"] for rm in rm_lines}, "VV Puram - IND")
+
     shortages = []
     for rm in rm_lines:
         required_qty = flt(rm["qty_per_fg"]) * qty_needed
         if required_qty <= 0:
             continue
+        if sales_order:
+            available = _rm_available_for(pools.get(rm["item_code"]), sales_order)
+        else:
+            available = flt(rm["available_qty"])
         # Round to the same 2dp the RM Pipeline widget displays before
         # comparing — otherwise a UOM-conversion remainder (13.999 in stock
         # against a required 14.0) blocks the Subcontract PO here even when
         # the widget's own numbers, and this same check re-run on the exact
         # 2dp-rounded figures, agree it's fully covered.
-        if flt(rm["available_qty"], 2) < flt(required_qty, 2):
+        if flt(available, 2) < flt(required_qty, 2):
             shortages.append({
                 "item_code": rm["item_code"], "item_name": rm["item_name"], "uom": rm["uom"],
-                "required_qty": required_qty, "available_qty": flt(rm["available_qty"]),
+                "required_qty": required_qty, "available_qty": flt(available),
             })
 
     return (len(shortages) == 0), shortages
@@ -4542,7 +4620,7 @@ def make_subcontract_purchase_order(sales_order, item_code, qty=None):
     # Hard block, no override: raw materials must be physically in stock
     # before a Subcontract PO can be raised for this item — a pending MR/PO
     # for the shortfall is not enough (see check_bom_raw_materials_in_stock).
-    is_fulfilled, shortages = check_bom_raw_materials_in_stock(so_row.bom_no, qty)
+    is_fulfilled, shortages = check_bom_raw_materials_in_stock(so_row.bom_no, qty, sales_order=sales_order)
     if not is_fulfilled:
         shortage_lines = "<br>".join(
             _("{0} — needs {1:.2f} {2}, only {3:.2f} in stock").format(
@@ -7553,7 +7631,12 @@ def create_material_request_for_shortage(purchase_order_name):
                 "item_code": item.get("item_code"),
                 "qty": shortage_qty,
                 "uom": item.get("uom"),
-                "warehouse": mr.set_warehouse
+                "warehouse": mr.set_warehouse,
+                # Unambiguous here: this request exists to cover a BOM
+                # shortage for a subcontract PO. Set explicitly because these
+                # rows carry no sales_order, so set_procurement_purpose has
+                # nothing to infer from.
+                "custom_procurement_purpose": "Raw Material"
                 # Add a reference back to the original PO
                 # You might need a custom field in 'Material Request Item' for this.
                 # 'custom_purchase_order_ref': po.name 
@@ -9819,6 +9902,10 @@ def create_material_request_custom(items, company, sales_order_name, is_subcontr
             "uom": it.get('uom'),
             "bom_no": it.get('bom_no'),
             "sales_order": sales_order_name,
+            # Passed through when the caller knows (the Raw Material MR /
+            # Finished Item MR collectors both state it). Left blank otherwise,
+            # so set_procurement_purpose falls back to inferring it.
+            "custom_procurement_purpose": it.get('custom_procurement_purpose') or None,
             "description": it.get('description', f"Requirement for {sales_order_name}")
         })
     

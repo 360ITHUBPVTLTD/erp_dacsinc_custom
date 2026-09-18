@@ -907,9 +907,13 @@ def _get_tracker_rows(days=120, search=None, scope="open", merchandiser=None, ap
         row = by_name.get(so_name)
         if not row:
             continue
+        # `items` now carries every pending BOM line, blocked ones included,
+        # so the badge has to key off how many are actually raisable.
+        if not info.get("ready_count"):
+            continue
         row["rm_ready_for_sco"] = True
         row["rm_ready_fg_qty"] = info["fg_qty"]
-        row["rm_ready_items"] = info["items"]
+        row["rm_ready_items"] = [i for i in info["items"] if i.get("ready")]
 
     # Roll every linked document up to its Sales Order in one pass.
     events = frappe.db.sql(f"""
@@ -1222,9 +1226,17 @@ def _rm_stock_pools(rm_codes, warehouse):
         JOIN `tabPurchase Receipt` pr ON pr.name = pri.parent
         WHERE pri.item_code IN %(codes)s AND pr.docstatus = 1
           AND IFNULL(pri.sales_order, '') != ''
-          AND NOT EXISTS (SELECT 1 FROM `tabSales Order Item` soi
-                          WHERE soi.name = pri.sales_order_item
-                            AND soi.item_code = pri.item_code)
+          AND (
+                -- Explicit wins: Procurement Purpose says what this line is
+                -- for, so nothing has to be deduced (see procurement_purpose.py).
+                pri.custom_procurement_purpose = 'Raw Material'
+                OR (
+                    IFNULL(pri.custom_procurement_purpose, '') = ''
+                    AND NOT EXISTS (SELECT 1 FROM `tabSales Order Item` soi
+                                    WHERE soi.name = pri.sales_order_item
+                                      AND soi.item_code = pri.item_code)
+                )
+              )
         GROUP BY pri.item_code, pri.sales_order
     """, {"codes": codes}, as_dict=True):
         bought[r.item_code][r.sales_order] += flt(r.qty)
@@ -1266,6 +1278,27 @@ def _rm_stock_pools(rm_codes, warehouse):
     """, {"codes": codes}, as_dict=True):
         picked[r.item_code] = flt(r.qty)
 
+    # Stock owed to CUSTOMERS. A raw material is very often also something this
+    # company sells, and a unit promised on a Sales Order line cannot also be
+    # consumed by a BOM. Without this the material bought expressly to sell
+    # landed in `free` and was offered straight back as raw material —
+    # confirmed live on Fabric blue: 63 units bought against sold lines and 131
+    # units of undelivered sell commitment, all of it being counted as
+    # available to subcontract with. Already-picked qty is excluded because
+    # `picked` above counts it, so the two cannot double-subtract.
+    sell_demand = {}
+    for r in frappe.db.sql("""
+        SELECT soi.item_code,
+               SUM(GREATEST(0, soi.qty - IFNULL(soi.delivered_qty, 0)
+                               - IFNULL(soi.picked_qty, 0))) AS qty
+        FROM `tabSales Order Item` soi
+        JOIN `tabSales Order` so ON so.name = soi.parent
+        WHERE soi.item_code IN %(codes)s AND so.docstatus = 1
+          AND so.status NOT IN ('Closed', 'Completed', 'Cancelled')
+        GROUP BY soi.item_code
+    """, {"codes": codes}, as_dict=True):
+        sell_demand[r.item_code] = flt(r.qty)
+
     pools = {}
     for code in rm_codes:
         earmarked = {}
@@ -1275,11 +1308,13 @@ def _rm_stock_pools(rm_codes, warehouse):
                 earmarked[so] = flt(surplus, 3)
         phys = flt(physical.get(code, 0))
         held = flt(picked.get(code, 0))
+        owed = flt(sell_demand.get(code, 0))
         pools[code] = {
             "physical": phys,
             "picked": held,
+            "sell_committed": owed,
             "earmarked": earmarked,
-            "free": flt(phys - sum(earmarked.values()) - held, 3),
+            "free": flt(phys - sum(earmarked.values()) - held - owed, 3),
         }
     return pools
 
@@ -1421,30 +1456,48 @@ def _rm_ready_for_sco(order_names):
         for rm in rm_lines:
             need[rm["item_code"]] = flt(need.get(rm["item_code"], 0)
                                         + flt(rm["qty_per_fg"]) * remaining)
-        if any(_rm_available_for(pools.get(code), c.sales_order) + 0.001 < qty
-               for code, qty in need.items()):
-            continue
 
-        # Snapshot what this candidate is actually consuming BEFORE the
-        # working map is decremented, so the prompt can show the real
-        # "needed vs on hand" per raw material rather than what is left over
-        # after this item already claimed its share.
-        rm_detail = [{
-            "item_code": rm["item_code"],
-            "item_name": rm.get("item_name") or rm["item_code"],
-            "uom": rm.get("uom") or "",
-            "qty_per_fg": flt(rm["qty_per_fg"], 4),
-            "required": flt(flt(rm["qty_per_fg"]) * remaining, 3),
-            # What THIS order may draw, not the warehouse total — the number
-            # the prompt shows must be the number the check actually used.
-            "available": _rm_available_for(pools.get(rm["item_code"]), c.sales_order),
-        } for rm in rm_lines]
+        # Snapshot what this candidate WOULD consume before the working map is
+        # decremented, so the prompt shows the real "needed vs may draw" per
+        # raw material rather than what is left after it claimed its share.
+        # Built for blocked candidates too: an item that silently disappears
+        # from the prompt is the single most confusing thing this feature can
+        # do, so every pending BOM line is returned with the arithmetic that
+        # decided its fate, and `ready` says which way it went.
+        rm_detail = []
+        blocked_on = []
+        for rm in rm_lines:
+            code = rm["item_code"]
+            required = flt(flt(rm["qty_per_fg"]) * remaining, 3)
+            available = _rm_available_for(pools.get(code), c.sales_order)
+            short = flt(required - available, 3)
+            held = _rm_borrowable_from(pools.get(code), c.sales_order) if short > 0.001 else {}
+            rm_detail.append({
+                "item_code": code,
+                "item_name": rm.get("item_name") or code,
+                "uom": rm.get("uom") or "",
+                "qty_per_fg": flt(rm["qty_per_fg"], 4),
+                "required": required,
+                # What THIS order may draw, not the warehouse total — the
+                # number shown must be the number the check actually used.
+                "available": available,
+                "short": max(0.0, short),
+                # Who is holding the rest, so the shortfall names a cause
+                # instead of just a number.
+                "held_by": held,
+            })
+            if short > 0.001:
+                blocked_on.append(code)
 
-        for code, qty in need.items():
-            _rm_draw(pools.get(code), c.sales_order, qty)
+        is_ready = not blocked_on
+        if is_ready:
+            for code, qty in need.items():
+                _rm_draw(pools.get(code), c.sales_order, qty)
 
-        entry = ready.setdefault(c.sales_order, {"fg_qty": 0.0, "items": []})
-        entry["fg_qty"] = flt(entry["fg_qty"] + remaining, 3)
+        entry = ready.setdefault(c.sales_order, {"fg_qty": 0.0, "ready_count": 0, "items": []})
+        if is_ready:
+            entry["fg_qty"] = flt(entry["fg_qty"] + remaining, 3)
+            entry["ready_count"] += 1
         entry["items"].append({
             "item_code": c.item_code,
             "so_item": c.so_item,
@@ -1459,6 +1512,8 @@ def _rm_ready_for_sco(order_names):
             "already_qty": flt(already.get(c.so_item, 0), 3),
             "uom": c.uom or c.stock_uom or "",
             "warehouse": c.warehouse,
+            "ready": is_ready,
+            "blocked_on": blocked_on,
             "rm": rm_detail,
         })
 
@@ -1486,6 +1541,26 @@ def get_rm_ready_bom_items(sales_order):
     the tracker's own "RM Ready" badge disagrees with, and can never offer
     two items that are only jointly satisfiable off the same raw material
     (see that function's item-ordering note).
+    """
+    frappe.get_doc("Sales Order", sales_order).check_permission("read")
+    items = _rm_ready_for_sco([sales_order]).get(sales_order, {}).get("items", [])
+    # Ready ONLY. make_subcontract_purchase_orders_bulk validates against this,
+    # so a blocked line must never appear here or it would become creatable.
+    return [i for i in items if i.get("ready")]
+
+
+@frappe.whitelist()
+def get_so_bom_items_for_spo(sales_order):
+    """
+    Every pending BOM line on this order — raisable or not — for the
+    "Create Subcontract PO" prompt.
+
+    Deliberately separate from get_rm_ready_bom_items, which stays
+    ready-only because it is what the creation endpoint validates against.
+    The prompt wants the fuller picture: an item that simply vanishes with
+    no explanation is the most confusing thing this feature can do, so a
+    blocked line is shown greyed with the raw material that blocked it, how
+    short it is, and which order is holding the rest.
     """
     frappe.get_doc("Sales Order", sales_order).check_permission("read")
     return _rm_ready_for_sco([sales_order]).get(sales_order, {}).get("items", [])
@@ -2008,7 +2083,12 @@ def _has_bom_rm_shortage(sales_order_name):
             qty_needed = flt(row.qty) - flt(row.delivered_qty)
             if qty_needed <= 0:
                 continue
-            is_fulfilled, _shortages = check_bom_raw_materials_in_stock(row.bom_no, qty_needed, bom_cache)
+            # Scoped to this order: material sitting in the warehouse for a
+            # DIFFERENT Sales Order must not make this one's action read
+            # "Create Subcontract PO" while its own Raw Material Pipeline
+            # shows Shortage for the same item.
+            is_fulfilled, _shortages = check_bom_raw_materials_in_stock(
+                row.bom_no, qty_needed, bom_cache, sales_order=sales_order_name)
             if not is_fulfilled:
                 return True
         return False

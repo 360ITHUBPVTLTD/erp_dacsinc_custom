@@ -1090,16 +1090,28 @@ function generate_stock_overview_table(frm, callback) {
                             // offer to buy qty an existing incoming PO already covers.
                             const uncovered_by_incoming = Math.max(0, flt(shortage_qty) - flt(d.total_incoming_qty));
                             if (uncovered_by_incoming > 0.01 && submitted) {
-                                action_parts.push(so_buy_btn(d, so_nm, ic_arg, uncovered_by_incoming));
+                                action_parts.push(so_buy_btn(d, so_nm, ic_arg, uncovered_by_incoming, undefined, pair_key));
                             }
                         }
 
                     } else {
                         // No stock at all
                         if (picked_for_others > 0 || draft_for_others > 0) {
-                            status_html = so_pill('blocked', 'lock', 'Allocation Conflict');
+                            // Name the quantity that is actually stuck. A bare
+                            // "Allocation Conflict" reads as if the whole line
+                            // is blocked, which is confusing on a line that has
+                            // already part-shipped — it sat next to "16
+                            // Delivered — Needs Invoice" and looked like a
+                            // contradiction, when only the REMAINING qty is
+                            // held up. What is blocked is needed_stock_qty, not
+                            // the ordered qty.
+                            status_html = so_pill('blocked', 'lock',
+                                `${flt(needed_stock_qty)} Blocked — Stock Held by Other Orders`,
+                                'This line still needs ' + flt(needed_stock_qty) + ', but every unit on the shelf is '
+                                + 'already picked or reserved for other Sales Orders. Anything already delivered or '
+                                + 'picked for this order is unaffected — only the remaining quantity is waiting.');
                             action_parts.push(so_cmd_btn(`show_picked_others_details_modal('${js_str(pair_key)}')`, 'eye', 'View', true));
-                            if (submitted) action_parts.push(so_buy_btn(d, so_nm, ic_arg, needed_stock_qty));
+                            if (submitted) action_parts.push(so_buy_btn(d, so_nm, ic_arg, needed_stock_qty, undefined, pair_key));
                         } else {
                             const has_incoming = (flt(d.total_incoming_qty) > 0
                                 || flt(d.total_incoming_po_count) > 0
@@ -1360,15 +1372,27 @@ function generate_stock_overview_table(frm, callback) {
             eligible_for_picking = (frm.doc.docstatus === 1) && (total_bulk_qty > 0);
 
             const $bulk_btn = container.find('#bulk-pick-action-btn');
-            // Filled in by the get_rm_ready_bom_items call below, then the
+            // Filled in by the get_so_bom_items_for_spo call below, then the
             // button row is re-rendered. Deliberately the SERVER's list, not a
             // client-side per-row stock test — see so_show_spo_multi_prompt.
-            let spo_ready_items = [];
+            // Holds EVERY pending BOM line; the button counts only the ones
+            // actually raisable, but the prompt gets the blocked ones too so
+            // it can explain them rather than silently omitting them.
+            let spo_items = [];
+            // The pick-list branch below renders a DIFFERENT button layout
+            // ("View Pick Lists", with the draft count) and runs off its own
+            // async call. Without this flag the Subcontract PO fetch, landing
+            // second, would re-render the plain "Create Pick List" layout over
+            // the top of it and the draft Pick Lists would vanish from the
+            // header — whichever call happened to finish last decided what the
+            // user saw.
+            let pick_list_branch_rendered = false;
             const render_create_btn = () => {
                 const dn_names = so_get_all_submitted_dn_names(frm);
                 const pending_rm_count = (frm.doc.docstatus === 1) ? so_collect_pending_rm(frm).length : 0;
                 const pending_fg_count = (frm.doc.docstatus === 1) ? so_collect_pending_fg(frm).length : 0;
-                const spo_ready_count = (frm.doc.docstatus === 1) ? spo_ready_items.length : 0;
+                const spo_ready_count = (frm.doc.docstatus === 1)
+                    ? spo_items.filter(x => x.ready !== false).length : 0;
                 $bulk_btn.html(`
                     <button class="so-btn so-btn--primary" id="btn-create-bulk-picklist" ${!eligible_for_picking ? 'disabled' : ''}
                             title="${eligible_for_picking ? 'Pick every pickable line' : 'Nothing pickable yet'}">
@@ -1401,7 +1425,7 @@ function generate_stock_overview_table(frm, callback) {
                 `);
                 if (spo_ready_count > 0) {
                     $bulk_btn.find('#btn-create-spo-all').on('click', () => {
-                        window.so_show_spo_multi_prompt(frm.doc.name, spo_ready_items);
+                        window.so_show_spo_multi_prompt(frm.doc.name, spo_items);
                     });
                 }
                 if (eligible_for_picking) {
@@ -1434,11 +1458,11 @@ function generate_stock_overview_table(frm, callback) {
             // than blocking the rest of the widget.
             if (frm.doc.docstatus === 1) {
                 frappe.call({
-                    method: 'erp_dacsinc_custom.order_flow_api.get_rm_ready_bom_items',
+                    method: 'erp_dacsinc_custom.order_flow_api.get_so_bom_items_for_spo',
                     args: { sales_order: frm.doc.name }
                 }).then(r => {
-                    spo_ready_items = r.message || [];
-                    if (spo_ready_items.length) render_create_btn();
+                    spo_items = r.message || [];
+                    if (spo_items.length && !pick_list_branch_rendered) render_create_btn();
                 }).catch(() => { /* button simply stays hidden */ });
             }
 
@@ -1456,6 +1480,7 @@ function generate_stock_overview_table(frm, callback) {
                     if (callback) callback();
                     return;
                 }
+                pick_list_branch_rendered = true;
 
                 const draft_count = existing_pls.filter(x => flt(x.docstatus) === 0).length;
                 const submitted_pls = existing_pls.filter(x => flt(x.docstatus) === 1);
@@ -1919,6 +1944,19 @@ function get_rm_breakdown_html(data, so_name, docstatus, pair_key) {
             ).join(', ');
             if (po_links) refs.push(`<b>PO:</b> ${po_links}`);
         }
+        // Where this material was requested from, even once that request is
+        // fully ordered and nothing is pending any more. Shown muted and
+        // prefixed "via" so it reads as the sourcing trail rather than as an
+        // outstanding request — the References column was otherwise blank on
+        // material that had very obviously arrived through an MR.
+        const sourced = (item.sourced_mr_documents || []).filter(Boolean)
+            .filter(mr => !(item.mr_documents || []).includes(mr));
+        if (sourced.length) {
+            const via = sourced.map(mr =>
+                `<a href="/app/material-request/${encodeURIComponent(mr)}" target="_blank" title="Material Request: ${esc(mr)}" style="color:var(--text-muted,#6c7680); text-decoration:underline;">${esc(so_short(mr))}</a>`
+            ).join(', ');
+            refs.push(`<span class="so-micro" title="${esc('Requested on ' + sourced.join(', ') + ' — already ordered, shown as history')}">via ${via}</span>`);
+        }
         // Drafts commit nothing yet, so they're never in rm_pending_mr_total/
         // rm_pending_so_linked_total — but the "Material Request" button just
         // creates one and opens it for review, so without this a click here
@@ -1997,6 +2035,7 @@ function get_rm_breakdown_html(data, so_name, docstatus, pair_key) {
                 <td>
                     ${so_qty(flt(item.rm_available_stock || 0).toFixed(2))}
                     <div class="so-micro" title="Counted at VV Puram - IND only">at VV Puram - IND</div>
+                    ${so_rm_alloc_breakdown(item)}
                     ${(item.rm_stock_breakdown || []).length > 1 || ((item.rm_stock_breakdown || [])[0] || {}).warehouse !== 'VV Puram - IND'
                         ? `<button class="so-btn so-btn--view" style="margin-top:2px;"
                                onclick="show_details_modal('${js_str(pair_key)}','rm_stock_details','${js_str(item.rm_code)}')">
@@ -2103,22 +2142,22 @@ function get_rm_breakdown_html(data, so_name, docstatus, pair_key) {
                                </span>`
             : ''}
                         <span class="so-rm__spacer"></span>
-                        <span class="so-rm__note">Coverage = Stock + Pending MR + Pending PO + Outstanding at Jobber</span>
+                        <span class="so-rm__note" title="${esc('Available to This Order is this order\'s own share of the warehouse stock — material bought against another order, or already picked for a delivery, is not counted here even though it is physically present.')}">Coverage = Usable Here + Pending MR + Pending PO + At Jobber</span>
                     </div>
                     <div class="so-scroll-hint"><i class="fa fa-arrows-h"></i> ${__('Scroll sideways to see every column')}</div>
                     <div class="so-scroll">
                     <table style="table-layout:fixed;">
                         <thead>
                             <tr>
-                                <th style="width:13%;">RM Item</th>
-                                <th style="width:12%;">Needed</th>
-                                <th style="width:10%;">Stock</th>
-                                <th style="width:7%;">Pending MR</th>
-                                <th style="width:7%;">Pending PO</th>
-                                <th style="width:9%;" title="Outstanding at Jobber">At Jobber</th>
-                                <th style="width:12%;">References</th>
-                                <th style="width:13%;">Status</th>
-                                <th style="width:17%;">Shortfall</th>
+                                <th style="width:13%;" title="${esc('The raw material this BOM consumes')}">Raw Material</th>
+                                <th style="width:12%;" title="${esc('Quantity this order still needs to produce, at the BOM rate per unit')}">Needed</th>
+                                <th style="width:10%;" title="${esc('Usable Here = this order\'s own share of the stock on hand. Material bought against another Sales Order, or already picked for a delivery, is physically present but not usable by this order.')}">Usable Here</th>
+                                <th style="width:7%;" title="${esc('Requested on a Material Request, not yet ordered')}">Pending MR</th>
+                                <th style="width:7%;" title="${esc('On a Purchase Order, not yet received')}">Pending PO</th>
+                                <th style="width:9%;" title="${esc('Already sent to the subcontractor and not yet consumed')}">At Jobber</th>
+                                <th style="width:11%;" title="${esc('The MR / PO documents behind the figures above')}">References</th>
+                                <th style="width:12%;" title="${esc('Covered means this order can cover the need from its own share plus what is already requested, ordered or at the jobber')}">Status</th>
+                                <th style="width:17%;" title="${esc('How much still has to be sourced before a Subcontract PO can be raised')}">Shortfall</th>
                             </tr>
                         </thead>
                         <tbody>${rows || '<tr><td colspan="9" class="so-empty">No Raw Material Data Available.</td></tr>'}</tbody>
@@ -3323,9 +3362,13 @@ function so_make_sales_invoice_from_all_dns(frm) {
  *
  * Returns [{item_code, item_name, qty, uom, warehouse, needed_by}].
  */
-function so_collect_pending_rm(frm) {
+function so_collect_pending_rm(frm, only_pair_key) {
     const by_item = {};
-    Object.values(frm.custom_stock_data || {}).forEach(d => {
+    // `only_pair_key` narrows this to ONE finished-good row, for the
+    // per-row "Request Raw Material" action — same collection and the same
+    // combining rule, just scoped to that line's own BOM.
+    Object.entries(frm.custom_stock_data || {}).forEach(([pair_key, d]) => {
+        if (only_pair_key && pair_key !== only_pair_key) return;
         if (!d.is_bom_item) return;
         const rm = d.rm_procurement_status || {};
         (rm.rm_items_status || []).forEach(item => {
@@ -3351,6 +3394,10 @@ function so_collect_pending_rm(frm) {
                     pending_mr: flt(item.rm_pending_mr_total),
                     pending_po: flt(item.rm_pending_so_linked_total),
                     at_jobber: flt(item.rm_transferred_to_sc_total),
+                    // Same reasoning as so_collect_pending_fg: this collector
+                    // only ever gathers BOM raw material, so it says so rather
+                    // than leaving it to inference.
+                    custom_procurement_purpose: 'Raw Material',
                 };
             }
             by_item[key].qty = flt(by_item[key].qty + short, 3);
@@ -3445,6 +3492,12 @@ function so_collect_pending_fg(frm) {
             // several lines would be a guess; leaving it unset means the
             // request still records its Sales Order, just not a single line.
             sales_order_item: so_resolve_single_so_line(frm, pair_key, d),
+            // Stated, not left to be deduced. An item that is BOTH sold and
+            // used as a BOM component (Fabric blue on SAL-ORD-2026-00131) is
+            // genuinely ambiguous from the row alone, and when the row groups
+            // several lines there is no sales_order_item to settle it — so
+            // this collector, which only ever gathers finished goods, says so.
+            custom_procurement_purpose: 'For Sale',
         });
     });
     return out;
@@ -3570,9 +3623,9 @@ function so_make_fg_material_request_all(frm) {
     dialog.show();
 }
 
-function so_make_rm_material_request_all(frm) {
+function so_make_rm_material_request_all(frm, only_pair_key) {
     inject_so_styles();
-    const rows = so_collect_pending_rm(frm);
+    const rows = so_collect_pending_rm(frm, only_pair_key);
     if (!rows.length) {
         frappe.msgprint(__('No raw material is short on this order — nothing to request.'));
         return;
@@ -3769,12 +3822,16 @@ window.so_show_spo_multi_prompt = function (sales_order, items, on_done) {
     items = (items || []).filter(it => flt(it.qty) > 0);
     if (!items.length) {
         frappe.msgprint({
-            title: __('Nothing ready for a Subcontract PO'),
-            message: __('No BOM item on this order has its raw material fully in stock yet.'),
+            title: __('Nothing to subcontract'),
+            message: __('No BOM item on this order still has quantity left to make.'),
             indicator: 'orange'
         });
         return;
     }
+    // Ready first, then blocked — blocked lines are shown rather than hidden
+    // so the user can see WHY an item they expected is not on offer.
+    items = items.slice().sort((a, b) => (b.ready === false ? 0 : 1) - (a.ready === false ? 0 : 1));
+    const ready_items = items.filter(it => it.ready !== false);
 
     const fmt = n => {
         const v = flt(n);
@@ -3783,6 +3840,7 @@ window.so_show_spo_multi_prompt = function (sales_order, items, on_done) {
 
     const row_html = (it, i) => {
         const uom = it.uom || '';
+        const blocked = (it.ready === false);
         // Everything already accounted for on this SO line, so the cap is
         // explainable rather than a number the user has to take on trust.
         const meta = [
@@ -3792,35 +3850,57 @@ window.so_show_spo_multi_prompt = function (sales_order, items, on_done) {
             flt(it.already_qty) > 0 ? `${__('already on SCO')} ${fmt(it.already_qty)}` : ''
         ].filter(Boolean).join(' · ');
 
-        const rm = (it.rm || []).map(r => `
+        const rm = (it.rm || []).map(r => {
+            const short = flt(r.short) > 0.0005;
+            const held = Object.keys(r.held_by || {});
+            return `
             <div class="spo-rm-line">
                 <span class="spo-rm-name">${esc(r.item_name || r.item_code)}</span>
                 <span class="spo-rm-num">${fmt(r.qty_per_fg)} ${esc(r.uom || '')} / ${__('unit')}</span>
                 <span class="spo-rm-num">${__('needs')} <b>${fmt(r.required)}</b></span>
-                <span class="spo-rm-num spo-ok">${__('in stock')} ${fmt(r.available)}</span>
-            </div>`).join('');
+                <span class="spo-rm-num ${short ? 'spo-bad' : 'spo-ok'}">
+                    ${__('you may use')} ${fmt(r.available)}</span>
+                ${short ? `<span class="spo-rm-num spo-bad"><b>${__('short')} ${fmt(r.short)}</b></span>` : ''}
+                ${short && held.length ? `<span class="spo-rm-num">${__('held by')} ${
+                    held.map(so => `${esc(so)} (${fmt(r.held_by[so])})`).join(', ')}</span>` : ''}
+            </div>`;
+        }).join('');
+
+        // A blocked line names the material that blocked it right on the row,
+        // so the reason is visible without expanding anything.
+        const blocked_note = blocked ? `
+            <div class="spo-blocked">
+                <i class="fa fa-ban"></i>
+                ${__('Not enough raw material')}${(it.blocked_on || []).length
+                    ? ' — ' + (it.blocked_on || []).map(esc).join(', ') : ''}
+            </div>` : '';
 
         return `
-        <tr data-i="${i}">
-            <td class="spo-c"><input type="checkbox" class="spo-pick" data-i="${i}" checked></td>
+        <tr data-i="${i}" class="${blocked ? 'spo-row-blocked' : ''}">
+            <td class="spo-c">
+                <input type="checkbox" class="spo-pick" data-i="${i}"
+                       ${blocked ? 'disabled' : 'checked'}>
+            </td>
             <td>
                 <div class="spo-item">${esc(it.item_code)}</div>
                 ${it.item_name && it.item_name !== it.item_code
                     ? `<div class="spo-sub">${esc(it.item_name)}</div>` : ''}
                 ${meta ? `<div class="spo-sub">${meta}</div>` : ''}
+                ${blocked_note}
                 ${rm ? `
                     <div class="spo-rm-toggle" data-i="${i}">
                         <i class="fa fa-flask"></i> ${__('Raw material')} (${(it.rm || []).length})
                         <i class="fa fa-caret-down"></i>
                     </div>
-                    <div class="spo-rm" data-i="${i}" style="display:none;">${rm}</div>` : ''}
+                    <div class="spo-rm" data-i="${i}" style="display:${blocked ? 'block' : 'none'};">${rm}</div>` : ''}
             </td>
-            <td class="spo-r"><span class="spo-cap">${fmt(it.qty)}</span>
-                ${uom ? `<div class="spo-sub">${esc(uom)}</div>` : ''}</td>
+            <td class="spo-r"><span class="spo-cap">${blocked ? '—' : fmt(it.qty)}</span>
+                ${uom && !blocked ? `<div class="spo-sub">${esc(uom)}</div>` : ''}</td>
             <td class="spo-r">
+                ${blocked ? `<span class="spo-sub">${__('blocked')}</span>` : `
                 <input type="number" class="spo-qty" data-i="${i}"
                        value="${fmt(it.qty)}" min="0" max="${flt(it.qty)}" step="any">
-                <div class="spo-err" data-i="${i}"></div>
+                <div class="spo-err" data-i="${i}"></div>`}
             </td>
             <td class="spo-wh">${esc(it.warehouse || '')}</td>
         </tr>`;
@@ -3933,6 +4013,13 @@ window.so_show_spo_multi_prompt = function (sales_order, items, on_done) {
             .spo-rm-name { min-width: 130px; font-weight: 600; color: var(--text-color, #1f272e); }
             .spo-rm-num { white-space: nowrap; }
             .spo-ok { color: var(--green-600, #28a745); }
+            .spo-bad { color: var(--red-500, #e24c4c); }
+            .spo-row-blocked { background: var(--bg-light-gray, #fbfbfc); }
+            .spo-row-blocked .spo-item { color: var(--text-muted, #6c7680); }
+            .spo-blocked {
+                display: inline-flex; gap: 5px; align-items: center; margin-top: 5px;
+                font-size: 11px; font-weight: 600; color: var(--red-500, #e24c4c);
+            }
             .spo-foot {
                 display: flex; justify-content: space-between; align-items: center;
                 margin-top: 10px; font-size: 12px; color: var(--text-muted, #6c7680);
@@ -4782,8 +4869,8 @@ function so_qty(val, tone, size) {
     return `<div class="${cls.join(' ')}">${val === undefined || val === null ? 0 : val}</div>`;
 }
 
-function so_pill(kind, icon, label) {
-    return `<span class="so-pill so-pill--${kind}"><i class="fa fa-${icon}"></i> ${esc(label)}</span>`;
+function so_pill(kind, icon, label, title) {
+    return `<span class="so-pill so-pill--${kind}"${title ? ` title="${esc(title)}"` : ''}><i class="fa fa-${icon}"></i> ${esc(label)}</span>`;
 }
 
 function so_shortfall(qty, incoming_qty) {
@@ -4842,7 +4929,7 @@ function so_shortfall_actions(d, so_nm, ic_arg, pair_key, qty, submitted, allow_
     } else if (has_incoming) {
         const uncovered_by_incoming = Math.max(0, flt(qty) - flt(d.total_incoming_qty));
         if (uncovered_by_incoming > 0.01 && submitted) {
-            buttons.push(so_buy_btn(d, so_nm, ic_arg, uncovered_by_incoming, primary));
+            buttons.push(so_buy_btn(d, so_nm, ic_arg, uncovered_by_incoming, primary, pair_key));
         }
         buttons.push(so_cmd_btn(`show_details_modal('${js_str(pair_key)}','incoming_docs')`, 'eye', 'Track Incoming',
             primary && uncovered_by_incoming <= 0.01));
@@ -4856,7 +4943,7 @@ function so_shortfall_actions(d, so_nm, ic_arg, pair_key, qty, submitted, allow_
             buttons.push(so_cmd_btn(`so_open_doc('Material Request','${js_str(open_mr.name)}')`, 'external-link', 'Open MR'));
         }
     } else if (submitted) {
-        buttons.push(so_buy_btn(d, so_nm, ic_arg, qty, primary));
+        buttons.push(so_buy_btn(d, so_nm, ic_arg, qty, primary, pair_key));
         if (!d.is_bom_item) {
             buttons.push(so_cmd_btn(`so_make_material_request('${so_nm}')`, 'file-text-o', 'Material Request'));
         }
@@ -4985,6 +5072,55 @@ function so_expand_rm_row(pair_key) {
 // real qty being ordered as its own parameter and gets this right; this
 // mirrors that by recomputing "needed" from qty * rm_qty_per_fg per row
 // when qty is passed, instead of trusting the row's own static figure.
+// "SAL-ORD-2026-00122" -> "…00122". The RM table lists several holding
+// orders side by side and the full names wrap the column into a wall of
+// text; the full name stays in the cell's title attribute.
+function so_short(name) {
+    const s = String(name || '');
+    const tail = s.split('-').pop();
+    return (tail && tail !== s) ? '…' + tail : s;
+}
+
+/**
+ * Where the "Usable Here" figure comes from, as labelled figures rather than
+ * a run-on line — each part named, values right-aligned so they can be read
+ * down the column. Only the parts that exist are listed, so a raw material
+ * nobody else has a claim on stays a single "On hand" row.
+ *
+ * Usable Here = Yours + Unused. Picked and Held are shown because they
+ * explain the gap between that and what is physically on the shelf.
+ */
+function so_rm_alloc_breakdown(item) {
+    const total  = flt(item.rm_total_stock || 0);
+    const usable = flt(item.rm_available_stock || 0);
+    if (total <= usable + 0.005 && !Object.keys(item.rm_held_by || {}).length) return '';
+
+    const held_map = item.rm_held_by || {};
+    const held_total = Object.keys(held_map).reduce((t, so) => t + flt(held_map[so]), 0);
+    const held_title = Object.keys(held_map)
+        .map(so => `${so} (${flt(held_map[so], 2).toFixed(2)})`).join(', ');
+
+    const line = (label, val, opts) => {
+        const o = opts || {};
+        if (!o.always && Math.abs(flt(val)) < 0.005) return '';
+        return `<div style="display:flex;justify-content:space-between;gap:8px;${o.style || ''}"
+                     ${o.title ? `title="${esc(o.title)}"` : ''}>
+                    <span>${label}</span><span>${flt(val, 2).toFixed(2)}</span>
+                </div>`;
+    };
+
+    return `
+        <div class="so-micro" style="margin-top:4px;padding-top:4px;border-top:1px solid var(--border-color,#e2e6e9);line-height:1.5;">
+            ${line('On hand', total, {always: true, title: 'Physically in this warehouse, whoever it belongs to'})}
+            ${line('Yours', item.rm_own_earmark, {title: 'Bought against this Sales Order'})}
+            ${line('Unused', item.rm_free_stock, {title: 'Not tied to any order — shareable'})}
+            ${line('Picked', item.rm_picked_elsewhere, {title: 'Already picked for a delivery, so no longer available as raw material'})}
+            ${line('Owed to customers', item.rm_sell_committed, {style: 'color:var(--so-red);', title: 'This item is also sold directly. Quantity promised on Sales Order lines that have not shipped yet cannot also be consumed by a BOM.'})}
+            ${line('Held by others', held_total, {style: 'color:var(--so-red);', title: 'Bought against ' + held_title + '. It stays theirs until their own production uses it.'})}
+        </div>`;
+}
+
+
 function so_rm_physically_in_stock(d, qty) {
     const rm_items = ((d.rm_procurement_status || {}).rm_items_status) || [];
     // Compare at the same 2-decimal precision the RM Pipeline table itself
@@ -5009,7 +5145,7 @@ function so_rm_physically_in_stock(d, qty) {
  * shelf here — it goes out as job work on a subcontracting PO. Offering a plain
  * Purchase Order for those items sends the user down the wrong path.
  */
-function so_buy_btn(d, so_name_arg, item_arg, qty, primary) {
+function so_buy_btn(d, so_name_arg, item_arg, qty, primary, pair_key) {
     const subcontract = (d.is_sub_contracted_item || d.is_bom_item) && d.bom_no;
     if (!subcontract) {
         return so_cmd_btn(`so_make_purchase_order('${so_name_arg}','${item_arg}',${flt(qty)})`,
@@ -5025,9 +5161,16 @@ function so_buy_btn(d, so_name_arg, item_arg, qty, primary) {
     // distinction matters once an earlier, partial Subcontract PO already
     // exists for part of it.
     if (!so_rm_physically_in_stock(d, qty)) {
-        return `<span class="so-action__note so-action__note--blocked" style="color:var(--so-red);font-weight:600;"
-            title="${esc('Raw materials for this BOM are not fully in stock yet. See the Raw Material Pipeline below — request or order the shortfall, then wait for it to arrive before creating a Subcontract PO.')}">
-            <i class="fa fa-ban"></i> RM Not in Stock — PO Blocked</span>`;
+        // "PO Blocked" on its own is a dead end — it says what cannot be done
+        // and leaves the user to work out the next move. What actually
+        // unblocks this line is requesting the missing raw material, so offer
+        // that here as the row's real next action, scoped to just this
+        // finished good's own shortfalls.
+        const note = `<div class="so-action__note so-action__note--blocked" style="color:var(--so-red);font-weight:600;"
+            title="${esc('Raw material for this BOM is not fully available to this order yet — some of the stock on hand belongs to other Sales Orders or is already picked. See the Raw Material Pipeline below for the per-material breakdown.')}">
+            <i class="fa fa-ban"></i> RM Short — Subcontract PO Blocked</div>`;
+        return note + so_cmd_btn(`so_make_rm_material_request_all(cur_frm,'${js_str(pair_key || '')}')`,
+            'flask', 'Request Raw Material', primary);
     }
     return so_cmd_btn(`so_make_subcontract_po('${so_name_arg}','${item_arg}',${flt(qty)})`,
         'cogs', 'Subcontract PO', primary);
@@ -5345,6 +5488,9 @@ window.so_make_sales_invoice = so_make_sales_invoice;
 window.so_make_sales_invoice_from_dn = so_make_sales_invoice_from_dn;
 window.so_make_sales_invoice_from_all_dns = so_make_sales_invoice_from_all_dns;
 window.so_make_rm_material_request = so_make_rm_material_request;
+// Reached from an inline onclick on the per-row "Request Raw Material"
+// action (see so_buy_btn), so it has to live on window like the rest.
+window.so_make_rm_material_request_all = so_make_rm_material_request_all;
 window.so_make_po_from_mr = so_make_po_from_mr;
 window.so_make_purchase_order = so_make_purchase_order;
 window.so_make_subcontract_po = so_make_subcontract_po;
