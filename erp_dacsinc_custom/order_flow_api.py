@@ -1160,6 +1160,171 @@ def _fmt_qty(qty):
 _FLAG_FILTERS = ("rm_ready_for_sco",)
 
 
+def _rm_stock_pools(rm_codes, warehouse):
+    """
+    Split each raw material's physical stock into who actually has a claim on
+    it, instead of reading tabBin as one shared pool:
+
+        {item_code: {"physical", "picked", "free", "earmarked": {so: qty}}}
+
+    Raw material bought against a Sales Order belongs to THAT order until its
+    own subcontracting consumes it. Reading the Bin total instead is what lets
+    one order's fabric quietly go out on another order's Subcontract PO, and
+    then lets the SPO prompt offer the same fabric to both — confirmed live on
+    Fabric blue, where 62 units had been consumed by orders that never bought
+    them (SO-00116 over by 40, 00131 by 20, 00130 by 2).
+
+      earmarked[so]  bought as RM against that SO, minus what that SO's own
+                     subcontracting already sent out. Surplus only; an order
+                     that has over-consumed earmarks nothing, and its debt
+                     shows up as a smaller `free` — which is the truth.
+      picked         physically picked on a submitted Pick List for a line
+                     that has not shipped: staged for a delivery, so not
+                     available to anyone as raw material.
+      free           what is left — bought against no order, plus anything
+                     the arithmetic cannot attribute. Shareable.
+
+    Anchored to tabBin rather than summed from movements, so it always
+    reconciles with physical stock even when a movement is missing a link:
+    `free` absorbs the difference, and goes negative when stock is
+    over-committed, which is a signal worth seeing rather than an error.
+
+    Attribution follows Stock Entry -> Subcontracting Order -> Purchase Order
+    -> sales_order. A Subcontracting Order whose PO spans SEVERAL Sales
+    Orders is deliberately left unattributed rather than charged to whichever
+    row came back first: a wrong attribution silently moves another order's
+    earmark, which is worse than a missing one.
+    """
+    if not rm_codes:
+        return {}
+    codes = tuple(rm_codes)
+
+    physical = {}
+    for r in frappe.db.sql("""
+        SELECT item_code, SUM(actual_qty) AS qty FROM `tabBin`
+        WHERE item_code IN %(codes)s AND warehouse = %(wh)s GROUP BY item_code
+    """, {"codes": codes, "wh": warehouse}, as_dict=True):
+        physical[r.item_code] = flt(r.qty)
+
+    # Bought as RAW MATERIAL against a specific order. The test is whether the
+    # receipt line is tied to a SOLD line of that same item — not the blunter
+    # "is this item sold anywhere on that order", which breaks exactly where
+    # it matters most: an order that both SELLS an item and CONSUMES it as raw
+    # material. Confirmed live on SAL-ORD-2026-00131, which sells Fabric blue
+    # (line 9ps7h09n9q, 13 bought against it) and also needs Fabric blue for
+    # its BOM items (18 bought with no sales_order_item at all). The blunt
+    # test called all 31 "for sale" and left that order no raw material to
+    # subcontract with, so every one of its BOM lines read "not ready".
+    bought = defaultdict(lambda: defaultdict(float))
+    for r in frappe.db.sql("""
+        SELECT pri.item_code, pri.sales_order, SUM(pri.qty) AS qty
+        FROM `tabPurchase Receipt Item` pri
+        JOIN `tabPurchase Receipt` pr ON pr.name = pri.parent
+        WHERE pri.item_code IN %(codes)s AND pr.docstatus = 1
+          AND IFNULL(pri.sales_order, '') != ''
+          AND NOT EXISTS (SELECT 1 FROM `tabSales Order Item` soi
+                          WHERE soi.name = pri.sales_order_item
+                            AND soi.item_code = pri.item_code)
+        GROUP BY pri.item_code, pri.sales_order
+    """, {"codes": codes}, as_dict=True):
+        bought[r.item_code][r.sales_order] += flt(r.qty)
+
+    sco_so = {}
+    for r in frappe.db.sql("""
+        SELECT sco.name AS sco, poi.sales_order
+        FROM `tabSubcontracting Order` sco
+        JOIN `tabPurchase Order Item` poi ON poi.parent = sco.purchase_order
+        WHERE IFNULL(poi.sales_order, '') != ''
+        GROUP BY sco.name, poi.sales_order
+    """, as_dict=True):
+        sco_so.setdefault(r.sco, set()).add(r.sales_order)
+
+    consumed = defaultdict(lambda: defaultdict(float))
+    for r in frappe.db.sql("""
+        SELECT sed.item_code, se.subcontracting_order AS sco, SUM(sed.qty) AS qty
+        FROM `tabStock Entry Detail` sed
+        JOIN `tabStock Entry` se ON se.name = sed.parent
+        WHERE sed.item_code IN %(codes)s AND se.docstatus = 1
+          AND se.purpose = 'Send to Subcontractor'
+          AND IFNULL(se.subcontracting_order, '') != ''
+        GROUP BY sed.item_code, se.subcontracting_order
+    """, {"codes": codes}, as_dict=True):
+        orders = sco_so.get(r.sco) or set()
+        if len(orders) == 1:
+            consumed[r.item_code][next(iter(orders))] += flt(r.qty)
+
+    picked = {}
+    for r in frappe.db.sql("""
+        SELECT pli.item_code, SUM(pli.picked_qty) AS qty
+        FROM `tabPick List Item` pli
+        JOIN `tabPick List` pl ON pl.name = pli.parent
+        JOIN `tabSales Order Item` soi ON soi.parent = pli.sales_order
+                                      AND soi.item_code = pli.item_code
+        WHERE pli.item_code IN %(codes)s AND pl.docstatus = 1
+          AND soi.delivered_qty < soi.qty
+        GROUP BY pli.item_code
+    """, {"codes": codes}, as_dict=True):
+        picked[r.item_code] = flt(r.qty)
+
+    pools = {}
+    for code in rm_codes:
+        earmarked = {}
+        for so, qty in bought[code].items():
+            surplus = flt(qty) - flt(consumed[code].get(so, 0))
+            if surplus > 0.001:
+                earmarked[so] = flt(surplus, 3)
+        phys = flt(physical.get(code, 0))
+        held = flt(picked.get(code, 0))
+        pools[code] = {
+            "physical": phys,
+            "picked": held,
+            "earmarked": earmarked,
+            "free": flt(phys - sum(earmarked.values()) - held, 3),
+        }
+    return pools
+
+
+def _rm_available_for(pool, sales_order):
+    """
+    How much of one raw material this order may draw WITHOUT borrowing: its
+    own earmark plus whatever is genuinely free. Stock earmarked to a
+    different order is excluded — borrowable, but only as a deliberate,
+    visible act, never silently inside a readiness check.
+    """
+    if not pool:
+        return 0.0
+    return flt(flt(pool["earmarked"].get(sales_order, 0)) + max(0.0, flt(pool["free"])), 3)
+
+
+def _rm_borrowable_from(pool, sales_order):
+    """
+    {other_so: qty} this order could borrow if its own share falls short —
+    what the prompt names when it asks the user to confirm a borrow, and
+    what flags the lending order afterwards.
+    """
+    if not pool:
+        return {}
+    return {so: qty for so, qty in pool["earmarked"].items()
+            if so != sales_order and flt(qty) > 0.001}
+
+
+def _rm_draw(pool, sales_order, qty):
+    """
+    Consume `qty` on behalf of `sales_order`, taking its OWN earmark first and
+    only then the free pool — so an order spends what was bought for it before
+    it eats shareable stock, and two candidates in one pass can never be
+    handed the same material. Mutates `pool`; the caller has already checked
+    the whole BOM is coverable, so this never half-draws.
+    """
+    if not pool:
+        return
+    own = flt(pool["earmarked"].get(sales_order, 0))
+    take_own = min(own, flt(qty))
+    if take_own > 0:
+        pool["earmarked"][sales_order] = flt(own - take_own, 3)
+    pool["free"] = flt(flt(pool["free"]) - (flt(qty) - take_own), 3)
+
+
 def _rm_ready_for_sco(order_names):
     """
     {so_name: {"fg_qty": x, "items": [{"item_code", "item_name", "so_item",
@@ -1238,14 +1403,10 @@ def _rm_ready_for_sco(order_names):
         ]
 
     rm_codes = {rm["item_code"] for lines in boms.values() for rm in lines}
-    stock = {}
-    if rm_codes:
-        for s in frappe.db.sql("""
-            SELECT item_code, SUM(actual_qty) AS qty FROM `tabBin`
-            WHERE item_code IN %(items)s AND warehouse = %(wh)s
-            GROUP BY item_code
-        """, {"items": tuple(rm_codes), "wh": target_warehouse}, as_dict=True):
-            stock[s.item_code] = flt(s.qty)
+    # Per-order claims, not one shared Bin total — see _rm_stock_pools. An
+    # order draws its own earmarked material plus whatever is genuinely free;
+    # another order's earmark is borrowable, but never silently here.
+    pools = _rm_stock_pools(rm_codes, target_warehouse)
 
     ready = {}
     for c in candidates:
@@ -1260,7 +1421,8 @@ def _rm_ready_for_sco(order_names):
         for rm in rm_lines:
             need[rm["item_code"]] = flt(need.get(rm["item_code"], 0)
                                         + flt(rm["qty_per_fg"]) * remaining)
-        if any(flt(stock.get(code, 0)) + 0.001 < qty for code, qty in need.items()):
+        if any(_rm_available_for(pools.get(code), c.sales_order) + 0.001 < qty
+               for code, qty in need.items()):
             continue
 
         # Snapshot what this candidate is actually consuming BEFORE the
@@ -1273,11 +1435,13 @@ def _rm_ready_for_sco(order_names):
             "uom": rm.get("uom") or "",
             "qty_per_fg": flt(rm["qty_per_fg"], 4),
             "required": flt(flt(rm["qty_per_fg"]) * remaining, 3),
-            "available": flt(stock.get(rm["item_code"], 0), 3),
+            # What THIS order may draw, not the warehouse total — the number
+            # the prompt shows must be the number the check actually used.
+            "available": _rm_available_for(pools.get(rm["item_code"]), c.sales_order),
         } for rm in rm_lines]
 
         for code, qty in need.items():
-            stock[code] = flt(stock.get(code, 0)) - qty
+            _rm_draw(pools.get(code), c.sales_order, qty)
 
         entry = ready.setdefault(c.sales_order, {"fg_qty": 0.0, "items": []})
         entry["fg_qty"] = flt(entry["fg_qty"] + remaining, 3)

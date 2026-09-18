@@ -280,6 +280,15 @@ doc_events = {
         "on_update": "erp_dacsinc_custom.order_flow_api.broadcast_order_flow_change",
         "on_cancel": "erp_dacsinc_custom.order_flow_api.broadcast_order_flow_change",
     },
+    "Stock Entry": {
+        # A subcontracting transfer is where raw material physically leaves,
+        # so it is the point where one order's material actually becomes
+        # another's. Detected before_submit (while the pools still reflect
+        # the pre-transfer position) and recorded on_submit. Warns and logs;
+        # never blocks — see flag_subcontract_rm_borrowing.
+        "before_submit": "erp_dacsinc_custom.custom_script.flag_subcontract_rm_borrowing",
+        "on_submit": "erp_dacsinc_custom.custom_script.record_subcontract_rm_borrowing",
+    },
     "Purchase Invoice": {
         "validate": "erp_dacsinc_custom.custom_script.validate_non_zero_rate",
         "on_update": "erp_dacsinc_custom.order_flow_api.broadcast_order_flow_change",
