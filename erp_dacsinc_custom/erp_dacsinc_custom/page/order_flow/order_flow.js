@@ -679,6 +679,30 @@ class OrderFlow {
             this.refresh(true);
         });
 
+        // "Create Subcontract PO" offered alongside the stage's own action
+        // whenever raw material is ready. Same prompt the Sales Order widget
+        // uses, so both surfaces offer exactly the same items.
+        this.$body.on('click', '.of-sco-btn', (e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            const so = $(e.currentTarget).data('so');
+            frappe.call({
+                method: 'erp_dacsinc_custom.order_flow_api.get_so_bom_items_for_spo',
+                args: { sales_order: so },
+                freeze: true,
+                freeze_message: __('Checking raw material…')
+            }).then(r => {
+                const ready = (r && r.message) || [];
+                frappe.require('/assets/erp_dacsinc_custom/js/sales_order.js', () => {
+                    if (typeof window.so_show_spo_multi_prompt !== 'function') {
+                        window.open(frappe.utils.get_form_link('Sales Order', so), '_blank');
+                        return;
+                    }
+                    window.so_show_spo_multi_prompt(so, ready, () => this.refresh(true));
+                });
+            });
+        });
+
         // "+N more" toggle for a collapsed Sales Order / Purchase Order link
         // list (see of_links) — a plain visibility flip, not a re-render, so
         // it can't disturb whatever row it lives in.
@@ -1105,7 +1129,7 @@ class OrderFlow {
                 // the order's own widget, so with nothing ready this falls
                 // back to exactly the old behaviour.
                 frappe.call({
-                    method: 'erp_dacsinc_custom.order_flow_api.get_rm_ready_bom_items',
+                    method: 'erp_dacsinc_custom.order_flow_api.get_so_bom_items_for_spo',
                     args: { sales_order: so },
                     freeze: true,
                     freeze_message: __('Checking raw material…')
@@ -2546,6 +2570,27 @@ class OrderFlow {
                                 data-customer="${of_esc(o.customer || '')}"
                                 data-customer-name="${of_esc(o.customer_name || '')}">
                             <i class="fa fa-${sec.icon || 'arrow-right'}"></i> ${of_esc(sec.action_label || 'Act')}
+                        </button>
+                    </div>`;
+            }
+
+            // "Raw material has arrived" is a fact that runs ALONGSIDE whatever
+            // stage the order is in, not a stage of its own — an order can be
+            // waiting on a Pick List for what is already made AND have material
+            // sitting ready to subcontract the rest. _compute_stage_info only
+            // ever returns one primary action, so on every order that has moved
+            // past "Newly Created" the Subcontract PO had no button at all and
+            // the RM Ready badge just sent the user to the Sales Order to find
+            // it themselves (confirmed: SAL-ORD-2026-00132, rm_ready_for_sco
+            // true, action_type make_picklist). Offered here as its own action
+            // so the primary one keeps meaning what it says.
+            if (o.rm_ready_for_sco && !view_only) {
+                action_btn_html += `
+                    <div class="of-secondary-action">
+                        <span class="of-secondary-action__tag">${__('RM Ready')}</span>
+                        <button class="of-btn of-btn--primary of-sco-btn" data-so="${o.name}"
+                                title="${of_esc('Raw material is in stock for ' + flt_of(o.rm_ready_fg_qty) + ' unit(s) — pick which items to put on a Subcontract PO.')}">
+                            <i class="fa fa-cogs"></i> ${__('Create Subcontract PO')} (${flt_of(o.rm_ready_fg_qty)})
                         </button>
                     </div>`;
             }

@@ -250,6 +250,7 @@ doc_events = {
         "on_cancel": "erp_dacsinc_custom.bom_events.on_cancel"
     },
     "Purchase Receipt": {
+        "validate": "erp_dacsinc_custom.procurement_purpose.set_procurement_purpose",
         "on_submit": "erp_dacsinc_custom.purchase_order.create_putaway_picklist",
         "on_update": "erp_dacsinc_custom.order_flow_api.broadcast_order_flow_change",
         "on_cancel": [
@@ -276,6 +277,7 @@ doc_events = {
         "validate": [
             "erp_dacsinc_custom.custom_script.validate_non_zero_rate",
             "erp_dacsinc_custom.custom_script.guard_po_item_not_over_so_need",
+            "erp_dacsinc_custom.procurement_purpose.set_procurement_purpose",
         ],
         "on_update": "erp_dacsinc_custom.order_flow_api.broadcast_order_flow_change",
         "on_cancel": "erp_dacsinc_custom.order_flow_api.broadcast_order_flow_change",
@@ -311,6 +313,9 @@ doc_events = {
             # over-order cap could be walked around by requesting the excess
             # on a Material Request and then converting that to a PO.
             "erp_dacsinc_custom.custom_script.guard_mr_item_not_over_so_need",
+            # Records Raw Material vs For Sale on each line, so the RM
+            # allocation reads it instead of re-deriving it later.
+            "erp_dacsinc_custom.procurement_purpose.set_procurement_purpose",
         ],
         "on_update": "erp_dacsinc_custom.order_flow_api.broadcast_order_flow_change",
         "on_cancel": "erp_dacsinc_custom.order_flow_api.broadcast_order_flow_change",
@@ -360,6 +365,22 @@ doc_events = {
 after_migrate = [
     "erp_dacsinc_custom.order_flow_permissions.sync_order_flow_page_roles",
     "erp_dacsinc_custom.order_flow_permissions.sync_sales_order_final_approver_role",
+    # Records whether a purchase is raw material or goods to sell, so the RM
+    # allocation reads it instead of inferring it. Idempotent.
+    "erp_dacsinc_custom.procurement_purpose.create_procurement_purpose_fields",
+]
+
+# Ships the Procurement Purpose field with the app rather than leaving it to
+# be recreated by hand on each site.
+fixtures = [
+    {
+        "dt": "Custom Field",
+        "filters": [["name", "in", [
+            "Material Request Item-custom_procurement_purpose",
+            "Purchase Order Item-custom_procurement_purpose",
+            "Purchase Receipt Item-custom_procurement_purpose",
+        ]]],
+    },
 ]
 
 
