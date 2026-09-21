@@ -1135,17 +1135,25 @@ class OrderFlow {
                     freeze_message: __('Checking raw material…')
                 }).then(r => {
                     const ready = (r && r.message) || [];
-                    if (!ready.length) {
-                        window.open(frappe.utils.get_form_link('Sales Order', so), '_blank');
+                    if (ready.length) {
+                        frappe.require('/assets/erp_dacsinc_custom/js/sales_order.js', () => {
+                            if (typeof window.so_show_spo_multi_prompt !== 'function') {
+                                window.open(frappe.utils.get_form_link('Sales Order', so), '_blank');
+                                return;
+                            }
+                            window.so_show_spo_multi_prompt(so, ready, () => this.refresh(true));
+                        });
                         return;
                     }
-                    frappe.require('/assets/erp_dacsinc_custom/js/sales_order.js', () => {
-                        if (typeof window.so_show_spo_multi_prompt !== 'function') {
-                            window.open(frappe.utils.get_form_link('Sales Order', so), '_blank');
-                            return;
-                        }
-                        window.so_show_spo_multi_prompt(so, ready, () => this.refresh(true));
-                    });
+                    // No BOM line at all on this order — "Raise MR from SO"
+                    // (plain trade items). Same complaint as the BOM case: the
+                    // per-item numbers already exist in the widget, so open its
+                    // "Finished Item MR" prompt directly instead of sending the
+                    // user to the Sales Order to find the same button. Loaded
+                    // into an OFF-SCREEN container — never appended to the
+                    // page — purely to populate custom_stock_data the same way
+                    // the visible widget does; nothing about this is shown.
+                    this.open_fg_mr_prompt_from_tracker(so);
                 }).catch(() => {
                     window.open(frappe.utils.get_form_link('Sales Order', so), '_blank');
                 });
@@ -2155,7 +2163,7 @@ class OrderFlow {
         }
     }
 
-    load_so_details(so_name, $container) {
+    load_so_details(so_name, $container, callback) {
         frappe.model.with_doc('Sales Order', so_name, () => {
             const doc = frappe.model.get_doc('Sales Order', so_name);
             if (!doc) {
@@ -2178,11 +2186,68 @@ class OrderFlow {
             window.cur_frm = mock_frm;
 
             if (typeof generate_stock_overview_table === 'function') {
-                generate_stock_overview_table(mock_frm);
+                // `callback` fires once custom_stock_data is fully populated
+                // (generate_stock_overview_table's own contract) — used by
+                // callers that need the computed data (so_collect_pending_fg
+                // etc.) rather than the rendered table itself, e.g. driving
+                // the "Finished Item MR" dialog straight from the tracker
+                // without the widget ever being visible.
+                generate_stock_overview_table(mock_frm, () => { if (callback) callback(mock_frm); });
                 this.strip_actions_if_view_only($container);
             } else {
                 $container.html('<div class="alert alert-warning">generate_stock_overview_table function not found.</div>');
+                if (callback) callback(null);
             }
+        });
+    }
+
+    // "Raise MR from SO" from the Action Required column, for an order whose
+    // pending lines are plain trade items (no BOM at all) — opens the same
+    // "Finished Item MR" dialog the Sales Order's own widget offers, instead
+    // of bouncing the user there to find it themselves. Builds the same
+    // mock_frm + off-screen container load_so_details already uses for the
+    // tracker's inline stock widget, so the numbers are computed exactly the
+    // same way — this never re-derives them independently.
+    open_fg_mr_prompt_from_tracker(so_name) {
+        const fallback_to_so = () => window.open(frappe.utils.get_form_link('Sales Order', so_name), '_blank');
+        let settled = false;
+        const settle = (fn) => { if (!settled) { settled = true; fn(); } };
+
+        // Guards against generate_stock_overview_table's own early-return
+        // paths (e.g. its stock-details call failing) never invoking the
+        // callback — falls back rather than leaving the freeze indicator
+        // (or the user) waiting on nothing.
+        const timeout = setTimeout(() => settle(fallback_to_so), 10000);
+
+        frappe.dom.freeze(__('Checking pending items…'));
+        const $hidden = $('<div>').appendTo(document.body).hide();
+
+        frappe.require('/assets/erp_dacsinc_custom/js/sales_order.js', () => {
+            this.load_so_details(so_name, $hidden, (mock_frm) => {
+                clearTimeout(timeout);
+                frappe.dom.unfreeze();
+                $hidden.remove();
+
+                if (!mock_frm || typeof so_collect_pending_fg !== 'function'
+                        || typeof so_make_fg_material_request_all !== 'function') {
+                    settle(fallback_to_so);
+                    return;
+                }
+                const pending_fg = so_collect_pending_fg(mock_frm);
+                if (!pending_fg.length) {
+                    // Nothing actually short (already fully requested/ordered
+                    // on paper) — the tracker's own "X Still Short" figure can
+                    // lag a step behind a request just raised elsewhere.
+                    settle(() => frappe.show_alert({
+                        message: __('Nothing left to request — already covered.'), indicator: 'green'
+                    }));
+                    return;
+                }
+                settle(() => {
+                    window.cur_frm = mock_frm;
+                    so_make_fg_material_request_all(mock_frm);
+                });
+            });
         });
     }
 
