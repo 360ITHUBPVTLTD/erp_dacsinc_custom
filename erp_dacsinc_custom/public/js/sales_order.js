@@ -1105,8 +1105,11 @@ function generate_stock_overview_table(frm, callback) {
                             // contradiction, when only the REMAINING qty is
                             // held up. What is blocked is needed_stock_qty, not
                             // the ordered qty.
+                            // Kept short: this column is narrow and the long
+                            // form wrapped to three lines. The full sentence
+                            // lives in the tooltip.
                             status_html = so_pill('blocked', 'lock',
-                                `${flt(needed_stock_qty)} Blocked — Stock Held by Other Orders`,
+                                `${flt(needed_stock_qty)} Held by Others`,
                                 'This line still needs ' + flt(needed_stock_qty) + ', but every unit on the shelf is '
                                 + 'already picked or reserved for other Sales Orders. Anything already delivered or '
                                 + 'picked for this order is unaffected — only the remaining quantity is waiting.');
