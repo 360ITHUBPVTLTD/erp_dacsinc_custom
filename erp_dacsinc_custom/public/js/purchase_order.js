@@ -255,7 +255,7 @@ function qty_round_indicator(exact_qty, opts) {
     const { was_rounded, exact } = qty_round_up(exact_qty);
     if (!was_rounded) return '';
     const label = (opts && opts.label) || 'Rounded up from';
-    return `<div class="qty-round-note" style="font-size:10px; color:#b45309; margin-top:2px; white-space:nowrap;"
+    return `<div class="qty-round-note" style="font-size:10px; color:#b45309; margin-top:2px; white-space:normal; overflow-wrap:break-word;"
                  title="Exact requirement: ${exact}. Rounded up so nothing is bought or produced short.">
                 <i class="fa fa-arrow-up"></i> ${label} ${exact.toFixed(3).replace(/0+$/, '').replace(/\.$/, '')}
             </div>`;
@@ -2542,9 +2542,10 @@ function create_receipts_now(sco_name, items_to_receive, dialog_instance, frm) {
                 // Build a confirmation message with links to created documents
                 let msg = __("<h4>Successfully Created:</h4>");
                 if (r.message.scr_name) msg += `• ${r.message.scr_name} (Subcontracting Receipt)<br>`;
-                if (r.message.pr_name) msg += `• ${r.message.pr_name} (Purchase Receipt - Normal)<br>`;
+                if (r.message.pr_name) {
+                    msg += `• ${r.message.pr_name} (Purchase Receipt${r.message.has_extra ? ' — includes extra over-collected qty' : ''})<br>`;
+                }
                 if (r.message.se_name) msg += `• ${r.message.se_name} (Stock Entry - Extra FG)<br>`;
-                if (r.message.extra_pr_name) msg += `• ${r.message.extra_pr_name} (Purchase Receipt - Extra Service)<br>`;
 
                 frappe.show_alert({
                     message: msg,
@@ -3083,7 +3084,13 @@ function render_smart_po_dialog(frm, raw_data) {
                 .row-selected { border-color: #3b82f6 !important; background-color: #f5faff !important; }
                 .link-item { font-weight: 700; color: #1e293b; font-size: 13.5px; text-decoration: none !important; display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;}
                 .badge-flex { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 2px; }
-                .pill { padding: 3px 8px; border-radius: 4px; font-size: 10.5px; font-weight: 700; border: 1px solid transparent; text-decoration: none !important; white-space: nowrap; max-width: 100%; overflow: hidden; text-overflow: ellipsis; display: inline-block;}
+                /* No nowrap/ellipsis here — a long "Supplier • #PO-ID • Status"
+                   or "SO-ID • Customer Name" pill was getting cut off mid-word
+                   instead of wrapping. min-width:0 overrides flexbox's default
+                   content-based floor so a pill can actually shrink to the
+                   column's width and wrap onto a second line rather than
+                   overflowing past it. */
+                .pill { padding: 3px 8px; border-radius: 4px; font-size: 10.5px; font-weight: 700; border: 1px solid transparent; text-decoration: none !important; display: inline-block; max-width: 100%; min-width: 0; white-space: normal; overflow-wrap: break-word; word-break: break-word; line-height: 1.4; }
                 .mr-pill { background: #fffbeb; color: #92400e; border-color: #fef3c7; }
                 .so-pill { background: #ecfdf5; color: #065f46; border-color: #d1fae5; }
                 .po-pill { background: #eff6ff; color: #1e40af; border-color: #bfdbfe; }
@@ -3095,7 +3102,11 @@ function render_smart_po_dialog(frm, raw_data) {
                 .sum-line { display: flex; justify-content: space-between; font-size: 10.5px; font-weight: 700; margin-bottom: 2px;}
                 .qty-inp { width: 85px; text-align: center; border: 1px solid #d1d5db; font-weight: 800; color: #c2410c; border-radius: 6px; height: 35px; font-size: 15px; }
                 .planner-row.row-covered { background: #f8fafc; opacity: 0.75; }
-                .covered-tag { display:inline-block; padding: 5px 10px; border-radius: 6px; background:#ecfdf5; color:#065f46; border:1px solid #d1fae5; font-size: 10.5px; font-weight: 800; white-space: nowrap; }
+                /* Order Now's own column is only 115px — "Ordered — Draft PO"
+                   at nowrap just ran past that width and got clipped by the
+                   row's overflow:hidden with no visual cue at all. Letting it
+                   wrap onto a second line keeps the whole label readable. */
+                .covered-tag { display:inline-block; padding: 5px 10px; border-radius: 6px; background:#ecfdf5; color:#065f46; border:1px solid #d1fae5; font-size: 10.5px; font-weight: 800; white-space: normal; word-break: break-word; max-width: 100%; }
                 .planner-summary { display:flex; gap:18px; align-items:center; padding: 8px 4px 10px; font-size: 12px; font-weight: 700; color:#475569; }
                 .planner-summary .ps-open { color:#1e40af; }
                 .planner-summary .ps-covered { color:#065f46; }

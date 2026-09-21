@@ -253,6 +253,35 @@ def _paged_query(sql, params, page, page_size):
     return {"rows": rows, "total": total, "page": page, "page_size": page_size}
 
 
+def _attach_creator_names(*row_lists):
+    """
+    Resolves each row's `owner` (a user id/email) to a display name, as
+    `creator_name`, in ONE query across however many row lists are passed —
+    the same bulk-fetch-then-map shape _get_primary_contact_names_map already
+    uses for contacts, so a page with several sub-tabs (Purchase Flow's POs +
+    MRs + Receipts + Bills, say) doesn't run one User lookup per sub-list.
+
+    Mutates each row in place; safe to call with any mix of populated, empty
+    or None lists — every tab's page calls this once, unconditionally, right
+    before returning.
+    """
+    owners = {r["owner"] for rows in row_lists for r in (rows or []) if r.get("owner")}
+    if not owners:
+        return
+
+    name_map = {
+        u.name: u.full_name for u in frappe.db.sql("""
+            SELECT name, full_name FROM `tabUser` WHERE name IN %(owners)s
+        """, {"owners": tuple(owners)}, as_dict=True)
+    }
+    for rows in row_lists:
+        for r in (rows or []):
+            if r.get("owner"):
+                # Falls back to the raw id — a deleted/renamed User must never
+                # make the row's creator disappear entirely.
+                r["creator_name"] = name_map.get(r["owner"]) or r["owner"]
+
+
 # --------------------------------------------------------------------------
 # Event importance & per-user relevance
 #
@@ -1130,20 +1159,23 @@ def get_sales_tracker(days=120, search=None, scope="open", stage_filter=None, me
 
     material_requests = _paged_query(f"""
         SELECT mr.name, mr.transaction_date, mr.schedule_date, mr.material_request_type,
-               mr.status, mr.docstatus, mr.per_ordered, mr.per_received,
+               mr.status, mr.docstatus, mr.per_ordered, mr.per_received, mr.owner,
                GROUP_CONCAT(DISTINCT mri.sales_order ORDER BY mri.sales_order SEPARATOR ', ') AS sales_orders,
                GROUP_CONCAT(DISTINCT so.customer_name ORDER BY so.customer_name SEPARATOR ', ') AS so_customer_names,
                COUNT(DISTINCT mri.item_code) AS item_count,
-               SUM(mri.qty) AS qty, SUM(mri.ordered_qty) AS ordered_qty
+               SUM(mri.qty) AS qty, SUM(mri.ordered_qty) AS ordered_qty,
+               SUM(mri.received_qty) AS received_qty
         FROM `tabMaterial Request Item` mri
         JOIN `tabMaterial Request` mr ON mr.name = mri.parent
         LEFT JOIN `tabSales Order` so ON so.name = mri.sales_order
         LEFT JOIN `tabCustomer` cust ON cust.name = so.customer
         WHERE {' AND '.join(mr_conditions)}
         GROUP BY mr.name, mr.transaction_date, mr.schedule_date, mr.material_request_type,
-                 mr.status, mr.docstatus, mr.per_ordered, mr.per_received
+                 mr.status, mr.docstatus, mr.per_ordered, mr.per_received, mr.owner
         ORDER BY mr.transaction_date DESC
     """, mr_params, mr_page, mr_page_size)
+
+    _attach_creator_names(page_rows, material_requests["rows"])
 
     return {
         "rows": page_rows,
@@ -2286,7 +2318,7 @@ def get_purchase_flow(days=120, search=None, scope="open", merchandiser=None,
         SELECT po.name, po.transaction_date, po.schedule_date, po.status, po.docstatus,
                po.supplier, sup.supplier_name, po.is_subcontracted, po.currency,
                po.per_received, po.per_billed, po.grand_total,
-               po.order_confirmation_no, po.order_confirmation_date,
+               po.order_confirmation_no, po.order_confirmation_date, po.owner,
                GROUP_CONCAT(DISTINCT poi.sales_order ORDER BY poi.sales_order SEPARATOR ', ') AS sales_orders,
                GROUP_CONCAT(DISTINCT so.customer_name ORDER BY so.customer_name SEPARATOR ', ') AS so_customer_names,
                COUNT(DISTINCT poi.item_code) AS item_count,
@@ -2301,7 +2333,7 @@ def get_purchase_flow(days=120, search=None, scope="open", merchandiser=None,
         GROUP BY po.name, po.transaction_date, po.schedule_date, po.status, po.docstatus,
                  po.supplier, sup.supplier_name, po.is_subcontracted, po.currency,
                  po.per_received, po.per_billed, po.grand_total,
-                 po.order_confirmation_no, po.order_confirmation_date
+                 po.order_confirmation_no, po.order_confirmation_date, po.owner
         ORDER BY po.transaction_date DESC, po.name DESC
     """, params, po_page, po_page_size)
 
@@ -2313,7 +2345,7 @@ def get_purchase_flow(days=120, search=None, scope="open", merchandiser=None,
         SELECT po.name, po.transaction_date, po.schedule_date, po.status, po.docstatus,
                po.supplier, sup.supplier_name, po.is_subcontracted, po.currency,
                po.per_received, po.per_billed, po.grand_total,
-               po.order_confirmation_no, po.order_confirmation_date,
+               po.order_confirmation_no, po.order_confirmation_date, po.owner,
                GROUP_CONCAT(DISTINCT poi.sales_order ORDER BY poi.sales_order SEPARATOR ', ') AS sales_orders,
                GROUP_CONCAT(DISTINCT so.customer_name ORDER BY so.customer_name SEPARATOR ', ') AS so_customer_names,
                COUNT(DISTINCT poi.item_code) AS item_count,
@@ -2328,7 +2360,7 @@ def get_purchase_flow(days=120, search=None, scope="open", merchandiser=None,
         GROUP BY po.name, po.transaction_date, po.schedule_date, po.status, po.docstatus,
                  po.supplier, sup.supplier_name, po.is_subcontracted, po.currency,
                  po.per_received, po.per_billed, po.grand_total,
-                 po.order_confirmation_no, po.order_confirmation_date
+                 po.order_confirmation_no, po.order_confirmation_date, po.owner
         ORDER BY po.transaction_date DESC, po.name DESC
     """, params, bill_page, bill_page_size)
 
@@ -2369,6 +2401,7 @@ def get_purchase_flow(days=120, search=None, scope="open", merchandiser=None,
     receipts = _paged_query(f"""
         (SELECT 'Purchase Receipt' AS doctype, pr.name, pr.posting_date, pr.status, pr.docstatus,
                 pr.supplier, sup.supplier_name, pr.is_subcontracted, pr.currency, pr.grand_total,
+                pr.owner AS owner,
                 GROUP_CONCAT(DISTINCT pri.sales_order ORDER BY pri.sales_order SEPARATOR ', ') AS sales_orders,
                 GROUP_CONCAT(DISTINCT so.customer_name ORDER BY so.customer_name SEPARATOR ', ') AS so_customer_names,
                 GROUP_CONCAT(DISTINCT pri.purchase_order ORDER BY pri.purchase_order SEPARATOR ', ') AS purchase_orders,
@@ -2380,12 +2413,13 @@ def get_purchase_flow(days=120, search=None, scope="open", merchandiser=None,
          LEFT JOIN `tabCustomer` cust ON cust.name = so.customer
          WHERE {' AND '.join(pr_conditions)}
          GROUP BY pr.name, pr.posting_date, pr.status, pr.docstatus, pr.supplier,
-                  sup.supplier_name, pr.is_subcontracted, pr.currency, pr.grand_total)
+                  sup.supplier_name, pr.is_subcontracted, pr.currency, pr.grand_total, pr.owner)
 
         UNION ALL
 
         (SELECT 'Subcontracting Receipt', scr.name, scr.posting_date, scr.status, scr.docstatus,
                 scr.supplier, sup.supplier_name, 1, NULL, NULL,
+                scr.owner,
                 GROUP_CONCAT(DISTINCT poi.sales_order ORDER BY poi.sales_order SEPARATOR ', '),
                 GROUP_CONCAT(DISTINCT so.customer_name ORDER BY so.customer_name SEPARATOR ', '),
                 GROUP_CONCAT(DISTINCT scri.purchase_order ORDER BY scri.purchase_order SEPARATOR ', '),
@@ -2399,10 +2433,12 @@ def get_purchase_flow(days=120, search=None, scope="open", merchandiser=None,
          LEFT JOIN `tabSales Order` so ON so.name = poi.sales_order
          LEFT JOIN `tabCustomer` cust ON cust.name = so.customer
          WHERE {' AND '.join(scr_conditions)}
-         GROUP BY scr.name, scr.posting_date, scr.status, scr.docstatus, scr.supplier, sup.supplier_name)
+         GROUP BY scr.name, scr.posting_date, scr.status, scr.docstatus, scr.supplier, sup.supplier_name, scr.owner)
 
         ORDER BY posting_date DESC
     """, params, receipt_page, receipt_page_size)
+
+    _attach_creator_names(purchase_orders["rows"], bill_orders["rows"], receipts["rows"])
 
     draft_pis = frappe.db.sql("""
         SELECT pii.purchase_order, pi.name
@@ -2495,7 +2531,7 @@ def get_jobwork_flow(days=180, search=None, scope="open", merchandiser=None,
     purchase_orders = _paged_query(f"""
         SELECT po.name, po.transaction_date, po.schedule_date, po.status, po.docstatus,
                po.supplier, sup.supplier_name, po.is_subcontracted, po.currency,
-               po.per_received, po.per_billed, po.grand_total,
+               po.per_received, po.per_billed, po.grand_total, po.owner,
                GROUP_CONCAT(DISTINCT poi.sales_order ORDER BY poi.sales_order SEPARATOR ', ') AS sales_orders,
                GROUP_CONCAT(DISTINCT so.customer_name ORDER BY so.customer_name SEPARATOR ', ') AS so_customer_names,
                COUNT(DISTINCT poi.item_code) AS item_count,
@@ -2509,7 +2545,7 @@ def get_jobwork_flow(days=180, search=None, scope="open", merchandiser=None,
         WHERE {' AND '.join(conditions)}
         GROUP BY po.name, po.transaction_date, po.schedule_date, po.status, po.docstatus,
                  po.supplier, sup.supplier_name, po.is_subcontracted, po.currency,
-                 po.per_received, po.per_billed, po.grand_total
+                 po.per_received, po.per_billed, po.grand_total, po.owner
         ORDER BY po.transaction_date DESC, po.name DESC
     """, params, po_page, po_page_size)
 
@@ -2546,6 +2582,7 @@ def get_jobwork_flow(days=180, search=None, scope="open", merchandiser=None,
     receipts = _paged_query(f"""
         (SELECT 'Purchase Receipt' AS doctype, pr.name, pr.posting_date, pr.status, pr.docstatus,
                 pr.supplier, sup.supplier_name, pr.is_subcontracted, pr.currency, pr.grand_total,
+                pr.owner AS owner,
                 GROUP_CONCAT(DISTINCT pri.sales_order ORDER BY pri.sales_order SEPARATOR ', ') AS sales_orders,
                 GROUP_CONCAT(DISTINCT so.customer_name ORDER BY so.customer_name SEPARATOR ', ') AS so_customer_names,
                 GROUP_CONCAT(DISTINCT pri.purchase_order ORDER BY pri.purchase_order SEPARATOR ', ') AS purchase_orders,
@@ -2556,10 +2593,11 @@ def get_jobwork_flow(days=180, search=None, scope="open", merchandiser=None,
          LEFT JOIN `tabSales Order` so ON so.name = pri.sales_order
          LEFT JOIN `tabCustomer` cust ON cust.name = so.customer
          WHERE {' AND '.join(pr_conditions)}
-         GROUP BY pr.name, pr.posting_date, pr.status, pr.docstatus, pr.supplier, sup.supplier_name, pr.is_subcontracted, pr.currency, pr.grand_total)
+         GROUP BY pr.name, pr.posting_date, pr.status, pr.docstatus, pr.supplier, sup.supplier_name, pr.is_subcontracted, pr.currency, pr.grand_total, pr.owner)
         UNION
         (SELECT 'Subcontracting Receipt' AS doctype, scr.name, scr.posting_date, scr.status, scr.docstatus,
                 scr.supplier, sup.supplier_name, 1 AS is_subcontracted, '' AS currency, 0 AS grand_total,
+                scr.owner AS owner,
                 (SELECT GROUP_CONCAT(DISTINCT poi.sales_order ORDER BY poi.sales_order SEPARATOR ', ')
                  FROM `tabPurchase Order Item` poi
                  JOIN `tabSubcontracting Receipt Item` scri2 ON scri2.purchase_order = poi.parent
@@ -2584,7 +2622,7 @@ def get_jobwork_flow(days=180, search=None, scope="open", merchandiser=None,
          LEFT JOIN `tabSales Order` so ON so.name = poi.sales_order
          LEFT JOIN `tabCustomer` cust ON cust.name = so.customer
          WHERE {' AND '.join(scr_conditions)}
-         GROUP BY scr.name, scr.posting_date, scr.status, scr.docstatus, scr.supplier, sup.supplier_name)
+         GROUP BY scr.name, scr.posting_date, scr.status, scr.docstatus, scr.supplier, sup.supplier_name, scr.owner)
         ORDER BY posting_date DESC, name DESC
     """, params, receipt_page, receipt_page_size)
 
@@ -2593,7 +2631,7 @@ def get_jobwork_flow(days=180, search=None, scope="open", merchandiser=None,
             SELECT ewo.name, ewo.date, ewo.status, ewo.docstatus, ewo.work_type,
                    ewo.purchase_order, ewo.subcontracting_order, ewo.completed_on,
                    ewo.panel_stage, ewo.full_piece_stage, ewo.per_received,
-                   ewo.panel_jobber, ewo.full_piece_jobber,
+                   ewo.panel_jobber, ewo.full_piece_jobber, ewo.owner AS owner,
                    COALESCE(fp.supplier_name, pn.supplier_name) AS jobber_name,
                    po.supplier AS po_supplier, po_sup.supplier_name AS po_supplier_name,
                    (SELECT SUM(c.ordered_qty) FROM `tabEmbroidery Work Order Item` c WHERE c.parent = ewo.name) AS ordered_qty,
@@ -2613,7 +2651,7 @@ def get_jobwork_flow(days=180, search=None, scope="open", merchandiser=None,
             GROUP BY ewo.name, ewo.date, ewo.status, ewo.docstatus, ewo.work_type,
                      ewo.purchase_order, ewo.subcontracting_order, ewo.completed_on,
                      ewo.panel_stage, ewo.full_piece_stage, ewo.per_received,
-                     ewo.panel_jobber, ewo.full_piece_jobber, fp.supplier_name, pn.supplier_name,
+                     ewo.panel_jobber, ewo.full_piece_jobber, ewo.owner, fp.supplier_name, pn.supplier_name,
                      po.supplier, po_sup.supplier_name
             ORDER BY ewo.date DESC
         """
@@ -2652,6 +2690,8 @@ def get_jobwork_flow(days=180, search=None, scope="open", merchandiser=None,
         LEFT JOIN `tabCustomer` cust ON cust.name = so.customer
         WHERE {' AND '.join(ewo_conditions)}
     """, params)[0][0]
+
+    _attach_creator_names(purchase_orders["rows"], receipts["rows"], ewo_fp["rows"], ewo_pn["rows"])
 
     return {
         "purchase_orders": purchase_orders,
@@ -2802,7 +2842,7 @@ def get_accounts_flow(days=120, search=None, scope="open", merchandiser=None,
     sales_invoices = _paged_query(f"""
         SELECT si.name, si.posting_date, si.due_date, si.status, si.docstatus,
                si.customer, cust.customer_name, si.currency,
-               si.grand_total, si.outstanding_amount,
+               si.grand_total, si.outstanding_amount, si.owner,
                (si.grand_total - si.outstanding_amount) AS paid_amount,
                GROUP_CONCAT(DISTINCT sii.sales_order ORDER BY sii.sales_order SEPARATOR ', ') AS sales_orders,
                GROUP_CONCAT(DISTINCT so.customer_name ORDER BY so.customer_name SEPARATOR ', ') AS so_customer_names
@@ -2812,7 +2852,7 @@ def get_accounts_flow(days=120, search=None, scope="open", merchandiser=None,
         LEFT JOIN `tabSales Order` so ON so.name = sii.sales_order
         WHERE {' AND '.join(si_conditions)}
         GROUP BY si.name, si.posting_date, si.due_date, si.status, si.docstatus,
-                 si.customer, cust.customer_name, si.currency, si.grand_total, si.outstanding_amount
+                 si.customer, cust.customer_name, si.currency, si.grand_total, si.outstanding_amount, si.owner
         ORDER BY si.posting_date DESC, si.name DESC
     """, params, sales_page, sales_page_size)
 
@@ -2857,7 +2897,7 @@ def get_accounts_flow(days=120, search=None, scope="open", merchandiser=None,
             SELECT pi.name, pi.posting_date, pi.due_date, pi.status, pi.docstatus,
                    pi.supplier, sup.supplier_name, pi.currency,
                    IFNULL(sup.custom_is_jobber, 0) AS is_jobber,
-                   pi.grand_total, pi.outstanding_amount,
+                   pi.grand_total, pi.outstanding_amount, pi.owner,
                    (pi.grand_total - pi.outstanding_amount) AS paid_amount,
                    GROUP_CONCAT(DISTINCT poi.sales_order ORDER BY poi.sales_order SEPARATOR ', ') AS sales_orders,
                    GROUP_CONCAT(DISTINCT so.customer_name ORDER BY so.customer_name SEPARATOR ', ') AS so_customer_names
@@ -2869,7 +2909,7 @@ def get_accounts_flow(days=120, search=None, scope="open", merchandiser=None,
             LEFT JOIN `tabCustomer` cust ON cust.name = so.customer
             WHERE {' AND '.join(pi_conditions)} AND IFNULL(sup.custom_is_jobber, 0) = {jobber_flag}
             GROUP BY pi.name, pi.posting_date, pi.due_date, pi.status, pi.docstatus,
-                     pi.supplier, sup.supplier_name, sup.custom_is_jobber, pi.currency, pi.grand_total, pi.outstanding_amount
+                     pi.supplier, sup.supplier_name, sup.custom_is_jobber, pi.currency, pi.grand_total, pi.outstanding_amount, pi.owner
             ORDER BY pi.posting_date DESC, pi.name DESC
         """
 
@@ -2900,6 +2940,8 @@ def get_accounts_flow(days=120, search=None, scope="open", merchandiser=None,
     contact_map = _get_primary_contact_names_map([r.customer for r in sales_invoices["rows"]])
     for r in sales_invoices["rows"]:
         r["contact_person_name"] = contact_map.get(r.customer, "")
+
+    _attach_creator_names(sales_invoices["rows"], supplier_invoices["rows"], jobber_invoices["rows"])
 
     return {
         "sales_invoices": sales_invoices,
@@ -3106,6 +3148,7 @@ def get_pick_list_flow(search=None, scope="open", page=1, page_size=100):
         "partly": sum(1 for r in rows if r.status == "Partly Delivered"),
         "total": paged.get("total", len(rows)),
     }
+    _attach_creator_names(rows)
     return {**paged, "rows": rows, "metrics": metrics}
 
 
@@ -3167,6 +3210,8 @@ def get_billing_flow(days=120, search=None, scope="open", page=1, page_size=100)
     # Total order value still sitting in this queue, across every matching
     # order — not just the displayed page.
     pending_value = sum(flt(o.get("grand_total")) * (100 - flt(o.get("per_billed"))) / 100 for o in rows)
+
+    _attach_creator_names(page_rows)
 
     return {
         "orders": {
@@ -3689,6 +3734,13 @@ def get_pending_approvals(search=None, merchandiser=None, approval_stage=None, p
             items_formatted.append(f"{it.item_name} ({qty_str})")
         o["items_list"] = ", ".join(items_formatted)
         o["contact_person_name"] = contact_map.get(o.customer, "")
+
+    # This tab already resolves creator_name via the owner_u JOIN above — this
+    # call is a no-op for any row that JOIN matched. It only helps a row whose
+    # owner is a deleted/renamed User, where the LEFT JOIN silently leaves
+    # creator_name NULL; _attach_creator_names falls back to the raw id there
+    # instead of the row showing no creator at all.
+    _attach_creator_names(orders)
 
     return paged
 

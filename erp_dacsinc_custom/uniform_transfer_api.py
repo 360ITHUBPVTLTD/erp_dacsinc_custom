@@ -6,7 +6,7 @@ import frappe
 from frappe.utils import nowdate, flt
 
 from erp_dacsinc_custom.order_flow_permissions import guard_tab
-from erp_dacsinc_custom.order_flow_api import _paged_query
+from erp_dacsinc_custom.order_flow_api import _paged_query, _attach_creator_names
 
 @frappe.whitelist()
 def create_embroidery_transfer(source_item, target_item, qty, from_warehouse, wip_warehouse):
@@ -160,13 +160,15 @@ def get_embroidery_transfers(status=None, search=None, scope=None, page=1, page_
 
     where_clause = f"WHERE {' AND '.join(conditions)}" if conditions else ""
 
-    return _paged_query(f"""
+    transfers = _paged_query(f"""
         SELECT name, source_item, target_item, qty, received_qty, from_warehouse, wip_warehouse,
-               to_warehouse, status, date_sent, date_received, stock_entry_sent, stock_entry_received
+               to_warehouse, status, date_sent, date_received, stock_entry_sent, stock_entry_received, owner
         FROM `tabUniform Embroidery Transfer`
         {where_clause}
         ORDER BY creation DESC
     """, values, page, page_size)
+    _attach_creator_names(transfers["rows"])
+    return transfers
 
 @frappe.whitelist()
 def get_transfer_receipts(transfer_id):
