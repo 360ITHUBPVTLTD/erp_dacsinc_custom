@@ -487,6 +487,44 @@ function po_upsert_item(frm, built) {
 // --- CLIENT SCRIPT HOOKS (Controller) ---
 // ----------------------------------------------------------------------------------
 
+// Core's own PurchaseOrderController.refresh() (and its base BuyingController)
+// add "Material Request" / "Supplier Quotation" / "Product Bundle" under the
+// "Get Items From" split button on every refresh — this app already has its
+// own dedicated "Get Items from MR" flow, so that entry (and the other two,
+// which this app doesn't support against a subcontracted or SO-sourced PO)
+// just duplicate/undercut it. A single delayed removal after page load loses
+// the race the moment ANYTHING triggers another refresh afterwards (a field
+// default fetch, is_subcontracted toggling, etc.) — core's handler runs
+// again and re-adds them with nothing left to remove them a second time. A
+// MutationObserver on the toolbar keeps stripping them for as long as this
+// form view stays open, so they stay gone no matter how many more times
+// core's own refresh fires.
+const HIDDEN_GET_ITEMS_FROM_ENTRIES = ['Material Request', 'Supplier Quotation', 'Product Bundle'];
+
+function hide_get_items_from_entries(frm) {
+    const strip = () => {
+        const $group = frm.page.inner_toolbar.find(
+            `.inner-group-button[data-label="${encodeURIComponent('Get Items From')}"]`
+        );
+        if (!$group.length) return;
+        HIDDEN_GET_ITEMS_FROM_ENTRIES.forEach(label => {
+            $group.find(`.dropdown-item[data-label="${encodeURIComponent(label)}"]`).remove();
+        });
+        if ($group.find('.dropdown-item').length === 0) $group.remove();
+    };
+
+    strip();
+
+    if (!frm.__hide_get_items_from_observer) {
+        const target = frm.page.inner_toolbar.get(0);
+        if (target) {
+            const observer = new MutationObserver(strip);
+            observer.observe(target, { childList: true, subtree: true });
+            frm.__hide_get_items_from_observer = observer;
+        }
+    }
+}
+
 frappe.ui.form.on('Purchase Order', {
     is_subcontracted: function (frm) {
         apply_supplier_filter(frm);
@@ -538,10 +576,9 @@ frappe.ui.form.on('Purchase Order', {
                 frm.page.remove_inner_button('Purchase Receipt', 'Create');
                 frm.page.remove_inner_button('Subcontracting Order', 'Create');
             }
-            frm.remove_custom_button('Supplier Quotation', 'Get Items From');
-            frm.remove_custom_button('Material Request', 'Get Items From');
-            frm.remove_custom_button('Product Bundle', 'Get Items From');
         }, 500);
+
+        hide_get_items_from_entries(frm);
 
         const wrapper = frm.fields_dict.custom_purchase_order_html.$wrapper;
         wrapper.empty();
