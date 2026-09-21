@@ -43,7 +43,7 @@ class RolesAndPermissions {
 		this.page = page;
 		this.access_cache = {};
 		this.expanded = new Set();
-		this.filters = { search: '', profile: '', status: '' };
+		this.filters = { search: '', profile: '', status: '1' };
 		this.page_no = 1;
 		this.page_size = 20;
 		this.build_dom();
@@ -59,8 +59,8 @@ class RolesAndPermissions {
 					<input type="text" class="form-control rp-search" placeholder="${__('Search name or email...')}">
 				</div>
 				<div class="rp-status-toggle">
-					<button type="button" class="is-active" data-status="">${__('All')}</button>
-					<button type="button" data-status="1">${__('Enabled')}</button>
+					<button type="button" data-status="">${__('All')}</button>
+					<button type="button" class="is-active" data-status="1">${__('Enabled')}</button>
 					<button type="button" data-status="0">${__('Disabled')}</button>
 				</div>
 				<select class="form-control rp-filter-profile"><option value="">${__('All Role Profiles')}</option></select>
@@ -117,11 +117,11 @@ class RolesAndPermissions {
 			this.render();
 		});
 		this.$body.find('.rp-toolbar-clear').on('click', () => {
-			this.filters = { search: '', profile: '', status: '' };
+			this.filters = { search: '', profile: '', status: '1' };
 			this.$body.find('.rp-search').val('');
 			this.$body.find('.rp-filter-profile').val('');
 			this.$body.find('.rp-status-toggle button').removeClass('is-active');
-			this.$body.find('.rp-status-toggle button[data-status=""]').addClass('is-active');
+			this.$body.find('.rp-status-toggle button[data-status="1"]').addClass('is-active');
 			this.page_no = 1;
 			this.render();
 		});

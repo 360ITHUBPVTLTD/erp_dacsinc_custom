@@ -96,7 +96,10 @@ def get_users_overview():
 
     users = frappe.get_all(
         "User",
-        filters={"user_type": "System User"},
+        filters={
+            "user_type": "System User",
+            "name": ["not in", ["Administrator", "Guest"]],
+        },
         fields=["name", "full_name", "enabled", "role_profile_name", "last_login",
                 *PROFILE_FIELDS],
         order_by="full_name asc",
