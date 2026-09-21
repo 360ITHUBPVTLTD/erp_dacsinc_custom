@@ -2724,7 +2724,7 @@ class OrderFlow {
                                 <div class="of-micro" style="margin-top:2px;color:var(--of-info);" title="Merchandiser assigned to this customer">
                                     <i class="fa fa-user"></i> ${of_esc(o.custom_merchandiser_name || o.custom_merchandiser_user)}
                                 </div>` : ''}
-                            ${of_creator_html(o)}
+                            ${of_creator_html(o, o.custom_merchandiser_user)}
                         </div>
                     </div>
                 </td>
@@ -4398,7 +4398,7 @@ class OrderFlow {
                         <i class="fa fa-user" style="color:#007bff;"></i> Merchandiser: <b>${of_esc(o.custom_merchandiser_name || o.custom_merchandiser_user)}</b>
                     </div>
                     ` : ''}
-                    ${of_creator_html(o)}
+                    ${of_creator_html(o, o.custom_merchandiser_user)}
                     ${o.items_list ? `
                     <div style="margin-top: 6px; display: inline-flex; align-items: center; background-color: #f4f6f8; border: 1px solid #d1d8dd; border-radius: 4px; padding: 2px 8px; font-size: 11px; color: #555; max-width: 100%; box-sizing: border-box;">
                         <i class="fa fa-cube" style="margin-right: 5px; color: #888;"></i>
@@ -5429,9 +5429,14 @@ function of_order_confirmation_html(p) {
 // order_flow_api.py, called once per tab's data function); falls back to the
 // raw owner id only for a row from before that resolution existed (or a
 // stale cached page), never silently to nothing.
-function of_creator_html(row) {
+// `also_shown_as` is another user id this same row may already display under
+// a more specific label (e.g. the assigned Merchandiser) — when the creator
+// IS that person, showing "Created by: <name>" right underneath it is the
+// same name twice for no reason, so it's skipped rather than repeated.
+function of_creator_html(row, also_shown_as) {
     const who = row && (row.creator_name || row.owner);
     if (!who) return '';
+    if (also_shown_as && row.owner && also_shown_as === row.owner) return '';
     return `<div class="of-micro text-muted"><i class="fa fa-user-o"></i> ${of_esc(who)}</div>`;
 }
 
