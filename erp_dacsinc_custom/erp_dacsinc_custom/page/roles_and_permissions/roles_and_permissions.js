@@ -19,6 +19,8 @@ frappe.pages['roles-and-permissions'].on_page_load = function (wrapper) {
 };
 
 
+const RP_NO_PROFILE_FILTER = '__no_profile__';
+
 const RP_AVATAR_PALETTE = [
 	'#2490ef', '#29a745', '#e0863b', '#8e5ce6', '#e0507a',
 	'#17a2b8', '#6c7ac9', '#c0392b', '#159957', '#9b59b6',
@@ -63,7 +65,10 @@ class RolesAndPermissions {
 					<button type="button" class="is-active" data-status="1">${__('Enabled')}</button>
 					<button type="button" data-status="0">${__('Disabled')}</button>
 				</div>
-				<select class="form-control rp-filter-profile"><option value="">${__('All Role Profiles')}</option></select>
+				<select class="form-control rp-filter-profile">
+					<option value="">${__('All Role Profiles')}</option>
+					<option value="${RP_NO_PROFILE_FILTER}">${__('No Profile')}</option>
+				</select>
 				<button type="button" class="rp-toolbar-clear">${__('Clear filters')}</button>
 				<span class="rp-result-count"></span>
 			</div>
@@ -166,7 +171,7 @@ class RolesAndPermissions {
 	populate_profile_filter() {
 		const $sel = this.$body.find('.rp-filter-profile');
 		const current = $sel.val();
-		$sel.find('option').slice(1).remove();
+		$sel.find('option').slice(2).remove();
 		(this.data.available_role_profiles || []).forEach((p) => {
 			$sel.append(`<option value="${frappe.utils.escape_html(p)}">${frappe.utils.escape_html(p)}</option>`);
 		});
@@ -209,7 +214,11 @@ class RolesAndPermissions {
 				const hay = `${u.full_name || ''} ${u.user}`.toLowerCase();
 				if (!hay.includes(search)) return false;
 			}
-			if (profile && !u.role_profiles.includes(profile)) return false;
+			if (profile === RP_NO_PROFILE_FILTER) {
+				if (u.role_profiles.length) return false;
+			} else if (profile && !u.role_profiles.includes(profile)) {
+				return false;
+			}
 			if (status !== '' && String(u.enabled) !== status) return false;
 			return true;
 		});
