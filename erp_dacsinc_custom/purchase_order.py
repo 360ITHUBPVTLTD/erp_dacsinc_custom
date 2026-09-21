@@ -3698,31 +3698,33 @@ def create_receipt_documents(sco_name, items_to_receive):
             })
 
     # --- DOCUMENT GENERATION ---
-    scr_name, pr_name, se_name, extra_pr_name = None, None, None, None
+    scr_name, pr_name, se_name = None, None, None
+    pr = None
 
-    # A. NORMAL FLOW
+    # A. NORMAL FLOW — build (but don't submit yet) the PR off the SCR, so
+    # any extra-qty service rows below land on this SAME Purchase Receipt
+    # instead of a second one.
     if final_scr_items:
         scr.items = final_scr_items
         scr.save(ignore_permissions=True)
         scr.submit()
         scr_name = scr.name
-        
-        pr = make_purchase_receipt_from_scr(scr.name)
-        pr.save(ignore_permissions=True)
-        pr.submit()
-        pr_name = pr.name
 
-    # B. EXTRA FLOW (With Custom Fields)
+        pr = make_purchase_receipt_from_scr(scr.name)
+
+    # B. EXTRA FLOW (over-collection beyond the SCO's ordered qty)
     if extra_items:
-        # 1. STOCK ENTRY (Material Receipt)
+        # 1. STOCK ENTRY (Material Receipt) — always its own document: this
+        # is what actually puts the extra physical FG into stock, and an SCR
+        # can't be submitted for qty above what the SCO ordered.
         se = frappe.new_doc("Stock Entry")
         se.stock_entry_type = "Material Receipt"
         se.company = sco.company
         se.set_posting_time = 1
-        
+
         # --- CUSTOM FIELDS SET HERE ---
         se.custom_extra_fg_collect_from_jobbers = 1
-        se.custom_reference_id = sco.purchase_order 
+        se.custom_reference_id = sco.purchase_order
         # ------------------------------
 
         for ex in extra_items:
@@ -3738,41 +3740,56 @@ def create_receipt_documents(sco_name, items_to_receive):
         se.submit()
         se_name = se.name
 
-        # 2. PURCHASE RECEIPT (Liability/Service)
-        pr_svc = frappe.new_doc("Purchase Receipt")
-        pr_svc.supplier = sco.supplier
-        pr_svc.company = sco.company
-        pr_svc.currency = po_doc.currency
-        pr_svc.conversion_rate = po_doc.conversion_rate or 1
-        pr_svc.set_posting_time = 1
-        
-        # REQUESTED SETTINGS
-        pr_svc.is_subcontracted = 1
-        
+        # 2. SERVICE CHARGE for the extra qty — appended onto the PR from
+        # step A when one exists (only built fresh when this batch is
+        # PURELY extra, i.e. there was no normal SCR portion at all), so a
+        # mixed normal+extra receipt produces exactly ONE Purchase Receipt.
+        # Each row's own description flags it as extra so it's visible on
+        # the document itself, not only in a field that's easy to miss.
+        if pr is None:
+            pr = frappe.new_doc("Purchase Receipt")
+            pr.supplier = sco.supplier
+            pr.company = sco.company
+            pr.currency = po_doc.currency
+            pr.conversion_rate = po_doc.conversion_rate or 1
+            pr.set_posting_time = 1
+            pr.is_subcontracted = 1
+
         # --- CUSTOM FIELDS SET HERE ---
-        pr_svc.custom_extra_fg_collect_from_jobbers = 1
-        pr_svc.custom_reference_id = sco.purchase_order
+        pr.custom_extra_fg_collect_from_jobbers = 1
+        pr.custom_reference_id = sco.purchase_order
         # ------------------------------
 
+        extra_summary_lines = []
         for ex in extra_items:
-            pr_svc.append("items", {
+            pr.append("items", {
                 "item_code": ex["svc_code"], # Service/PO Item
                 "qty": ex["qty"],
                 "rate": ex["svc_rate"],
                 "uom": ex["svc_uom"],
                 "warehouse": "", # Non-stock ideally
-                "description": f"Service charge for Extra {ex['fg_name']}"
+                "description": f"⚠ EXTRA (over-collected beyond SCO qty) — {ex['fg_name']}: {flt(ex['qty'], 2)} {ex['uom']}"
             })
-            
-        pr_svc.insert(ignore_permissions=True)
-        pr_svc.submit()
-        extra_pr_name = pr_svc.name
+            extra_summary_lines.append(f"{ex['fg_name']}: +{flt(ex['qty'], 2)} {ex['uom']}")
+
+    # Save + submit the single merged PR (normal rows, extra rows, or both),
+    # then leave a comment spelling out exactly what was over-collected.
+    if pr is not None:
+        pr.save(ignore_permissions=True)
+        pr.submit()
+        pr_name = pr.name
+        if extra_items:
+            pr.add_comment(
+                "Comment",
+                "Includes extra qty received beyond SCO ordered qty (over-collection allowance):<br>"
+                + "<br>".join(extra_summary_lines)
+            )
 
     return {
         "scr_name": scr_name,
         "pr_name": pr_name,
         "se_name": se_name,
-        "extra_pr_name": extra_pr_name
+        "has_extra": bool(extra_items)
     }
 
 # Mocking helper for function call, replace with standard frappe method

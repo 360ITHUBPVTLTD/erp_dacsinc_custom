@@ -1522,6 +1522,52 @@ figure) — MariaDB float noise on `Bin.actual_qty` (e.g. `13.999999999994`)
 otherwise makes ERPNext's own stock-sufficiency check reject a request for
 exactly the displayed "14".
 
+### "Receive Goods for SCO" — over-collection produces ONE Purchase Receipt, not two
+
+`show_receive_items_dialog` in `purchase_order.js`, validated by
+`check_over_collection_limit` and submitted via `create_receipt_documents`
+in `purchase_order.py`.
+
+A jobber can return more finished goods than the SCO ordered, up to Admin
+Settings' `allow_over_collecting_of_fg` % (rounded up). For each requested
+qty, the backend splits it into a **normal** portion (within the SCO
+line's own pending/ordered qty) and an **extra** portion (the
+over-collected balance):
+
+- Normal portion → Subcontracting Receipt → Purchase Receipt, via
+  `make_purchase_receipt` from `erpnext.subcontracting...subcontracting_receipt`
+  (aliased `make_purchase_receipt_from_scr`).
+- Extra portion → a "Material Receipt" Stock Entry (this is what actually
+  puts the extra physical FG into stock — an SCR can't be submitted for qty
+  above what the SCO ordered) **and** a service-item charge for paying the
+  jobber for the extra pieces.
+
+That service-item charge is appended onto the **same** Purchase Receipt
+object as the normal portion (before it's saved/submitted) rather than
+built as a second document — a receipt that mixes normal and extra qty
+must produce exactly one PR. A fresh PR is only created from scratch when
+a batch is *purely* extra (no normal SCR portion at all in that submission).
+
+The extra qty is flagged three ways on that single PR, so it's never just
+a number that blends into the rest of the document:
+
+- `custom_extra_fg_collect_from_jobbers` / `custom_reference_id` (existing
+  custom fields, also used on the Stock Entry side) are set on the PR
+  whenever it carries *any* extra rows — even when most of the document is
+  normal SCR-derived rows. This is what `get_linked_subcontracting_docs`'s
+  "Extra" badge (in the PO's linked-documents dashboard,
+  `render_linked_docs_html`) keys off.
+- Each extra row's own `description` is prefixed `⚠ EXTRA (over-collected
+  beyond SCO qty) — {item}: {qty}`, visible directly in the PR's item
+  table/print-out.
+- A `Comment` is added to the submitted PR listing exactly which items and
+  quantities were over-collected.
+
+The returned `has_extra` flag (not a document name) tells the client-side
+success message in `create_receipts_now` whether to note "includes extra
+over-collected qty" next to the single PR link — there is no separate
+"extra PR" name to report any more.
+
 ## Rounding conventions
 
 - **Purchase/production suggestions round UP** (`qty_round_up` /

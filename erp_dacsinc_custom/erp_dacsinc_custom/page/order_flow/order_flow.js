@@ -1135,17 +1135,25 @@ class OrderFlow {
                     freeze_message: __('Checking raw material…')
                 }).then(r => {
                     const ready = (r && r.message) || [];
-                    if (!ready.length) {
-                        window.open(frappe.utils.get_form_link('Sales Order', so), '_blank');
+                    if (ready.length) {
+                        frappe.require('/assets/erp_dacsinc_custom/js/sales_order.js', () => {
+                            if (typeof window.so_show_spo_multi_prompt !== 'function') {
+                                window.open(frappe.utils.get_form_link('Sales Order', so), '_blank');
+                                return;
+                            }
+                            window.so_show_spo_multi_prompt(so, ready, () => this.refresh(true));
+                        });
                         return;
                     }
-                    frappe.require('/assets/erp_dacsinc_custom/js/sales_order.js', () => {
-                        if (typeof window.so_show_spo_multi_prompt !== 'function') {
-                            window.open(frappe.utils.get_form_link('Sales Order', so), '_blank');
-                            return;
-                        }
-                        window.so_show_spo_multi_prompt(so, ready, () => this.refresh(true));
-                    });
+                    // No BOM line at all on this order — "Raise MR from SO"
+                    // (plain trade items). Same complaint as the BOM case: the
+                    // per-item numbers already exist in the widget, so open its
+                    // "Finished Item MR" prompt directly instead of sending the
+                    // user to the Sales Order to find the same button. Loaded
+                    // into an OFF-SCREEN container — never appended to the
+                    // page — purely to populate custom_stock_data the same way
+                    // the visible widget does; nothing about this is shown.
+                    this.open_fg_mr_prompt_from_tracker(so);
                 }).catch(() => {
                     window.open(frappe.utils.get_form_link('Sales Order', so), '_blank');
                 });
@@ -2155,7 +2163,7 @@ class OrderFlow {
         }
     }
 
-    load_so_details(so_name, $container) {
+    load_so_details(so_name, $container, callback) {
         frappe.model.with_doc('Sales Order', so_name, () => {
             const doc = frappe.model.get_doc('Sales Order', so_name);
             if (!doc) {
@@ -2178,11 +2186,68 @@ class OrderFlow {
             window.cur_frm = mock_frm;
 
             if (typeof generate_stock_overview_table === 'function') {
-                generate_stock_overview_table(mock_frm);
+                // `callback` fires once custom_stock_data is fully populated
+                // (generate_stock_overview_table's own contract) — used by
+                // callers that need the computed data (so_collect_pending_fg
+                // etc.) rather than the rendered table itself, e.g. driving
+                // the "Finished Item MR" dialog straight from the tracker
+                // without the widget ever being visible.
+                generate_stock_overview_table(mock_frm, () => { if (callback) callback(mock_frm); });
                 this.strip_actions_if_view_only($container);
             } else {
                 $container.html('<div class="alert alert-warning">generate_stock_overview_table function not found.</div>');
+                if (callback) callback(null);
             }
+        });
+    }
+
+    // "Raise MR from SO" from the Action Required column, for an order whose
+    // pending lines are plain trade items (no BOM at all) — opens the same
+    // "Finished Item MR" dialog the Sales Order's own widget offers, instead
+    // of bouncing the user there to find it themselves. Builds the same
+    // mock_frm + off-screen container load_so_details already uses for the
+    // tracker's inline stock widget, so the numbers are computed exactly the
+    // same way — this never re-derives them independently.
+    open_fg_mr_prompt_from_tracker(so_name) {
+        const fallback_to_so = () => window.open(frappe.utils.get_form_link('Sales Order', so_name), '_blank');
+        let settled = false;
+        const settle = (fn) => { if (!settled) { settled = true; fn(); } };
+
+        // Guards against generate_stock_overview_table's own early-return
+        // paths (e.g. its stock-details call failing) never invoking the
+        // callback — falls back rather than leaving the freeze indicator
+        // (or the user) waiting on nothing.
+        const timeout = setTimeout(() => settle(fallback_to_so), 10000);
+
+        frappe.dom.freeze(__('Checking pending items…'));
+        const $hidden = $('<div>').appendTo(document.body).hide();
+
+        frappe.require('/assets/erp_dacsinc_custom/js/sales_order.js', () => {
+            this.load_so_details(so_name, $hidden, (mock_frm) => {
+                clearTimeout(timeout);
+                frappe.dom.unfreeze();
+                $hidden.remove();
+
+                if (!mock_frm || typeof so_collect_pending_fg !== 'function'
+                        || typeof so_make_fg_material_request_all !== 'function') {
+                    settle(fallback_to_so);
+                    return;
+                }
+                const pending_fg = so_collect_pending_fg(mock_frm);
+                if (!pending_fg.length) {
+                    // Nothing actually short (already fully requested/ordered
+                    // on paper) — the tracker's own "X Still Short" figure can
+                    // lag a step behind a request just raised elsewhere.
+                    settle(() => frappe.show_alert({
+                        message: __('Nothing left to request — already covered.'), indicator: 'green'
+                    }));
+                    return;
+                }
+                settle(() => {
+                    window.cur_frm = mock_frm;
+                    so_make_fg_material_request_all(mock_frm);
+                });
+            });
         });
     }
 
@@ -2455,10 +2520,46 @@ class OrderFlow {
 
         const mr_rows = mrs.map(m => {
             const pending = flt_of(m.qty) - flt_of(m.ordered_qty);
+            // ERPNext's own per_ordered/per_received on a Material Request
+            // can get stuck just under 100% by a floating-point remainder —
+            // every line ordered AND received to at least its requested qty,
+            // nothing genuinely outstanding, yet neither figure ever quite
+            // reaches the exact 100 the core status check wants, so status
+            // reads "Partially Ordered" forever even past full receipt.
+            // Confirmed live: MAT-MR-2026-00043, per_ordered AND per_received
+            // both 99.999953, every one of its 20 lines individually ordered
+            // AND received >= requested. This dashboard's own "Not ordered"
+            // column (pending, below) and Action column already
+            // independently agree ordering is done; received_pending is that
+            // same math applied to receiving, so a MR that has gone all the
+            // way to received is labelled "Received", not left one step
+            // behind at "Ordered". Only ever moves a status FORWARD along
+            // Pending -> Partially Ordered -> Ordered -> Received, and only
+            // when this dashboard's own qty math says the next stage is
+            // genuinely done — anything outside that progression (Stopped,
+            // Cancelled, Transferred, or already Received) is left exactly
+            // as ERPNext itself reports it.
+            const received_pending = flt_of(m.qty) - flt_of(m.received_qty);
+            // Two separate upgrade paths, checked in this order — receiving
+            // first. A status of "Partially Received" already means ordering
+            // is done and receiving has genuinely started; if only some of
+            // it is in yet (received_pending still material), that status is
+            // ALREADY correct and must not be overwritten by the ordering
+            // check below just because pending (the ordering gap) reads 0 —
+            // an earlier version of this fix did exactly that and silently
+            // downgraded a real 50%-received MR back to "Ordered".
+            let mr_status = m.status;
+            if (['Pending', 'Partially Ordered', 'Ordered', 'Partially Received'].includes(m.status)
+                    && received_pending <= 0.01) {
+                mr_status = 'Received';
+            } else if (['Pending', 'Partially Ordered'].includes(m.status) && pending <= 0.01) {
+                mr_status = 'Ordered';
+            }
             return `<tr class="of-doc-row">
                 <td><i class="fa fa-caret-right of-doc-items-toggle" data-doctype="Material Request" data-docname="${of_esc(m.name)}" style="cursor:pointer;margin-right:4px;color:var(--text-light);"></i>
                     <a href="/app/material-request/${encodeURIComponent(m.name)}" target="_blank" style="font-weight:700;">${of_esc(m.name)}</a>
-                    <div class="of-micro">${of_esc(m.material_request_type || '')}</div></td>
+                    <div class="of-micro">${of_esc(m.material_request_type || '')}</div>
+                    ${of_creator_html(m)}</td>
                 <td>${of_so_links(m.sales_orders)}
                     ${m.so_customer_names ? `<div class="of-micro text-muted">${of_esc(m.so_customer_names)}</div>` : ''}</td>
                 <td class="of-meta">${of_date(m.transaction_date)}
@@ -2466,7 +2567,7 @@ class OrderFlow {
                 <td>${of_qty(m.qty)}<div class="of-micro">${of_num(m.item_count)} item(s)</div></td>
                 <td>${of_qty(m.ordered_qty, 'info')}</td>
                 <td>${of_qty(pending, pending > 0 ? 'warn' : null)}</td>
-                <td>${of_doc_status(m.status)}</td>
+                <td>${of_doc_status(mr_status)}</td>
                 <td>
                     ${flt_of(m.docstatus) === 0
                         ? `<span class="of-micro" style="color:var(--of-orange);font-weight:600;" title="A Purchase Order can only be made from a submitted Material Request">
@@ -2623,6 +2724,7 @@ class OrderFlow {
                                 <div class="of-micro" style="margin-top:2px;color:var(--of-info);" title="Merchandiser assigned to this customer">
                                     <i class="fa fa-user"></i> ${of_esc(o.custom_merchandiser_name || o.custom_merchandiser_user)}
                                 </div>` : ''}
+                            ${of_creator_html(o)}
                         </div>
                     </div>
                 </td>
@@ -3097,7 +3199,8 @@ class OrderFlow {
                 <td><i class="fa fa-caret-right of-doc-items-toggle" data-doctype="Purchase Order" data-docname="${of_esc(p.name)}" style="cursor:pointer;margin-right:4px;color:var(--text-light);"></i>
                     <a href="/app/purchase-order/${encodeURIComponent(p.name)}" target="_blank" style="font-weight:700;">${of_esc(p.name)}</a>
                     ${flt_of(p.is_subcontracted) === 1 ? '<div><span class="of-chip">Subcontract</span></div>' : ''}
-                    ${of_order_confirmation_html(p)}</td>
+                    ${of_order_confirmation_html(p)}
+                    ${of_creator_html(p)}</td>
                 <td style="text-align:left;">
                     <a href="/app/supplier/${encodeURIComponent(p.supplier)}" target="_blank" style="font-weight:600;">${of_esc(p.supplier_name || p.supplier || '')}</a>
                 </td>
@@ -3121,7 +3224,8 @@ class OrderFlow {
             <tr class="of-doc-row">
                 <td><i class="fa fa-caret-right of-doc-items-toggle" data-doctype="Purchase Order" data-docname="${of_esc(p.name)}" style="cursor:pointer;margin-right:4px;color:var(--text-light);"></i>
                     <a href="/app/purchase-order/${encodeURIComponent(p.name)}" target="_blank" style="font-weight:700;">${of_esc(p.name)}</a>
-                    ${of_order_confirmation_html(p)}</td>
+                    ${of_order_confirmation_html(p)}
+                    ${of_creator_html(p)}</td>
                 <td style="text-align:left;">
                     <a href="/app/supplier/${encodeURIComponent(p.supplier)}" target="_blank" style="font-weight:600;">${of_esc(p.supplier_name || p.supplier || '')}</a>
                 </td>
@@ -3154,7 +3258,8 @@ class OrderFlow {
             <tr class="of-doc-row">
                 <td><i class="fa fa-caret-right of-doc-items-toggle" data-doctype="${of_esc(open_doctype)}" data-docname="${of_esc(open_name)}" style="cursor:pointer;margin-right:4px;color:var(--text-light);"></i>
                     <a href="/app/${of_route(open_doctype)}/${encodeURIComponent(open_name)}" target="_blank" style="font-weight:700;">${of_esc(r.name)}</a>
-                    <div class="of-micro">${of_esc(open_doctype)}${open_doctype !== r.doctype ? ` (via ${of_esc(r.doctype)})` : ''}</div></td>
+                    <div class="of-micro">${of_esc(open_doctype)}${open_doctype !== r.doctype ? ` (via ${of_esc(r.doctype)})` : ''}</div>
+                    ${of_creator_html(r)}</td>
                 <td style="text-align:left;">
                     <a href="/app/supplier/${encodeURIComponent(r.supplier)}" target="_blank" style="font-weight:600;">${of_esc(r.supplier_name || r.supplier || '')}</a>
                 </td>
@@ -3445,7 +3550,8 @@ class OrderFlow {
             <tr class="of-doc-row">
                 <td><i class="fa fa-caret-right of-doc-items-toggle" data-doctype="Purchase Order" data-docname="${of_esc(p.name)}" style="cursor:pointer;margin-right:4px;color:var(--text-light);"></i>
                     <a href="/app/purchase-order/${encodeURIComponent(p.name)}" target="_blank" style="font-weight:700;">${of_esc(p.name)}</a>
-                    <div><span class="of-chip" style="background:var(--of-purple);color:#fff;">Job Work</span></div></td>
+                    <div><span class="of-chip" style="background:var(--of-purple);color:#fff;">Job Work</span></div>
+                    ${of_creator_html(p)}</td>
                 <td style="text-align:left;">
                     <a href="/app/supplier/${encodeURIComponent(p.supplier)}" target="_blank" style="font-weight:600;">${of_esc(p.supplier_name || p.supplier || '')}</a>
                 </td>
@@ -3477,7 +3583,8 @@ class OrderFlow {
             <tr class="of-doc-row">
                 <td><i class="fa fa-caret-right of-doc-items-toggle" data-doctype="${of_esc(open_doctype)}" data-docname="${of_esc(open_name)}" style="cursor:pointer;margin-right:4px;color:var(--text-light);"></i>
                     <a href="/app/${of_route(open_doctype)}/${encodeURIComponent(open_name)}" target="_blank" style="font-weight:700;">${of_esc(r.name)}</a>
-                    <div class="of-micro">${of_esc(open_doctype)}${open_doctype !== r.doctype ? ` (via ${of_esc(r.doctype)})` : ''}</div></td>
+                    <div class="of-micro">${of_esc(open_doctype)}${open_doctype !== r.doctype ? ` (via ${of_esc(r.doctype)})` : ''}</div>
+                    ${of_creator_html(r)}</td>
                 <td style="text-align:left;">
                     <a href="/app/supplier/${encodeURIComponent(r.supplier)}" target="_blank" style="font-weight:600;">${of_esc(r.supplier_name || r.supplier || '')}</a>
                 </td>
@@ -3526,7 +3633,8 @@ class OrderFlow {
             return `<tr class="of-ewo-row" data-ewo="${of_esc(e.name)}">
                 <td><i class="fa fa-caret-right of-ewo-items-toggle" data-ewo="${of_esc(e.name)}" style="cursor:pointer;margin-right:4px;color:var(--text-light);"></i>
                     <a href="/app/embroidery-work-order/${encodeURIComponent(e.name)}" target="_blank" style="font-weight:700;">${of_esc(e.name)}</a>
-                    <div class="of-micro">${of_esc(e.work_type || '')}</div></td>
+                    <div class="of-micro">${of_esc(e.work_type || '')}</div>
+                    ${of_creator_html(e)}</td>
                 <td style="text-align:left;">
                     ${jobber_id ? `
                         <a href="/app/supplier/${encodeURIComponent(jobber_id)}" target="_blank" style="font-weight:600;">${of_esc(e.jobber_name || jobber_id)}</a>
@@ -3857,7 +3965,8 @@ class OrderFlow {
             return `<tr>
                 <td><a href="/app/pick-list/${encodeURIComponent(r.name)}" target="_blank"
                        style="font-weight:700;">${of_esc(r.name)}</a>
-                    <div class="of-micro text-muted">${of_esc(r.purpose || '')}</div></td>
+                    <div class="of-micro text-muted">${of_esc(r.purpose || '')}</div>
+                    ${of_creator_html(r)}</td>
                 <td>${status_pill(r)}</td>
                 <td>${of_esc(r.customer_name || r.customer || '')}
                     ${r.customer && r.customer_name && r.customer !== r.customer_name
@@ -3946,7 +4055,8 @@ class OrderFlow {
 
             return `<tr data-so="${of_esc(o.name)}" class="of-row-main">
                 <td><i class="fa fa-caret-right of-so-toggle" data-so="${of_esc(o.name)}" style="cursor:pointer; width:12px; font-size:14px; color:var(--text-light);"></i>
-                    ${of_so_link(o.name, {bold: true})}</td>
+                    ${of_so_link(o.name, {bold: true})}
+                    ${of_creator_html(o)}</td>
                 <td style="text-align:left;">
                     <a href="/app/customer/${encodeURIComponent(o.customer)}" target="_blank" style="font-weight:600;">${of_customer_display(o.customer_name || o.customer, o.contact_person_name)}</a>
                 </td>
@@ -4001,7 +4111,8 @@ class OrderFlow {
 
             return `<tr class="of-doc-row">
                 <td><i class="fa fa-caret-right of-doc-items-toggle" data-doctype="Sales Invoice" data-docname="${of_esc(s.name)}" style="cursor:pointer;margin-right:4px;color:var(--text-light);"></i>
-                    <a href="/app/sales-invoice/${encodeURIComponent(s.name)}" target="_blank" style="font-weight:700;">${of_esc(s.name)}</a></td>
+                    <a href="/app/sales-invoice/${encodeURIComponent(s.name)}" target="_blank" style="font-weight:700;">${of_esc(s.name)}</a>
+                    ${of_creator_html(s)}</td>
                 <td style="text-align:left;">
                     <a href="/app/customer/${encodeURIComponent(s.customer)}" target="_blank" style="font-weight:600;">${of_customer_display(s.customer_name || s.customer, s.contact_person_name)}</a>
                     <div class="of-micro text-muted">${of_esc(s.customer || '')}</div>
@@ -4031,7 +4142,8 @@ class OrderFlow {
 
             return `<tr class="of-doc-row">
                 <td><i class="fa fa-caret-right of-doc-items-toggle" data-doctype="Purchase Invoice" data-docname="${of_esc(p.name)}" style="cursor:pointer;margin-right:4px;color:var(--text-light);"></i>
-                    <a href="/app/purchase-invoice/${encodeURIComponent(p.name)}" target="_blank" style="font-weight:700;">${of_esc(p.name)}</a></td>
+                    <a href="/app/purchase-invoice/${encodeURIComponent(p.name)}" target="_blank" style="font-weight:700;">${of_esc(p.name)}</a>
+                    ${of_creator_html(p)}</td>
                 <td style="text-align:left;">
                     <a href="/app/supplier/${encodeURIComponent(p.supplier)}" target="_blank" style="font-weight:600;">${of_esc(p.supplier_name || p.supplier || '')}</a>
                 </td>
@@ -4060,7 +4172,8 @@ class OrderFlow {
 
             return `<tr class="of-doc-row">
                 <td><i class="fa fa-caret-right of-doc-items-toggle" data-doctype="Purchase Invoice" data-docname="${of_esc(p.name)}" style="cursor:pointer;margin-right:4px;color:var(--text-light);"></i>
-                    <a href="/app/purchase-invoice/${encodeURIComponent(p.name)}" target="_blank" style="font-weight:700;">${of_esc(p.name)}</a></td>
+                    <a href="/app/purchase-invoice/${encodeURIComponent(p.name)}" target="_blank" style="font-weight:700;">${of_esc(p.name)}</a>
+                    ${of_creator_html(p)}</td>
                 <td style="text-align:left;">
                     <a href="/app/supplier/${encodeURIComponent(p.supplier)}" target="_blank" style="font-weight:600;">${of_esc(p.supplier_name || p.supplier || '')}</a>
                     <div class="of-micro text-muted"><span class="of-chip">Jobber</span></div>
@@ -4285,11 +4398,7 @@ class OrderFlow {
                         <i class="fa fa-user" style="color:#007bff;"></i> Merchandiser: <b>${of_esc(o.custom_merchandiser_name || o.custom_merchandiser_user)}</b>
                     </div>
                     ` : ''}
-                    ${sub === 'other' && o.owner ? `
-                    <div class="of-micro text-muted" style="margin-top: 3px; font-weight: 500;">
-                        <i class="fa fa-pencil" style="color:#888;"></i> Created by: <b>${of_esc(o.creator_name || o.owner)}</b>
-                    </div>
-                    ` : ''}
+                    ${of_creator_html(o)}
                     ${o.items_list ? `
                     <div style="margin-top: 6px; display: inline-flex; align-items: center; background-color: #f4f6f8; border: 1px solid #d1d8dd; border-radius: 4px; padding: 2px 8px; font-size: 11px; color: #555; max-width: 100%; box-sizing: border-box;">
                         <i class="fa fa-cube" style="margin-right: 5px; color: #888;"></i>
@@ -4711,7 +4820,8 @@ class OrderFlow {
                 <tr class="${received > 0 ? 'of-transfer-row' : ''}">
                     <td>${received > 0
                         ? `<i class="fa fa-caret-right of-transfer-receipts-toggle" data-id="${of_esc(t.name)}" style="cursor:pointer;margin-right:4px;color:var(--text-light);"></i>`
-                        : ''}<a href="/app/uniform-embroidery-transfer/${encodeURIComponent(t.name)}" target="_blank"><b>${of_esc(t.name)}</b></a></td>
+                        : ''}<a href="/app/uniform-embroidery-transfer/${encodeURIComponent(t.name)}" target="_blank"><b>${of_esc(t.name)}</b></a>
+                        ${of_creator_html(t)}</td>
                     <td><a href="/app/item/${encodeURIComponent(t.source_item)}" target="_blank">${of_esc(t.source_item)}</a></td>
                     <td><a href="/app/item/${encodeURIComponent(t.target_item)}" target="_blank">${of_esc(t.target_item)}</a></td>
                     <td><b>${total}</b></td>
@@ -5312,6 +5422,17 @@ function of_po_links(list) { return of_links(list, 'Purchase Order'); }
 function of_order_confirmation_html(p) {
     if (!p.order_confirmation_no) return '';
     return `<div class="of-micro text-muted">${__('Order Conf')}: ${of_esc(p.order_confirmation_no)}${p.order_confirmation_date ? ` (${of_date(p.order_confirmation_date)})` : ''}</div>`;
+}
+
+// Who created this document — shown under its id link on every tab.
+// `creator_name` is server-resolved (see _attach_creator_names in
+// order_flow_api.py, called once per tab's data function); falls back to the
+// raw owner id only for a row from before that resolution existed (or a
+// stale cached page), never silently to nothing.
+function of_creator_html(row) {
+    const who = row && (row.creator_name || row.owner);
+    if (!who) return '';
+    return `<div class="of-micro text-muted"><i class="fa fa-user-o"></i> ${of_esc(who)}</div>`;
 }
 
 /**
