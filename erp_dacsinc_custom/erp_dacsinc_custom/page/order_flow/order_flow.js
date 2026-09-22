@@ -156,6 +156,16 @@ class OrderFlow {
         this.stock_warehouse_filter = ''; // Stock Tracker tab only — see #of-stock-warehouse
         this.tracker_industry_filter = ''; // Sales Tracker's SO subtab only — see #of-tracker-industry
 
+        // Draft/Submitted filter-pill state, per tab + sub-list — '' means
+        // "All" (both mixed together, same as before this filter existed).
+        // Keyed exactly like the server's own <sublist>_docstatus args (see
+        // build_docstatus_args) so there is only one name per concept.
+        this.docstatus_filter = {
+            purchase: { po: '', receipt: '' },
+            jobwork: { po: '', receipt: '', ewo_fp: '', ewo_pn: '' },
+            tracker: { mr: '' },
+        };
+
         // Per-tab pagination state. A tab whose data is one list (stock,
         // billing, approval, uniform) tracks a single {page, page_size};
         // a tab whose response carries several independently-paginated sub-lists
@@ -556,6 +566,20 @@ class OrderFlow {
         this.$body.on('change', '#of-uniform-status', (e) => { this.uniform_status_filter = e.target.value; this.reset_all_pagination(); this.refresh(true); });
         this.$body.on('change', '#of-stock-warehouse', (e) => { this.stock_warehouse_filter = e.target.value; this.reset_all_pagination(); this.refresh(true); });
         this.$body.on('change', '#of-tracker-industry', (e) => { this.tracker_industry_filter = e.target.value; this.reset_all_pagination(); this.refresh(true); });
+
+        // Draft/Submitted filter pills — Purchase Flow's PO/Receipt, Job
+        // Work's PO/Receipt/EWO, Sales Tracker's MR sub-tab (see
+        // this.docstatus_filter / build_docstatus_args / of_docstatus_pills).
+        this.$body.on('click', '.of-ds-pill', (e) => {
+            const $btn = $(e.currentTarget);
+            const tab = $btn.data('tab');
+            const sublist = $btn.data('sublist');
+            const value = $btn.data('docstatus') || '';
+            if (!this.docstatus_filter[tab] || !(sublist in this.docstatus_filter[tab])) return;
+            this.docstatus_filter[tab][sublist] = value;
+            this.reset_all_pagination();
+            this.refresh(true);
+        });
         this.$body.on('change', '#of-scope', (e) => { this.scope = e.target.value; this.reset_all_pagination(); this.refresh(true); });
         this.$body.on('change', '#of-days',  (e) => { this.days  = e.target.value; this.reset_all_pagination(); this.refresh(true); });
 
@@ -1590,6 +1614,20 @@ class OrderFlow {
         return out;
     }
 
+    // {po_docstatus: 'draft', ...} from this.docstatus_filter[tab] — skips
+    // empty ('All') entries so a tab with no filter selected sends nothing
+    // extra, same default-mixing behaviour the server already had before
+    // this filter existed.
+    build_docstatus_args(tab) {
+        const d = this.docstatus_filter[tab];
+        if (!d) return {};
+        const out = {};
+        Object.keys(d).forEach(k => {
+            if (d[k]) out[`${k}_docstatus`] = d[k];
+        });
+        return out;
+    }
+
     // Same shape as build_pagination_args, but joined into the cache key so
     // paging forward/back (or changing page size) is treated as a distinct
     // fetch — without this, page 2 would silently reuse page 1's cached rows.
@@ -1709,7 +1747,7 @@ class OrderFlow {
         this.load_summary();
         if (force) this.cache = {};
 
-        const key = `${this.active}:${this.days}:${this.scope}:${this.stage_filter}:${this.search}:${this.merchandiser_filter}:${this.approval_stage_filter}:${this.uniform_status_filter}:${this.stock_warehouse_filter}:${this.tracker_industry_filter}:${this.pagination_cache_part(this.active)}`;
+        const key = `${this.active}:${this.days}:${this.scope}:${this.stage_filter}:${this.search}:${this.merchandiser_filter}:${this.approval_stage_filter}:${this.uniform_status_filter}:${this.stock_warehouse_filter}:${this.tracker_industry_filter}:${JSON.stringify(this.docstatus_filter[this.active] || {})}:${this.pagination_cache_part(this.active)}`;
         if (this.cache[key]) {
             this.paint(this.cache[key]);
             this.load_activity();
@@ -1752,6 +1790,7 @@ class OrderFlow {
             args.warehouse = this.stock_warehouse_filter || null;
         }
         Object.assign(args, this.build_pagination_args(this.active));
+        Object.assign(args, this.build_docstatus_args(this.active));
 
         frappe.call({ method, args }).then(r => {
             const data = r.message;
@@ -1774,7 +1813,7 @@ class OrderFlow {
                 this.render_tracker_summary(s);
             });
         } else {
-            const key = `${this.active}:${this.days}:${this.scope}:${this.stage_filter}:${this.search}:${this.merchandiser_filter}:${this.approval_stage_filter}:${this.uniform_status_filter}:${this.stock_warehouse_filter}:${this.tracker_industry_filter}:${this.pagination_cache_part(this.active)}`;
+            const key = `${this.active}:${this.days}:${this.scope}:${this.stage_filter}:${this.search}:${this.merchandiser_filter}:${this.approval_stage_filter}:${this.uniform_status_filter}:${this.stock_warehouse_filter}:${this.tracker_industry_filter}:${JSON.stringify(this.docstatus_filter[this.active] || {})}:${this.pagination_cache_part(this.active)}`;
             const data = this.cache[key];
             if (data) {
                 if (this.active === 'purchase') this.render_purchase_summary(data);
@@ -2909,7 +2948,8 @@ class OrderFlow {
                     </table>`,
                     `<a class="of-btn of-btn--primary" href="/app/material-request/new" target="_blank">
                         <i class="fa fa-plus"></i> ${__('Create Material Request')}
-                    </a>`, of_pagination_html('tracker', 'mr', mrs_env))}
+                    </a>`, of_pagination_html('tracker', 'mr', mrs_env),
+                    of_docstatus_pills('tracker', 'mr', mrs_env.docstatus_counts, this.docstatus_filter.tracker.mr))}
             </div>`;
     }
 
@@ -3396,7 +3436,8 @@ class OrderFlow {
                     </table>`,
                     `<a class="of-btn of-btn--primary" href="/app/purchase-order/new" target="_blank">
                         <i class="fa fa-plus"></i> ${__('Create Purchase Order')}
-                    </a>`, of_pagination_html('purchase', 'po', pos_env))}
+                    </a>`, of_pagination_html('purchase', 'po', pos_env),
+                    of_docstatus_pills('purchase', 'po', pos_env.docstatus_counts, this.docstatus_filter.purchase.po))}
             </div>
 
             <div id="of-pur-sec-receipt" class="${subtab !== 'receipt' ? 'of-hidden' : ''}">
@@ -3408,7 +3449,8 @@ class OrderFlow {
                     </table>`,
                     `<a class="of-btn of-btn--primary" href="/app/purchase-receipt/new" target="_blank">
                         <i class="fa fa-plus"></i> ${__('Create Purchase Receipt')}
-                    </a>`, of_pagination_html('purchase', 'receipt', rcs_env))}
+                    </a>`, of_pagination_html('purchase', 'receipt', rcs_env),
+                    of_docstatus_pills('purchase', 'receipt', rcs_env.docstatus_counts, this.docstatus_filter.purchase.receipt))}
             </div>
 
             <div id="of-pur-sec-bill" class="${subtab !== 'bill' ? 'of-hidden' : ''}">
@@ -3789,7 +3831,8 @@ class OrderFlow {
                     </table>`,
                     `<a class="of-btn of-btn--primary" href="/app/purchase-order/new?is_subcontracted=1" target="_blank">
                         <i class="fa fa-plus"></i> ${__('Create Subcontracting PO')}
-                    </a>`, of_pagination_html('jobwork', 'po', pos_env))}
+                    </a>`, of_pagination_html('jobwork', 'po', pos_env),
+                    of_docstatus_pills('jobwork', 'po', pos_env.docstatus_counts, this.docstatus_filter.jobwork.po))}
             </div>
 
             <div id="of-job-sec-receipt" class="${subtab !== 'receipt' ? 'of-hidden' : ''}">
@@ -3801,7 +3844,8 @@ class OrderFlow {
                     </table>`,
                     `<a class="of-btn of-btn--primary" href="/app/subcontracting-receipt/new" target="_blank">
                         <i class="fa fa-plus"></i> ${__('Create Subcontracting Receipt')}
-                    </a>`, of_pagination_html('jobwork', 'receipt', rcs_env))}
+                    </a>`, of_pagination_html('jobwork', 'receipt', rcs_env),
+                    of_docstatus_pills('jobwork', 'receipt', rcs_env.docstatus_counts, this.docstatus_filter.jobwork.receipt))}
             </div>
 
             <div id="of-job-sec-fp" class="${subtab !== 'fp' ? 'of-hidden' : ''}">
@@ -3811,7 +3855,8 @@ class OrderFlow {
                             <th>Purchase Order</th><th>Sales Order</th><th>Date</th>
                             <th>Sent</th><th>Received</th><th>Pending</th><th>Stage</th><th>Action</th></tr></thead>
                         <tbody>${ewo_fp_rows || of_empty_row(10)}</tbody>
-                    </table>`, null, of_pagination_html('jobwork', 'ewo_fp', ewo_fp_env))}
+                    </table>`, null, of_pagination_html('jobwork', 'ewo_fp', ewo_fp_env),
+                    of_docstatus_pills('jobwork', 'ewo_fp', ewo_fp_env.docstatus_counts, this.docstatus_filter.jobwork.ewo_fp))}
             </div>
 
             <div id="of-job-sec-pn" class="${subtab !== 'pn' ? 'of-hidden' : ''}">
@@ -3821,7 +3866,8 @@ class OrderFlow {
                             <th>Purchase Order</th><th>Sales Order</th><th>Date</th>
                             <th>Sent</th><th>Received</th><th>Pending</th><th>Stage</th><th>Action</th></tr></thead>
                         <tbody>${ewo_pn_rows || of_empty_row(10)}</tbody>
-                    </table>`, null, of_pagination_html('jobwork', 'ewo_pn', ewo_pn_env))}
+                    </table>`, null, of_pagination_html('jobwork', 'ewo_pn', ewo_pn_env),
+                    of_docstatus_pills('jobwork', 'ewo_pn', ewo_pn_env.docstatus_counts, this.docstatus_filter.jobwork.ewo_pn))}
             </div>`;
     }
 
@@ -5409,6 +5455,41 @@ function of_round2(v) {
  * Returns '' when there is nothing to page through, so a tab with no rows
  * doesn't show an empty, confusing "Showing 0–0 of 0" bar.
  */
+// All / Draft / Submitted filter pills for a sub-list that mixes Draft
+// (docstatus 0) and Submitted (docstatus 1) documents together — Purchase
+// Flow's PO/Receipt, Job Work's PO/Receipt/EWO, Sales Tracker's MR sub-tab.
+// `counts` is the {draft, submitted} the server computed from the SAME
+// filters the list itself uses (see _docstatus_pill_counts in
+// order_flow_api.py), so these numbers can never disagree with what
+// clicking a pill actually returns. `current` is this.docstatus_filter's
+// current value for this sub-list ('', 'draft' or 'submitted').
+//
+// The Draft pill only renders when there's a reason to click it — either a
+// draft actually exists right now, or the viewer is already filtered to
+// Draft (so "All" stays one click away even if the last draft was just
+// submitted while this tab was open).
+function of_docstatus_pills(tab, sublist, counts, current) {
+    counts = counts || {};
+    const draft = flt_of(counts.draft);
+    const submitted = flt_of(counts.submitted);
+    current = current || '';
+    // Compact — this sits inline in the card header next to the title, not
+    // as its own row, so it shares the header's font size rather than
+    // looking like a full-size button.
+    const pill = (value, label, count) => `
+        <button type="button" class="of-btn ${current === value ? 'of-btn--primary' : ''} of-ds-pill"
+                style="padding:2px 8px; font-size:11px; font-weight:500;"
+                data-tab="${tab}" data-sublist="${sublist}" data-docstatus="${value}">
+            ${of_esc(label)} (${count})
+        </button>`;
+    const show_draft = draft > 0 || current === 'draft';
+    return `<span style="display:inline-flex; gap:4px;">
+        ${pill('', __('All'), draft + submitted)}
+        ${show_draft ? pill('draft', __('Draft'), draft) : ''}
+        ${pill('submitted', __('Submitted'), submitted)}
+    </span>`;
+}
+
 function of_pagination_html(tab, sublist, state) {
     state = state || {};
     const total = of_num(state.total);
@@ -5645,13 +5726,16 @@ function of_stat_strip(stats) {
     return `<div class="of-stat-strip">${cells}</div>`;
 }
 
-function of_card(title, icon, inner, actions_html, footer_html) {
+function of_card(title, icon, inner, actions_html, footer_html, title_suffix_html) {
     // footer_html (e.g. a pagination bar) renders AFTER .of-scroll, not
     // inside it — a control the user needs to click must stay put while the
     // table scrolls sideways underneath it, not scroll away with the table.
+    // title_suffix_html (e.g. the Draft/Submitted filter pills) is raw HTML,
+    // unlike `title` — it renders right after the title text, in the same
+    // row the Create button already occupies, instead of a whole extra row.
     return `<div class="of-card">
         <div class="of-card__head" style="${actions_html ? 'display:flex;justify-content:space-between;align-items:center;' : ''}">
-            <span><i class="fa fa-${icon}"></i> ${of_esc(title)}</span>
+            <span style="display:inline-flex;align-items:center;gap:10px;flex-wrap:wrap;"><i class="fa fa-${icon}"></i> ${of_esc(title)}${title_suffix_html || ''}</span>
             ${actions_html || ''}
         </div>
         <div class="of-scroll-hint"><i class="fa fa-arrows-h"></i> ${__('Scroll sideways to see every column')}</div>

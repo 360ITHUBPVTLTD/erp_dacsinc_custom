@@ -917,3 +917,38 @@ behind what does and doesn't clear the queue live in `logistics_tab.py`.
   uses. `of_tab_logistics_roles`, by contrast, is a real field on this
   app's own Admin Settings doctype JSON — that one genuinely does need
   `bench migrate` to appear.
+
+## Draft / Submitted filter pills
+
+Several sub-lists mix Draft (`docstatus = 0`) and Submitted (`docstatus =
+1`) documents together with no way to see just one or the other: Purchase
+Flow's POs and Receipts, Job Work's Sub POs / Sub Receipts / both
+Embroidery Work Order sub-tabs, and Sales Tracker's Material Requests
+sub-tab. Each of those now has an **All / Draft / Submitted** filter-pill
+row (`of_docstatus_pills`) directly above its table.
+
+- **Counts, not guesses**: each pill's number comes from
+  `_docstatus_pill_counts` (order_flow_api.py), which re-runs the exact
+  FROM/JOIN/WHERE the sub-list's own paginated query already uses — minus
+  its own docstatus condition — grouped by `docstatus`. A pill's count can
+  therefore never disagree with what clicking it actually returns. For a
+  UNIONed sub-list (Receipts = Purchase Receipt + Subcontracting Receipt),
+  it counts each document once across both doctypes, not once per doctype.
+- **The Draft pill only appears when there's a reason to click it** — a
+  draft actually exists right now, or the viewer already has Draft
+  selected (so "All" stays one click away even if the last draft was just
+  submitted while the tab was open). This was the specific ask driving the
+  feature: don't show a permanently-empty choice.
+- **Selection lives in `this.docstatus_filter[tab][sublist]`** (`''` /
+  `'draft'` / `'submitted'`), sent to the server as a `<sublist>_docstatus`
+  arg (`po_docstatus`, `receipt_docstatus`, `ewo_fp_docstatus`,
+  `ewo_pn_docstatus`, `mr_docstatus`) via `build_docstatus_args` and folded
+  into the refresh cache key so switching pills is treated as a distinct
+  fetch. `_with_docstatus` turns a selection into the extra SQL condition;
+  `''`/anything else leaves the query exactly as it was before this filter
+  existed (both docstatuses mixed together).
+- **Deliberately not applied everywhere**: Purchase Flow's "To Bill"
+  sub-tab requires `per_received >= 100`, which a Draft PO can never
+  satisfy (nothing can be received against an unsubmitted PO) — it is
+  already implicitly Submitted-only, so no pill was added there. The Pick
+  Lists tab was considered and explicitly left out for now.

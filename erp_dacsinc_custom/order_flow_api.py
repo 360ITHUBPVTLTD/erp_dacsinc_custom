@@ -253,6 +253,52 @@ def _paged_query(sql, params, page, page_size):
     return {"rows": rows, "total": total, "page": page, "page_size": page_size}
 
 
+def _with_docstatus(conditions, column, value):
+    """conditions + a docstatus condition when `value` is a real filter-pill
+    selection ("draft"/"submitted"); unchanged for "all"/None/anything else,
+    so the default keeps mixing Draft and Submitted together exactly like
+    every one of these sub-lists did before this filter existed."""
+    if value == "draft":
+        return conditions + [f"{column} = 0"]
+    if value == "submitted":
+        return conditions + [f"{column} = 1"]
+    return conditions
+
+
+def _docstatus_pill_counts(pieces, params):
+    """Draft/Submitted counts for a sub-list's filter-pill row (All / Draft /
+    Submitted), computed by re-running the exact FROM/JOIN/WHERE that
+    sub-list's own paginated query already uses — MINUS its own docstatus
+    filter — so a pill's count can never disagree with what selecting it
+    actually returns, and "Draft" can be hidden client-side when its count
+    is 0 instead of showing an always-empty choice.
+
+    `pieces` is one (name_col, docstatus_col, from_join_sql, conditions)
+    tuple per doctype folded into the sub-list — more than one for a
+    UNIONed list like Receipts (Purchase Receipt + Subcontracting Receipt),
+    which must count each document once, not once per doctype.
+    """
+    selects = [
+        f"""(SELECT DISTINCT {name_col} AS _n, {docstatus_col} AS docstatus
+             FROM {from_join_sql}
+             WHERE {' AND '.join(conditions)})"""
+        for name_col, docstatus_col, from_join_sql, conditions in pieces
+    ]
+    rows = frappe.db.sql(f"""
+        SELECT docstatus, COUNT(*) AS cnt
+        FROM ({' UNION ALL '.join(selects)}) x
+        GROUP BY docstatus
+    """, params, as_dict=1)
+    counts = {"draft": 0, "submitted": 0}
+    for r in rows:
+        ds = cint(r.docstatus)
+        if ds == 0:
+            counts["draft"] = cint(r.cnt)
+        elif ds == 1:
+            counts["submitted"] = cint(r.cnt)
+    return counts
+
+
 def _attach_creator_names(*row_lists):
     """
     Resolves each row's `owner` (a user id/email) to a display name, as
@@ -1092,7 +1138,7 @@ def _get_tracker_rows(days=120, search=None, scope="open", merchandiser=None, ap
 @frappe.whitelist()
 def get_sales_tracker(days=120, search=None, scope="open", stage_filter=None, merchandiser=None,
                        approval_stage=None, page=1, page_size=100, so_page=1, so_page_size=100,
-                       mr_page=1, mr_page_size=100, industry=None):
+                       mr_page=1, mr_page_size=100, industry=None, mr_docstatus=None):
     """
     Paginated view over _get_tracker_rows, with `stage_filter` applied in
     Python (stage is a computed field, not a column — see
@@ -1162,6 +1208,14 @@ def get_sales_tracker(days=120, search=None, scope="open", stage_filter=None, me
         mr_params["merch_scope"] = frappe.session.user
         mr_conditions.append("cust.custom_merchandiser_user = %(merch_scope)s")
 
+    _mr_from_join = """`tabMaterial Request Item` mri
+        JOIN `tabMaterial Request` mr ON mr.name = mri.parent
+        LEFT JOIN `tabSales Order` so ON so.name = mri.sales_order
+        LEFT JOIN `tabCustomer` cust ON cust.name = so.customer"""
+    mr_docstatus_counts = _docstatus_pill_counts(
+        [("mr.name", "mr.docstatus", _mr_from_join, mr_conditions)], mr_params)
+    mr_list_conditions = _with_docstatus(mr_conditions, "mr.docstatus", mr_docstatus)
+
     material_requests = _paged_query(f"""
         SELECT mr.name, mr.transaction_date, mr.schedule_date, mr.material_request_type,
                mr.status, mr.docstatus, mr.per_ordered, mr.per_received, mr.owner,
@@ -1170,15 +1224,13 @@ def get_sales_tracker(days=120, search=None, scope="open", stage_filter=None, me
                COUNT(DISTINCT mri.item_code) AS item_count,
                SUM(mri.qty) AS qty, SUM(mri.ordered_qty) AS ordered_qty,
                SUM(mri.received_qty) AS received_qty
-        FROM `tabMaterial Request Item` mri
-        JOIN `tabMaterial Request` mr ON mr.name = mri.parent
-        LEFT JOIN `tabSales Order` so ON so.name = mri.sales_order
-        LEFT JOIN `tabCustomer` cust ON cust.name = so.customer
-        WHERE {' AND '.join(mr_conditions)}
+        FROM {_mr_from_join}
+        WHERE {' AND '.join(mr_list_conditions)}
         GROUP BY mr.name, mr.transaction_date, mr.schedule_date, mr.material_request_type,
                  mr.status, mr.docstatus, mr.per_ordered, mr.per_received, mr.owner
         ORDER BY mr.transaction_date DESC
     """, mr_params, mr_page, mr_page_size)
+    material_requests["docstatus_counts"] = mr_docstatus_counts
 
     _attach_creator_names(page_rows, material_requests["rows"])
 
@@ -2275,7 +2327,8 @@ def get_activity(days=21, limit=80, merchandiser=None, scope="open", search=None
 @frappe.whitelist()
 def get_purchase_flow(days=120, search=None, scope="open", merchandiser=None,
                        po_page=1, po_page_size=100, mr_page=1, mr_page_size=100,
-                       receipt_page=1, receipt_page_size=100, bill_page=1, bill_page_size=100):
+                       receipt_page=1, receipt_page_size=100, bill_page=1, bill_page_size=100,
+                       po_docstatus=None, receipt_docstatus=None):
     """Purchase Orders with their receipt progress, tied back to the Sales Order.
 
     Returns four independently-paginated sub-lists (material_requests,
@@ -2319,6 +2372,15 @@ def get_purchase_flow(days=120, search=None, scope="open", merchandiser=None,
         params["merch_scope"] = frappe.session.user
         conditions.append("cust.custom_merchandiser_user = %(merch_scope)s")
 
+    _po_from_join = """`tabPurchase Order Item` poi
+        JOIN `tabPurchase Order` po ON po.name = poi.parent
+        LEFT JOIN `tabSupplier` sup ON sup.name = po.supplier
+        LEFT JOIN `tabSales Order` so ON so.name = poi.sales_order
+        LEFT JOIN `tabCustomer` cust ON cust.name = so.customer"""
+    po_docstatus_counts = _docstatus_pill_counts(
+        [("po.name", "po.docstatus", _po_from_join, conditions)], params)
+    po_list_conditions = _with_docstatus(conditions, "po.docstatus", po_docstatus)
+
     purchase_orders = _paged_query(f"""
         SELECT po.name, po.transaction_date, po.schedule_date, po.status, po.docstatus,
                po.supplier, sup.supplier_name, po.is_subcontracted, po.currency,
@@ -2329,18 +2391,15 @@ def get_purchase_flow(days=120, search=None, scope="open", merchandiser=None,
                COUNT(DISTINCT poi.item_code) AS item_count,
                SUM(CASE WHEN po.is_subcontracted = 1 THEN poi.fg_item_qty ELSE poi.qty END) AS qty,
                SUM(poi.received_qty) AS received_qty
-        FROM `tabPurchase Order Item` poi
-        JOIN `tabPurchase Order` po ON po.name = poi.parent
-        LEFT JOIN `tabSupplier` sup ON sup.name = po.supplier
-        LEFT JOIN `tabSales Order` so ON so.name = poi.sales_order
-        LEFT JOIN `tabCustomer` cust ON cust.name = so.customer
-        WHERE {' AND '.join(conditions)}
+        FROM {_po_from_join}
+        WHERE {' AND '.join(po_list_conditions)}
         GROUP BY po.name, po.transaction_date, po.schedule_date, po.status, po.docstatus,
                  po.supplier, sup.supplier_name, po.is_subcontracted, po.currency,
                  po.per_received, po.per_billed, po.grand_total,
                  po.order_confirmation_no, po.order_confirmation_date, po.owner
         ORDER BY po.transaction_date DESC, po.name DESC
     """, params, po_page, po_page_size)
+    purchase_orders["docstatus_counts"] = po_docstatus_counts
 
     # "To Bill" sub-tab: fully-received POs still waiting on a Purchase
     # Invoice — same base filters as purchase_orders, plus the bill-status
@@ -2403,6 +2462,24 @@ def get_purchase_flow(days=120, search=None, scope="open", merchandiser=None,
         pr_conditions.append("cust.custom_merchandiser_user = %(merch_scope)s")
         scr_conditions.append("cust.custom_merchandiser_user = %(merch_scope)s")
 
+    _pr_from_join = """`tabPurchase Receipt Item` pri
+        JOIN `tabPurchase Receipt` pr ON pr.name = pri.parent
+        LEFT JOIN `tabSupplier` sup ON sup.name = pr.supplier
+        LEFT JOIN `tabSales Order` so ON so.name = pri.sales_order
+        LEFT JOIN `tabCustomer` cust ON cust.name = so.customer"""
+    _scr_from_join = """`tabSubcontracting Receipt Item` scri
+        JOIN `tabSubcontracting Receipt` scr ON scr.name = scri.parent
+        LEFT JOIN `tabPurchase Order Item` poi ON poi.name = scri.purchase_order_item
+        LEFT JOIN `tabSupplier` sup ON sup.name = scr.supplier
+        LEFT JOIN `tabSales Order` so ON so.name = poi.sales_order
+        LEFT JOIN `tabCustomer` cust ON cust.name = so.customer"""
+    receipt_docstatus_counts = _docstatus_pill_counts([
+        ("pr.name", "pr.docstatus", _pr_from_join, pr_conditions),
+        ("scr.name", "scr.docstatus", _scr_from_join, scr_conditions),
+    ], params)
+    pr_list_conditions = _with_docstatus(pr_conditions, "pr.docstatus", receipt_docstatus)
+    scr_list_conditions = _with_docstatus(scr_conditions, "scr.docstatus", receipt_docstatus)
+
     receipts = _paged_query(f"""
         (SELECT 'Purchase Receipt' AS doctype, pr.name, pr.posting_date, pr.status, pr.docstatus,
                 pr.supplier, sup.supplier_name, pr.is_subcontracted, pr.currency, pr.grand_total,
@@ -2411,12 +2488,8 @@ def get_purchase_flow(days=120, search=None, scope="open", merchandiser=None,
                 GROUP_CONCAT(DISTINCT so.customer_name ORDER BY so.customer_name SEPARATOR ', ') AS so_customer_names,
                 GROUP_CONCAT(DISTINCT pri.purchase_order ORDER BY pri.purchase_order SEPARATOR ', ') AS purchase_orders,
                 SUM(pri.received_qty) AS qty, NULL AS linked_pr
-         FROM `tabPurchase Receipt Item` pri
-         JOIN `tabPurchase Receipt` pr ON pr.name = pri.parent
-         LEFT JOIN `tabSupplier` sup ON sup.name = pr.supplier
-         LEFT JOIN `tabSales Order` so ON so.name = pri.sales_order
-         LEFT JOIN `tabCustomer` cust ON cust.name = so.customer
-         WHERE {' AND '.join(pr_conditions)}
+         FROM {_pr_from_join}
+         WHERE {' AND '.join(pr_list_conditions)}
          GROUP BY pr.name, pr.posting_date, pr.status, pr.docstatus, pr.supplier,
                   sup.supplier_name, pr.is_subcontracted, pr.currency, pr.grand_total, pr.owner)
 
@@ -2431,17 +2504,13 @@ def get_purchase_flow(days=120, search=None, scope="open", merchandiser=None,
                 SUM(scri.qty),
                 (SELECT pr2.name FROM `tabPurchase Receipt` pr2
                  WHERE pr2.subcontracting_receipt = scr.name LIMIT 1)
-         FROM `tabSubcontracting Receipt Item` scri
-         JOIN `tabSubcontracting Receipt` scr ON scr.name = scri.parent
-         LEFT JOIN `tabPurchase Order Item` poi ON poi.name = scri.purchase_order_item
-         LEFT JOIN `tabSupplier` sup ON sup.name = scr.supplier
-         LEFT JOIN `tabSales Order` so ON so.name = poi.sales_order
-         LEFT JOIN `tabCustomer` cust ON cust.name = so.customer
-         WHERE {' AND '.join(scr_conditions)}
+         FROM {_scr_from_join}
+         WHERE {' AND '.join(scr_list_conditions)}
          GROUP BY scr.name, scr.posting_date, scr.status, scr.docstatus, scr.supplier, sup.supplier_name, scr.owner)
 
         ORDER BY posting_date DESC
     """, params, receipt_page, receipt_page_size)
+    receipts["docstatus_counts"] = receipt_docstatus_counts
 
     _attach_creator_names(purchase_orders["rows"], bill_orders["rows"], receipts["rows"])
 
@@ -2494,7 +2563,9 @@ def get_purchase_flow(days=120, search=None, scope="open", merchandiser=None,
 @frappe.whitelist()
 def get_jobwork_flow(days=180, search=None, scope="open", merchandiser=None,
                       po_page=1, po_page_size=100, receipt_page=1, receipt_page_size=100,
-                      ewo_fp_page=1, ewo_fp_page_size=100, ewo_pn_page=1, ewo_pn_page_size=100):
+                      ewo_fp_page=1, ewo_fp_page_size=100, ewo_pn_page=1, ewo_pn_page_size=100,
+                      po_docstatus=None, receipt_docstatus=None,
+                      ewo_fp_docstatus=None, ewo_pn_docstatus=None):
     """Subcontracting/Job Work POs with their receipt progress, tied back to the Sales Order.
 
     Four independently-paginated sub-lists (purchase_orders, receipts,
@@ -2533,6 +2604,15 @@ def get_jobwork_flow(days=180, search=None, scope="open", merchandiser=None,
         params["merch_scope"] = frappe.session.user
         conditions.append("cust.custom_merchandiser_user = %(merch_scope)s")
 
+    _po_from_join = """`tabPurchase Order Item` poi
+        JOIN `tabPurchase Order` po ON po.name = poi.parent
+        LEFT JOIN `tabSupplier` sup ON sup.name = po.supplier
+        LEFT JOIN `tabSales Order` so ON so.name = poi.sales_order
+        LEFT JOIN `tabCustomer` cust ON cust.name = so.customer"""
+    po_docstatus_counts = _docstatus_pill_counts(
+        [("po.name", "po.docstatus", _po_from_join, conditions)], params)
+    po_list_conditions = _with_docstatus(conditions, "po.docstatus", po_docstatus)
+
     purchase_orders = _paged_query(f"""
         SELECT po.name, po.transaction_date, po.schedule_date, po.status, po.docstatus,
                po.supplier, sup.supplier_name, po.is_subcontracted, po.currency,
@@ -2542,17 +2622,14 @@ def get_jobwork_flow(days=180, search=None, scope="open", merchandiser=None,
                COUNT(DISTINCT poi.item_code) AS item_count,
                SUM(poi.fg_item_qty) AS qty,
                SUM(poi.received_qty) AS received_qty
-        FROM `tabPurchase Order Item` poi
-        JOIN `tabPurchase Order` po ON po.name = poi.parent
-        LEFT JOIN `tabSupplier` sup ON sup.name = po.supplier
-        LEFT JOIN `tabSales Order` so ON so.name = poi.sales_order
-        LEFT JOIN `tabCustomer` cust ON cust.name = so.customer
-        WHERE {' AND '.join(conditions)}
+        FROM {_po_from_join}
+        WHERE {' AND '.join(po_list_conditions)}
         GROUP BY po.name, po.transaction_date, po.schedule_date, po.status, po.docstatus,
                  po.supplier, sup.supplier_name, po.is_subcontracted, po.currency,
                  po.per_received, po.per_billed, po.grand_total, po.owner
         ORDER BY po.transaction_date DESC, po.name DESC
     """, params, po_page, po_page_size)
+    purchase_orders["docstatus_counts"] = po_docstatus_counts
 
     pr_conditions = ["pr.docstatus < 2", "pr.posting_date >= %(from_date)s", "pr.is_subcontracted = 1", _NOT_DISABLED_SO]
     scr_conditions = ["scr.docstatus < 2", "scr.posting_date >= %(from_date)s", _NOT_DISABLED_SO]
@@ -2584,6 +2661,24 @@ def get_jobwork_flow(days=180, search=None, scope="open", merchandiser=None,
         scr_conditions.append("cust.custom_merchandiser_user = %(merch_scope)s")
         ewo_conditions.append("cust.custom_merchandiser_user = %(merch_scope)s")
 
+    _pr_from_join = """`tabPurchase Receipt Item` pri
+        JOIN `tabPurchase Receipt` pr ON pr.name = pri.parent
+        LEFT JOIN `tabSupplier` sup ON sup.name = pr.supplier
+        LEFT JOIN `tabSales Order` so ON so.name = pri.sales_order
+        LEFT JOIN `tabCustomer` cust ON cust.name = so.customer"""
+    _scr_from_join = """`tabSubcontracting Receipt Item` scri
+        JOIN `tabSubcontracting Receipt` scr ON scr.name = scri.parent
+        LEFT JOIN `tabPurchase Order Item` poi ON poi.name = scri.purchase_order_item
+        LEFT JOIN `tabSupplier` sup ON sup.name = scr.supplier
+        LEFT JOIN `tabSales Order` so ON so.name = poi.sales_order
+        LEFT JOIN `tabCustomer` cust ON cust.name = so.customer"""
+    receipt_docstatus_counts = _docstatus_pill_counts([
+        ("pr.name", "pr.docstatus", _pr_from_join, pr_conditions),
+        ("scr.name", "scr.docstatus", _scr_from_join, scr_conditions),
+    ], params)
+    pr_list_conditions = _with_docstatus(pr_conditions, "pr.docstatus", receipt_docstatus)
+    scr_list_conditions = _with_docstatus(scr_conditions, "scr.docstatus", receipt_docstatus)
+
     receipts = _paged_query(f"""
         (SELECT 'Purchase Receipt' AS doctype, pr.name, pr.posting_date, pr.status, pr.docstatus,
                 pr.supplier, sup.supplier_name, pr.is_subcontracted, pr.currency, pr.grand_total,
@@ -2592,12 +2687,8 @@ def get_jobwork_flow(days=180, search=None, scope="open", merchandiser=None,
                 GROUP_CONCAT(DISTINCT so.customer_name ORDER BY so.customer_name SEPARATOR ', ') AS so_customer_names,
                 GROUP_CONCAT(DISTINCT pri.purchase_order ORDER BY pri.purchase_order SEPARATOR ', ') AS purchase_orders,
                 SUM(pri.received_qty) AS qty, NULL AS linked_pr
-         FROM `tabPurchase Receipt Item` pri
-         JOIN `tabPurchase Receipt` pr ON pr.name = pri.parent
-         LEFT JOIN `tabSupplier` sup ON sup.name = pr.supplier
-         LEFT JOIN `tabSales Order` so ON so.name = pri.sales_order
-         LEFT JOIN `tabCustomer` cust ON cust.name = so.customer
-         WHERE {' AND '.join(pr_conditions)}
+         FROM {_pr_from_join}
+         WHERE {' AND '.join(pr_list_conditions)}
          GROUP BY pr.name, pr.posting_date, pr.status, pr.docstatus, pr.supplier, sup.supplier_name, pr.is_subcontracted, pr.currency, pr.grand_total, pr.owner)
         UNION
         (SELECT 'Subcontracting Receipt' AS doctype, scr.name, scr.posting_date, scr.status, scr.docstatus,
@@ -2620,18 +2711,14 @@ def get_jobwork_flow(days=180, search=None, scope="open", merchandiser=None,
                 -- business actually works from day to day.
                 (SELECT pr2.name FROM `tabPurchase Receipt` pr2
                  WHERE pr2.subcontracting_receipt = scr.name LIMIT 1) AS linked_pr
-         FROM `tabSubcontracting Receipt Item` scri
-         JOIN `tabSubcontracting Receipt` scr ON scr.name = scri.parent
-         LEFT JOIN `tabPurchase Order Item` poi ON poi.name = scri.purchase_order_item
-         LEFT JOIN `tabSupplier` sup ON sup.name = scr.supplier
-         LEFT JOIN `tabSales Order` so ON so.name = poi.sales_order
-         LEFT JOIN `tabCustomer` cust ON cust.name = so.customer
-         WHERE {' AND '.join(scr_conditions)}
+         FROM {_scr_from_join}
+         WHERE {' AND '.join(scr_list_conditions)}
          GROUP BY scr.name, scr.posting_date, scr.status, scr.docstatus, scr.supplier, sup.supplier_name, scr.owner)
         ORDER BY posting_date DESC, name DESC
     """, params, receipt_page, receipt_page_size)
+    receipts["docstatus_counts"] = receipt_docstatus_counts
 
-    def _ewo_sql(work_type):
+    def _ewo_sql(work_type, ewo_conds):
         return f"""
             SELECT ewo.name, ewo.date, ewo.status, ewo.docstatus, ewo.work_type,
                    ewo.purchase_order, ewo.subcontracting_order, ewo.completed_on,
@@ -2652,7 +2739,7 @@ def get_jobwork_flow(days=180, search=None, scope="open", merchandiser=None,
             LEFT JOIN `tabPurchase Order Item` poi ON poi.parent = ewo.purchase_order
             LEFT JOIN `tabSales Order` so ON so.name = poi.sales_order
             LEFT JOIN `tabCustomer` cust ON cust.name = so.customer
-            WHERE {' AND '.join(ewo_conditions)} AND ewo.work_type = %(work_type)s
+            WHERE {' AND '.join(ewo_conds)} AND ewo.work_type = %(work_type)s
             GROUP BY ewo.name, ewo.date, ewo.status, ewo.docstatus, ewo.work_type,
                      ewo.purchase_order, ewo.subcontracting_order, ewo.completed_on,
                      ewo.panel_stage, ewo.full_piece_stage, ewo.per_received,
@@ -2661,10 +2748,30 @@ def get_jobwork_flow(days=180, search=None, scope="open", merchandiser=None,
             ORDER BY ewo.date DESC
         """
 
+    _ewo_from_join = """`tabEmbroidery Work Order` ewo
+        LEFT JOIN `tabSupplier` fp ON fp.name = ewo.full_piece_jobber
+        LEFT JOIN `tabSupplier` pn ON pn.name = ewo.panel_jobber
+        LEFT JOIN `tabPurchase Order` po ON po.name = ewo.purchase_order
+        LEFT JOIN `tabSupplier` po_sup ON po_sup.name = po.supplier
+        LEFT JOIN `tabPurchase Order Item` poi ON poi.parent = ewo.purchase_order
+        LEFT JOIN `tabSales Order` so ON so.name = poi.sales_order
+        LEFT JOIN `tabCustomer` cust ON cust.name = so.customer"""
+
     ewo_params_fp = {**params, "work_type": "Full Piece Job Work"}
     ewo_params_pn = {**params, "work_type": "Panel Job Work"}
-    ewo_fp = _paged_query(_ewo_sql("Full Piece Job Work"), ewo_params_fp, ewo_fp_page, ewo_fp_page_size)
-    ewo_pn = _paged_query(_ewo_sql("Panel Job Work"), ewo_params_pn, ewo_pn_page, ewo_pn_page_size)
+    ewo_fp_conditions_base = ewo_conditions + ["ewo.work_type = %(work_type)s"]
+    ewo_pn_conditions_base = ewo_conditions + ["ewo.work_type = %(work_type)s"]
+    ewo_fp_docstatus_counts = _docstatus_pill_counts(
+        [("ewo.name", "ewo.docstatus", _ewo_from_join, ewo_fp_conditions_base)], ewo_params_fp)
+    ewo_pn_docstatus_counts = _docstatus_pill_counts(
+        [("ewo.name", "ewo.docstatus", _ewo_from_join, ewo_pn_conditions_base)], ewo_params_pn)
+    ewo_fp_conditions = _with_docstatus(ewo_conditions, "ewo.docstatus", ewo_fp_docstatus)
+    ewo_pn_conditions = _with_docstatus(ewo_conditions, "ewo.docstatus", ewo_pn_docstatus)
+
+    ewo_fp = _paged_query(_ewo_sql("Full Piece Job Work", ewo_fp_conditions), ewo_params_fp, ewo_fp_page, ewo_fp_page_size)
+    ewo_pn = _paged_query(_ewo_sql("Panel Job Work", ewo_pn_conditions), ewo_params_pn, ewo_pn_page, ewo_pn_page_size)
+    ewo_fp["docstatus_counts"] = ewo_fp_docstatus_counts
+    ewo_pn["docstatus_counts"] = ewo_pn_docstatus_counts
 
     # Same reasoning as get_purchase_flow's metrics block: aggregate over
     # every matching row, not just the displayed page.

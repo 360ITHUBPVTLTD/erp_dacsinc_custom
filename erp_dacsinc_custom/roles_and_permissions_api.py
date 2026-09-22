@@ -342,23 +342,105 @@ def delete_user(user):
     return {"user": user, "deleted": True}
 
 
-@frappe.whitelist()
-def get_user_doctype_access(user):
-    """
-    Every doctype this user's roles grant SOME access to, and what they can
-    do on it — the "collapsible doctype access" detail on the page. Reads
-    both tabDocPerm (each doctype's own baseline permissions) and
-    tabCustom DocPerm (this matrix's additions) directly, keyed off the
-    user's actual role list, so it can never drift from what
-    frappe.has_permission would really decide.
-    """
-    _guard()
-    if not frappe.db.exists("User", user):
-        frappe.throw(_("User {0} does not exist.").format(user))
+PTYPES = ("read", "write", "create", "submit", "cancel", "delete")
 
-    roles = frappe.get_roles(user)
+# How the preview ORDERS AND LABELS the doctypes an admin weighs when
+# deciding whether a Role Profile is safe to hand out.
+#
+# This list is not what decides whether a doctype is shown — see
+# _classify_doctypes(), which also surfaces anything submittable or from one
+# of this company's own apps under "Other business documents". That matters:
+# a curated list silently goes stale every time ERPNext or this app adds a
+# doctype, and a permission screen that quietly hides a grant is worse than
+# one that shows it in the wrong group. Adding a doctype here only promotes
+# it out of "Other" into a named group.
+#
+# What it deliberately leaves out is the supporting cast: granting Sales
+# Order also drags in Sales Taxes and Charges Template, Currency, UOM, Price
+# List, Territory, Brand and a dozen more (see
+# dac_permission_matrix.DOCTYPE_DEPENDENCIES, which is what actually grants
+# them). Those are a consequence of the main grant, not a separate decision,
+# so they are reported as a count.
+#
+# A doctype named here that doesn't exist on the site is simply skipped.
+KEY_DOCTYPE_GROUPS = (
+    ("Sales", ("Lead", "Quotation", "Sales Order", "Delivery Note",
+               "Delivery Trip", "Sales Invoice", "Customer")),
+    ("Purchase", ("Material Request", "Request for Quotation", "Supplier Quotation",
+                  "Purchase Order", "Purchase Receipt", "Purchase Invoice",
+                  "Supplier")),
+    ("Subcontracting & Production", ("Subcontracting Order", "Subcontracting Receipt",
+                                     "BOM", "Work Order", "Job Card",
+                                     "Embroidery Work Order",
+                                     "Uniform Embroidery Transfer")),
+    ("Stock", ("Item", "Stock Entry", "Stock Reconciliation", "Quality Inspection",
+               "Pick List", "Warehouse")),
+    ("Accounts", ("Payment Entry", "Payment Request", "Journal Entry",
+                  "Bank Transaction", "Bank Reconciliation Tool", "Expense Claim")),
+    ("POS", ("POS Invoice", "POS Opening Entry", "POS Closing Entry")),
+    ("HR & Payroll", ("Employee", "Attendance", "Leave Application", "Employee Checkin",
+                      "Employee Advance", "Salary Slip", "Salary Structure",
+                      "Salary Structure Assignment")),
+    ("CRM & Communication", ("Contact", "Business Contacts", "Opportunity",
+                             "Event Activity", "WhatsApp Instance")),
+    ("Tasks & Projects", ("Task", "Project", "Timesheet")),
+)
+
+KEY_DOCTYPES = frozenset(dt for _group, dts in KEY_DOCTYPE_GROUPS for dt in dts)
+
+# Apps this business maintains — their doctypes are business-specific by
+# definition, so a grant on one is always worth showing.
+COMPANY_APPS = ("erp_dacsinc_custom", "mobile_app_360ithub", "fcm_360ithub",
+                "webtoolex_whatsapp")
+
+OTHER_GROUP_LABEL = "Other business documents"
+
+
+def _classify_doctypes(names):
+    """
+    Split granted doctypes into (main, supporting).
+
+    "Main" is anything an admin would want to see on a permission screen:
+    the curated KEY_DOCTYPES, plus any submittable doctype (a business
+    transaction — Work Order, Salary Slip, Asset, Delivery Trip...), plus
+    anything from one of this company's own apps (Business Contacts,
+    WhatsApp Instance...). Everything left is the supporting cast that rides
+    along with a main grant — Currency, UOM, tax templates, Item Group.
+
+    Deriving it this way rather than from KEY_DOCTYPES alone is deliberate:
+    it means a doctype nobody remembered to curate still shows up.
+    """
+    names = list(names)
+    if not names:
+        return set(), set()
+
+    company_modules = set(frappe.get_all(
+        "Module Def", filters={"app_name": ["in", list(COMPANY_APPS)]}, pluck="name",
+    ))
+    main = {
+        d.name for d in frappe.get_all(
+            "DocType", filters={"name": ["in", names]},
+            fields=["name", "module", "is_submittable", "issingle"],
+        )
+        if d.name in KEY_DOCTYPES
+        # a single is a settings page, not a document anyone files
+        or (not d.issingle and (d.is_submittable or d.module in company_modules))
+    }
+    return main, set(names) - main
+
+
+def _doctype_access_for_roles(roles):
+    """
+    What `roles` can do on each doctype: {doctype: {ptype: "full"|"owner"}}.
+
+    Reads both tabDocPerm (each doctype's own baseline permissions) and
+    tabCustom DocPerm (this app's matrix additions) directly, keyed off a
+    role list, so it can never drift from what frappe.has_permission would
+    really decide. Shared by the per-user view and the Role Profile preview
+    so the two can never disagree about what a grant means.
+    """
     if not roles:
-        return {"user": user, "doctypes": []}
+        return {}
 
     rows = frappe.db.sql(
         """
@@ -370,11 +452,10 @@ def get_user_doctype_access(user):
         from `tabCustom DocPerm`
         where role in %(roles)s and permlevel = 0
         """,
-        {"roles": roles},
+        {"roles": list(roles)},
         as_dict=True,
     )
 
-    PTYPES = ("read", "write", "create", "submit", "cancel", "delete")
     by_doctype = {}
     for r in rows:
         entry = by_doctype.setdefault(r.doctype, {})
@@ -389,19 +470,374 @@ def get_user_doctype_access(user):
     valid_doctypes = set(frappe.get_all(
         "DocType", filters={"istable": 0}, pluck="name",
     ))
+    # Drop stale/renamed doctypes referenced by an old perm row, and drop
+    # any whose perm row grants none of PTYPES — a row carrying only
+    # select/print/export/report is real in tabDocPerm but grants nothing
+    # this screen reports on, and rendering it produces a card with a
+    # doctype name and no flags at all, which reads as "access granted"
+    # while showing nothing.
+    return {
+        dt: perms for dt, perms in by_doctype.items()
+        if dt in valid_doctypes and perms
+    }
 
-    doctypes = []
-    for doctype, perms in by_doctype.items():
-        if doctype not in valid_doctypes:
-            continue  # stale/renamed doctype referenced by an old perm row
-        doctypes.append({
+
+def _group_key_doctypes(access):
+    """
+    Lay a {doctype: perms} map out in KEY_DOCTYPE_GROUPS order, dropping
+    groups nothing was granted in, and sweeping every other main doctype
+    into a trailing "Other business documents" group so a grant can never
+    go missing just because it wasn't curated.
+
+    Returns (groups, supporting_count).
+    """
+    main, supporting = _classify_doctypes(access.keys())
+
+    groups = []
+    grouped = set()
+    for label, doctypes in KEY_DOCTYPE_GROUPS:
+        items = [
+            {"doctype": dt, "permissions": access[dt]}
+            for dt in doctypes if access.get(dt)
+        ]
+        if items:
+            groups.append({"group": label, "doctypes": items})
+            grouped.update(d["doctype"] for d in items)
+
+    leftover = sorted(main - grouped)
+    if leftover:
+        groups.append({
+            "group": OTHER_GROUP_LABEL,
+            "doctypes": [{"doctype": dt, "permissions": access[dt]} for dt in leftover],
+        })
+
+    return groups, len(supporting)
+
+
+@frappe.whitelist()
+def get_user_doctype_access(user):
+    """
+    Every doctype this user's roles grant SOME access to, and what they can
+    do on it — the "Doctype Access" detail on the page. `key_doctypes` marks
+    which of them are the curated main ones, so the UI can default to those
+    and keep the supporting doctypes behind a toggle.
+    """
+    _guard()
+    if not frappe.db.exists("User", user):
+        frappe.throw(_("User {0} does not exist.").format(user))
+
+    access = _doctype_access_for_roles(frappe.get_roles(user))
+    main, _supporting = _classify_doctypes(access.keys())
+
+    doctypes = [
+        {
             "doctype": doctype,
             "permissions": perms,
             "owner_only": bool(perms) and all(v == "owner" for v in perms.values()),
-        })
+            "is_key": doctype in main,
+        }
+        for doctype, perms in access.items()
+    ]
     doctypes.sort(key=lambda d: d["doctype"])
 
     return {"user": user, "doctypes": doctypes}
+
+
+def _page_user_population():
+    """The same user population the Users view lists: system users, minus
+    Administrator/Guest. Every other "who has this" query on this page
+    filters through this set, so a Role Profile held only by a filtered-out
+    account never shows up as if a real page user had it."""
+    return set(frappe.get_all(
+        "User",
+        filters={
+            "user_type": "System User",
+            "name": ["not in", ["Administrator", "Guest"]],
+        },
+        pluck="name",
+    ))
+
+
+def _users_by_role_profile(page_users):
+    """{role_profile: {user, ...}} — native `role_profile_name` plus every
+    User Access Profile grant, restricted to `page_users` and counting a
+    user once even if both mechanisms name the same profile."""
+    users_by_profile = {}
+    for u in frappe.get_all(
+        "User", filters={"role_profile_name": ["is", "set"]},
+        fields=["name", "role_profile_name"],
+    ):
+        if u.name in page_users:
+            users_by_profile.setdefault(u.role_profile_name, set()).add(u.name)
+    for r in frappe.get_all(
+        "User Access Profile Role Profile", fields=["parent", "role_profile"],
+    ):
+        if r.parent in page_users:
+            users_by_profile.setdefault(r.role_profile, set()).add(r.parent)
+    return users_by_profile
+
+
+@frappe.whitelist()
+def get_role_profiles_overview():
+    """
+    Every Role Profile on the site with the roles it bundles and how many
+    users currently hold it — the "Role Profiles" view, which exists to
+    answer "what does this profile grant?" without picking a user first.
+
+    User counts are over the same population the Users view shows (system
+    users, excluding Administrator/Guest) and count a user once even if
+    they hold the profile both natively and through a User Access Profile.
+    """
+    _guard()
+
+    roles_by_profile = {}
+    for r in frappe.get_all(
+        "Has Role", filters={"parenttype": "Role Profile"}, fields=["parent", "role"],
+    ):
+        roles_by_profile.setdefault(r.parent, []).append(r.role)
+
+    users_by_profile = _users_by_role_profile(_page_user_population())
+
+    profiles = []
+    for name in sorted(frappe.get_all("Role Profile", pluck="name")):
+        roles = sorted(roles_by_profile.get(name, []))
+        profiles.append({
+            "profile": name,
+            "roles": roles,
+            "role_count": len(roles),
+            "user_count": len(users_by_profile.get(name, ())),
+        })
+    return {"profiles": profiles}
+
+
+@frappe.whitelist()
+def get_role_profile_users(role_profile):
+    """
+    Name and email of every user currently holding `role_profile` — the
+    "who actually has this" behind the Role Profiles view's user count.
+    Same population and native/User-Access-Profile union as that count, via
+    the shared helper, so the two can never disagree.
+    """
+    _guard()
+    if not frappe.db.exists("Role Profile", role_profile):
+        frappe.throw(_("Role Profile {0} does not exist.").format(role_profile))
+
+    page_users = _page_user_population()
+    user_names = _users_by_role_profile(page_users).get(role_profile, set())
+
+    users = frappe.get_all(
+        "User", filters={"name": ["in", list(user_names)]},
+        fields=["name", "full_name", "enabled"],
+        order_by="full_name asc",
+    )
+    return {"role_profile": role_profile, "users": users}
+
+
+def _roles_granting_doctype(doctype):
+    """{role: {ptype: "full"|"owner"}} for every role with SOME access to
+    `doctype` — the reverse of _doctype_access_for_roles (that one takes
+    roles and finds doctypes; this takes a doctype and finds roles)."""
+    rows = frappe.db.sql(
+        """
+        select role, `read`, `write`, `create`, submit, cancel, `delete`, if_owner
+        from `tabDocPerm`
+        where parent = %(dt)s and permlevel = 0
+        union all
+        select role, `read`, `write`, `create`, submit, cancel, `delete`, if_owner
+        from `tabCustom DocPerm`
+        where parent = %(dt)s and permlevel = 0
+        """,
+        {"dt": doctype},
+        as_dict=True,
+    )
+    by_role = {}
+    for r in rows:
+        entry = by_role.setdefault(r.role, {})
+        for ptype in PTYPES:
+            if not r.get(ptype):
+                continue
+            if entry.get(ptype) != "full":
+                entry[ptype] = "owner" if r.if_owner else "full"
+    # same reason as _doctype_access_for_roles: a perm row granting only
+    # select/print/export would otherwise list the role with no flags
+    return {role: perms for role, perms in by_role.items() if perms}
+
+
+def _users_with_any_role(roles, page_users):
+    """Every one of `page_users` who currently holds at least one of
+    `roles`, read straight off each User's own Has Role rows — the same
+    source of truth frappe.get_roles() resolves from, so this can never
+    disagree with what a user can actually do."""
+    if not roles:
+        return set()
+    return set(frappe.get_all(
+        "Has Role",
+        filters={
+            "parenttype": "User",
+            "role": ["in", list(roles)],
+            "parent": ["in", list(page_users)],
+        },
+        pluck="parent",
+    ))
+
+
+def _merge_role_permissions(by_role, roles):
+    """Collapse several roles' {ptype: tier} grants on one doctype down to
+    a single recipient's grant, "full" always winning over "owner" — same
+    rule _roles_granting_doctype and _doctype_access_for_roles both use, so
+    a user's merged access can never disagree with the role-level rows
+    already shown for the same doctype."""
+    merged = {}
+    for role in roles:
+        for ptype, tier in by_role.get(role, {}).items():
+            if merged.get(ptype) != "full":
+                merged[ptype] = tier
+    return merged
+
+
+@frappe.whitelist()
+def get_user_access_for_doctype(user, doctype):
+    """
+    Exactly what `user` can do on `doctype`, and which of their roles is the
+    reason — the drill-down behind clicking a name in a doctype's "N users"
+    list. Different roles among the ones granting a doctype often grant
+    different tiers (read-only vs full CRUD); this answers "which one does
+    THIS person actually get" instead of leaving the admin to cross-reference
+    the role list against a role list they'd have to fetch separately.
+    """
+    _guard()
+    if not frappe.db.exists("User", user):
+        frappe.throw(_("User {0} does not exist.").format(user))
+    if not frappe.db.exists("DocType", doctype):
+        frappe.throw(_("DocType {0} does not exist.").format(doctype))
+
+    by_role = _roles_granting_doctype(doctype)
+    granting_roles = sorted(set(frappe.get_roles(user)) & set(by_role.keys()))
+
+    return {
+        "user": user,
+        "doctype": doctype,
+        "roles": [{"role": r, "permissions": by_role[r]} for r in granting_roles],
+        "permissions": _merge_role_permissions(by_role, granting_roles),
+    }
+
+
+@frappe.whitelist()
+def get_doctype_access_overview():
+    """
+    Every doctype ANY role currently grants some access to, with how many
+    roles grant it and how many of this page's users hold at least one of
+    those roles — the list behind the "search any doctype" view.
+
+    Deliberately NOT restricted to the curated KEY_DOCTYPES the Role Profile
+    preview uses: an admin searching for a specific doctype — including a
+    "supporting" one like Customer or Item — is exactly the case a search
+    exists for, and hiding results here would defeat the point. The curated
+    list only matters when BROWSING a profile's grants, where 60 lines of
+    noise bury the 6 that matter; a targeted search has no such problem.
+    """
+    _guard()
+
+    rows = frappe.db.sql(
+        """
+        select parent as doctype, role from `tabDocPerm` where permlevel = 0
+        union
+        select parent as doctype, role from `tabCustom DocPerm` where permlevel = 0
+        """,
+        as_dict=True,
+    )
+    roles_by_doctype = {}
+    for r in rows:
+        roles_by_doctype.setdefault(r.doctype, set()).add(r.role)
+
+    valid_doctypes = set(frappe.get_all(
+        "DocType", filters={"istable": 0, "issingle": 0}, pluck="name",
+    ))
+
+    page_users = _page_user_population()
+    users_by_role = {}
+    for r in frappe.get_all(
+        "Has Role", filters={"parenttype": "User", "parent": ["in", list(page_users)]},
+        fields=["parent", "role"],
+    ):
+        users_by_role.setdefault(r.role, set()).add(r.parent)
+
+    items = []
+    for doctype, roles in roles_by_doctype.items():
+        if doctype not in valid_doctypes:
+            continue
+        users = set()
+        for role in roles:
+            users |= users_by_role.get(role, set())
+        items.append({
+            "doctype": doctype,
+            "role_count": len(roles),
+            "user_count": len(users),
+        })
+    items.sort(key=lambda x: x["doctype"])
+    return {"doctypes": items}
+
+
+@frappe.whitelist()
+def get_doctype_access_detail(doctype):
+    """
+    Exactly which roles grant access to `doctype`, what each one grants, and
+    every one of this page's users who currently holds any of those roles —
+    the drill-down behind get_doctype_access_overview().
+    """
+    _guard()
+    if not frappe.db.exists("DocType", doctype):
+        frappe.throw(_("DocType {0} does not exist.").format(doctype))
+
+    by_role = _roles_granting_doctype(doctype)
+    roles = [{"role": r, "permissions": by_role[r]} for r in sorted(by_role)]
+
+    page_users = _page_user_population()
+    user_names = _users_with_any_role(by_role.keys(), page_users)
+    users = frappe.get_all(
+        "User", filters={"name": ["in", list(user_names)]},
+        fields=["name", "full_name", "enabled"],
+        order_by="full_name asc",
+    )
+    return {"doctype": doctype, "roles": roles, "users": users}
+
+
+@frappe.whitelist()
+def get_role_profile_access_preview(role_profiles=None):
+    """
+    "If I give someone these Role Profile(s), what can they actually do?" —
+    answered before anything is assigned, over the curated key doctypes only.
+
+    Reports what the PROFILES themselves grant. A user may end up with more
+    than this from a directly-assigned role or another profile, which is why
+    the caller shows this as the profiles' own contribution rather than as
+    the user's final access.
+    """
+    _guard()
+    if isinstance(role_profiles, str):
+        role_profiles = frappe.parse_json(role_profiles)
+    role_profiles = role_profiles or []
+
+    roles = sorted({
+        role
+        for profile in role_profiles
+        for role in frappe.get_all(
+            "Has Role",
+            filters={"parent": profile, "parenttype": "Role Profile"},
+            pluck="role",
+        )
+    })
+
+    access = _doctype_access_for_roles(roles)
+    groups, supporting_count = _group_key_doctypes(access)
+    return {
+        "role_profiles": role_profiles,
+        "roles": roles,
+        "groups": groups,
+        # the supporting cast only — a count, so the admin knows the preview
+        # summarises rather than hides
+        "supporting_count": supporting_count,
+    }
 
 
 @frappe.whitelist()
