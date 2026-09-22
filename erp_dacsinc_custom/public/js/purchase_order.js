@@ -2302,16 +2302,45 @@ async function show_stock_check_dialog(frm, materials, linked_subcontracting_doc
     ) || 0;
     const allowance_cap = (required_qty) => flt(required_qty) * (1 + over_transfer_allowance / 100);
 
+    // The one working copy of the material list for this dialog's lifetime
+    // — everything (initial render, live per-keystroke updates, and the
+    // final submit-time validation) reads and writes THIS array, never the
+    // original `materials` parameter. Reading the original elsewhere used to
+    // let the submit-time check validate against a required_qty that could
+    // no longer match what the table was actually showing (see below).
+    const updated_materials = JSON.parse(JSON.stringify(materials));
+
+    // Every raw material's own "Qty to Supply" is independent of every
+    // other one — including other raw materials feeding the SAME Finished
+    // Good — and independent of the Subcontracting Order's own qty (always
+    // the full remaining batch; see create_subcontracting_docs). Supplying
+    // less than Required Qty is a real, deliberate choice here (the rest
+    // gets transferred to the SAME SCO in a later round), so it's flagged
+    // as a warning to knowingly confirm (see check_rm_supply_shortfall),
+    // never silently linked to any other row and never a hard block.
+    const compute_ceiling = (material) => {
+        const required_qty = flt(material.required_qty, 2);
+        const available_qty = flt(material.available_qty, 2);
+        // The real ceiling is whichever binds first: physical stock, or
+        // Stock Settings' Over Transfer Allowance against Required Qty.
+        const allowance_qty = flt(allowance_cap(required_qty), 2);
+        const max_sendable = flt(Math.min(available_qty, allowance_qty), 2);
+        // Spelled out visibly (not just a hover tooltip) which one is
+        // actually binding right now, and what the OTHER number is —
+        // "19.5, capped by allowance" reads very differently from
+        // "19.5" alone when stock actually has 115 sitting there.
+        const limit_reason = allowance_qty < available_qty
+            ? __('{0}% allowance limit (stock has {1})', [over_transfer_allowance, available_qty])
+            : __('limited by stock (allowance permits {0})', [allowance_qty]);
+        return { required_qty, available_qty, max_sendable, limit_reason };
+    };
+
     // Function to rebuild the HTML table inside the dialog
-    const rebuild_table = (updated_materials) => {
+    const rebuild_table = () => {
         let all_stock_sufficient_for_supply = true;
 
-        let table_rows = updated_materials.map((item, index) => {
-            const required_qty = flt(item.required_qty, 2);
-            const available_qty = flt(item.available_qty, 2);
-            const required_qty_disp = flt(required_qty, 2);
-            const available_qty_disp = flt(available_qty, 2);
-            const qty_to_supply = flt(item.qty_to_supply !== undefined ? item.qty_to_supply : required_qty, 2);
+        let table_rows = updated_materials.map((item) => {
+            const qty_to_supply = flt(item.qty_to_supply !== undefined ? item.qty_to_supply : item.required_qty, 2);
             // Persist the resolved default back onto the row's own data, not
             // just the local const used to render this pass's HTML. Without
             // this, a row nobody has typed into yet keeps qty_to_supply
@@ -2323,52 +2352,49 @@ async function show_stock_check_dialog(frm, materials, linked_subcontracting_doc
             // as any other, never-touched row still looked (to that check,
             // not to the eye) like it was supplying zero.
             item.qty_to_supply = qty_to_supply;
-            // The real ceiling is whichever binds first: physical stock, or
-            // Stock Settings' Over Transfer Allowance against Required Qty.
-            const allowance_qty = flt(allowance_cap(required_qty), 2);
-            const max_sendable = flt(Math.min(available_qty, allowance_qty), 2);
-            // Spelled out visibly (not just a hover tooltip) which one is
-            // actually binding right now, and what the OTHER number is —
-            // "19.5, capped by allowance" reads very differently from
-            // "19.5" alone when stock actually has 115 sitting there.
-            const limit_reason = allowance_qty < available_qty
-                ? __('{0}% allowance limit (stock has {1})', [over_transfer_allowance, available_qty])
-                : __('limited by stock (allowance permits {0})', [allowance_qty]);
+
+            const { required_qty, available_qty, max_sendable, limit_reason } = compute_ceiling(item);
 
             let supply_status_icon;
             let supply_input_class = '';
-            // Under-supply is just as fatal as over-supply: this Subcontracting
-            // Order's Stock Entry only ever carries what the user types here, and
-            // the later Subcontracting Receipt independently recomputes, from the
-            // BOM ratio, exactly how much of each raw material the planned
-            // finished-good qty consumes. Letting a qty below Required Qty
-            // through here (previously shown as a plain green check, since the
-            // only check was against the stock/allowance ceiling) meant the
-            // shortfall only surfaced later as a hard "Consumed Qty must be less
-            // than or equal to Available Qty" error at receipt time — confirmed
-            // live: Required 110/55 with only 100/50 in stock let 100/50 through
-            // here with no warning at all.
+            // Only exceeding Max You Can Send blocks — that's a real ceiling
+            // (physical stock, or Stock Settings' Over Transfer Allowance,
+            // both enforced by ERPNext itself at submit time regardless of
+            // what this dialog shows). Supplying LESS than Required Qty is a
+            // deliberate, allowed choice — the SCO is still raised for the
+            // full batch; the rest of this material gets transferred to the
+            // SAME SCO in a later round. It's flagged as a warning (see
+            // check_rm_supply_shortfall's confirm step on submit), never a
+            // block, and never linked to any other raw material's own qty.
             const is_over = qty_exceeds(qty_to_supply, max_sendable);
             const is_short = qty_exceeds(required_qty, qty_to_supply);
-            if (is_over || is_short) {
+            if (is_over) {
                 supply_status_icon = 'fa-times text-danger';
                 supply_input_class = 'is-invalid';
                 all_stock_sufficient_for_supply = false;
+            } else if (is_short) {
+                // Bootstrap's own .text-warning (#ffc107) is a light yellow
+                // that's very hard to read on a white background — an
+                // explicit amber (matching the qty-round-note color used
+                // elsewhere in this file) actually reads clearly instead.
+                supply_status_icon = 'fa-exclamation-triangle';
             } else if (qty_to_supply > 0) {
                 supply_status_icon = 'fa-check text-success';
             } else {
                 supply_status_icon = 'fa-minus text-muted';
             }
             const shortfall_amt = flt(required_qty - qty_to_supply, 2);
-            const short_note_html = __('{0} {1} short of Required — will fail at Subcontracting Receipt', [shortfall_amt > 0 ? shortfall_amt : 0, item.uom]);
+            const short_note_html = is_short
+                ? __('{0} {1} less than Required — the rest can be sent to this Subcontracting Order in a later Material Transfer', [shortfall_amt > 0 ? shortfall_amt : 0, item.uom])
+                : '';
 
             return `<tr data-item-code="${item.item_code}" data-max-sendable="${max_sendable}">
                 <td>${frappe.utils.get_form_link("Item", item.item_code, true)}</td>
-                <td>${required_qty_disp} ${item.uom}</td>
-                <td class="font-weight-bold ${qty_exceeds(required_qty, available_qty) ? 'text-danger' : ''}">${available_qty_disp} ${item.uom}</td>
-                <td class="font-weight-bold">
-                    ${max_sendable} ${item.uom}
-                    <div class="text-muted" style="font-size:11px; font-weight:normal; white-space:normal;">${limit_reason}</div>
+                <td class="required-qty-cell">${required_qty} ${item.uom}</td>
+                <td class="font-weight-bold ${qty_exceeds(required_qty, available_qty) ? 'text-danger' : ''}">${available_qty} ${item.uom}</td>
+                <td class="font-weight-bold max-sendable-cell">
+                    <span class="max-sendable-value">${max_sendable} ${item.uom}</span>
+                    <div class="text-muted limit-reason" style="font-size:11px; font-weight:normal; white-space:normal;">${limit_reason}</div>
                 </td>
                 <td>
                     <div class="input-group" style="width: 140px;">
@@ -2385,9 +2411,9 @@ async function show_stock_check_dialog(frm, materials, linked_subcontracting_doc
                             <button class="btn btn-outline-secondary btn-sm btn-qty-change" data-action="plus" data-item-code="${item.item_code}">+</button>
                         </div>
                     </div>
-                    <div class="text-danger short-of-required-note" style="font-size:11px; white-space:normal; margin-top:4px; ${is_short ? '' : 'display:none;'}">${short_note_html}</div>
+                    <div class="short-of-required-note" style="font-size:11px; white-space:normal; margin-top:4px; color:#b45309; ${is_short ? '' : 'display:none;'}">${short_note_html}</div>
                 </td>
-                <td class="text-center status-icon"><i class="fa ${supply_status_icon}"></i></td>
+                <td class="text-center status-icon"><i class="fa ${supply_status_icon}" style="${is_short ? 'color:#b45309;' : ''}"></i></td>
             </tr>`;
         }).join('');
 
@@ -2405,53 +2431,53 @@ async function show_stock_check_dialog(frm, materials, linked_subcontracting_doc
             </table>`;
 
         if (!all_stock_sufficient_for_supply) {
-            dialog_html += `<div class="alert alert-warning error-msg"><b>Cannot Proceed:</b> "Qty to Supply" either exceeds the Max You Can Send (physical stock, or the ${over_transfer_allowance}% Over Transfer Allowance — whichever is lower), or falls short of the Required Qty. Supplying less than Required will let this Subcontracting Order be created but will fail later at Subcontracting Receipt — reduce the subcontracted quantity for the finished good(s) using that raw material on this Purchase Order (or bring in more stock) instead.</div>`;
+            dialog_html += `<div class="alert alert-warning error-msg"><b>Cannot Proceed:</b> "Qty to Supply" exceeds the Max You Can Send (physical stock, or the ${over_transfer_allowance}% Over Transfer Allowance — whichever is lower) for at least one raw material.</div>`;
         }
 
         dialog.fields_dict.stock_info.html(dialog_html);
 
-        // --- IMPROVED EVENT HANDLERS ---
-
+        // Updates one row's status icon / is-invalid state / short-of-
+        // required note in place (no full-table rebuild — that would drop
+        // focus out of whichever input the user is actively typing in).
+        // Required Qty/Max Sendable never change here — every raw material
+        // is independent, so editing one never affects any other row.
         const update_row_ui = (itemCode, newVal) => {
             const material = updated_materials.find(m => m.item_code === itemCode);
-            const required_qty = flt(material.required_qty, 2);
-            const max_sendable = flt(Math.min(flt(material.available_qty, 2), allowance_cap(material.required_qty)), 2);
+            material.qty_to_supply = newVal;
+
+            const { required_qty, max_sendable } = compute_ceiling(material);
             const $row = $(dialog.body).find(`tr[data-item-code="${itemCode}"]`);
             const $input = $row.find('.qty-to-supply-input');
             const $iconBox = $row.find('.status-icon');
             const $shortNote = $row.find('.short-of-required-note');
 
-            // Update internal data
-            material.qty_to_supply = newVal;
-
             const is_over = qty_exceeds(newVal, max_sendable);
             const is_short = qty_exceeds(required_qty, newVal);
 
-            // Update Icon and Classes dynamically without full refresh
-            if (is_over || is_short) {
+            if (is_over) {
                 $iconBox.html('<i class="fa fa-times text-danger"></i>');
                 $input.addClass('is-invalid');
-            } else if (newVal > 0) {
-                $iconBox.html('<i class="fa fa-check text-success"></i>');
-                $input.removeClass('is-invalid');
             } else {
-                $iconBox.html('<i class="fa fa-minus text-muted"></i>');
                 $input.removeClass('is-invalid');
+                if (is_short) {
+                    $iconBox.html('<i class="fa fa-exclamation-triangle" style="color:#b45309;"></i>');
+                } else if (newVal > 0) {
+                    $iconBox.html('<i class="fa fa-check text-success"></i>');
+                } else {
+                    $iconBox.html('<i class="fa fa-minus text-muted"></i>');
+                }
             }
 
             if (is_short) {
                 const shortfall_amt = flt(required_qty - newVal, 2);
-                $shortNote.text(__('{0} {1} short of Required — will fail at Subcontracting Receipt', [shortfall_amt > 0 ? shortfall_amt : 0, material.uom])).show();
+                $shortNote.text(__('{0} {1} less than Required — the rest can be sent to this Subcontracting Order in a later Material Transfer', [shortfall_amt > 0 ? shortfall_amt : 0, material.uom])).show();
             } else {
                 $shortNote.hide();
             }
 
-            // Check if primary button should be disabled
-            let any_error = updated_materials.some(m => {
-                const m_required = flt(m.required_qty, 2);
-                const m_max = Math.min(flt(m.available_qty, 2), allowance_cap(m.required_qty));
-                return qty_exceeds(m.qty_to_supply, m_max) || qty_exceeds(m_required, flt(m.qty_to_supply, 2));
-            });
+            // Only exceeding Max You Can Send blocks the primary button —
+            // supplying less than Required Qty never does (see above).
+            let any_error = updated_materials.some(m => qty_exceeds(m.qty_to_supply, Math.min(flt(m.available_qty, 2), allowance_cap(m.required_qty))));
             dialog.get_primary_btn().prop('disabled', any_error);
             $(dialog.body).find('.error-msg').toggle(any_error);
         };
@@ -2508,13 +2534,19 @@ async function show_stock_check_dialog(frm, materials, linked_subcontracting_doc
             $(dialog.body).find('input.qty-to-supply-input').each(function () {
                 const itemCode = $(this).data('item-code');
                 const suppliedQty = flt($(this).val());
-                const materialData = materials.find(m => m.item_code === itemCode);
-                const requiredQty = materialData ? flt(materialData.required_qty, 2) : 0;
+                // updated_materials, not the original `materials` — kept as
+                // the one working copy the whole dialog reads from, so this
+                // final check can never see a stale required_qty/available_qty.
+                const materialData = updated_materials.find(m => m.item_code === itemCode);
                 const availableQty = materialData ? flt(materialData.available_qty, 2) : 0;
                 const maxSendable = materialData
                     ? flt(Math.min(availableQty, allowance_cap(materialData.required_qty)), 2)
                     : 0;
 
+                // Only exceeding Max You Can Send blocks submission here —
+                // supplying less than Required Qty is a deliberate, allowed
+                // choice (see check_rm_supply_shortfall below), never a hard
+                // stop, and never linked to any other raw material's own qty.
                 if (qty_exceeds(suppliedQty, maxSendable)) {
                     can_proceed_with_transfer = false;
                     frappe.show_alert({
@@ -2523,14 +2555,6 @@ async function show_stock_check_dialog(frm, materials, linked_subcontracting_doc
                             : __("Cannot transfer {0} of {1}. Only {2} is available.", [flt(suppliedQty, 2), itemCode, maxSendable]),
                         indicator: 'red'
                     }, 5);
-                    return false; // Break .each loop
-                }
-                if (qty_exceeds(requiredQty, suppliedQty)) {
-                    can_proceed_with_transfer = false;
-                    frappe.show_alert({
-                        message: __("Cannot proceed: {0} needs {1} but only {2} is set to be supplied. Supplying less will fail later at Subcontracting Receipt — reduce the subcontracted quantity for the finished good(s) using this raw material on the Purchase Order, or bring in more stock.", [itemCode, requiredQty, flt(suppliedQty, 2)]),
-                        indicator: 'red'
-                    }, 8);
                     return false; // Break .each loop
                 }
                 final_materials_to_supply.push({
@@ -2543,27 +2567,71 @@ async function show_stock_check_dialog(frm, materials, linked_subcontracting_doc
                 return; // Stop the primary action if validation fails
             }
 
+            const do_create = () => {
+                frappe.call({
+                    method: "erp_dacsinc_custom.purchase_order.create_subcontracting_docs",
+                    args: {
+                        purchase_order_name: frm.doc.name,
+                        updated_materials_for_supply: JSON.stringify(final_materials_to_supply)
+                    },
+                    freeze: true,
+                    freeze_message: __("Creating Subcontracting Order and Stock Entry..."),
+                    callback: function (r) {
+                        if (r.message && r.message.ste_name) {
+                            dialog.hide();
+                            frappe.show_alert({
+                                message: __("Successfully Created Subcontracting Order and Stock Entry"),
+                                indicator: 'green'
+                            }, 5);
+
+                            // Split across more than one row (see the proration
+                            // comment in create_subcontracting_docs) can push a
+                            // raw material's real total a few hundredths above
+                            // what was typed — spelled out here instead of
+                            // leaving it as unexplained drift on the Stock Entry.
+                            const adjustments = r.message.qty_adjustments || [];
+                            if (adjustments.length) {
+                                const lines = adjustments.map(a => __(
+                                    '{0}: sent {1}, asked for {2} (split across {3} linked rows, each rounded up so none falls short)',
+                                    [a.item_code, a.actual_qty, a.requested_qty, a.row_count]
+                                ));
+                                frappe.msgprint({
+                                    title: __('Qty Adjusted for Rounding'),
+                                    indicator: 'orange',
+                                    message: lines.join('<br>')
+                                });
+                            }
+
+                            frm.refresh();
+                        } else if (r.exc) {
+                            frappe.show_alert({
+                                message: __("Error creating documents: {0}", [r.exc]),
+                                indicator: 'red'
+                            }, 5);
+                        }
+                    }
+                });
+            };
+
+            // Confirm (not block) any raw material set to supply less than
+            // Required Qty — the SCO still gets raised for the full batch,
+            // so this is a real, deliberate gap the user needs to knowingly
+            // accept (and remember to top up in a later Material Transfer),
+            // mirroring "Receive Goods for SCO"'s own confirm-don't-block
+            // pattern for its over-collection case.
             frappe.call({
-                method: "erp_dacsinc_custom.purchase_order.create_subcontracting_docs",
+                method: "erp_dacsinc_custom.purchase_order.check_rm_supply_shortfall",
                 args: {
                     purchase_order_name: frm.doc.name,
                     updated_materials_for_supply: JSON.stringify(final_materials_to_supply)
                 },
                 freeze: true,
-                freeze_message: __("Creating Subcontracting Order and Stock Entry..."),
-                callback: function (r) {
-                    if (r.message && r.message.ste_name) {
-                        dialog.hide();
-                        frappe.show_alert({
-                            message: __("Successfully Created Subcontracting Order and Stock Entry"),
-                            indicator: 'green'
-                        }, 5);
-                        frm.refresh();
-                    } else if (r.exc) {
-                        frappe.show_alert({
-                            message: __("Error creating documents: {0}", [r.exc]),
-                            indicator: 'red'
-                        }, 5);
+                freeze_message: __("Checking quantities..."),
+                callback: function (res) {
+                    if (res.message && res.message.has_shortfall) {
+                        frappe.confirm(res.message.confirm_msg, do_create, () => { });
+                    } else {
+                        do_create();
                     }
                 }
             });
@@ -2571,7 +2639,7 @@ async function show_stock_check_dialog(frm, materials, linked_subcontracting_doc
     });
 
     dialog.show();
-    rebuild_table(JSON.parse(JSON.stringify(materials)));
+    rebuild_table();
 }
 
 function create_receipts_now(sco_name, items_to_receive, dialog_instance, frm) {

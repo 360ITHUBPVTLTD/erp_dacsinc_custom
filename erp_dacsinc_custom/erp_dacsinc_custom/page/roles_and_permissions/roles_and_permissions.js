@@ -351,6 +351,17 @@ class RolesAndPermissions {
 			}).join('')
 			: `<span class="rp-no-profile">${__('No Role Profile assigned yet')}</span>`;
 
+		const locked = !row.enabled;
+		const remove_attr = locked ? `disabled title="${__('Enable this user first to make changes')}"` : `title="${__('Remove this role')}"`;
+		const extra_roles_html = (row.extra_roles || []).length
+			? row.extra_roles.map((r) => `
+				<span class="rp-role-chip rp-role-chip-extra" title="${__('Assigned directly — not part of any Role Profile')}">
+					${frappe.utils.escape_html(r)}
+					<button type="button" class="rp-role-remove" data-role="${frappe.utils.escape_html(r)}" ${remove_attr}>&times;</button>
+				</span>
+			`).join('')
+			: `<span class="text-muted small">${__('None')}</span>`;
+
 		return `
 			<div class="rp-panel-section">
 				<div class="rp-panel-section-title">${__('User Details')}</div>
@@ -373,6 +384,10 @@ class RolesAndPermissions {
 				<div class="rp-panel-section-title">${__('Role Profile(s) Selected')}</div>
 				<div class="rp-profile-detail-list">${profiles_html}</div>
 			</div>
+			<div class="rp-panel-section">
+				<div class="rp-panel-section-title">${__('Additional Roles')} <span class="rp-flag-badge" title="${__('Roles assigned directly to this user, outside any Role Profile')}">${__('extra')}</span></div>
+				<div class="rp-extra-roles-list">${extra_roles_html}</div>
+			</div>
 		`;
 	}
 
@@ -393,6 +408,25 @@ class RolesAndPermissions {
 			const $list = $tr.find(`.rp-profile-roles-list[data-profile-roles-idx="${idx}"]`);
 			$(this).find('.rp-expand-btn').toggleClass('is-open');
 			$list.toggleClass('is-open');
+		});
+
+		$tr.find('.rp-role-remove').on('click', (e) => {
+			const role = $(e.currentTarget).attr('data-role');
+			frappe.confirm(
+				__('Remove the {0} role from {1}? This does not touch their Role Profile(s).', [role, row.user]),
+				() => {
+					frappe.call({
+						method: 'erp_dacsinc_custom.roles_and_permissions_api.toggle_user_role',
+						args: { user: row.user, role, enabled: 0 },
+						freeze: true,
+						callback: () => {
+							frappe.show_alert({ message: __('Role removed'), indicator: 'green' });
+							delete this.access_cache[row.user];
+							this.refresh();
+						},
+					});
+				}
+			);
 		});
 
 		const render_grid = (doctypes, filterText) => {
