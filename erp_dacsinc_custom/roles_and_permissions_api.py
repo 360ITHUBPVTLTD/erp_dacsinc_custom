@@ -112,6 +112,20 @@ def get_users_overview():
 
     profile_detail_cache = {}
 
+    # Every role actually applied on each User right now — this is a
+    # superset of what their Role Profile(s) grant whenever a role was
+    # added directly (outside any profile), e.g. via toggle_user_role
+    # below or another mechanism like Sales Order Final Approver. Fetched
+    # once for every user rather than per-row so this page stays a single
+    # extra query regardless of how many users it's showing.
+    current_roles_by_user = {}
+    for r in frappe.get_all(
+        "Has Role",
+        filters={"parenttype": "User", "parent": ["in", [u.name for u in users]]},
+        fields=["parent", "role"],
+    ):
+        current_roles_by_user.setdefault(r.parent, set()).add(r.role)
+
     rows = []
     for u in users:
         extra_profiles = profiles_for_user.get(u.name, [])
@@ -119,6 +133,7 @@ def get_users_overview():
         all_profiles = ([native_profile] if native_profile else []) + extra_profiles
 
         profile_summaries = []
+        profile_role_union = set()
         for p in all_profiles:
             if p not in profile_detail_cache:
                 profile_detail_cache[p] = _profile_detail(p)
@@ -126,6 +141,11 @@ def get_users_overview():
             profile_summaries.append({
                 "profile": p, "summary": detail["summary"], "roles": detail["roles"],
             })
+            profile_role_union.update(detail["roles"])
+
+        # Roles this user actually has that no selected Role Profile
+        # explains — assigned directly to the user, not through a profile.
+        extra_roles = sorted(current_roles_by_user.get(u.name, set()) - profile_role_union)
 
         # Kept as the raw code in profile_fields (the edit dialog's Language
         # Link field needs that, not the display name) — language_display
@@ -139,6 +159,7 @@ def get_users_overview():
             "last_login": u.last_login,
             "role_profiles": all_profiles,
             "profile_summaries": profile_summaries,
+            "extra_roles": extra_roles,
             "managed_by_multi_profile": u.name in uap_by_user,
             "profile_fields": {f: u.get(f) for f in PROFILE_FIELDS},
             "language_display": language_names.get(language_code, language_code),

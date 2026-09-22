@@ -2834,6 +2834,58 @@ from collections import defaultdict
 
 
 
+def _remaining_fg_qty(item):
+    # A subcontracted PO Item can be split across more than one Subcontracting
+    # Order — ERPNext supports "Create SC" being run again for whatever
+    # remains after an earlier partial SCO, and tracks how much of
+    # fg_item_qty has already gone into an SCO in its own
+    # `subcontracted_quantity` field (see is_po_fully_subcontracted).
+    return max(0, flt(item.fg_item_qty) - flt(item.subcontracted_quantity))
+
+
+def _explode_rm_requirements(po):
+    """Explodes BOM demand for every subcontracted FG row on `po` into raw
+    material requirements: {rm_item_code: required_qty}.
+
+    Explodes per PO Item row, not per fg_item code — the same Finished Good
+    can appear on this PO more than once against DIFFERENT BOMs (an item can
+    have several BOMs; whichever one was actually chosen on the source Sales
+    Order Item row is what this PO Item's own `bom` field was stamped with —
+    see validate_and_get_items_for_po). Grouping by fg_item first and
+    resolving one BOM per group would silently use only one of those BOMs —
+    usually the Item's current default — for every row, ignoring whichever
+    BOM the other row(s) actually chose.
+
+    Each raw material's Required Qty here is purely a reference figure —
+    "Raw Material Stock Check & Planning" lets every raw material's own
+    "Qty to Supply" be typed independently of every other one, including
+    ones feeding the SAME Finished Good row, and independently of the SCO's
+    own qty (always the row's full _remaining_fg_qty — see
+    create_subcontracting_docs). Sending less of one material than its
+    Required Qty is a real, deliberate workflow here (e.g. this material
+    physically isn't all on hand yet; the rest gets transferred to the SAME
+    SCO in a later round via ERPNext's own standard Material Transfer),
+    not something to silently reduce or infer a smaller batch from.
+    """
+    rm_requirements = defaultdict(float)
+    for item in po.items:
+        if not item.fg_item:
+            continue
+        remaining_fg_qty = _remaining_fg_qty(item)
+        if remaining_fg_qty <= 0:
+            continue
+
+        bom_name = item.bom or frappe.db.get_value("Item", item.fg_item, "default_bom")
+        if not bom_name:
+            frappe.throw(_("Please set a BOM for Finished Good: {0}").format(item.fg_item))
+
+        bom_items = frappe.get_all("BOM Item", filters={"parent": bom_name}, fields=["item_code", "qty"])
+        for bom_item in bom_items:
+            rm_requirements[bom_item.item_code] += flt(bom_item.qty) * remaining_fg_qty
+
+    return rm_requirements
+
+
 @frappe.whitelist()
 def get_required_raw_materials_for_po(purchase_order_name):
     po = frappe.get_doc("Purchase Order", purchase_order_name)
@@ -2843,45 +2895,11 @@ def get_required_raw_materials_for_po(purchase_order_name):
     # Target warehouse specified by the user
     target_warehouse = "VV Puram - IND"
 
-    # Explode RM demand per PO Item row, not per fg_item code — the same
-    # Finished Good can appear on this PO more than once against DIFFERENT
-    # BOMs (an item can have several BOMs; whichever one was actually chosen
-    # on the source Sales Order Item row is what this PO Item's own `bom`
-    # field was stamped with — see validate_and_get_items_for_po). Grouping
-    # by fg_item first and resolving one BOM per group would silently use
-    # only one of those BOMs — usually the Item's current default — for
-    # every row, ignoring whichever BOM the other row(s) actually chose.
-    #
-    # A subcontracted PO Item can be split across more than one Subcontracting
-    # Order — ERPNext supports "Create SC" being run again for whatever
-    # remains after an earlier partial SCO, and tracks how much of
-    # fg_item_qty has already gone into an SCO in its own
-    # `subcontracted_quantity` field (see is_po_fully_subcontracted). Explode
-    # RM demand against what's actually LEFT to subcontract, not the row's
-    # full original fg_item_qty — otherwise every "Create SC" run after the
-    # first asks to send raw material for units that were already covered
-    # (and transferred) by the earlier SCO.
-    def _remaining_fg_qty(item):
-        return max(0, flt(item.fg_item_qty) - flt(item.subcontracted_quantity))
-
     if not any(item.fg_item and _remaining_fg_qty(item) > 0 for item in po.items):
         return []
 
-    rm_requirements = defaultdict(float)
-    for item in po.items:
-        remaining_fg_qty = _remaining_fg_qty(item)
-        if not (item.fg_item and remaining_fg_qty > 0):
-            continue
+    rm_requirements = _explode_rm_requirements(po)
 
-        bom_name = item.bom or frappe.db.get_value("Item", item.fg_item, "default_bom")
-        if not bom_name:
-            frappe.throw(_("Please set a BOM for Finished Good: {0}").format(item.fg_item))
-
-        bom_items = frappe.get_all("BOM Item", filters={"parent": bom_name}, fields=["item_code", "qty"])
-        for bom_item in bom_items:
-            required_qty = flt(bom_item.qty) * remaining_fg_qty
-            rm_requirements[bom_item.item_code] += required_qty
-            
     results = []
     for rm_code, req_qty in rm_requirements.items():
         item_details = frappe.db.get_value("Item", rm_code, ["item_name", "stock_uom"], as_dict=1)
@@ -2974,64 +2992,76 @@ from erpnext.controllers.subcontracting_controller import make_rm_stock_entry
 #     }
 
 @frappe.whitelist()
+def check_rm_supply_shortfall(purchase_order_name, updated_materials_for_supply):
+    """Reports (never blocks) any raw material whose "Qty to Supply" is set
+    below its own Required Qty.
+
+    The SCO this round creates is always for the PO row's full remaining FG
+    qty (see create_subcontracting_docs) — every raw material's own "Qty to
+    Supply" is independent of every other one, including ones feeding the
+    SAME Finished Good, and independent of that SCO qty. Sending less of one
+    material than Required Qty is a legitimate, deliberate choice (e.g. it
+    isn't all physically on hand yet — the rest gets transferred to the SAME
+    SCO in a later round via ERPNext's own standard "Material Transfer"),
+    so this only surfaces a confirmation for the user to knowingly accept,
+    mirroring check_over_collection_limit's own confirm-don't-block pattern
+    for "Receive Goods for SCO"'s over-collection case.
+    """
+    supply_quantities = {
+        item['item_code']: flt(item['qty_to_supply']) for item in json.loads(updated_materials_for_supply)
+    }
+    required_materials = get_required_raw_materials_for_po(purchase_order_name)
+
+    short_items = []
+    for m in required_materials:
+        required_qty = flt(m['required_qty'], 2)
+        supplied_qty = flt(supply_quantities.get(m['item_code'], 0), 2)
+        if required_qty - supplied_qty > 0.01:
+            short_items.append({
+                "item_code": m['item_code'], "uom": m['uom'],
+                "required_qty": required_qty, "supplied_qty": supplied_qty,
+                "shortfall": flt(required_qty - supplied_qty, 2),
+            })
+
+    if not short_items:
+        return {"has_shortfall": False, "confirm_msg": ""}
+
+    confirm_msg = "<h5>Sending Less Than Required</h5>"
+    confirm_msg += (
+        "The Subcontracting Order will still be raised for the full finished-good qty, "
+        "but these raw materials are set to send less than that needs. Send the rest to "
+        "the same Subcontracting Order in a later round before it's received back, or the "
+        "Subcontracting Receipt will fail once that shortfall bites.<br><br>"
+    )
+    confirm_msg += "<table class='table table-bordered table-sm'><thead><tr class='small'>"
+    confirm_msg += "<th>Item</th><th>Required</th><th>Supplying</th><th>Short By</th></tr></thead><tbody>"
+    for i in short_items:
+        confirm_msg += (
+            f"<tr><td>{i['item_code']}</td><td>{i['required_qty']} {i['uom']}</td>"
+            f"<td>{i['supplied_qty']} {i['uom']}</td>"
+            f"<td class='text-danger'>{i['shortfall']} {i['uom']}</td></tr>"
+        )
+    confirm_msg += "</tbody></table>"
+
+    return {"has_shortfall": True, "confirm_msg": confirm_msg}
+
+
+@frappe.whitelist()
 def create_subcontracting_docs(purchase_order_name, updated_materials_for_supply=None):
     """
     Creates a Subcontracting Order and its corresponding Material Transfer.
     Uses 'qty_to_supply' from `updated_materials_for_supply` for the Stock Entry.
+
+    The SCO is always raised for the PO row's full remaining FG qty — how
+    much of any given raw material is actually sent in THIS Material
+    Transfer is independent of that (see check_rm_supply_shortfall for how
+    under-supply is surfaced instead of silently allowed or hard-blocked).
     """
     po = frappe.get_doc("Purchase Order", purchase_order_name)
     subcontractor_warehouse = "Jobers Warehouse - IND" # Ensure this warehouse exists
 
     if not frappe.db.exists("Warehouse", subcontractor_warehouse):
         frappe.throw(_("Warehouse '{0}' not found. Please create it first.").format(subcontractor_warehouse))
-
-    # --- VALIDATION: reject any under-supply BEFORE creating the SCO ---
-    #
-    # get_required_raw_materials_for_po is the same server-side computation
-    # that built the "Raw Material Stock Check & Planning" dialog's own
-    # Required Qty column in the first place — recomputed here (not trusted
-    # from the client) so a stale dialog, or a supply qty typed below what
-    # the finished-good quantity on this PO actually needs, is caught before
-    # anything is created. Checked here, before make_subcontracting_order
-    # runs below, so the failure is reported with a specific, actionable
-    # message instead of surfacing many steps later as ERPNext's own generic
-    # stock-insufficiency error out of a Stock Entry submit — and so nothing
-    # is written (and no naming-series number consumed) for a request that
-    # was always going to fail.
-    #
-    # Confirmed live: a PO needing 110/55 of two raw materials with only
-    # 100/50 physically in stock let the dialog's own "Qty to Supply" accept
-    # 100/50 with a green check — nothing there flagged an under-supply
-    # against Required Qty, only against the stock/allowance ceiling. The
-    # Subcontracting Order and Material Transfer were created fine, and only
-    # later, at Subcontracting Receipt, did ERPNext's own BOM-ratio-based
-    # consumption check reject it for not having enough raw material on hand
-    # at the jobber.
-    if updated_materials_for_supply:
-        supply_quantities = {
-            item['item_code']: flt(item['qty_to_supply']) for item in json.loads(updated_materials_for_supply)
-        }
-        required_materials = get_required_raw_materials_for_po(purchase_order_name)
-        short_lines = []
-        for m in required_materials:
-            required_qty = flt(m['required_qty'], 2)
-            supplied_qty = flt(supply_quantities.get(m['item_code'], 0), 2)
-            if required_qty - supplied_qty > 0.01:
-                short_lines.append(
-                    _("{0}: needs {1} {2}, only {3} {2} is set to be supplied ({4} {2} in stock)").format(
-                        frappe.bold(m['item_code']), required_qty, m['uom'], supplied_qty, flt(m['available_qty'], 2)
-                    )
-                )
-        if short_lines:
-            frappe.throw(_(
-                "Cannot create the Subcontracting Order: the following raw material(s) are "
-                "set to be supplied below what the finished-good quantity on this Purchase "
-                "Order actually needs — the Subcontracting Receipt would later fail with a "
-                "'Consumed Qty must be less than or equal to Available Qty' error once that "
-                "shortfall bites:<br>{0}<br>Reduce the subcontracted quantity for the "
-                "finished good(s) using this raw material on the Purchase Order (or bring in "
-                "more stock), then try again."
-            ).format("<br>".join(short_lines)))
 
     # --- Create the Subcontracting Order ---
     sco = make_subcontracting_order(purchase_order_name)
@@ -3049,6 +3079,7 @@ def create_subcontracting_docs(purchase_order_name, updated_materials_for_supply
     ste_doc = frappe.get_doc(ste_doclist)
 
     # --- NEW: LOGIC TO UPDATE QUANTITIES BASED ON 'qty_to_supply' ---
+    qty_adjustment_notes = []
     if updated_materials_for_supply:
         supply_quantities = {
             item['item_code']: flt(item['qty_to_supply']) for item in json.loads(updated_materials_for_supply)
@@ -3094,6 +3125,16 @@ def create_subcontracting_docs(purchase_order_name, updated_materials_for_supply
         for item in ste_doc.items:
             rows_by_item[item.item_code].append(item)
 
+        # qty_adjustment_notes (see qty_adjustments in the return value)
+        # is populated below whenever a raw material's ACTUAL transferred
+        # total ends up different from what was typed in the dialog — almost
+        # always because it's split across more than one row here (one per
+        # SCO line consuming it) and each row gets rounded up independently
+        # below. That split-plus-rounding is otherwise invisible: the dialog
+        # only ever shows ONE combined figure per raw material, so a few
+        # hundredths of difference in the real Stock Entry used to look like
+        # unexplained drift rather than an expected, explainable rounding
+        # effect.
         for item_code, rows in rows_by_item.items():
             target_total = flt(supply_quantities.get(item_code, 0), 2)
             original_total = sum(flt(row.qty) for row in rows)
@@ -3159,6 +3200,16 @@ def create_subcontracting_docs(purchase_order_name, updated_materials_for_supply
                         frappe.bold(item_code), len(rows), flt(new_total, 2),
                         flt(real_avail, 2), target_warehouse,
                     ))
+
+                # Report the difference plainly instead of leaving it for the
+                # user to notice (or not) on the Stock Entry afterwards.
+                if flt(new_total - target_total, 2) > 0.001:
+                    qty_adjustment_notes.append({
+                        "item_code": item_code,
+                        "requested_qty": target_total,
+                        "actual_qty": flt(new_total, 2),
+                        "row_count": len(rows),
+                    })
     else:
         # If no updated_materials_for_supply, default all to 0 or original SCO quantities
         # Depending on desired default behavior. For this, we'll set to 0.
@@ -3177,10 +3228,20 @@ def create_subcontracting_docs(purchase_order_name, updated_materials_for_supply
     ste_doc.insert(ignore_permissions=True)
     ste_doc.submit()
     po.add_comment("Comment", _("Created Material Transfer: {0}").format(ste_doc.name))
-    
+
+    if qty_adjustment_notes:
+        po.add_comment("Comment", "<br>".join([
+            _("{0}: sent {1} (asked for {2}) — split across {3} rows here (one per Sales-Order-linked "
+              "line consuming it), each rounded up to the nearest 0.01 so none of them falls short "
+              "later.").format(
+                frappe.bold(n["item_code"]), n["actual_qty"], n["requested_qty"], n["row_count"]
+            ) for n in qty_adjustment_notes
+        ]))
+
     return {
         "sco_name": sco.name,
-        "ste_name": ste_doc.name
+        "ste_name": ste_doc.name,
+        "qty_adjustments": qty_adjustment_notes,
     }
 
 

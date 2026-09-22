@@ -1522,6 +1522,14 @@ figure) — MariaDB float noise on `Bin.actual_qty` (e.g. `13.999999999994`)
 otherwise makes ERPNext's own stock-sufficiency check reject a request for
 exactly the displayed "14".
 
+This dialog's own Required Qty (a straight `bom_item.qty * remaining_fg_qty`
+from `_explode_rm_requirements`) is this app's own BOM explosion, not
+ERPNext's — it's a preview/estimate of what the later Subcontracting Receipt
+will actually want to consume (computed there from
+`bom_item.qty_consumed_per_unit * row.qty * row.conversion_factor`), not a
+byte-identical recomputation. Worth knowing if the two ever need
+reconciling, but not a new risk introduced by anything below.
+
 Each row's `qty_to_supply` must be persisted onto its own data object the
 first time `rebuild_table` renders it (defaulting to `required_qty`), not
 just resolved into a local variable used for that render's HTML. The
@@ -1533,6 +1541,69 @@ its input visibly shows the correct default), which the exceeds-check treats
 as supplying 0 — always short of Required Qty. That silently kept the button
 disabled forever after touching just one row, even once every row's own
 displayed value was valid.
+
+`updated_materials` (the dialog's one working copy, built once from the
+server response) is what every part of the dialog reads and writes,
+including the FINAL submit-time re-validation in `primary_action` — that
+validation used to read the original, never-mutated `materials` parameter
+instead, so it could reject a qty the table itself was already showing as
+valid the moment anything (see below) changed a row's `required_qty` after
+the initial render.
+
+#### Every raw material's "Qty to Supply" is independent — supplying less than Required Qty warns, never blocks or links rows together
+
+The Subcontracting Order this dialog creates is **always** raised for the PO
+row's full remaining Finished Good qty (`_remaining_fg_qty`) — nothing here
+ever reduces it. Each raw material's own "Qty to Supply" is completely
+independent of every other raw material, including other ones feeding the
+SAME Finished Good, and independent of the SCO's own qty. This was a
+deliberate reversal of an earlier version of this feature that tried to
+infer and auto-shrink a shared "batch size" from one edited raw material —
+in practice, sending different amounts of different raw materials for the
+same Finished Good (because they don't all happen to be on hand at once) is
+a normal, wanted workflow, not something to couple together or guess at.
+
+Supplying less than Required Qty for a raw material is a real, legitimate
+choice (the rest gets transferred to the **same** SCO in a later round, via
+ERPNext's own standard "Material Transfer" action on the Subcontracting
+Order itself — this app doesn't need to do anything special for that
+follow-up transfer). It shows a warning icon/note on the row (`fa-
+exclamation-triangle`, "N short of Required — the rest can be sent to this
+Subcontracting Order in a later Material Transfer") but never disables
+"Create SCO & Material Transfer" and never touches any other row. Only
+exceeding **Max You Can Send** (physical stock, or Stock Settings' Over
+Transfer Allowance) is still a hard block — that's a real ERPNext-enforced
+ceiling, unrelated to Required Qty.
+
+On submit, `check_rm_supply_shortfall` (whitelisted, called before
+`create_subcontracting_docs`) re-derives Required Qty per raw material from
+`get_required_raw_materials_for_po` and compares it against what's actually
+being supplied. If anything is short, the client shows a `frappe.confirm`
+listing exactly which raw materials and by how much, so under-supplying is
+always a knowing choice, never a silent one — mirroring "Receive Goods for
+SCO"'s own `check_over_collection_limit` confirm-don't-block pattern for its
+over-collection case. `create_subcontracting_docs` itself no longer performs
+any Required-Qty validation or SCO-item-qty adjustment at all — it just
+raises the SCO at full qty and applies whatever "Qty to Supply" figures were
+confirmed to the Material Transfer.
+
+#### The final Stock Entry total can differ slightly from what was typed — now explained, not silent
+
+The per-row ceiling-rounding described above (splitting one raw material
+across several SCO-linked rows, each rounded up to 2dp so none of them falls
+short at Subcontracting Receipt) can push a raw material's real transferred
+total a few hundredths above what was typed in the dialog — mathematically
+unavoidable at 2dp precision without risking under-supplying a specific row
+(see that section). This was already happening; it just wasn't visible
+anywhere, since the dialog only ever shows one combined figure per raw
+material and the split only happens after the SCO exists.
+`create_subcontracting_docs` now tracks every raw material where the actual
+post-rounding total (`new_total`) differs from what was requested
+(`target_total`) by more than a hundredth as `qty_adjustment_notes`, adds a
+PO comment spelling out the difference and why, and returns it as
+`qty_adjustments` — the client shows it via `frappe.msgprint` right after the
+success alert, so a "why did .02 extra appear" question never has to be
+asked; the create-time explanation is already sitting right there.
 
 ### "Receive Goods for SCO" — over-collection produces ONE Purchase Receipt, not two
 
