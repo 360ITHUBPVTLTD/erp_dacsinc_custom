@@ -1522,6 +1522,18 @@ figure) — MariaDB float noise on `Bin.actual_qty` (e.g. `13.999999999994`)
 otherwise makes ERPNext's own stock-sufficiency check reject a request for
 exactly the displayed "14".
 
+Each row's `qty_to_supply` must be persisted onto its own data object the
+first time `rebuild_table` renders it (defaulting to `required_qty`), not
+just resolved into a local variable used for that render's HTML. The
+"Create SCO & Material Transfer" button's enabled/disabled state is
+recomputed on every keystroke by scanning **every** row's `qty_to_supply` in
+`updated_materials` (`update_row_ui`'s `any_error` check) — a row nobody has
+typed into yet would otherwise still read as `undefined` there (even though
+its input visibly shows the correct default), which the exceeds-check treats
+as supplying 0 — always short of Required Qty. That silently kept the button
+disabled forever after touching just one row, even once every row's own
+displayed value was valid.
+
 ### "Receive Goods for SCO" — over-collection produces ONE Purchase Receipt, not two
 
 `show_receive_items_dialog` in `purchase_order.js`, validated by

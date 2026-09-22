@@ -4,8 +4,22 @@
 frappe.ui.form.on('Customer', {
 	refresh(frm) {
 		render_contact_widget(frm);
+		set_merchandiser_user_query(frm);
 	},
 });
+
+// custom_merchandiser_user is the field every "own customers only" scoping
+// check across the app is keyed off (Order Flow dashboard, Sales Order /
+// Customer permission query conditions — see custom_script.py), so only an
+// actual Merchandiser User or Junior Merchandiser should ever be assignable
+// here — same role-filtered User query the "Assign Merchandiser" bulk
+// action already uses from the Customer list view (customer_list.js).
+function set_merchandiser_user_query(frm) {
+	frm.set_query('custom_merchandiser_user', () => ({
+		query: 'frappe.core.doctype.user.user.user_query',
+		filters: { role: ['in', ['Merchandiser User', 'Junior Merchandiser']] },
+	}));
+}
 
 function render_contact_widget(frm) {
 	frm.fields_dict.custom_contact_details_html.$wrapper.html(`

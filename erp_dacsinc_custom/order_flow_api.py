@@ -685,7 +685,7 @@ def _event_relevance(ev, ctx):
 _TRACKER_ROW_CEILING = 5000
 
 
-def _get_tracker_rows(days=120, search=None, scope="open", merchandiser=None, approval_stage=None, tab="tracker"):
+def _get_tracker_rows(days=120, search=None, scope="open", merchandiser=None, approval_stage=None, tab="tracker", industry=None):
     """
     Sales Orders ordered by most recent downstream activity, each enriched
     with doc-flow counts and `stage` (via _compute_stage_info) — the full
@@ -750,6 +750,10 @@ def _get_tracker_rows(days=120, search=None, scope="open", merchandiser=None, ap
         conditions.append("cust.custom_merchandiser_user = %(merchandiser)s")
         params["merchandiser"] = merchandiser
 
+    if industry:
+        conditions.append("cust.industry = %(industry)s")
+        params["industry"] = industry
+
     # A user whose ONLY reason for seeing this tab is Merchandiser User (no
     # other tracker-granting role held) uses it to answer "where is MY order",
     # not to browse the whole company's order book — scope to the customers
@@ -782,7 +786,7 @@ def _get_tracker_rows(days=120, search=None, scope="open", merchandiser=None, ap
         SELECT so.name, so.customer, so.customer_name, so.transaction_date, so.delivery_date,
                so.status, so.grand_total, so.currency, so.per_delivered, so.per_billed,
                so.owner, so.modified, so.skip_delivery_note, so.docstatus,
-               so.po_no, so.po_date,
+               so.po_no, so.po_date, cust.industry,
                cust.custom_merchandiser_user, mu.full_name AS custom_merchandiser_name
         FROM `tabSales Order` so
         LEFT JOIN `tabCustomer` cust ON cust.name = so.customer
@@ -1088,7 +1092,7 @@ def _get_tracker_rows(days=120, search=None, scope="open", merchandiser=None, ap
 @frappe.whitelist()
 def get_sales_tracker(days=120, search=None, scope="open", stage_filter=None, merchandiser=None,
                        approval_stage=None, page=1, page_size=100, so_page=1, so_page_size=100,
-                       mr_page=1, mr_page_size=100):
+                       mr_page=1, mr_page_size=100, industry=None):
     """
     Paginated view over _get_tracker_rows, with `stage_filter` applied in
     Python (stage is a computed field, not a column — see
@@ -1110,7 +1114,8 @@ def get_sales_tracker(days=120, search=None, scope="open", stage_filter=None, me
     # applies for its own always-count-every-stage needs.
     effective_scope = "all" if stage_filter == "completed" else scope
     full = _get_tracker_rows(days=days, search=search, scope=effective_scope,
-                              merchandiser=merchandiser, approval_stage=approval_stage)
+                              merchandiser=merchandiser, approval_stage=approval_stage,
+                              industry=industry)
     rows = full["rows"]
     if not billing_visible:
         rows = [o for o in rows if o.get("stage", {}).get("stage_key") not in ("need_to_bill", "ready_to_deliver")]
@@ -2711,7 +2716,7 @@ def get_jobwork_flow(days=180, search=None, scope="open", merchandiser=None,
 # --------------------------------------------------------------------------
 
 @frappe.whitelist()
-def get_summary(days=120, scope="open", search=None, merchandiser=None, approval_stage=None):
+def get_summary(days=120, scope="open", search=None, merchandiser=None, approval_stage=None, industry=None):
     """
     Headline stage counters for Number Cards on the Order Flow page.
     """
@@ -2726,7 +2731,8 @@ def get_summary(days=120, scope="open", search=None, merchandiser=None, approval
     # we override "open" scope to "all". "mine" scope is preserved to only count the user's orders.
     summary_scope = "all" if scope == "open" else scope
     orders_all = _get_tracker_rows(days=days, scope=summary_scope, search=search,
-                                    merchandiser=merchandiser, approval_stage=approval_stage)["rows"]
+                                    merchandiser=merchandiser, approval_stage=approval_stage,
+                                    industry=industry)["rows"]
 
     open_orders = 0
     completed = 0
@@ -2958,6 +2964,128 @@ def get_accounts_flow(days=120, search=None, scope="open", merchandiser=None,
             "jobber_paid": flt(jobber_agg.paid),
             "jobber_outstanding": flt(jobber_agg.outstanding),
         }
+    }
+
+
+# --------------------------------------------------------------------------
+# Logistics — submitted Sales Invoices still missing proof-of-delivery
+# paperwork (LR Number / Signed Copy). See logistics_tab.py for the fields
+# and the reasoning behind what does and does not clear this queue.
+# --------------------------------------------------------------------------
+
+@frappe.whitelist()
+def get_logistics_flow(days=None, search=None, scope="open", page=1, page_size=100):
+    """
+    Default (scope="open"): submitted Sales Invoices where NEITHER LR Number
+    nor Signed Copy is filled in yet — an invoice drops off this default
+    list the moment either one is, regardless of the separate Proof of
+    Delivery checkbox (see logistics_tab.py for why that checkbox does not
+    also clear it).
+
+    scope="all" lifts that exclusion so an invoice that HAS since been
+    updated (LR Number and/or Signed Copy filled in) shows up too — the
+    filter to go looking for what's already been taken care of, same
+    "Open"/"All" convention get_billing_flow uses for its own
+    pending-vs-completed split. scope="mine" still narrows to the
+    caller's own invoices, but keeps the pending-only default (someone
+    checking "my paperwork backlog" wants what's still outstanding).
+
+    No date filter by default: this is a documentation backlog, not an
+    activity feed — an invoice missing its paperwork does not become less
+    relevant for being old, so nothing should silently age out of view
+    unless a caller explicitly narrows it with `days`.
+    """
+    _guard()
+    _guard_tab("logistics")
+
+    conditions = ["si.docstatus = 1"]
+    if scope != "all":
+        conditions.append("IFNULL(si.custom_lr_number, '') = ''")
+        conditions.append("IFNULL(si.custom_signed_copy, '') = ''")
+    params = {}
+
+    if days:
+        conditions.append("si.posting_date >= %(from_date)s")
+        params["from_date"] = _from_date(days)
+
+    if scope == "mine":
+        conditions.append("si.owner = %(me)s")
+        params["me"] = frappe.session.user
+
+    if search:
+        for idx, word in enumerate(search.strip().split()):
+            param_key = f"q_{idx}"
+            conditions.append(f"""(si.name LIKE %({param_key})s OR si.customer LIKE %({param_key})s
+                                  OR si.customer_name LIKE %({param_key})s
+                                  OR sii.sales_order LIKE %({param_key})s)""")
+            params[param_key] = f"%{word}%"
+
+    # Same merchandiser scoping as every other Sales-Invoice-bearing tab
+    # (Finance) — a plain Merchandiser User sees only their own customers'
+    # invoices here too; a combined-role user, or one actually configured on
+    # of_tab_logistics_roles, sees the full company-wide queue.
+    if is_scoped_to_own_customers("logistics"):
+        conditions.append("cust.custom_merchandiser_user = %(merch_scope)s")
+        params["merch_scope"] = frappe.session.user
+
+    result = _paged_query(f"""
+        SELECT si.name, si.posting_date, si.customer, si.customer_name, si.currency,
+               si.grand_total, si.owner, si.custom_proof_of_delivery,
+               si.custom_lr_number, si.custom_signed_copy,
+               GROUP_CONCAT(DISTINCT sii.sales_order ORDER BY sii.sales_order SEPARATOR ', ') AS sales_orders
+        FROM `tabSales Invoice` si
+        LEFT JOIN `tabSales Invoice Item` sii ON sii.parent = si.name
+        LEFT JOIN `tabCustomer` cust ON cust.name = si.customer
+        WHERE {' AND '.join(conditions)}
+        GROUP BY si.name, si.posting_date, si.customer, si.customer_name, si.currency,
+                 si.grand_total, si.owner, si.custom_proof_of_delivery,
+                 si.custom_lr_number, si.custom_signed_copy
+        ORDER BY si.posting_date ASC, si.name ASC
+    """, params, page, page_size)
+
+    _attach_creator_names(result["rows"])
+    return result
+
+
+@frappe.whitelist()
+def update_logistics_fields(sales_invoice, lr_number=None, signed_copy=None, proof_of_delivery=None):
+    """
+    Inline update from the Logistics tab. Only whichever of
+    lr_number/signed_copy/proof_of_delivery is actually PASSED gets touched —
+    distinguished from an intentional blank by checking for None, not
+    falsiness, so clearing a field back to empty (e.g. undoing a wrong LR
+    Number) still works, while a save that only ever meant to touch one
+    field can never blank out either of the other two.
+
+    All three fields are allow_on_submit, so this updates a submitted
+    invoice the same way ERPNext's own core would for any other
+    update-after-submit field.
+    """
+    _guard()
+    _guard_tab("logistics")
+
+    doc = frappe.get_doc("Sales Invoice", sales_invoice)
+    doc.check_permission("write")
+
+    changed = False
+    if lr_number is not None:
+        doc.custom_lr_number = cstr(lr_number).strip()
+        changed = True
+    if signed_copy is not None:
+        doc.custom_signed_copy = signed_copy
+        changed = True
+    if proof_of_delivery is not None:
+        doc.custom_proof_of_delivery = cint(proof_of_delivery)
+        changed = True
+
+    if changed:
+        doc.save()
+
+    return {
+        "name": doc.name,
+        "custom_lr_number": doc.custom_lr_number,
+        "custom_signed_copy": doc.custom_signed_copy,
+        "custom_proof_of_delivery": doc.custom_proof_of_delivery,
     }
 
 
@@ -4284,6 +4412,23 @@ def get_merchandisers():
         JOIN `tabHas Role` hr ON hr.parent = u.name
         WHERE hr.role = 'Merchandiser User' AND u.enabled = 1
         ORDER BY u.full_name ASC
+    """, as_dict=1)
+
+
+@frappe.whitelist()
+def get_customer_industries():
+    """Distinct Customer.industry values actually in use — for the Sales
+    Tracker's industry filter dropdown. Sourced from real Customer data
+    rather than the full Industry Type master (get_warehouses's "every
+    non-disabled warehouse" precedent doesn't fit here: Industry Type ships
+    with ~20 default entries, most never assigned to a customer, which
+    would only pad the dropdown with choices that can never match a row)."""
+    _guard()
+    return frappe.db.sql("""
+        SELECT DISTINCT cust.industry AS name
+        FROM `tabCustomer` cust
+        WHERE IFNULL(cust.industry, '') != ''
+        ORDER BY cust.industry ASC
     """, as_dict=1)
 
 

@@ -18,8 +18,8 @@ Subcontracting/Embroidery → Pick List → Delivery Note → Invoice.
 - **Sales Tracker** — all orders, their current stage and next action.
 - **Pick Lists** — the Pick Lists themselves (see below).
 - **Purchase Flow**, **Job Work**, **Stock Tracker**, **Pending DN/SI**,
-  **Finance**, **Embroidery Transfers** — each a different lens on the same
-  underlying documents.
+  **Finance**, **Embroidery Transfers**, **Logistics** — each a different
+  lens on the same underlying documents.
 
 ## Pick Lists tab
 
@@ -73,6 +73,21 @@ It is **searchable by the same box**: `_get_tracker_rows` matches `so.po_no`
 alongside the SO name and customer, and the tracker's search placeholder says
 so. Showing a reference on the row without making it findable is the half
 that leaves people scrolling, so the two always ship together.
+
+The same cell also shows the customer's **Industry** (`Customer.industry`)
+right under the customer name, and — again, showing it without a way to
+narrow by it would be half the feature — a dedicated **industry filter**
+(`#of-tracker-industry`, Sales Tracker's SO subtab only, hidden on the
+Material Requests subtab since MR rows aren't per-customer the same way).
+`get_customer_industries` populates the dropdown from the *distinct
+industries actually assigned to a Customer* rather than the full Industry
+Type master list (which ships ~20 default entries, most never assigned to
+anyone — those would only be dead choices in the dropdown).
+`_get_tracker_rows` takes `industry` as a plain SQL condition on the same
+`cust` join `custom_merchandiser_user` already uses, so it flows through to
+every caller that shares that function — `get_sales_tracker` and
+`get_summary` both narrow by it, keeping the stage tiles above the table in
+agreement with the rows below.
 
 The tracker's own primary Action Required button is visually emphasized
 (`td > .of-action-btn` — bigger, bolder, a subtle shadow) so it reads as
@@ -840,3 +855,65 @@ it: ERPNext's own `calculate_taxes_and_totals` unconditionally recomputes
 client sent, and the existing rate lock already guarantees `rate` itself
 can't drift — so `amount` was already fully protected server-side once
 `rate` was.
+
+## Logistics tab
+
+Lists every **submitted** Sales Invoice still missing proof-of-delivery
+paperwork, so nothing sits un-followed-up after it leaves billing.
+`get_logistics_flow` / `update_logistics_fields`
+(`order_flow_api.py`) serve it; the fields themselves and the reasoning
+behind what does and doesn't clear the queue live in `logistics_tab.py`.
+
+- **What puts an invoice on this list**: `docstatus = 1` AND both
+  **LR Number** (`custom_lr_number`) and **Signed Copy**
+  (`custom_signed_copy`) are blank. No date filter by default — this is a
+  documentation backlog, not an activity feed, so an old invoice missing
+  its paperwork stays visible instead of silently aging out; `days` still
+  narrows it if a caller passes one.
+- **What takes it off the list**: filling in **either** LR Number or
+  Signed Copy — not both. The two are independent triggers, not a pair
+  that both need clearing.
+- **Seeing what's already been updated**: dropping off the default list is
+  the point, not a dead end — the shared `#of-scope` selector's **"All
+  orders"** option (same "Open" vs "All" convention `get_billing_flow` uses
+  for its own pending-vs-completed split) lifts the LR-Number/Signed-Copy
+  exclusion entirely, so it shows pending AND already-updated invoices
+  together. A **Status** column (Pending / Updated, driven purely by
+  whether either field is filled in) makes it obvious which is which once
+  they're mixed in the same list — meaningless under the default "Open"
+  scope, where every row is necessarily still pending. "Created by me"
+  keeps the pending-only default (a personal backlog check, not a "what
+  did I already close out" one).
+- **Proof of Delivery (`custom_proof_of_delivery`) is deliberately NOT a
+  third way to clear the queue.** It's a separate manual confirmation,
+  editable from the same row, but ticking it alone leaves the invoice on
+  the list. Letting the checkbox alone clear the row would let someone
+  mark an invoice "delivered" with no LR Number or signed copy on file at
+  all — exactly the paperwork gap this tab exists to catch.
+- **Editing style**: inline in the table row, not a dialog — an LR Number
+  text input with a Save button (also submits on Enter), a Signed Copy
+  Attach/Replace button (`frappe.ui.FileUploader`, targeting
+  `custom_signed_copy` directly on the Sales Invoice), and the Proof of
+  Delivery checkbox, each saving independently via
+  `update_logistics_fields`. All three fields are `allow_on_submit`, so
+  these are normal update-after-submit saves — no cancel/amend involved.
+  `update_logistics_fields` only touches whichever of
+  `lr_number`/`signed_copy`/`proof_of_delivery` was actually passed
+  (checked for `None`, not falsiness), so clearing one field back to blank
+  never clobbers the other two.
+- **Visibility**: governed by `of_tab_logistics_roles` on Admin Settings,
+  the same `of_tab_<tab>_roles` pattern every other tab uses (empty =
+  visible to everyone who can open the page). Also merchandiser-scoped the
+  same way Finance is — `is_scoped_to_own_customers("logistics")` limits a
+  plain Merchandiser User to their own customers' invoices.
+- **Custom fields**: LR Number and Signed Copy were added as proper Custom
+  Fields (`logistics_tab.py::create_logistics_fields`, wired into
+  `hooks.py`'s `after_migrate`, so a fresh deploy creates them) rather than
+  editing the Sales Invoice doctype directly — inserting a Custom Field
+  adds its own DB column immediately, no `bench migrate` needed for those
+  two. All three fields (including the pre-existing
+  `custom_proof_of_delivery`) are listed in `hooks.py`'s `fixtures` so they
+  export with this app, the same mechanism `custom_procurement_purpose`
+  uses. `of_tab_logistics_roles`, by contrast, is a real field on this
+  app's own Admin Settings doctype JSON — that one genuinely does need
+  `bench migrate` to appear.

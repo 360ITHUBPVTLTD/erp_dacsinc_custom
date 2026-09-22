@@ -368,10 +368,12 @@ after_migrate = [
     # Records whether a purchase is raw material or goods to sell, so the RM
     # allocation reads it instead of inferring it. Idempotent.
     "erp_dacsinc_custom.procurement_purpose.create_procurement_purpose_fields",
+    # LR Number / Signed Copy on Sales Invoice, for the Logistics tab. Idempotent.
+    "erp_dacsinc_custom.logistics_tab.create_logistics_fields",
 ]
 
-# Ships the Procurement Purpose field with the app rather than leaving it to
-# be recreated by hand on each site.
+# Ships these Custom Fields with the app rather than leaving them to be
+# recreated by hand on each site.
 fixtures = [
     {
         "dt": "Custom Field",
@@ -379,6 +381,12 @@ fixtures = [
             "Material Request Item-custom_procurement_purpose",
             "Purchase Order Item-custom_procurement_purpose",
             "Purchase Receipt Item-custom_procurement_purpose",
+            "Sales Invoice-custom_lr_number",
+            "Sales Invoice-custom_signed_copy",
+            # Pre-existing (created via Customize Form, 2026-02-24) — not
+            # created by this app's code, but exported alongside the two
+            # fields above since the Logistics tab now depends on it too.
+            "Sales Invoice-custom_proof_of_delivery",
         ]]],
     },
 ]
