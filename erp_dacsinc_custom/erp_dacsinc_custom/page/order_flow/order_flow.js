@@ -115,7 +115,8 @@ const OF_TABS = [
     { key: 'stock',    label: 'Stock Tracker',        icon: 'fa-cubes' },
     { key: 'billing',  label: 'Pending DN/SI',         icon: 'fa-truck' },
     { key: 'accounts', label: 'Finance',              icon: 'fa-calculator' },
-    { key: 'uniform',  label: 'Embroidery Transfers', icon: 'fa-random' }
+    { key: 'uniform',  label: 'Embroidery Transfers', icon: 'fa-random' },
+    { key: 'logistics', label: 'Logistics',           icon: 'fa-flag-checkered' }
 ];
 
 // Tab display names, for messages that name the tab being acted on.
@@ -153,6 +154,7 @@ class OrderFlow {
         this.approval_stage_filter = '';
         this.uniform_status_filter = ''; // Embroidery Transfers tab only — see #of-uniform-status
         this.stock_warehouse_filter = ''; // Stock Tracker tab only — see #of-stock-warehouse
+        this.tracker_industry_filter = ''; // Sales Tracker's SO subtab only — see #of-tracker-industry
 
         // Per-tab pagination state. A tab whose data is one list (stock,
         // billing, approval, uniform) tracks a single {page, page_size};
@@ -186,6 +188,7 @@ class OrderFlow {
             },
             approval: { page: 1, page_size: 100 },
             uniform: { page: 1, page_size: 100 },
+            logistics: { page: 1, page_size: 100 },
         };
 
         this.cache = {};
@@ -366,6 +369,9 @@ class OrderFlow {
                     <select class="of-select" id="of-stock-warehouse" style="display: none;" title="Filter by warehouse">
                         <option value="">All Warehouses</option>
                     </select>
+                    <select class="of-select" id="of-tracker-industry" style="display: none;" title="Filter by customer industry">
+                        <option value="">All Industries</option>
+                    </select>
                     <select class="of-select" id="of-scope">
                         <option value="open">Open orders</option>
                         <option value="all">All orders</option>
@@ -421,6 +427,7 @@ class OrderFlow {
                 <div id="of-panel-accounts" class="of-hidden"></div>
                 <div id="of-panel-approval" class="of-hidden"></div>
                 <div id="of-panel-uniform" class="of-hidden"></div>
+                <div id="of-panel-logistics" class="of-hidden"></div>
             </div>
         `);
 
@@ -441,6 +448,16 @@ class OrderFlow {
             const select = this.$body.find('#of-stock-warehouse');
             list.forEach(w => {
                 select.append(`<option value="${of_esc(w.name)}">${of_esc(w.name)}</option>`);
+            });
+        });
+
+        frappe.call({
+            method: 'erp_dacsinc_custom.order_flow_api.get_customer_industries'
+        }).then(r => {
+            const list = r.message || [];
+            const select = this.$body.find('#of-tracker-industry');
+            list.forEach(i => {
+                select.append(`<option value="${of_esc(i.name)}">${of_esc(i.name)}</option>`);
             });
         });
     }
@@ -470,6 +487,7 @@ class OrderFlow {
                 this.$body.find('#of-panel-tracker .of-subtab').removeClass('is-active')
                     .filter(`[data-subtab="${sub}"]`).addClass('is-active');
                 this.$body.find('#of-stage-bar').toggleClass('of-hidden', sub !== 'so');
+                this.$body.find('#of-tracker-industry').toggle(sub === 'so');
                 ['so', 'mr'].forEach(s => {
                     this.$body.find(`#of-tracker-sec-${s}`).toggleClass('of-hidden', s !== sub);
                 });
@@ -537,6 +555,7 @@ class OrderFlow {
         this.$body.on('change', '#of-approval-stage', (e) => { this.approval_stage_filter = e.target.value; this.reset_all_pagination(); this.refresh(true); });
         this.$body.on('change', '#of-uniform-status', (e) => { this.uniform_status_filter = e.target.value; this.reset_all_pagination(); this.refresh(true); });
         this.$body.on('change', '#of-stock-warehouse', (e) => { this.stock_warehouse_filter = e.target.value; this.reset_all_pagination(); this.refresh(true); });
+        this.$body.on('change', '#of-tracker-industry', (e) => { this.tracker_industry_filter = e.target.value; this.reset_all_pagination(); this.refresh(true); });
         this.$body.on('change', '#of-scope', (e) => { this.scope = e.target.value; this.reset_all_pagination(); this.refresh(true); });
         this.$body.on('change', '#of-days',  (e) => { this.days  = e.target.value; this.reset_all_pagination(); this.refresh(true); });
 
@@ -1417,6 +1436,68 @@ class OrderFlow {
             this.prompt_create_transfer();
         });
 
+        // ── Logistics tab: inline LR Number save ────────────────────
+        this.$body.on('click', '.of-logi-save-lr-btn', (e) => {
+            const $btn = $(e.currentTarget);
+            const name = $btn.data('name');
+            const lr_number = this.$body.find(`.of-logi-lr-input[data-name="${name}"]`).val();
+            $btn.prop('disabled', true);
+            frappe.call({
+                method: 'erp_dacsinc_custom.order_flow_api.update_logistics_fields',
+                args: { sales_invoice: name, lr_number }
+            }).then(() => {
+                frappe.show_alert({ message: __('LR Number saved.'), color: 'green' });
+                this.refresh(true);
+            }).catch(() => {
+                $btn.prop('disabled', false);
+            });
+        });
+        this.$body.on('keydown', '.of-logi-lr-input', (e) => {
+            if (e.key !== 'Enter') return;
+            e.preventDefault();
+            const name = $(e.currentTarget).data('name');
+            this.$body.find(`.of-logi-save-lr-btn[data-name="${name}"]`).trigger('click');
+        });
+
+        // ── Logistics tab: inline Signed Copy attach ────────────────
+        this.$body.on('click', '.of-logi-attach-btn', (e) => {
+            const name = $(e.currentTarget).data('name');
+            new frappe.ui.FileUploader({
+                doctype: 'Sales Invoice',
+                docname: name,
+                fieldname: 'custom_signed_copy',
+                allow_multiple: false,
+                on_success: (file_doc) => {
+                    frappe.call({
+                        method: 'erp_dacsinc_custom.order_flow_api.update_logistics_fields',
+                        args: { sales_invoice: name, signed_copy: file_doc.file_url }
+                    }).then(() => {
+                        frappe.show_alert({ message: __('Signed copy attached.'), color: 'green' });
+                        this.refresh(true);
+                    });
+                }
+            });
+        });
+
+        // ── Logistics tab: inline Proof of Delivery checkbox ────────
+        // Independent of LR Number / Signed Copy — toggling this never
+        // removes the row (see logistics_html/logistics_tab.py).
+        this.$body.on('change', '.of-logi-pod-checkbox', (e) => {
+            const $cb = $(e.currentTarget);
+            const name = $cb.data('name');
+            const checked = $cb.is(':checked') ? 1 : 0;
+            $cb.prop('disabled', true);
+            frappe.call({
+                method: 'erp_dacsinc_custom.order_flow_api.update_logistics_fields',
+                args: { sales_invoice: name, proof_of_delivery: checked }
+            }).then(() => {
+                frappe.show_alert({ message: __('Proof of Delivery updated.'), color: 'green' });
+                this.refresh(true);
+            }).catch(() => {
+                $cb.prop('checked', !checked).prop('disabled', false);
+            });
+        });
+
         // Click to redirect logic for Sales Tracker flow links and status chips
         this.$body.on('click', '.of-link-flow', (e) => {
             e.stopPropagation();
@@ -1565,6 +1646,7 @@ class OrderFlow {
         this.$body.find('#of-approval-stage').toggle(tab === 'approval');
         this.$body.find('#of-uniform-status').toggle(tab === 'uniform');
         this.$body.find('#of-stock-warehouse').toggle(tab === 'stock');
+        this.$body.find('#of-tracker-industry').toggle(tab === 'tracker' && this.tracker_subtab !== 'mr');
         // Scope/days scope Sales-Order-linked activity, which the Stock
         // Tracker's global item report has none of.
         this.$body.find('#of-scope, #of-days').toggle(tab !== 'stock');
@@ -1580,7 +1662,8 @@ class OrderFlow {
             billing: __('Search Sales Order #, Customer…'),
             accounts: __('Search Invoice #, Customer, Supplier, Sales Order…'),
             approval: __('Search Sales Order #, Customer…'),
-            uniform: __('Search transfers…')
+            uniform: __('Search transfers…'),
+            logistics: __('Search Sales Invoice #, Customer…')
         };
         this.$body.find('#of-search').attr('placeholder', placeholders[tab] || __('Search…'));
 
@@ -1626,7 +1709,7 @@ class OrderFlow {
         this.load_summary();
         if (force) this.cache = {};
 
-        const key = `${this.active}:${this.days}:${this.scope}:${this.stage_filter}:${this.search}:${this.merchandiser_filter}:${this.approval_stage_filter}:${this.uniform_status_filter}:${this.stock_warehouse_filter}:${this.pagination_cache_part(this.active)}`;
+        const key = `${this.active}:${this.days}:${this.scope}:${this.stage_filter}:${this.search}:${this.merchandiser_filter}:${this.approval_stage_filter}:${this.uniform_status_filter}:${this.stock_warehouse_filter}:${this.tracker_industry_filter}:${this.pagination_cache_part(this.active)}`;
         if (this.cache[key]) {
             this.paint(this.cache[key]);
             this.load_activity();
@@ -1650,7 +1733,8 @@ class OrderFlow {
             billing:  'erp_dacsinc_custom.order_flow_api.get_billing_flow',
             accounts: 'erp_dacsinc_custom.order_flow_api.get_accounts_flow',
             approval: 'erp_dacsinc_custom.order_flow_api.get_pending_approvals',
-            uniform:  'erp_dacsinc_custom.uniform_transfer_api.get_embroidery_transfers'
+            uniform:  'erp_dacsinc_custom.uniform_transfer_api.get_embroidery_transfers',
+            logistics: 'erp_dacsinc_custom.order_flow_api.get_logistics_flow'
         }[this.active];
 
         // merchandiser only narrows Approvals and Tracker — every other tab
@@ -1659,6 +1743,7 @@ class OrderFlow {
         const args = { days: this.days, search: this.search || null, scope: this.scope, merchandiser: merch, approval_stage: this.approval_stage_filter || null };
         if (this.active === 'tracker') {
             args.stage_filter = this.stage_filter;
+            args.industry = this.tracker_industry_filter || null;
         }
         if (this.active === 'uniform') {
             args.status = this.uniform_status_filter || null;
@@ -1683,13 +1768,13 @@ class OrderFlow {
         if (this.active === 'tracker') {
             frappe.call({
                 method: 'erp_dacsinc_custom.order_flow_api.get_summary',
-                args: { days: this.days, scope: this.scope, search: this.search || null, approval_stage: this.approval_stage_filter || null }
+                args: { days: this.days, scope: this.scope, search: this.search || null, approval_stage: this.approval_stage_filter || null, industry: this.tracker_industry_filter || null }
             }).then(r => {
                 const s = r.message || {};
                 this.render_tracker_summary(s);
             });
         } else {
-            const key = `${this.active}:${this.days}:${this.scope}:${this.stage_filter}:${this.search}:${this.merchandiser_filter}:${this.approval_stage_filter}:${this.uniform_status_filter}:${this.stock_warehouse_filter}:${this.pagination_cache_part(this.active)}`;
+            const key = `${this.active}:${this.days}:${this.scope}:${this.stage_filter}:${this.search}:${this.merchandiser_filter}:${this.approval_stage_filter}:${this.uniform_status_filter}:${this.stock_warehouse_filter}:${this.tracker_industry_filter}:${this.pagination_cache_part(this.active)}`;
             const data = this.cache[key];
             if (data) {
                 if (this.active === 'purchase') this.render_purchase_summary(data);
@@ -2482,6 +2567,7 @@ class OrderFlow {
             if (this.active === 'accounts') html = this.accounts_html(data);
             if (this.active === 'approval') html = this.approval_html(data);
             if (this.active === 'uniform')  html = this.uniform_html(data);
+            if (this.active === 'logistics') html = this.logistics_html(data);
             panel.html(html);
         } catch (e) {
             console.error("Error painting panel:", this.active, e);
@@ -2716,6 +2802,10 @@ class OrderFlow {
                             <div class="of-meta" style="font-weight:500;">
                                 <a href="/app/customer/${encodeURIComponent(o.customer)}" target="_blank" style="color:inherit;">${of_customer_display(o.customer_name || o.customer, o.contact_person_name)}</a>
                             </div>
+                            ${o.industry ? `
+                                <div class="of-micro text-muted" title="Customer's industry">
+                                    <i class="fa fa-industry"></i> ${of_esc(o.industry)}
+                                </div>` : ''}
                             ${o.po_no ? `
                                 <div class="of-micro" style="margin-top:2px;" title="${of_esc('Customer PO ' + o.po_no + (o.po_date ? ' dated ' + of_date(o.po_date) : '') + ' — the reference this customer uses for the order. Searchable from the box above.')}">
                                     <i class="fa fa-file-text-o"></i> ${__('Cust PO')}: <strong>${of_esc(o.po_no)}</strong>${o.po_date ? `<span style="color:var(--text-light);"> &middot; ${of_date(o.po_date)}</span>` : ''}
@@ -4873,6 +4963,98 @@ class OrderFlow {
                 </div>
                 ${of_pagination_html('uniform', null, data)}
             </div>
+        `;
+    }
+
+    // ── Tab: logistics ──────────────────────────────────────────
+    // Submitted Sales Invoices still missing an LR Number or a Signed Copy —
+    // see get_logistics_flow/logistics_tab.py. A row drops off this list the
+    // moment EITHER of those two fields is filled in; Proof of Delivery is a
+    // separate, independent checkbox that does not clear the row on its own.
+    logistics_html(data) {
+        data = data || {};
+        const rows = data.rows || [];
+        this.$body.find('#of-count').text(
+            data.total
+                ? (this.scope === 'all'
+                    ? __('{0} invoice(s) match', [data.total])
+                    : __('{0} invoice(s) missing proof of delivery', [data.total]))
+                : ''
+        );
+
+        const rows_html = rows.map(r => {
+            // Only meaningful once "All" scope is pulling in invoices that
+            // already have their paperwork — the default "Open" scope only
+            // ever returns pending ones, so every row would say the same
+            // thing. See get_logistics_flow's scope handling.
+            const is_updated = !!(r.custom_lr_number || r.custom_signed_copy);
+            const status_pill = is_updated
+                ? `<span class="of-pill of-pill--ready">${__('Updated')}</span>`
+                : `<span class="of-pill of-pill--wait">${__('Pending')}</span>`;
+            const lr_value = of_esc(r.custom_lr_number || '');
+            const signed_copy_html = r.custom_signed_copy ? `
+                <div style="display:flex; gap:4px; align-items:center; justify-content:center;">
+                    <a href="${of_esc(r.custom_signed_copy)}" target="_blank" class="of-btn of-btn--success" title="${__('View signed copy')}">
+                        <i class="fa fa-file-o"></i>
+                    </a>
+                    <button class="of-btn of-logi-attach-btn" data-name="${of_esc(r.name)}" title="${__('Replace')}">
+                        <i class="fa fa-upload"></i>
+                    </button>
+                </div>` : `
+                <button class="of-btn of-btn--primary of-logi-attach-btn" data-name="${of_esc(r.name)}">
+                    <i class="fa fa-upload"></i> ${__('Attach')}
+                </button>`;
+
+            return `<tr data-name="${of_esc(r.name)}">
+                <td><a href="/app/sales-invoice/${encodeURIComponent(r.name)}" target="_blank"><b>${of_esc(r.name)}</b></a>
+                    ${of_creator_html(r)}</td>
+                <td style="text-align:left;">
+                    <a href="/app/customer/${encodeURIComponent(r.customer)}" target="_blank" style="font-weight:600;">${of_esc(r.customer_name || r.customer)}</a>
+                </td>
+                <td>${of_so_links(r.sales_orders)}</td>
+                <td class="of-meta">${of_date(r.posting_date)}</td>
+                <td style="font-weight:700;">${of_money(r.grand_total, r.currency)}</td>
+                <td>${status_pill}</td>
+                <td>
+                    <div style="display:flex; gap:4px; align-items:center;">
+                        <input type="text" class="of-logi-lr-input" data-name="${of_esc(r.name)}" value="${lr_value}"
+                               placeholder="${__('LR Number')}"
+                               style="width:110px; font-size:12px; padding:3px 6px; border:1px solid var(--border-color); border-radius:4px;">
+                        <button class="of-btn of-btn--primary of-logi-save-lr-btn" data-name="${of_esc(r.name)}" title="${__('Save')}">
+                            <i class="fa fa-check"></i>
+                        </button>
+                    </div>
+                </td>
+                <td style="text-align:center;">${signed_copy_html}</td>
+                <td style="text-align:center;">
+                    <input type="checkbox" class="of-logi-pod-checkbox" data-name="${of_esc(r.name)}"
+                           ${Number(r.custom_proof_of_delivery) ? 'checked' : ''}
+                           title="${__('Proof of Delivery confirmed')}">
+                </td>
+            </tr>`;
+        }).join('');
+
+        return `
+            <!-- Live Activity Notifications -->
+            ${this.activity_stream_html('logistics')}
+
+            ${of_card(this.scope === 'all' ? 'Sales Invoices — Delivery Paperwork' : 'Sales Invoices Missing Proof of Delivery', 'flag-checkered', `
+                <table class="of-table">
+                    <thead>
+                        <tr>
+                            <th>Sales Invoice</th>
+                            <th>Customer</th>
+                            <th>Sales Order(s)</th>
+                            <th>Posting Date</th>
+                            <th>Grand Total</th>
+                            <th>Status</th>
+                            <th>LR Number</th>
+                            <th>Signed Copy</th>
+                            <th>Proof of Delivery</th>
+                        </tr>
+                    </thead>
+                    <tbody>${rows_html || of_empty_row(9)}</tbody>
+                </table>`, null, of_pagination_html('logistics', null, data))}
         `;
     }
 

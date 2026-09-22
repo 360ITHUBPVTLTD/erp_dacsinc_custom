@@ -51,6 +51,7 @@
   "of_tab_billing_roles",
   "of_tab_accounts_roles",
   "of_tab_uniform_roles",
+  "of_tab_logistics_roles",
   "po_price_check_section",
   "po_price_check_roles"
  ],
@@ -326,6 +327,13 @@
    "fieldname": "of_tab_uniform_roles",
    "fieldtype": "Table MultiSelect",
    "label": "Embroidery Transfers \u2014 Allowed Roles",
+   "options": "Order Flow Tab Role"
+  },
+  {
+   "description": "Logistics tab (submitted Sales Invoices still missing LR Number or a Signed Copy). Empty = visible to everyone who can open the page.",
+   "fieldname": "of_tab_logistics_roles",
+   "fieldtype": "Table MultiSelect",
+   "label": "Logistics \u2014 Allowed Roles",
    "options": "Order Flow Tab Role"
   },
   {

@@ -2312,6 +2312,17 @@ async function show_stock_check_dialog(frm, materials, linked_subcontracting_doc
             const required_qty_disp = flt(required_qty, 2);
             const available_qty_disp = flt(available_qty, 2);
             const qty_to_supply = flt(item.qty_to_supply !== undefined ? item.qty_to_supply : required_qty, 2);
+            // Persist the resolved default back onto the row's own data, not
+            // just the local const used to render this pass's HTML. Without
+            // this, a row nobody has typed into yet keeps qty_to_supply
+            // `undefined` in updated_materials — and update_row_ui's
+            // "any_error" re-check (fired when a DIFFERENT row changes) reads
+            // that undefined as 0, which is always short of Required Qty. So
+            // fixing the one row you actually edited back to a valid value
+            // could never re-enable "Create SCO & Material Transfer" as long
+            // as any other, never-touched row still looked (to that check,
+            // not to the eye) like it was supplying zero.
+            item.qty_to_supply = qty_to_supply;
             // The real ceiling is whichever binds first: physical stock, or
             // Stock Settings' Over Transfer Allowance against Required Qty.
             const allowance_qty = flt(allowance_cap(required_qty), 2);
