@@ -1459,7 +1459,11 @@ function show_sales_order_dialog(frm, data, is_subcontracted) {
                 <td><strong><a href="/app/item/${i.item_code}" target="_blank" style="color: var(--primary-color); text-decoration: none;">
             ${i.item_code}
         </a></strong></td>
-                <td class="text-right">${flt(i.avail).toFixed(0)}</td>
+                <td class="text-right">${flt(i.avail).toFixed(0)}
+                    ${flt(i.rm_earmarked || 0) > 0 ? `<div style="font-size:9px; font-weight:600; line-height:1.3; color:#805ad5;"
+                        title="${frappe.utils.escape_html(`${flt(i.rm_earmarked).toFixed(2)} of this item's stock was bought as raw material for a BOM and is owed to a Subcontract PO, so it is not available to cover a sold line of the same item. It is excluded from In Stock above.`)}">
+                        ${flt(i.rm_earmarked).toFixed(0)} RM</div>` : ''}
+                </td>
                 <td class="text-right text-pick-draft">${flt(i.draft_picks || 0).toFixed(0)}</td>
                 <td class="text-right text-pick-sub">${flt(i.sub_picks || 0).toFixed(0)}</td>
                 <td class="text-right text-po-draft" title="${draft_po_qty > 0

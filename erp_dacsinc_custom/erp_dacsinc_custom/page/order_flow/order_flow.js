@@ -155,6 +155,7 @@ class OrderFlow {
         this.uniform_status_filter = ''; // Embroidery Transfers tab only — see #of-uniform-status
         this.stock_warehouse_filter = ''; // Stock Tracker tab only — see #of-stock-warehouse
         this.tracker_industry_filter = ''; // Sales Tracker's SO subtab only — see #of-tracker-industry
+        this.approval_rejected_stage_filter = ''; // SO Approvals' Rejected Orders sub-tab only — 'merchandiser' | 'final'
 
         // Draft/Submitted filter-pill state, per tab + sub-list — '' means
         // "All" (both mixed together, same as before this filter existed).
@@ -580,6 +581,13 @@ class OrderFlow {
             this.reset_all_pagination();
             this.refresh(true);
         });
+
+        // SO Approvals' Rejected Orders sub-tab: All / By Merchandiser / At
+        // Final Approval — see of_rejection_stage_pills.
+        this.$body.on('click', '.of-rej-stage-pill', (e) => {
+            this.approval_rejected_stage_filter = $(e.currentTarget).data('stage') || '';
+            this.refresh(true);
+        });
         this.$body.on('change', '#of-scope', (e) => { this.scope = e.target.value; this.reset_all_pagination(); this.refresh(true); });
         this.$body.on('change', '#of-days',  (e) => { this.days  = e.target.value; this.reset_all_pagination(); this.refresh(true); });
 
@@ -995,7 +1003,37 @@ class OrderFlow {
                 });
             };
 
-            if (action === 'open_doc' && target && doctype) {
+            if (action === 'submit_pick_list' && so) {
+                // The same review-and-submit table the Sales Order widget's
+                // "Pick Lists" button opens: every draft pick on the order,
+                // each qty editable before it commits stock. A mock frm is
+                // built off-screen first (load_so_details) because that modal
+                // — and the refresh it runs after a successful submit — read
+                // cur_frm, exactly as the widget's own buttons do here.
+                const $hidden = $('<div>').appendTo(document.body).hide();
+                frappe.dom.freeze(__('Loading Pick Lists…'));
+                frappe.require('/assets/erp_dacsinc_custom/js/sales_order.js', () => {
+                    this.load_so_details(so, $hidden, (mock_frm) => {
+                        frappe.call({
+                            method: 'erp_dacsinc_custom.order_flow_api.get_pick_lists_for_so',
+                            args: { sales_order: so }
+                        }).then(r => {
+                            frappe.dom.unfreeze();
+                            $hidden.remove();
+                            const pls = r.message || [];
+                            if (!pls.length) {
+                                frappe.msgprint(__('No Pick List found for this order.'));
+                                return;
+                            }
+                            if (mock_frm) window.cur_frm = mock_frm;
+                            window.show_so_picklists_modal(mock_frm || { doc: { name: so } }, pls);
+                        }).catch(() => {
+                            frappe.dom.unfreeze();
+                            $hidden.remove();
+                        });
+                    });
+                });
+            } else if (action === 'open_doc' && target && doctype) {
                 // Opens an EXISTING document (the Next Action button for most
                 // tracker stages) — a document link like any other on this
                 // dashboard, so it opens in a new tab rather than navigating
@@ -1023,7 +1061,7 @@ class OrderFlow {
                         }).then(draft_res => {
                             const drafts = draft_res.message || {};
                             frappe.require('/assets/erp_dacsinc_custom/js/sales_order.js', () => {
-                                show_bulk_dn_si_modal(mock_frm, pls, 'Sales Invoice', 0, drafts.draft_sis || []);
+                                show_bulk_dn_si_modal(mock_frm, pls, 'Sales Invoice', 0, drafts.draft_sis || [], [], drafts.draft_details || []);
                             });
                         });
                     } else {
@@ -1122,9 +1160,9 @@ class OrderFlow {
                                 /*
                                 // ORIGINAL CODE (commented out as per requirement - always create DN instead of choice/SI):
                                 if (route_lock === 'dn') {
-                                    show_bulk_dn_si_modal(mock_frm, pls, 'Delivery Note', 0, drafts.draft_dns || []);
+                                    show_bulk_dn_si_modal(mock_frm, pls, 'Delivery Note', 0, drafts.draft_dns || [], [], drafts.draft_details || []);
                                 } else if (route_lock === 'si') {
-                                    show_bulk_dn_si_modal(mock_frm, pls, 'Sales Invoice', 0, drafts.draft_sis || []);
+                                    show_bulk_dn_si_modal(mock_frm, pls, 'Sales Invoice', 0, drafts.draft_sis || [], [], drafts.draft_details || []);
                                 } else {
                                     const choice = new frappe.ui.Dialog({
                                         title: __('Choose Fulfillment Route'),
@@ -1137,14 +1175,14 @@ class OrderFlow {
                                         primary_action_label: __('Create Delivery Note'),
                                         primary_action: () => { choice.hide(); show_bulk_dn_si_modal(mock_frm, pls, 'Delivery Note', 0, drafts.draft_dns || []); },
                                         secondary_action_label: __('Create Sales Invoice (Update Stock)'),
-                                        secondary_action: () => { choice.hide(); show_bulk_dn_si_modal(mock_frm, pls, 'Sales Invoice', 0, drafts.draft_sis || []); }
+                                        secondary_action: () => { choice.hide(); show_bulk_dn_si_modal(mock_frm, pls, 'Sales Invoice', 0, drafts.draft_sis || [], [], drafts.draft_details || []); }
                                     });
                                     choice.show();
                                 }
                                 */
 
                                 // Always create Delivery Note directly:
-                                show_bulk_dn_si_modal(mock_frm, pls, 'Delivery Note', 0, drafts.draft_dns || []);
+                                show_bulk_dn_si_modal(mock_frm, pls, 'Delivery Note', 0, drafts.draft_dns || [], [], drafts.draft_details || []);
                             });
                         });
                     }
@@ -2770,6 +2808,7 @@ class OrderFlow {
             } else if (st.action_type && st.action_type !== 'none') {
                 action_btn_html = `
                     <button class="of-btn ${st.action_btn_class || 'of-btn--primary'} of-action-btn"
+                            title="${of_esc(st.action_hint || st.action_label || '')}"
                             data-action="${st.action_type}"
                             data-target="${st.target_doc || ''}"
                             data-doctype="${st.target_doctype || ''}"
@@ -2789,6 +2828,7 @@ class OrderFlow {
                     <div class="of-secondary-action">
                         <span class="of-secondary-action__tag">Also Pending</span>
                         <button class="of-btn ${sec.action_btn_class || 'of-btn--warning'} of-action-btn"
+                                title="${of_esc(sec.action_hint || sec.action_label || '')}"
                                 data-action="${sec.action_type}"
                                 data-target="${sec.target_doc || ''}"
                                 data-doctype="${sec.target_doctype || ''}"
@@ -2881,7 +2921,7 @@ class OrderFlow {
                 </td>
                 <td style="text-align:left;">${chain}${rm_chain_html}</td>
                 <td>
-                    ${of_status_chip(o.per_delivered, st.stage_key, 'delivered', o.delivery_notes, null, o.stock_invoices)}
+                    ${of_status_chip(o.per_delivered, st.stage_key, 'delivered', o.delivery_notes, o.draft_delivery_notes, o.stock_invoices)}
                 </td>
                 <td>
                     ${of_status_chip(o.per_billed, st.stage_key, 'billed', o.invoices, o.draft_invoices)}
@@ -4162,6 +4202,7 @@ class OrderFlow {
         // too, just not what this queue is for.
         const btn_html = (act, o, extra_class) => `
             <button class="of-btn ${act.action_btn_class || 'of-btn--primary'} of-action-btn ${extra_class || ''}"
+                    title="${of_esc(act.action_hint || act.action_label || '')}"
                     data-action="${act.action_type}"
                     data-target="${act.target_doc || ''}"
                     data-doctype="${act.target_doctype || ''}"
@@ -4435,6 +4476,7 @@ class OrderFlow {
         const unassigned_approvals = [];
         const final_approvals = [];
         const other_merchandiser_approvals = [];
+        const rejected_approvals = [];
 
         const can_final = !!(this.perms && this.perms.is_final_approver);
         // Mirrors get_pending_approvals()'s own is_scoped_to_own_customers
@@ -4456,6 +4498,9 @@ class OrderFlow {
         const show_other_tab = !can_final;
 
         // An order sits in exactly one bucket, by the step it is actually waiting on.
+        //   Rejected                  — needs correction and resubmission, checked first
+        //                                so a rejected order never also shows as if it
+        //                                were still a fresh/unassigned/other approval
         //   Pending Approval          — waiting on ME as the customer's merchandiser
         //   Unassigned                — no merchandiser on the customer yet
         //   Pending Final             — merchandiser is done; waiting on a final approver
@@ -4466,7 +4511,9 @@ class OrderFlow {
             const is_my_assigned = !!(o.custom_merchandiser_user && current_user && o.custom_merchandiser_user.toLowerCase() === current_user.toLowerCase());
             const is_created_by_me = !!(o.owner && current_user && o.owner.toLowerCase() === current_user.toLowerCase());
 
-            if (o.workflow_state === 'Pending Final Approval') {
+            if (o.workflow_state === 'Rejected') {
+                rejected_approvals.push(o);
+            } else if (o.workflow_state === 'Pending Final Approval') {
                 final_approvals.push(o);
             } else if (!o.custom_merchandiser_user) {
                 unassigned_approvals.push(o);
@@ -4477,6 +4524,14 @@ class OrderFlow {
             }
         });
 
+        // Rejected Orders is split further by WHICH stage rejected it —
+        // rejected_stage comes from the server (get_pending_approvals),
+        // derived from the rejection comment reject_sales_orders writes.
+        // "merchandiser" also covers the rare Draft-state Reject transition
+        // — anything rejected before ever reaching final approval.
+        const rejected_by_merchandiser = rejected_approvals.filter(o => o.rejected_stage !== 'final');
+        const rejected_at_final = rejected_approvals.filter(o => o.rejected_stage === 'final');
+
         // Only the users named in Admin Settings (plus admins) may work the
         // final-approval queue. Permissions come from the server; until they
         // arrive the tab stays hidden rather than flashing into view.
@@ -4486,6 +4541,18 @@ class OrderFlow {
             this.approval_subtab = 'merchandiser';
         }
 
+        // Rejected only gets a tab of its own once there's a reason to click
+        // it — a rejected order actually exists right now, or the viewer
+        // already has it selected (so "back to Pending Approval" stays one
+        // click away even if the last rejection was just fixed while the
+        // tab was open). Same defensive pattern as the Draft/Submitted
+        // filter pills elsewhere on this dashboard.
+        const show_rejected_tab = rejected_approvals.length > 0 || sub === 'rejected';
+        // Numbered to fill the gap left when final approval isn't shown —
+        // a plain viewer sees 1/2/3/4(Rejected); a final approver sees an
+        // unbroken 1/2/3/4/5(Rejected) instead of jumping straight to 5.
+        const rejected_tab_number = can_final ? 5 : 4;
+
         let active_orders = [];
         if (sub === 'merchandiser') {
             active_orders = my_approvals;
@@ -4493,6 +4560,11 @@ class OrderFlow {
             active_orders = unassigned_approvals;
         } else if (sub === 'other') {
             active_orders = other_merchandiser_approvals;
+        } else if (sub === 'rejected') {
+            const stage_filter = this.approval_rejected_stage_filter;
+            active_orders = stage_filter === 'merchandiser' ? rejected_by_merchandiser :
+                             stage_filter === 'final' ? rejected_at_final :
+                             rejected_approvals;
         } else {
             active_orders = can_final ? final_approvals : [];
         }
@@ -4550,6 +4622,13 @@ class OrderFlow {
                     <span class="of-pill ${pill_class}">
                         ${of_esc(of_to_title_case(o.workflow_state || 'Draft'))}
                     </span>
+                    ${o.workflow_state === 'Rejected' ? `
+                    <div class="of-micro" style="margin-top:4px;">
+                        <span class="of-chip" style="background:${o.rejected_stage === 'final' ? 'var(--of-purple)' : 'var(--of-orange)'}; color:#fff;">
+                            ${o.rejected_stage === 'final' ? __('Rejected at Final Approval') : __('Rejected by Merchandiser')}
+                        </span>
+                    </div>
+                    ` : ''}
                     ${o.workflow_state === 'Rejected' && o.rejection_comment && show_rejection_reason ? `
                     <div style="font-size: 11px; color: #dc3545; margin-top: 5px; font-weight: 500; line-height: 1.3;">
                         <i class="fa fa-info-circle"></i> Reason: ${of_esc(o.rejection_comment.replace(/<[^>]*>/g, ''))}
@@ -4570,12 +4649,15 @@ class OrderFlow {
                     </span>
                     ` : `
                     <div style="display: inline-flex; gap: 8px;">
-                        <button class="of-btn of-btn--success of-approve-btn" data-so="${o.name}" data-state="${o.workflow_state}">
+                        <button class="of-btn of-btn--success of-approve-btn" data-so="${o.name}" data-state="${o.workflow_state}"
+                                ${o.workflow_state === 'Rejected' ? `title="${of_esc(__('Resubmits this order for merchandiser approval'))}"` : ''}>
                             <i class="fa fa-check"></i> ${__('Approve')}
                         </button>
+                        ${o.workflow_state === 'Rejected' ? '' : `
                         <button class="of-btn of-btn--danger of-reject-btn" data-so="${o.name}">
                             <i class="fa fa-times"></i> ${__('Reject')}
                         </button>
+                        `}
                     </div>
                     `}
                 </td>
@@ -4601,18 +4683,26 @@ class OrderFlow {
                 <button class="of-subtab ${sub === 'final' ? 'is-active' : ''}" data-subtab="final">
                     <i class="fa fa-check-circle" style="color:var(--of-green);"></i> 4. Pending Final SO Approval (${final_approvals.length})
                 </button>` : ''}
+                ${show_rejected_tab ? `
+                <button class="of-subtab ${sub === 'rejected' ? 'is-active' : ''}" data-subtab="rejected">
+                    <i class="fa fa-ban" style="color:var(--of-red);"></i> ${rejected_tab_number}. Rejected Orders (${rejected_approvals.length})
+                </button>` : ''}
             </div>
 
             <!-- Table Card -->
             <div class="of-card">
-                <div class="of-card__head" style="display: flex; justify-content: space-between; align-items: center; padding: 12px 16px;">
-                    <div>
-                        <i class="fa fa-check-square-o"></i> ${
+                <div class="of-card__head" style="display: flex; justify-content: space-between; align-items: center; padding: 12px 16px; flex-wrap: wrap; gap: 10px;">
+                    <div style="display:inline-flex; align-items:center; gap:10px; flex-wrap:wrap;">
+                        <span><i class="fa fa-check-square-o"></i> ${
                             sub === 'merchandiser' ? (can_final ? __('Merchandiser Queue (Track)') : __('Pending Approval')) :
                             sub === 'unassigned' ? __('Merchandiser Unassigned Orders (Approve & Claim)') :
                             sub === 'other' ? __("Other Merchandisers' Orders") :
+                            sub === 'rejected' ? __('Rejected Orders — Needs Correction & Resubmission') :
                             __('Pending Final SO Approval')
-                        }
+                        }</span>
+                        ${sub === 'rejected' ? of_rejection_stage_pills(
+                            rejected_by_merchandiser.length, rejected_at_final.length, this.approval_rejected_stage_filter
+                        ) : ''}
                     </div>
                     <div style="display: flex; gap: 10px;">
                         <button class="of-btn of-btn--primary" id="of-new-so-btn" title="${__('A merchandiser sees only their own customers here; this is the same restriction Frappe already applies to the Customer field everywhere else.')}">
@@ -5490,6 +5580,25 @@ function of_docstatus_pills(tab, sublist, counts, current) {
     </span>`;
 }
 
+// All / By Merchandiser / At Final Approval pills for the SO Approvals
+// Rejected Orders sub-tab — same compact inline-in-header style as
+// of_docstatus_pills, but keyed on rejected_stage rather than docstatus, so
+// it's kept separate rather than shoehorned into that one.
+function of_rejection_stage_pills(merchandiser_count, final_count, current) {
+    current = current || '';
+    const pill = (value, label, count) => `
+        <button type="button" class="of-btn ${current === value ? 'of-btn--primary' : ''} of-rej-stage-pill"
+                style="padding:2px 8px; font-size:11px; font-weight:500;"
+                data-stage="${value}">
+            ${of_esc(label)} (${count})
+        </button>`;
+    return `<span style="display:inline-flex; gap:4px;">
+        ${pill('', __('All'), merchandiser_count + final_count)}
+        ${pill('merchandiser', __('By Merchandiser'), merchandiser_count)}
+        ${pill('final', __('At Final Approval'), final_count)}
+    </span>`;
+}
+
 function of_pagination_html(tab, sublist, state) {
     state = state || {};
     const total = of_num(state.total);
@@ -5600,6 +5709,18 @@ function of_status_chip(pct, stage_label, context, docs, draft_docs, stock_invoi
     };
 
     if (context === 'delivered') {
+        // A Delivery Challan saved but not submitted: the goods are packed
+        // for this order and nothing has physically gone out. per_delivered
+        // only moves on submit, so without this the column kept showing the
+        // pick/stage label it had before the DC was raised — and once the DC
+        // WAS submitted it jumped straight to "Delivered", with no state in
+        // between for "made, not yet dispatched".
+        if (p < 100 && draft_docs && draft_docs.length) {
+            // Link the draft DC itself — the thing to go and submit — rather
+            // than an older submitted Delivery Note on the same order.
+            docs = draft_docs;
+            return pill('of-pill--wait', 'To Be Dispatched');
+        }
         if (p === 0) {
             if (!stage_label) return '<span class="of-val of-val--zero">—</span>';
             const stages_map = {

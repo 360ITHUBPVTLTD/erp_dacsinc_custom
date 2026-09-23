@@ -372,6 +372,61 @@ float-noise "13.999 vs 14" reading as a shortage that isn't real):
   This is a deliberately honest middle state: it must never read as
   "Covered" (implying the stock is physically here) when it isn't.
 
+### RM Pipeline table layout: six columns, one question each
+
+The table is read by people deciding what to buy, so each column answers
+exactly one question and shows one primary number; everything else in the
+cell is secondary. It was nine columns and became unreadable — three of
+them (Pending MR / Pending PO / At Jobber) read `0.00` on almost every row,
+and the Usable Here cell printed five same-weight numbers with no
+hierarchy.
+
+| Column | The question | Primary number |
+| --- | --- | --- |
+| Raw Material | which material | — |
+| Needed | how much this order still needs | `rm_needed_for_shortfall` (the `fg_shortfall × per-unit` calc and `Full order` sit under it, muted) |
+| Usable Here | how much of it this order may actually use | `rm_available_stock` |
+| On the Way | is any already coming | MR + PO + At-jobber summed, itemised underneath only for the non-zero parts; a plain `—` when nothing is coming |
+| References | which documents | — |
+| Status & Next Step | can we cover it, and if not what do I press | the status pill, then `Short by N`, then the Material Request button |
+
+**Usable Here does not equal "on hand minus the claims listed under it",
+and the table must not imply that it does.** The same physical stock is
+routinely claimed by more orders than it can satisfy — confirmed live,
+`Fabric blue` had 502.00 on hand against 673.97 of claims (51.00 picked,
+194.00 owed to direct-sale customers, 428.97 held by nine other orders).
+Printing those as a flat stack under a `0.00` figure is what made the cell
+look like broken arithmetic. So: `so_rm_alloc_breakdown` now shows one
+plain-language line (`On hand 502.00 Meter — none free for this order`),
+puts the itemised ledger behind a closed **Why?** disclosure that balances
+explicitly to `Usable here`, and when claims exceed what is on hand says so
+outright — `Over-committed by 171.97 — more is promised than is on hand` —
+rather than leaving the reader to reconcile figures that cannot reconcile.
+A material nobody else has claimed skips the disclosure entirely and stays
+a single `On hand N · VV Puram` line.
+
+### An RM-blocked line says so in Status, and offers the request in Next Action
+
+For a BOM line whose raw material is short, the RM block *is* the headline:
+it is the reason no Subcontract PO button can appear. `so_shortfall_actions`
+therefore returns a `status_note` naming the shortage — "RM not in stock —
+2 materials short" plus the first two material codes — which both the
+no-pick-list branch and the draft-Pick-List branch append to the Status
+cell. Previously only the no-pick-list branch showed anything (a bare "RM
+Not in Stock"), so a line that happened to have a draft Pick List showed
+`Awaiting Pick` and nothing at all about the block; the shortage was
+visible only after expanding the RM Pipeline.
+
+Next Action leads with **Request Raw Material**
+(`so_make_rm_material_request_all` scoped to this line's `pair_key`) — the
+step that actually unblocks the line — with **View Raw Materials** demoted
+to the follow-up, since navigating to the pipeline is not itself an action.
+On an unsubmitted Sales Order there is nothing to request against, so View
+Raw Materials takes the primary slot instead. Where the caller already owns
+the primary action (the draft-Pick-List branch, whose primary is "Submit
+Pick List"), neither is marked primary — that branch passes
+`allow_primary = false`, unchanged.
+
 ### A second, partial Subcontract PO was wrongly blocked as "RM Not in Stock"
 
 `so_rm_physically_in_stock` gates the "Subcontract PO" button — physical
@@ -553,10 +608,69 @@ Orders** — a batch purchase is a shared pool, and once part of it is
 committed elsewhere (and not yet consumed there either), that's why Stock
 reads lower than the full purchase would suggest.
 
+### A line with a draft DC reads "To Be Dispatched", not "Create Delivery Note"
+
+Once a draft Delivery Note (or Update-Stock Sales Invoice) exists for a
+fully-picked line, the document is already built and the only step left is
+to submit it. The widget kept offering "Create Delivery Note (5)" there,
+which invites a second document for stock the first one already holds —
+exactly how DN-26-00035 and DN-26-00036 both came to exist for the same
+5-qty pick. The row now shows a "To Be Dispatched" note under its status
+pill and a Next Action that **opens that draft** (`row_dns` / `row_sis`,
+first entry with `docstatus === 0`), with "Open Pick List" still alongside.
+
+Same wording as the tracker's Action Required and the dashboard's Delivery
+column, so all three surfaces say the same thing about the same state.
+
+### Stock bought as raw material is not available to pick for a direct sale
+
+An item can be both **sold directly** on one Sales Order line and **consumed
+as raw material** by another line's BOM — `fabric red` on
+SAL-ORD-2026-00141 is exactly that: 30 Meter sold outright, and 1 Meter per
+unit of `Item 2 with BOM`. Buying it for the BOM used to make the sold line
+offer to pick that very material: 15.00 on hand, 10.00 already picked, so
+the row showed "+5 More Available / Pick 5 more" — the 5 bought expressly so
+a Subcontract PO could go out. Whichever action happened first silently won,
+and the other was starved.
+
+`_rm_stock_pools`' `earmarked` (bought as RM against an order, net of what
+that order's subcontracting already consumed) is now treated as a
+**reservation against the sold line**, exactly like another order's pick:
+
+- `get_item_stock_details_bulk` returns `rm_earmarked_qty`,
+  `rm_earmarked_this_so` and `rm_earmarked_by` per item, and subtracts the
+  total from `truly_available_fg`. The Item Stock & Action Plan subtracts it
+  from `truly_available_stock` too, so "Pick N more" and the bulk Create
+  Pick List can never offer it, and shows it in the **Picked (Others)**
+  column under an `RM` chip naming the orders holding it.
+- `fetch_multi_order_requirements` (the Material Request fetch dialog)
+  subtracts it from each row's `available`, so the demand it proposes is the
+  real one. Counting it as available made this dialog *under-request* —
+  netting off material the BOM was already waiting to consume, leaving the
+  order short after the MR was raised.
+- `get_pending_so_with_material_stock` (the Purchase Order "Fetch Pending
+  Sales Orders" dialog) does the same for its Inventory Status Overview,
+  with the excluded qty shown as a small `N RM` note under In Stock so the
+  gap is explained rather than looking like a wrong stock figure.
+
+All three read the **same pool**, so they cannot disagree about who owns a
+unit. Confirmed live on `fabric red` / SAL-ORD-2026-00141: 15.00 on hand,
+10.00 picked, 21.00 earmarked as RM across three orders (6.00 SO-00122,
+10.00 SO-00133, 5.00 this order) — available for the sold line goes 5.00 →
+**0**, the MR dialog's available 15 → 0 (demand 20, the true figure), the PO
+dialog's In Stock 15 → 0 with "21 RM" beside it, and `Item 2 with BOM` keeps
+the material it needs (still "can make 5 of 10").
+
+Note the earmark can exceed what is physically on hand (21.00 claimed
+against 15.00 here) — the same over-commitment the RM Pipeline's "Why?"
+ledger spells out. `max(0, …)` is what keeps that from reading as negative
+availability.
+
 ### The FG row's Status pill and RM-block indicator
 
 `rm_shortfall_exists` (from the RM Pipeline calc above) is what should gate
-the FG row's own "RM Needed" pill / "⚠ RM Not in Stock" note — **not**
+the FG row's own "RM Needed" pill and its "RM not in stock — N materials
+short" note (see "An RM-blocked line says so in Status" above) — **not**
 whether something happens to be "Incoming"
 (`total_incoming_qty`/`total_incoming_po_count`/`total_incoming_ewo_count`).
 Incoming can come from something entirely unrelated to the raw material
@@ -586,10 +700,23 @@ button plus an unlabelled, easy-to-miss afterthought, with nothing showing
 that the second one is an equally real, independently clickable option.
 
 When 2+ actual `<button class="so-btn">` entries land in the same cell,
-`so_build_action_html` inserts a small "or" divider between adjacent buttons
-and tags whichever one carries `so-btn--primary` with a "Recommended" label.
-A cell with only one action (the common case) is untouched — the labels only
-ever appear when there is a genuine alternative to distinguish it from.
+`so_build_action_html` tags whichever one carries `so-btn--primary` with a
+"Recommended" label and puts it on its own line; every other button in that
+run goes into **one wrapped row** (`.so-action__alts`) underneath. A cell
+with only one action (the common case) is untouched — the labels only ever
+appear when there is a genuine alternative to distinguish it from.
+
+**The cell is laid out to stay short.** One button per line, each with its
+own "or" above it, made this column three or four times taller than any
+other in the row, leaving every other cell sitting in a band of blank space
+(reported as "it is making some empty space, it's not looking good"). So:
+alternatives share a row rather than stacking; "Recommended" is emitted **at
+most once per cell**, because a second one lower down only raises "which of
+these two is it, then?"; and the "or" divider is dropped when there is just
+one alternative, which reads perfectly well sitting directly under the
+recommended action. The worst real case — a draft Pick List plus a genuine
+shortfall — went from ten stacked elements to six lines, with nothing
+removed.
 
 "or"/"Recommended" only ever apply **within one contiguous run** of buttons
 — a `so_shortfall(...)` span, a plain `''` entry, or any other non-button
@@ -634,8 +761,11 @@ Every DN/SI action button in this cell carries the qty it actually acts on
 ready to complete the line" branch, which used to omit it. Long labels with
 a qty suffix wrap at word boundaries only (`.so-action .so-btn`, base rule
 not just the narrow-viewport one) rather than overflowing the column —
-the Next Action column itself was also widened (`min-width:200px`) to fit
-these more often without wrapping at all.
+the Next Action column itself was also widened (`min-width:225px`) to fit
+these more often without wrapping at all — and, since the compact
+alternatives row shares a line, so that two of them ("Purchase Order" +
+"Material Request") actually fit side by side instead of falling back to
+one per line, which would have undone the compaction.
 
 ### The standard "Create" buttons are removed where this app owns the flow
 
@@ -848,6 +978,24 @@ is in stock, via one multi-select prompt:
   Order and leave the user to find the per-row button.
 - **Item Stock & Action Plan → "Subcontract PO · N"**, alongside the
   existing "Raw Material MR · N" / "Finished Item MR · N" bulk buttons.
+- **The per-row "Subcontract PO" button** in that widget's Next Action cell.
+  It used to create a PO for that one line immediately; it now opens the
+  same picker (`window.so_open_spo_prompt`, a fresh
+  `get_so_bom_items_for_spo` fetch then the dialog). A subcontract PO nearly
+  always wants every ready item on one document, one supplier, one delivery
+  — and the picker is also the only place the qty can be reviewed, both of
+  which the old button decided silently.
+
+**The bulk button must survive a Pick List existing.** That header row was
+once drawn by two separate functions — one for "no Pick Lists yet", one
+inlined in the Pick List fetch — each firing its own async call, so whichever
+landed last won. A flag was added to stop the flicker, which then caused a
+worse bug: "Subcontract PO · N" only ever existed in the *first* layout, so
+the moment any Pick List existed on the order the button could never appear
+at all (reported as "previously it was visible, now it is not"). There is now
+ONE renderer over shared state (`spo_items`, `existing_pls`); each fetch
+stores its result and re-renders, so every button that applies is drawn
+whichever call lands first.
 
 Both call `order_flow_api.get_rm_ready_bom_items(sales_order)` for the item
 list and open the same dialog, `window.so_show_spo_multi_prompt` in
@@ -867,7 +1015,38 @@ satisfiable. Where two lines on one order compete, the earlier SO Item row
 wins (the candidate ordering tie-breaks on `soi.idx`); the loser simply
 isn't offered until more material arrives.
 
-**Quantities are editable, and capped.** Each row's `qty` from
+**A partially-covered line is offered, not blocked.** `ready` is
+all-or-nothing against the full outstanding qty, and using it as the gate hid
+an ordinary case: 10 units pending with material for 5 on the shelf is a
+perfectly good Subcontract PO, and the other 5 stay claimable once more
+material lands. `_rm_ready_for_sco` therefore also returns **`ready_qty`** —
+what the material on hand actually covers right now — computed as
+`min(available ÷ per-unit consumption)` across the BOM's raw materials, with
+per-unit consumption aggregated per material code (a BOM may list the same
+material twice). Confirmed live on SAL-ORD-2026-00141: `Item 2 with BOM`, 10
+outstanding, `ready: false`, `ready_qty: 5` (Fabric blue 10.00 on hand ÷
+2/unit); `Beige T Shirt`, 40 outstanding, `ready_qty: 39`.
+
+`ready_qty` — not `ready` — is now the gate everywhere downstream:
+`get_rm_ready_bom_items` returns any line with `ready_qty > 0`, the bulk
+button counts those, the prompt caps each row's editable qty at it, and
+`make_subcontract_purchase_orders_bulk` validates against it. **The Sales
+Tracker's "RM Ready — Make SCO PO" stage counts them too** — via the
+per-order `raisable_count` / `raisable_qty` that `_rm_ready_for_sco` now
+returns alongside `ready_count` / `fg_qty`. Keying that stage off
+`ready_count` meant an order whose material covered part of a line was
+missing from the stage filter entirely while its own row sat there offering
+the Subcontract PO button — the two surfaces disagreeing about the same
+order. Confirmed live: SAL-ORD-2026-00141 (5 of 10 + 39 of 40) now appears
+in that stage at 44 units raisable, where before it appeared in none. **A partial
+draw still decrements the working stock map** (it previously only did so for
+fully-ready lines) — without that, two lines competing for the same fabric
+would each be offered a partial batch off the very same stock, the exact
+double-promise this function exists to prevent. `ready` itself is unchanged
+and still drives the Sales Tracker's "RM Ready" badge (`ready_count` /
+`fg_qty`), which deliberately still means *fully* coverable.
+
+**Quantities are editable, and capped.** Each row's `ready_qty` from
 `get_rm_ready_bom_items` is a **cap** — the most that can go out right now,
 already net of what is delivered, what an earlier Subcontract PO committed
 (`already_qty`), and what competing lines have claimed from the same raw
@@ -876,7 +1055,10 @@ PO; the remainder stays claimable next time, because `_rm_ready_for_sco`
 nets off the new PO's `fg_item_qty` on the following pass (verified: a line
 of 200 with 50 ordered re-offers exactly 150, with `already_qty` 50).
 `make_subcontract_purchase_orders_bulk` re-checks every qty server-side
-against a fresh cap and refuses anything above it, at or below zero.
+against a fresh `ready_qty` cap and refuses anything above it, at or below
+zero (verified live: 5 of 10 builds a draft; 10 is refused with "only 5.0 can
+be subcontracted right now"; an omitted qty on a 40-unit line defaults to its
+39 cap, not 40).
 An *omitted* qty means "all of it"; an explicitly-sent `0` is an error, not
 a silent fall-through to the cap.
 
