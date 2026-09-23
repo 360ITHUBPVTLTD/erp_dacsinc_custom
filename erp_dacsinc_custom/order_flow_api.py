@@ -27,7 +27,8 @@ from erp_dacsinc_custom.order_flow_permissions import (
     is_scoped_to_own_customers,
 )
 from erp_dacsinc_custom.custom_script import (
-    _so_has_submitted_dn, _so_has_submitted_stock_si, check_bom_raw_materials_in_stock,
+    _so_has_submitted_dn, _so_has_submitted_stock_si, _so_draft_delivery_notes,
+    check_bom_raw_materials_in_stock,
 )
 
 
@@ -863,6 +864,7 @@ def _get_tracker_rows(days=120, search=None, scope="open", merchandiser=None, ap
         o["invoices"] = []
         o["draft_invoices"] = []
         o["delivery_notes"] = []
+        o["draft_delivery_notes"] = []
         # Raw-material-tier procurement (an MR/PO/Receipt for a BOM component,
         # not the SO's own sold item) — tracked separately so it can be shown
         # as its own pipeline without ever driving the main stage/action below.
@@ -988,11 +990,17 @@ def _get_tracker_rows(days=120, search=None, scope="open", merchandiser=None, ap
             continue
         # `items` now carries every pending BOM line, blocked ones included,
         # so the badge has to key off how many are actually raisable.
-        if not info.get("ready_count"):
+        #
+        # Raisable, NOT fully-covered: an order whose material covers 5 of a
+        # 10-unit line can have a Subcontract PO raised for those 5 right
+        # now, and that IS the order's most important next action — keying
+        # this off ready_count hid exactly that order from the "RM Ready —
+        # Make SCO PO" stage while its own row offered the button.
+        if not info.get("raisable_count"):
             continue
         row["rm_ready_for_sco"] = True
-        row["rm_ready_fg_qty"] = info["fg_qty"]
-        row["rm_ready_items"] = [i for i in info["items"] if i.get("ready")]
+        row["rm_ready_fg_qty"] = info["raisable_qty"]
+        row["rm_ready_items"] = [i for i in info["items"] if flt(i.get("ready_qty")) > 0.001]
 
     # Roll every linked document up to its Sales Order in one pass.
     events = frappe.db.sql(f"""
@@ -1095,6 +1103,14 @@ def _get_tracker_rows(days=120, search=None, scope="open", merchandiser=None, ap
             elif dt == "Delivery Note":
                 if ev.name not in row["delivery_notes"]:
                     row["delivery_notes"].append(ev.name)
+                # A saved-but-unsubmitted Delivery Challan means the goods are
+                # packed for this order but have not left: the Delivery column
+                # says "To Be Dispatched" for exactly this state, rather than
+                # falling back to whatever pick/stage label applied before it
+                # was raised. per_delivered only moves on submit, so nothing
+                # else on the row can tell that the DC exists yet.
+                if ds == 0 and ev.name not in row["draft_delivery_notes"]:
+                    row["draft_delivery_notes"].append(ev.name)
 
         # "Last Activity" is a milestone column, not a change log: events arrive
         # newest first, so the first important one is the one worth showing. A
@@ -1553,12 +1569,21 @@ def _rm_ready_for_sco(order_names):
         # from the prompt is the single most confusing thing this feature can
         # do, so every pending BOM line is returned with the arithmetic that
         # decided its fate, and `ready` says which way it went.
+        # Per-unit consumption per raw material code, aggregated — a BOM may
+        # list the same material on more than one line, and how much of it a
+        # single finished unit eats is the SUM of those, not either one.
+        per_unit = {}
+        for rm in rm_lines:
+            per_unit[rm["item_code"]] = flt(per_unit.get(rm["item_code"], 0) + flt(rm["qty_per_fg"]))
+
         rm_detail = []
         blocked_on = []
+        avail_by_code = {}
         for rm in rm_lines:
             code = rm["item_code"]
             required = flt(flt(rm["qty_per_fg"]) * remaining, 3)
             available = _rm_available_for(pools.get(code), c.sales_order)
+            avail_by_code[code] = available
             short = flt(required - available, 3)
             held = _rm_borrowable_from(pools.get(code), c.sales_order) if short > 0.001 else {}
             rm_detail.append({
@@ -1579,14 +1604,52 @@ def _rm_ready_for_sco(order_names):
                 blocked_on.append(code)
 
         is_ready = not blocked_on
+
+        # How much of `remaining` the material on hand covers RIGHT NOW.
+        # "Blocked" used to be all-or-nothing against the full remaining qty,
+        # which hid a real and ordinary case: 10 units pending, material for
+        # 5 on the shelf. That is a perfectly good Subcontract PO — the other
+        # 5 stay claimable later, because `already` above nets off whatever a
+        # partial PO commits. Reporting it as a flat "not enough raw
+        # material" left the user with a blocked row and no way to act on the
+        # half they could.
         if is_ready:
-            for code, qty in need.items():
+            ready_qty = remaining
+        else:
+            coverable = remaining
+            for code, per in per_unit.items():
+                if per <= 0:
+                    continue
+                coverable = min(coverable, flt(avail_by_code.get(code, 0)) / per)
+            ready_qty = max(0.0, coverable)
+        ready_qty = flt(ready_qty, 3)
+
+        # Draw what this candidate will actually consume — the partial batch
+        # too, not just a fully-ready one. Without this, two lines competing
+        # for the same fabric would each be offered a partial qty off the
+        # very same stock, which is the double-promise this whole function
+        # exists to prevent.
+        if ready_qty > 0.001:
+            draw_need = {}
+            for rm in rm_lines:
+                draw_need[rm["item_code"]] = flt(
+                    draw_need.get(rm["item_code"], 0) + flt(rm["qty_per_fg"]) * ready_qty)
+            for code, qty in draw_need.items():
                 _rm_draw(pools.get(code), c.sales_order, qty)
 
-        entry = ready.setdefault(c.sales_order, {"fg_qty": 0.0, "ready_count": 0, "items": []})
+        entry = ready.setdefault(c.sales_order, {
+            "fg_qty": 0.0, "ready_count": 0, "raisable_qty": 0.0, "raisable_count": 0, "items": [],
+        })
         if is_ready:
             entry["fg_qty"] = flt(entry["fg_qty"] + remaining, 3)
             entry["ready_count"] += 1
+        # Raisable = a Subcontract PO can go out for this line TODAY, for the
+        # whole of it or for the batch the material covers. This is what the
+        # tracker's "RM Ready — Make SCO PO" stage and every Subcontract PO
+        # button key off; fg_qty/ready_count stay strictly fully-coverable.
+        if ready_qty > 0.001:
+            entry["raisable_qty"] = flt(entry["raisable_qty"] + ready_qty, 3)
+            entry["raisable_count"] += 1
         entry["items"].append({
             "item_code": c.item_code,
             "so_item": c.so_item,
@@ -1602,6 +1665,11 @@ def _rm_ready_for_sco(order_names):
             "uom": c.uom or c.stock_uom or "",
             "warehouse": c.warehouse,
             "ready": is_ready,
+            # The real cap for a PO raised right now: the whole line when
+            # nothing is short, the coverable batch when only part of the
+            # material is here, 0 when none of it is. `qty` stays the full
+            # outstanding qty so the prompt can still say "N of M".
+            "ready_qty": ready_qty,
             "blocked_on": blocked_on,
             "rm": rm_detail,
         })
@@ -1633,9 +1701,12 @@ def get_rm_ready_bom_items(sales_order):
     """
     frappe.get_doc("Sales Order", sales_order).check_permission("read")
     items = _rm_ready_for_sco([sales_order]).get(sales_order, {}).get("items", [])
-    # Ready ONLY. make_subcontract_purchase_orders_bulk validates against this,
-    # so a blocked line must never appear here or it would become creatable.
-    return [i for i in items if i.get("ready")]
+    # Raisable-right-now ONLY. make_subcontract_purchase_orders_bulk validates
+    # against this, so a line with no material at all must never appear here or
+    # it would become creatable. A PARTIALLY covered line does belong: it can
+    # genuinely have a PO raised for `ready_qty` today (see _rm_ready_for_sco),
+    # and that endpoint caps every row at exactly that figure.
+    return [i for i in items if flt(i.get("ready_qty")) > 0.001]
 
 
 @frappe.whitelist()
@@ -1694,7 +1765,8 @@ def _resolve_secondary_billing_action(order):
         inv_name = draft_invoices[0]
         return {
             "action_type": "open_doc",
-            "action_label": f"Open Draft Invoice ({inv_name})",
+            "action_label": "Open Draft Invoice",
+            "action_hint": f"Open draft Sales Invoice {inv_name}",
             "action_btn_class": "of-btn--warning",
             "target_doc": inv_name,
             "target_doctype": "Sales Invoice",
@@ -1834,7 +1906,8 @@ def _compute_primary_stage_info(order):
                 "target_doc": inv_name,
                 "target_doctype": "Sales Invoice",
                 "action_type": "open_doc",
-                "action_label": f"Open Draft Invoice ({inv_name})",
+                "action_label": "Open Draft Invoice",
+                "action_hint": f"Open draft Sales Invoice {inv_name}",
                 "action_btn_class": "of-btn--warning"
             }
         else:
@@ -1871,8 +1944,15 @@ def _compute_primary_stage_info(order):
             "icon": "clock-o",
             "target_doc": pl_name,
             "target_doctype": "Pick List",
-            "action_type": "open_doc",
-            "action_label": f"Submit Pick List ({pl_name})",
+            # Not open_doc: submitting is done from the dashboard's own
+            # review table (every draft pick on the order, each qty editable
+            # before it commits stock), the same modal the Sales Order
+            # widget's "Pick Lists" button opens. Redirecting to the Pick
+            # List form instead made the one action the row is waiting on a
+            # navigation away from the queue.
+            "action_type": "submit_pick_list",
+            "action_label": "Submit Pick List",
+            "action_hint": f"Review and submit Pick List {pl_name}",
             "action_btn_class": "of-btn--warning"
         }
 
@@ -1937,6 +2017,33 @@ def _compute_primary_stage_info(order):
 
             label = "Create Delivery Note" if is_fully_picked else "Create Delivery Note (Partial)"
             icon = "truck"
+
+            # A Delivery Challan already saved for this order: the goods are
+            # mapped and packed, the only thing left is to submit it and
+            # dispatch. "Create Delivery Note" here sent the user into a
+            # dialog whose entire content was "this order already has a draft
+            # Delivery Note" — an action that exists only to tell you not to
+            # take it. Offer the document itself instead, under the same
+            # wording the Delivery column uses for this state.
+            draft_dns = _so_draft_delivery_notes(order["name"])
+            if draft_dns:
+                return {
+                    "stage_key": "ready_to_deliver",
+                    "stage_label": "Ready for Delivery",
+                    "badge_class": "of-pill--dn",
+                    "icon": "truck",
+                    "target_doc": draft_dns[0],
+                    "target_doctype": "Delivery Note",
+                    "action_type": "open_doc",
+                    "action_label": "To Be Dispatched",
+                    "action_hint": (
+                        f"Delivery Challan {draft_dns[0]} is saved but not submitted"
+                        + (f" (+{len(draft_dns) - 1} more draft)" if len(draft_dns) > 1 else "")
+                        + " — open it and submit to dispatch."
+                    ),
+                    "action_btn_class": "of-btn--warning",
+                    "route_lock": route_lock,
+                }
 
             if is_fully_picked:
                 return {
@@ -2012,7 +2119,8 @@ def _compute_primary_stage_info(order):
             "target_doc": rcpt["name"],
             "target_doctype": rcpt["doctype"],
             "action_type": "open_doc",
-            "action_label": f"Submit Receipt ({rcpt['name']})",
+            "action_label": "Submit Receipt",
+            "action_hint": f"Submit Receipt {rcpt['name']}",
             "action_btn_class": "of-btn--warning"
         }
 
@@ -2033,7 +2141,8 @@ def _compute_primary_stage_info(order):
             "target_doc": ewo_name,
             "target_doctype": ewo_doctype,
             "action_type": "open_doc",
-            "action_label": f"Track Embroidery ({ewo_name})",
+            "action_label": "Track Embroidery",
+            "action_hint": f"Track Embroidery Work Order {ewo_name}",
             "action_btn_class": "of-btn--info"
         }
 
@@ -2051,7 +2160,8 @@ def _compute_primary_stage_info(order):
             "target_doc": jw_name,
             "target_doctype": jw_doctype,
             "action_type": "open_doc",
-            "action_label": f"Track Job Work ({jw_name})",
+            "action_label": "Track Job Work",
+            "action_hint": f"Track Job Work {jw_name}",
             "action_btn_class": "of-btn--info"
         }
 
@@ -2065,7 +2175,8 @@ def _compute_primary_stage_info(order):
             "target_doc": po_name,
             "target_doctype": "Purchase Order",
             "action_type": "open_doc",
-            "action_label": f"Track PO ({po_name})",
+            "action_label": "Track PO",
+            "action_hint": f"Track Purchase Order {po_name}",
             "action_btn_class": "of-btn--info"
         }
 
@@ -2079,7 +2190,8 @@ def _compute_primary_stage_info(order):
             "target_doc": mr_name,
             "target_doctype": "Material Request",
             "action_type": "make_po_from_mr",
-            "action_label": f"Order from MR ({mr_name})",
+            "action_label": "Order from MR",
+            "action_hint": f"Raise a Purchase Order against Material Request {mr_name}",
             "action_btn_class": "of-btn--primary"
         }
 
@@ -3251,23 +3363,46 @@ def get_draft_dn_si_for_so(sales_order):
     dashboard's "Create DN / SI" action, so that action never builds a
     duplicate draft next to one the user already started."""
     _guard()
-    draft_dns = frappe.db.sql_list("""
-        SELECT DISTINCT dn.name
+    # Item-level detail, not just the ids: the whole question the user has at
+    # this point is "is the thing I am about to create the same as the one I
+    # already have?", and a bare document name cannot answer it. Returned per
+    # draft so the prompt can list exactly what each one already covers —
+    # which is also what create_dn_or_si_from_pick_lists nets off before
+    # building anything (it refuses outright when a draft already covers the
+    # lot), so the prompt and the guard describe the same facts.
+    def _detail(doctype, rows):
+        by_doc = {}
+        for r in rows:
+            by_doc.setdefault(r.parent, []).append({
+                "item_code": r.item_code,
+                "qty": flt(r.qty, 3),
+                "uom": r.uom or "",
+            })
+        return [{"name": name, "doctype": doctype, "items": items}
+                for name, items in by_doc.items()]
+
+    dn_rows = frappe.db.sql("""
+        SELECT dn.name AS parent, dni.item_code, dni.qty, dni.uom
         FROM `tabDelivery Note Item` dni
         JOIN `tabDelivery Note` dn ON dn.name = dni.parent
         WHERE dni.against_sales_order = %s AND dn.docstatus = 0
-    """, sales_order)
-    # Scoped to update_stock=1 — a plain draft invoice (e.g. billing against
-    # an existing DN) is a different, expected document, not a duplicate of
-    # the "Sales Invoice with Update Stock" fulfillment route this action
-    # creates.
-    draft_sis = frappe.db.sql_list("""
-        SELECT DISTINCT si.name
+        ORDER BY dn.name, dni.idx
+    """, sales_order, as_dict=True)
+    si_rows = frappe.db.sql("""
+        SELECT si.name AS parent, sii.item_code, sii.qty, sii.uom
         FROM `tabSales Invoice Item` sii
         JOIN `tabSales Invoice` si ON si.name = sii.parent
         WHERE sii.sales_order = %s AND si.docstatus = 0 AND si.update_stock = 1
-    """, sales_order)
-    return {"draft_dns": draft_dns, "draft_sis": draft_sis}
+        ORDER BY si.name, sii.idx
+    """, sales_order, as_dict=True)
+
+    draft_dns = sorted({r.parent for r in dn_rows})
+    draft_sis = sorted({r.parent for r in si_rows})
+    return {
+        "draft_dns": draft_dns,
+        "draft_sis": draft_sis,
+        "draft_details": _detail("Delivery Note", dn_rows) + _detail("Sales Invoice", si_rows),
+    }
 
 
 # --------------------------------------------------------------------------
@@ -3911,7 +4046,13 @@ def get_pending_approvals(search=None, merchandiser=None, approval_stage=None, p
             "LOWER(so.owner) = LOWER(%(me)s)"
         ]
         if is_final_approver:
-            clause.append("so.workflow_state = 'Pending Final Approval'")
+            # Same "sees every merchandiser" breadth already granted for
+            # Pending Final Approval — without this, a final approver who
+            # rejects an order (Pending Final Approval -> Rejected) loses
+            # visibility of it the moment they do, for any order whose
+            # customer isn't also their own. The Rejected Orders tab
+            # (below) is exactly where they'd expect to keep seeing it.
+            clause.append("so.workflow_state IN ('Pending Final Approval', 'Rejected')")
         conditions.append(f"({' OR '.join(clause)})")
         params["me"] = frappe.session.user
         
@@ -3969,6 +4110,18 @@ def get_pending_approvals(search=None, merchandiser=None, approval_stage=None, p
             items_formatted.append(f"{it.item_name} ({qty_str})")
         o["items_list"] = ", ".join(items_formatted)
         o["contact_person_name"] = contact_map.get(o.customer, "")
+        # Which stage rejected this order — for the Rejected Orders tab's
+        # own filter pills. Derived from the same rejection_comment already
+        # fetched above rather than a new column: reject_sales_orders now
+        # writes a distinct "Rejected at Final Approval" label specifically
+        # for that stage (see there), so its presence is a reliable signal.
+        # A comment predating that change reads as plain "Rejected by ..."
+        # and defaults to "merchandiser" — the correct guess for every
+        # rejection recorded before this distinction existed, since a
+        # final-stage rejection was the less common path.
+        if o.get("workflow_state") == "Rejected":
+            comment = o.get("rejection_comment") or ""
+            o["rejected_stage"] = "final" if "Final Approval" in comment else "merchandiser"
 
     # This tab already resolves creator_name via the owner_u JOIN above — this
     # call is a no-op for any row that JOIN matched. It only helps a row whose
@@ -4138,25 +4291,31 @@ def reject_sales_orders(sales_orders, comment):
         
     for so_name in sales_orders:
         doc = frappe.get_doc("Sales Order", so_name)
-        
+        # Captured before apply_workflow overwrites workflow_state — the only
+        # place that still records WHICH stage rejected this order. The
+        # Rejected Orders tab's stage pills (get_pending_approvals' own
+        # rejected_stage, derived from this same comment) rely on it.
+        state_before = doc.workflow_state or "Draft"
+
         transitions = frappe.model.workflow.get_transitions(doc)
         action = None
         for t in transitions:
             if t.next_state == "Rejected" and t.action in ("Reject", "Cancel"):
                 action = t.action
                 break
-                
+
         if not action:
             for t in transitions:
                 if "reject" in t.action.lower() or "reject" in t.next_state.lower():
                     action = t.action
                     break
-                    
+
         if not action:
             frappe.throw(_("No valid transition found to reject Sales Order {0}.").format(so_name))
-            
+
         frappe.model.workflow.apply_workflow(doc, action)
-        add_custom_workflow_comment(doc.doctype, doc.name, "Rejected", comment)
+        label = "Rejected at Final Approval" if state_before == "Pending Final Approval" else "Rejected"
+        add_custom_workflow_comment(doc.doctype, doc.name, label, comment)
 
 
 def _drop_stale_contact_links(cont):

@@ -1,5 +1,11 @@
 import frappe
 
+# The one stock warehouse this company actually fulfils and produces from.
+# Availability, coverage and every "can this go out now" check are counted
+# here only — stock in other locations (POS counters, other stores) is real
+# but not usable for an order. Named once so the widget's own per-item loop
+# and the raw-material pool lookup it feeds can never drift apart.
+MAIN_WAREHOUSE = "VV Puram - IND"
 
 
 def copy_custom_fields(doc, method):
@@ -2556,6 +2562,19 @@ def get_item_stock_details_bulk(item_bom_pairs, sales_order_name):
                 "Item", filters={"name": ["in", all_rm_codes]}, fields=["name", "item_name"])
         }
 
+    # How much of each SOLD item's own stock is actually raw material bought
+    # for a BOM. An item can be both — sold directly on one line and consumed
+    # by another line's BOM — and that stock cannot serve both. Without this
+    # the direct-sale line offered "Pick N more" against the very fabric a
+    # Subcontract PO was waiting on, and whichever got picked first starved
+    # the other. Same pool the RM Pipeline itself reads (_rm_stock_pools), so
+    # the two surfaces can never disagree about who owns a unit.
+    from erp_dacsinc_custom.order_flow_api import _rm_stock_pools
+    sold_item_rm_pools = (
+        _rm_stock_pools(set(all_pair_item_codes), MAIN_WAREHOUSE)
+        if all_pair_item_codes != ("",) else {}
+    )
+
     all_pick_blockers = _get_pick_blockers(list(all_pair_item_codes)) if all_pair_item_codes != ("",) else []
     pick_blockers_by_item = defaultdict(list)
     for b in all_pick_blockers:
@@ -2595,7 +2614,7 @@ def get_item_stock_details_bulk(item_bom_pairs, sales_order_name):
         # stores) isn't actually available to fulfill or produce this order.
         # warehouse_stock itself still carries every warehouse, unfiltered,
         # so the UI's "View" breakdown can keep showing where else it sits.
-        main_warehouse = "VV Puram - IND"
+        main_warehouse = MAIN_WAREHOUSE
         warehouse_stock = frappe.db.sql("""
             SELECT warehouse, actual_qty
             FROM `tabBin`
@@ -3277,7 +3296,22 @@ def get_item_stock_details_bulk(item_bom_pairs, sales_order_name):
         stale_blocked_qty = sum(b["held_qty"] for b in stale_blockers)
 
         # 9. Shortfall & RM Logic
-        truly_available_fg = max(0, total_available_stock - picked_for_others_qty - draft_qty_for_others)
+        #
+        # Stock of THIS item that was bought as raw material for a BOM — on
+        # any order, including this one. It is physically on the shelf and
+        # counts in total_available_stock, but it is spoken for by a
+        # Subcontract PO that has not gone out yet, so it can no more be
+        # picked for a direct sale than stock already picked for another
+        # order can. Treated exactly like those other reservations here; the
+        # UI shows it alongside them with its own RM flag.
+        _rm_pool = sold_item_rm_pools.get(item_code) or {}
+        rm_earmarked_by = {so: flt(q, 3) for so, q in (_rm_pool.get("earmarked") or {}).items()
+                           if flt(q) > 0.001}
+        rm_earmarked_qty = flt(sum(rm_earmarked_by.values()), 3)
+        rm_earmarked_this_so = flt(rm_earmarked_by.get(so_doc.name, 0), 3)
+
+        truly_available_fg = max(0, total_available_stock - picked_for_others_qty
+                                 - draft_qty_for_others - rm_earmarked_qty)
         # Qty already picked for THIS order counts as produced. Picking moves
         # it out of total_available_stock, so without this an order whose
         # goods are fully picked and sitting ready for a Delivery Note reads
@@ -3761,6 +3795,11 @@ def get_item_stock_details_bulk(item_bom_pairs, sales_order_name):
             "total_mr_pending_qty": total_mr_pending_qty, "total_mr_count": len(material_requests),
             "total_paper_coverage_qty": total_paper_coverage_qty,
             "picked_for_others_qty": picked_for_others_qty, "draft_qty_for_others": draft_qty_for_others, "conflict_details": conflict_details,
+            # Bought as raw material, so not pickable for a direct sale of
+            # the same item — shown flagged beside the other reservations.
+            "rm_earmarked_qty": rm_earmarked_qty,
+            "rm_earmarked_this_so": rm_earmarked_this_so,
+            "rm_earmarked_by": rm_earmarked_by,
             "picked_submitted_other_rows": picked_submitted_other_rows, "picked_draft_other_rows": picked_draft_other_rows,
             "incoming_stock": incoming_stock, "total_incoming_qty": total_incoming_qty, "total_incoming_po_count": total_incoming_po_count, "total_incoming_ewo_count": total_incoming_ewo_count,
             "draft_purchase_orders": draft_purchase_orders, "draft_material_requests": draft_material_requests,
@@ -4702,22 +4741,29 @@ def make_subcontract_purchase_orders_bulk(sales_order, items):
         info = ready_by_code.get(item_code)
         if not info:
             frappe.throw(_(
-                "Raw material for {0} is no longer fully available — refresh and try again."
+                "No raw material is available for {0} right now — refresh and try again."
             ).format(item_code))
 
-        # An omitted qty means "all of it"; an explicitly-sent 0 is an error.
-        # `flt(x) or cap` would silently turn that 0 into a full-qty PO.
+        # `ready_qty` is the cap, NOT `qty`: `qty` is everything still
+        # outstanding on the line, which the material on hand may only
+        # partly cover (see _rm_ready_for_sco). Raising a PO for the
+        # coverable part is expected and fine — the remainder stays
+        # claimable later, because that function nets off whatever an
+        # earlier partial PO already committed (`already`).
+        cap = flt(info.get("ready_qty"))
+        # An omitted qty means "all that's possible"; an explicitly-sent 0 is
+        # an error. `flt(x) or cap` would silently turn that 0 into a full PO.
         raw_qty = row.get("qty")
-        qty = flt(info["qty"]) if raw_qty in (None, "") else flt(raw_qty)
+        qty = cap if raw_qty in (None, "") else flt(raw_qty)
         if qty <= 0:
             frappe.throw(_("Row for {0}: qty must be greater than zero.").format(item_code))
         # Compared at 3dp, the same precision get_rm_ready_bom_items rounds
         # its cap to — otherwise re-sending the exact cap the prompt just
         # displayed could fail on a float remainder.
-        if flt(qty, 3) > flt(info["qty"], 3):
+        if flt(qty, 3) > flt(cap, 3):
             frappe.throw(_(
                 "Row for {0}: only {1} can be subcontracted right now (raw material on hand), not {2}."
-            ).format(item_code, flt(info["qty"], 3), flt(qty, 3)))
+            ).format(item_code, flt(cap, 3), flt(qty, 3)))
 
         chosen.append((info, qty))
 
@@ -5185,6 +5231,25 @@ def update_pick_lists_on_stock_si_cancel(doc, method):
 def _so_has_submitted_dn(sales_order):
     return bool(frappe.db.exists(
         "Delivery Note Item", {"against_sales_order": sales_order, "docstatus": 1}))
+
+
+def _so_draft_delivery_notes(sales_order):
+    """Saved-but-unsubmitted Delivery Challans for this order, newest first.
+
+    A draft DC means the goods are already mapped and packed for this order;
+    the only thing left is to submit it and dispatch. Offering "Create
+    Delivery Note" in that state sends the user into a dialog whose whole
+    content is "you already have one of these" — so the caller uses this to
+    offer the existing document instead.
+    """
+    rows = frappe.db.sql("""
+        SELECT DISTINCT dni.parent, dn.modified
+        FROM `tabDelivery Note Item` dni
+        JOIN `tabDelivery Note` dn ON dn.name = dni.parent
+        WHERE dni.against_sales_order = %s AND dn.docstatus = 0
+        ORDER BY dn.modified DESC
+    """, sales_order, as_dict=True)
+    return [r.parent for r in rows]
 
 
 def _so_has_submitted_stock_si(sales_order):
@@ -9560,6 +9625,13 @@ def fetch_multi_order_requirements(exclude_mr=None):
     """, {"items": all_item_codes}, as_dict=True)
     bin_map = {(r.item_code, r.warehouse): flt(r.actual_qty) for r in bin_rows}
 
+    # Which of these sold items' stock is actually raw material bought for a
+    # BOM — the same pool the Item Stock & Action Plan and the RM Pipeline
+    # read, so all three surfaces agree about who owns a unit. Looked up once
+    # for the whole dialog rather than per row.
+    from erp_dacsinc_custom.order_flow_api import _rm_stock_pools
+    fg_rm_pools = _rm_stock_pools(set(all_item_codes), MAIN_WAREHOUSE) if all_item_codes != ("",) else {}
+
     pick_rows_all = frappe.db.sql("""
         SELECT pli.sales_order, pli.item_code, pli.warehouse, pli.sales_order_item,
                pli.qty, pli.picked_qty, pli.delivered_qty, pl.docstatus AS pl_docstatus,
@@ -9641,7 +9713,19 @@ def fetch_multi_order_requirements(exclude_mr=None):
         # SAL-ORD-2026-00104 showed 18 needed instead of the correct 19,
         # matching get_item_stock_details_bulk's fg_shortfall, which only
         # ever subtracts stock once).
-        val["available"] = max(0, raw_available - reserved_for_others - flt(picked_qty))
+        # Stock of this same item bought as RAW MATERIAL for a BOM is on the
+        # shelf but spoken for by a Subcontract PO, so it cannot also satisfy
+        # a sold line of that item — exactly the reservation
+        # get_item_stock_details_bulk applies for the Item Stock & Action Plan
+        # (rm_earmarked_qty). Counting it as available here made this dialog
+        # under-request: it netted material off the demand that the BOM was
+        # already waiting to consume, so the shortage it showed was smaller
+        # than the real one and the order stayed short after the MR was raised.
+        val["rm_earmarked"] = flt(sum(
+            q for q in (((fg_rm_pools.get(val["item_code"]) or {}).get("earmarked") or {}).values())
+            if flt(q) > 0.001), 3)
+        val["available"] = max(0, raw_available - reserved_for_others - flt(picked_qty)
+                               - val["rm_earmarked"])
 
     standard_results = []
     bom_vals_with_shortage = []
@@ -10591,6 +10675,74 @@ def create_dn_or_si_from_pick_lists(sales_order, pick_lists, doctype):
 
     if not pick_items:
         frappe.throw(_("No submitted Pick List items found for the selected Pick Lists."))
+
+    # Net off what a DRAFT Delivery Note / Update-Stock Sales Invoice already
+    # holds for these same Pick List lines.
+    #
+    # pli.delivered_qty above only moves on SUBMIT, so nothing here knew about
+    # a draft already built from the very same pick — clicking the action
+    # twice produced two identical drafts (confirmed live: DN-26-00035 and
+    # DN-26-00036 on SAL-ORD-2026-00124, both 5 Nos of the same item, same
+    # so_detail, same pick_list_item), and submitting both would deliver 10
+    # against a 5-qty pick. A Delivery Note Item carries pick_list_item, so
+    # drafts net per pick line; a Sales Invoice Item has no such field (see
+    # the DN/SI row-lock note in the docs) and nets by so_detail instead,
+    # which this function always sets on that route.
+    draft_by_pick_item = defaultdict(float)
+    draft_by_so_item = defaultdict(float)
+    draft_docs_by_key = defaultdict(set)
+    for r in frappe.db.sql("""
+        SELECT dni.pick_list_item, dni.so_detail, dni.qty, dni.parent
+        FROM `tabDelivery Note Item` dni
+        JOIN `tabDelivery Note` dn ON dn.name = dni.parent
+        WHERE dni.against_sales_order = %(so)s AND dn.docstatus = 0
+    """, {"so": sales_order}, as_dict=True):
+        if r.pick_list_item:
+            draft_by_pick_item[r.pick_list_item] += flt(r.qty)
+            draft_docs_by_key[r.pick_list_item].add(r.parent)
+        elif r.so_detail:
+            draft_by_so_item[r.so_detail] += flt(r.qty)
+            draft_docs_by_key[r.so_detail].add(r.parent)
+    for r in frappe.db.sql("""
+        SELECT sii.so_detail, sii.qty, sii.parent
+        FROM `tabSales Invoice Item` sii
+        JOIN `tabSales Invoice` si ON si.name = sii.parent
+        WHERE sii.sales_order = %(so)s AND si.docstatus = 0 AND IFNULL(si.update_stock, 0) = 1
+    """, {"so": sales_order}, as_dict=True):
+        if r.so_detail:
+            draft_by_so_item[r.so_detail] += flt(r.qty)
+            draft_docs_by_key[r.so_detail].add(r.parent)
+
+    blocked_by_drafts = {}
+    remaining_items = []
+    for p in pick_items:
+        on_draft = flt(draft_by_pick_item.get(p.pick_list_item, 0))
+        if not on_draft and p.sales_order_item:
+            on_draft = flt(draft_by_so_item.get(p.sales_order_item, 0))
+        if on_draft > 0.0001:
+            docs = sorted(draft_docs_by_key.get(p.pick_list_item)
+                          or draft_docs_by_key.get(p.sales_order_item) or [])
+            entry = blocked_by_drafts.setdefault(p.item_code, {"qty": 0.0, "docs": set()})
+            entry["qty"] += min(on_draft, flt(p.qty))
+            entry["docs"].update(docs)
+        left = flt(p.qty) - on_draft
+        if left > 0.0001:
+            p.qty = left
+            remaining_items.append(p)
+
+    if not remaining_items:
+        lines = "<br>".join(
+            _("{0}: {1} already on {2}").format(
+                frappe.bold(code), flt(v["qty"], 3),
+                ", ".join(sorted(v["docs"])) or _("a draft"))
+            for code, v in blocked_by_drafts.items()
+        )
+        frappe.throw(
+            _("Every picked item is already on a draft {0} for this order — creating another would deliver the same stock twice.<br><br>{1}<br><br>Open the existing document and submit it instead.")
+            .format(doctype, lines),
+            title=_("Already on a draft {0}").format(doctype),
+        )
+    pick_items = remaining_items
 
     if doctype == "Delivery Note":
         from erpnext.selling.doctype.sales_order.sales_order import make_delivery_note

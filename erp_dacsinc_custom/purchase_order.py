@@ -1614,13 +1614,29 @@ def get_pending_so_with_material_stock(is_subcontracted=False):
     for p in summary_pick_rows:
         summary_picks_by_item[p.item_code].append(p)
 
+    # Stock of a sold item that was actually bought as RAW MATERIAL for a BOM
+    # is on the shelf but owed to a Subcontract PO, so it must not read as
+    # available to cover a sold line of that same item here either — same
+    # reservation the Item Stock & Action Plan (rm_earmarked_qty) and the
+    # Material Request fetch dialog apply, off the same pool
+    # (_rm_stock_pools), so the three cannot disagree about who owns a unit.
+    from erp_dacsinc_custom.order_flow_api import _rm_stock_pools
+    summary_rm_pools = (_rm_stock_pools(set(summary_items), "VV Puram - IND")
+                        if summary_items != ("",) else {})
+
     summ_list = []
     for it, data in item_summaries.items():
-        avail = summary_avail_map.get(it, 0.0)
+        rm_earmarked = flt(sum(
+            q for q in (((summary_rm_pools.get(it) or {}).get("earmarked") or {}).values())
+            if flt(q) > 0.001), 2)
+        avail = max(0.0, flt(summary_avail_map.get(it, 0.0)) - rm_earmarked)
         global_picks = summary_picks_by_item.get(it, [])
 
         summ_list.append({
             "item_code": it, "item_name": data["item_name"], "total_need": data["qty_need"], "avail": avail,
+            # Shown beside In Stock so the gap between the two is explained
+            # rather than looking like a wrong stock figure.
+            "rm_earmarked": rm_earmarked,
             "draft_picks": flt(sum(flt(p.draft_qty) for p in global_picks if p.docstatus == 0), 2),
             "sub_picks": flt(sum(flt(p.held_qty) for p in global_picks
                                  if p.docstatus == 1 and p.pl_status != "Completed"), 2),

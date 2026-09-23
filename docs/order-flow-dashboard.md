@@ -544,6 +544,199 @@ Approve/Reject buttons instead of "View only" for exactly the rows where
 Final Approval (past the merchandiser stage this tab's Approve action
 handles) — every other row in that sub-tab stays view-only.
 
+## SO Approvals: a dedicated Rejected sub-tab, split by which stage rejected it
+
+`get_pending_approvals` already included `workflow_state = 'Rejected'` in
+its base query — those orders just had nowhere of their own to land.
+`approval_html`'s client-side bucketing now checks `workflow_state ===
+'Rejected'` FIRST, ahead of the Pending Final / Unassigned / Pending
+Approval / Other Merchandisers' checks, so a rejected order always lands in
+its own **Rejected Orders** sub-tab instead of being scattered across
+whichever of the other four buckets its merchandiser-assignment would
+otherwise have put it in.
+
+- **Only appears when there's a reason to click it** — a rejected order
+  actually exists right now, or the viewer already has the tab selected
+  (`rejected_approvals.length > 0 || sub === 'rejected'`) — the same
+  defensive pattern as the Draft/Submitted filter pills elsewhere on this
+  dashboard, so the tab doesn't sit there permanently empty.
+- **Numbered to fill the gap** left when "Pending Final SO Approval" isn't
+  shown at all (a plain viewer never sees tab "4"): a non-final-approver
+  sees an unbroken 1/2/3/4(Rejected); a final approver sees
+  1/2/3/4/5(Rejected) instead of the Rejected tab jumping straight to "5"
+  with nothing filling "4".
+
+**A rejection is further tagged by WHICH stage rejected it** —
+`rejected_stage`, `"merchandiser"` or `"final"` — since a Sales Order can be
+rejected either at "Pending Merchandiser Approval" (or, rarely, straight
+from "Draft") or at "Pending Final Approval", and both dead-end at the same
+`workflow_state = 'Rejected'` with nothing else distinguishing them.
+
+- `reject_sales_orders` now captures `state_before` right before applying
+  the reject transition and writes a stage-specific comment label —
+  `"Rejected at Final Approval"` when `state_before ==
+  'Pending Final Approval'`, plain `"Rejected"` otherwise —
+  `add_custom_workflow_comment`'s only record of which stage acted.
+  `get_pending_approvals` derives `rejected_stage` per row straight from
+  that same comment text (already fetched for the "Reason: …" line) rather
+  than adding a new column: `"final"` when it contains `"Final Approval"`,
+  `"merchandiser"` otherwise. A comment written before this distinction
+  existed reads as plain `"Rejected by …"` and defaults to `"merchandiser"`
+  — the correct guess for every rejection recorded before this shipped,
+  since final-stage rejection is the less common path.
+- Client-side, the Rejected Orders card header gets its own **All / By
+  Merchandiser / At Final Approval** filter pills
+  (`of_rejection_stage_pills`, same compact inline-in-header style as
+  `of_docstatus_pills`, keyed on `rejected_stage` rather than docstatus so
+  it's a separate function, not shoehorned into that one) — narrows
+  `active_orders` client-side (`this.approval_rejected_stage_filter`, no
+  extra sub-list of its own), plus a small colored chip under each row's
+  status pill so the same distinction reads at a glance without opening the
+  filter.
+- **Fixed a real visibility bug found while building this**: a final
+  approver's own server-side scoping clause only ever granted them extra
+  visibility into `workflow_state = 'Pending Final Approval'` orders — not
+  `'Rejected'` ones. The moment a final approver rejected an order (moving
+  it Pending Final Approval → Rejected) for a customer that wasn't also
+  their own, it vanished from their queue entirely — exactly the "final
+  approval is rejected, not showing" report that surfaced this. Fixed by
+  widening that clause to `workflow_state IN ('Pending Final Approval',
+  'Rejected')`, the same "sees every merchandiser, company-wide" breadth a
+  final approver already has for Pending Final Approval — a final approver
+  now keeps seeing everything they (or anyone else) rejected, the same way
+  they already track the whole company's final-approval queue.
+- **No new server-side scoping needed for the sub-tab split itself** —
+  every non-final-approver viewer already only receives the Rejected
+  orders relevant to them (their own, or an unassigned customer's) via
+  `get_pending_approvals`'s existing query; the stage split is purely a
+  client-side reclassification of rows already present in the response.
+- **Also fixed a latent bug surfaced while building this**: the Actions
+  column's default branch always rendered both Approve and Reject buttons.
+  For a row whose `workflow_state` is already `Rejected`, clicking Reject
+  used to throw `frappe.throw("No valid transition found to reject Sales
+  Order …")` — `setup_sales_order_workflow`'s only transition defined FROM
+  `Rejected` goes to `Pending Merchandiser Approval` ("Submit for
+  Merchandiser Approval"); there never was a `Rejected → Rejected`
+  transition to fire. This bug already existed today (a rejected order
+  assigned to you showed this same broken Reject button inside "Pending
+  Approval"), but consolidating every rejected order into one tab makes it
+  far more likely to be hit, so it's fixed as part of this change: the
+  Reject button is hidden whenever `o.workflow_state === 'Rejected'`,
+  leaving only Approve, with a tooltip clarifying it resubmits the order
+  for merchandiser approval (`approve_sales_orders` already handles a
+  `Rejected` `state_before` by applying "Submit for Merchandiser Approval"
+  and then the resulting Approve transition, in one click).
+
+## Action Required labels carry no document id
+
+`Submit Pick List (STO-PICK-2026-00102)` wrapped to three lines in a column
+that already has to fit a button — and the id was never the point of the
+label, it was context. Every stage action that embedded one (`Submit Pick
+List`, `Submit Receipt`, `Open Draft Invoice`, `Track PO`, `Track Job Work`,
+`Track Embroidery`, `Order from MR`) now returns the plain verb as
+`action_label` and the full sentence — id included — as a new
+`action_hint`, which the client renders as the button's `title`. Nothing is
+lost: the button already carries `target_doc`, so clicking still opens that
+exact document, and hovering still names it. Labels that carry a **quantity**
+rather than an id (`Create Pick List — 40 Still on Order`) keep it; a number
+is short and changes what you'd decide.
+
+## The Delivery column: "To Be Dispatched" for a saved-but-unsubmitted DC
+
+A Delivery Challan that has been saved and not yet submitted means the goods
+are packed for that order and nothing has physically gone out. `per_delivered`
+only moves on submit, so the Delivery column used to keep showing whatever
+pick/stage label applied *before* the DC was raised, then jump straight to
+"✓ Delivered" the moment it was submitted — with no state in between for
+"made, not yet dispatched".
+
+`get_sales_tracker` now returns `draft_delivery_notes` per row (the same way
+it already collected `draft_invoices`), and `of_status_chip`'s `delivered`
+context shows **"To Be Dispatched"** whenever a draft DC exists and the order
+is not yet 100% delivered.
+
+**Action Required says the same thing, and offers the draft itself.** The
+`ready_to_deliver` stage used to keep offering "Create Delivery Note" even
+when a draft DC already existed — clicking it opened a dialog whose entire
+content was *"Delivery Note already in progress — this order already has a
+draft Delivery Note"*, i.e. an action that exists only to tell you not to
+take it. `_compute_primary_stage_info` now checks `_so_draft_delivery_notes`
+first and, when one exists, returns an `open_doc` action on that document
+labelled **"To Be Dispatched"** — the same wording as the Delivery column,
+so the two columns agree — with the id and the "+N more draft" count in the
+tooltip. Confirmed live on SAL-ORD-2026-00124 (drafts DN-26-00035 /
+DN-26-00036): the action opens DN-26-00036 instead of starting a third one.
+An order with no draft DC still reads "Create Delivery Note" exactly as
+before. The pill links to the draft DC itself — the thing
+to go and submit — rather than to an older submitted Delivery Note on the
+same order. Once the DC is submitted the column reads "✓ Delivered" exactly
+as before; this adds a state, it does not rename the existing one.
+
+## "Submit Pick List" opens the review table, not the Pick List form
+
+The tracker's own `submit_pick_list` action (was `open_doc`) opens the same
+review-and-submit table the Sales Order widget's "Pick Lists" button uses —
+every draft pick on that order, each qty editable before it commits stock,
+one Submit per Pick List. Redirecting to the Pick List form instead made the
+single action the row is waiting on a navigation away from the queue, and
+lost the short-pick edit that `update_and_submit_pick_list` exists to
+support.
+
+`show_so_picklists_modal` is exported on `window` for this (the dashboard
+`frappe.require()`s `sales_order.js`, same as it already does for
+`show_bulk_dn_si_modal`). The handler builds a mock frm off-screen first via
+`load_so_details` — both that modal and the refresh it runs after a
+successful submit read `cur_frm`, exactly as the widget's own buttons do
+inside this page.
+
+## A second DN can't duplicate what a draft DN already holds
+
+`create_dn_or_si_from_pick_lists` netted off `Pick List Item.delivered_qty`,
+which only moves on **submit** — so nothing in the mapping knew about a draft
+built from the very same pick. Clicking the action twice produced two
+identical drafts: confirmed live, DN-26-00035 and DN-26-00036 on
+SAL-ORD-2026-00124, both 5 Nos of `Item 1 without BOM`, same `so_detail`,
+same `pick_list_item`. Submitting both would have delivered 10 against a
+5-qty pick.
+
+The mapping now subtracts what draft documents already hold, before building
+anything:
+
+- **Delivery Note Item carries `pick_list_item`**, so DN drafts net per pick
+  line. **Sales Invoice Item has no such field** (see the DN/SI row-lock
+  note above) so Update-Stock SI drafts net by `so_detail`, which this
+  function always sets on that route.
+- Partly covered → only the remainder is mapped (verified: a draft holding
+  13 of a 33 pick leaves exactly 20 on the next call).
+- Fully covered → it refuses, naming the item, the qty and the documents:
+  *"Every picked item is already on a draft Delivery Note for this order —
+  creating another would deliver the same stock twice."*
+- Nothing covered → unchanged.
+
+**The duplicate is shown in the PROMPT, not as an error after the click.**
+A server exception is the wrong place to learn this — by then the user has
+already decided. `get_draft_dn_si_for_so` returns `draft_details` (the items
+and quantities on each existing draft, not just its id, because an id alone
+cannot answer "is what I am about to create the same as what I already
+have?"), and `show_bulk_dn_si_modal` uses it three ways:
+
+- each existing draft listed **with its contents** in the warning box;
+- a red *"10 already on DN-26-00035, DN-26-00036"* flag on the affected row
+  of the preview table itself;
+- when **every** row is already covered for at least its full qty, a
+  "This would be a duplicate Delivery Note" banner, and the primary button
+  becomes **"Open DN-26-00035"** instead of Create — there is nothing left to
+  create, so offering it would only lead to the server's refusal.
+
+A partially-covered or mixed selection still offers Create (there is real
+work in it) with the overlapping row flagged; the server nets the overlap off
+when building. Verified across five cases: pure duplicate → Open; same item
+but larger qty → Create; different item → Create; one duplicate row plus one
+new → Create with the duplicate flagged; no drafts → unchanged.
+
+The prompt and the server guard read the same query, so they cannot
+disagree about what counts as a duplicate.
+
 ## Sales Tracker hides what Pending DN/SI hides
 
 `need_to_bill` and `ready_to_deliver` are the two stages Pending DN/SI (the

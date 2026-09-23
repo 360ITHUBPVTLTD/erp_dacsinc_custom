@@ -464,6 +464,24 @@ function inject_so_styles() {
             font-size: 9px; font-weight: 700; color: var(--text-light);
             text-transform: uppercase; letter-spacing: .06em; line-height: 1;
         }
+        /* The non-recommended actions, side by side on one wrapped row
+           rather than one per line — see so_build_action_html. They are
+           deliberately smaller than the recommended button: at the full
+           .so-btn size two of them ("Open Pick List", "Pick 5 more") do not
+           fit this 200px column and wrap back to one per line, which is the
+           tall stack this exists to avoid. Labels stay — the point is to fit
+           every action in, not to hide any behind an icon or a menu. */
+        .so-action__alts {
+            display: flex; flex-wrap: wrap; gap: 4px; justify-content: center;
+            width: 100%;
+        }
+        .so-action__alts .so-btn {
+            font-size: 10px; padding: 3px 6px; gap: 0;
+        }
+        /* Icons go, labels stay: the icon costs ~12px a button, which is the
+           difference between two secondary actions sharing a line and each
+           taking its own. The recommended button above keeps its icon. */
+        .so-action__alts .so-btn i { display: none; }
 
         /* ── Cell breakdown (POs / EWOs) ─────────────────────────── */
         .so-brk { font-size: 11px; line-height: 1.5; }
@@ -488,7 +506,7 @@ function inject_so_styles() {
         .so-rm table {
             width: 100%; border-collapse: collapse; font-size: 12px;
             border: 1px solid var(--border-color);
-            /* Nine dense columns. With table-layout:fixed at width:100% the
+            /* Six columns. With table-layout:fixed at width:100% the
                table can never exceed its container, so on a narrow screen it
                silently squeezed every column instead of scrolling — which is
                what made the Status pill and the calc line run out of room in
@@ -496,7 +514,7 @@ function inject_so_styles() {
                with nothing to scroll. A floor means the .so-scroll wrapper
                actually scrolls when there isn't room, and the percentage
                widths apply as intended when there is. */
-            min-width: 940px;
+            min-width: 820px;
         }
         /* Grey header, not a second blue bar — one blue header per card. */
         .so-rm th {
@@ -534,6 +552,25 @@ function inject_so_styles() {
         .so-rm td > * + * { margin-top: 6px; }
         .so-rm tbody tr:nth-child(even) td { background: var(--subtle-fg); }
         .so-rm tbody tr:hover td { background: rgba(52, 152, 219, 0.07); }
+        /* "Why is none of it usable here?" — the claim ledger behind the
+           Usable Here figure. It is real detail people occasionally need,
+           but printing all of it on every row is what made this table
+           unreadable: each cell became five stacked numbers with no
+           hierarchy. Closed by default — the cell states the answer and one
+           plain-language reason; the arithmetic is one click away. */
+        .so-rm__why { margin-top: 4px; }
+        .so-rm__why > summary {
+            cursor: pointer; font-size: 11px; color: var(--so-blue);
+            list-style: none; display: inline-block;
+        }
+        .so-rm__why > summary::-webkit-details-marker { display: none; }
+        .so-rm__why > summary:hover { text-decoration: underline; }
+        .so-rm__ledger { margin-top: 4px; font-size: 11px; line-height: 1.7; text-align: left; }
+        .so-rm__ledger > div { display: flex; justify-content: space-between; gap: 10px; }
+        .so-rm__ledger > div.is-total {
+            border-top: 1px solid var(--border-color);
+            margin-top: 3px; padding-top: 3px; font-weight: 600;
+        }
 
         /* ── Modal ───────────────────────────────────────────────── */
         .so-modal { font-size: 13px; color: var(--text-color); }
@@ -742,7 +779,7 @@ function generate_stock_overview_table(frm, callback) {
                             <th style="width:9%;">Picked (This SO)</th>
                             <th style="width:11%;">Picked (Others)</th>
                             <th style="width:9%;">Status</th>
-                            <th style="width:17%; min-width:200px;">Next Action</th>
+                            <th style="width:17%; min-width:225px;">Next Action</th>
                         </tr>
                     </thead>
                     <tbody id="stock-tbody">
@@ -888,8 +925,15 @@ function generate_stock_overview_table(frm, callback) {
                 const picked_draft_other_rows = d.picked_draft_other_rows || 0;
                 const total_actual_stock = d.total_available_stock || 0;
 
+                // Stock of this same item bought as RAW MATERIAL for a BOM
+                // (this order's or another's). It is on the shelf, but a
+                // Subcontract PO is waiting on it — picking it for a direct
+                // sale of the same item starves that PO, and whichever action
+                // happened first silently won. Reserved exactly like the pick
+                // reservations beside it; see rm_earmarked_qty server-side.
+                const rm_earmarked = d.rm_earmarked_qty || 0;
                 const all_reservation = picked_submitted_undeliv + picked_draft_so + picked_for_others + draft_for_others
-                    + picked_submitted_other_rows + picked_draft_other_rows;
+                    + picked_submitted_other_rows + picked_draft_other_rows + rm_earmarked;
                 const truly_available_stock = Math.max(0, total_actual_stock - all_reservation);
 
                 const total_committed_pipeline = delivered + picked_submitted_undeliv;
@@ -994,8 +1038,30 @@ function generate_stock_overview_table(frm, callback) {
                     // Fully picked → the next command is either a Delivery Note or a
                     // direct Sales Invoice with Update Stock — whichever route this
                     // Sales Order isn't already locked out of (so_route_lock).
+                    // A draft DN/SI already built for this line: the document
+                    // exists and the only thing left is to submit it and
+                    // dispatch. "Create Delivery Note (5)" here is the same
+                    // wrong prompt the tracker used to show — it invites a
+                    // second document for stock the first one already holds
+                    // (which is exactly how DN-26-00035/36 both happened).
+                    // Same wording the tracker's Action Required and the
+                    // Delivery column use, so all three agree.
+                    const row_draft_dn = (d.row_dns || []).find(x => flt(x.docstatus) === 0);
+                    const row_draft_si = (d.row_sis || []).find(x => flt(x.docstatus) === 0);
+                    const pending_doc = row_draft_dn || row_draft_si;
+                    const pending_doctype = row_draft_dn ? 'Delivery Note' : 'Sales Invoice';
+
                     status_html = so_pill('dn', 'cube', so_dn_si_status_label(d.so_route_lock));
-                    if (subm_pl) {
+                    if (pending_doc) {
+                        status_html += `<div class="so-micro" style="margin-top:4px;color:var(--so-orange);font-weight:600;">
+                            <i class="fa fa-truck"></i> ${__('To Be Dispatched')}</div>`;
+                        action_parts.push(so_cmd_btn(
+                            `so_open_doc('${pending_doctype}','${js_str(pending_doc.parent)}')`,
+                            'truck', __('To Be Dispatched'), true));
+                        if (subm_pl) {
+                            action_parts.push(so_cmd_btn(`so_open_doc('Pick List','${js_str(subm_pl)}')`, 'external-link', 'Open Pick List'));
+                        }
+                    } else if (subm_pl) {
                         action_parts.push(so_cmd_btn(
                             `so_prompt_dn_or_si('${so_nm}','${js_str(item.name)}','${ic_arg}','${js_str(subm_pl)}',${flt(picked_submitted_undeliv)},'${d.so_route_lock || ''}','${js_str(pair_key)}')`,
                             'truck', so_dn_si_action_label(d.so_route_lock, required - delivered), true));
@@ -1142,13 +1208,11 @@ function generate_stock_overview_table(frm, callback) {
                                     : (mr_open > 0
                                         ? so_pill('planned', 'file-text-o', 'Requested')
                                         : so_pill('blocked', 'exclamation-triangle', 'Out of Stock'));
-                            // Surface the RM block right here too, not only inside the
-                            // collapsible Raw Material Pipeline sub-row below — otherwise
-                            // "why is there no PO button" is invisible until it's expanded.
-                            if (rm_blocks_this) {
-                                status_html += `<div class="so-micro" style="margin-top:4px;color:var(--so-red);font-weight:600;">
-                                    <i class="fa fa-flask"></i> RM Not in Stock</div>`;
-                            }
+                            // The RM block itself is surfaced here through
+                            // so_shortfall_actions' own status_note (appended below), which
+                            // names the short materials — the same note the draft-Pick-List
+                            // branch shows, so "why is there no PO button" reads identically
+                            // whichever branch a line happens to be in.
                             // Incoming is only a real answer to THIS shortfall for a plain
                             // (non-BOM) item — for an RM-blocked BOM item, whatever's
                             // "Incoming" is unrelated (an EWO, a different batch), so it must
@@ -1280,14 +1344,34 @@ function generate_stock_overview_table(frm, callback) {
                 picked_html += `</div>`;
 
                 // ── Picked (Others) cell ──────────────────────────────
-                const total_others = flt(picked_for_others) + flt(draft_for_others);
+                // Counts RM-earmarked stock too: it is reserved against this
+                // item just as firmly as another order's pick, and leaving it
+                // out of the one "who else has a claim" column was why the
+                // row could show stock as free to pick that a Subcontract PO
+                // was already waiting on.
+                const total_others = flt(picked_for_others) + flt(draft_for_others) + flt(rm_earmarked);
                 let picked_others_html = `<div class="so-stack">`
                     + so_qty(total_others, total_others > 0 ? 'warn' : null);
                 if (total_others > 0) {
                     const split = [];
                     if (flt(picked_for_others) > 0) split.push(`${flt(picked_for_others)} Submitted`);
                     if (flt(draft_for_others) > 0) split.push(`${flt(draft_for_others)} Draft`);
-                    picked_others_html += `<div class="so-micro">${split.join(' · ')}</div>`;
+                    if (split.length) picked_others_html += `<div class="so-micro">${split.join(' · ')}</div>`;
+                }
+                if (flt(rm_earmarked) > 0) {
+                    // Flagged separately from a pick: this is not staged for a
+                    // delivery, it is material a BOM is waiting to consume.
+                    const rm_orders = Object.keys(d.rm_earmarked_by || {});
+                    const mine = flt(d.rm_earmarked_this_so || 0);
+                    picked_others_html += `
+                        <div class="so-micro" style="color:var(--so-purple, #805ad5); font-weight:600;"
+                             title="${esc('Bought as raw material for a BOM' + (rm_orders.length
+                                    ? ' — ' + rm_orders.map(so => `${so} (${flt((d.rm_earmarked_by || {})[so], 2)})`).join(', ')
+                                    : '') + '. It is on the shelf, but a Subcontract PO needs it, so it is not available to pick for a direct sale of this same item.')}">
+                            <span class="so-chip" style="background:var(--so-purple, #805ad5); color:#fff;">RM</span>
+                            ${flt(rm_earmarked)} ${__('reserved as raw material')}${
+                                mine > 0 && mine < flt(rm_earmarked) ? ` (${flt(mine)} ${__('for this order')})` : ''}
+                        </div>`;
                 }
                 if (Array.isArray(d.conflict_details) && d.conflict_details.length > 0) {
                     // Name the blocking orders inline — a bare count forces a click.
@@ -1383,25 +1467,89 @@ function generate_stock_overview_table(frm, callback) {
             // actually raisable, but the prompt gets the blocked ones too so
             // it can explain them rather than silently omitting them.
             let spo_items = [];
-            // The pick-list branch below renders a DIFFERENT button layout
-            // ("View Pick Lists", with the draft count) and runs off its own
-            // async call. Without this flag the Subcontract PO fetch, landing
-            // second, would re-render the plain "Create Pick List" layout over
-            // the top of it and the draft Pick Lists would vanish from the
-            // header — whichever call happened to finish last decided what the
-            // user saw.
-            let pick_list_branch_rendered = false;
-            const render_create_btn = () => {
+            // Pick Lists for this order: null until the fetch lands, [] when
+            // there genuinely are none.
+            //
+            // This row used to be drawn by TWO functions — one for "no pick
+            // lists yet", one inlined in the pick-list fetch — each firing
+            // off its own async call, so whichever landed last decided what
+            // the user saw. Guarding that with a flag stopped the flicker but
+            // created a worse bug: the Subcontract PO button lives only in
+            // the first layout, so the moment ANY Pick List existed it could
+            // never appear at all. One renderer over shared state fixes both
+            // — every button that applies is drawn, whichever call lands
+            // first, and a later arrival simply re-renders with more known.
+            let existing_pls = null;
+            const render_btn_row = () => {
+                const submitted = (frm.doc.docstatus === 1);
                 const dn_names = so_get_all_submitted_dn_names(frm);
-                const pending_rm_count = (frm.doc.docstatus === 1) ? so_collect_pending_rm(frm).length : 0;
-                const pending_fg_count = (frm.doc.docstatus === 1) ? so_collect_pending_fg(frm).length : 0;
-                const spo_ready_count = (frm.doc.docstatus === 1)
-                    ? spo_items.filter(x => x.ready !== false).length : 0;
+                const pending_rm_count = submitted ? so_collect_pending_rm(frm).length : 0;
+                const pending_fg_count = submitted ? so_collect_pending_fg(frm).length : 0;
+                // Counted on ready_qty, not the all-or-nothing `ready` flag:
+                // a line with material for 5 of its 10 outstanding units can
+                // have a real Subcontract PO raised today (see
+                // _rm_ready_for_sco), and hiding the button until every unit
+                // is covered is what made a freshly-purchased RM look like it
+                // had changed nothing.
+                const spo_ready = submitted ? spo_items.filter(x => flt(x.ready_qty) > 0.001) : [];
+
+                const pls = existing_pls || [];
+                const draft_count = pls.filter(x => flt(x.docstatus) === 0).length;
+                const submitted_pls = pls.filter(x => flt(x.docstatus) === 1);
+                // A Pick List already Completed has nothing left to deliver
+                // or invoice — excluded. "Partly Delivered" still has a
+                // remaining un-delivered balance on its line (picked_qty
+                // minus what's already gone out), so it belongs in this
+                // flow too; show_bulk_dn_si_modal and
+                // create_dn_or_si_from_pick_lists both compute that
+                // remainder rather than the full picked_qty, so only the
+                // outstanding balance ever gets mapped into the new DN/SI.
+                // "Open" is this doctype's own core status for "nothing
+                // delivered yet" — there is no "Submitted" option here.
+                const eligible_pls = submitted_pls.filter(x => ['Open', 'Partly Delivered'].includes(x.status || 'Open'));
+                const already_processed_count = submitted_pls.length - eligible_pls.length;
+
+                const unique_draft_dns = new Set();
+                const unique_draft_sis = new Set();
+                if (frm.custom_stock_data) {
+                    Object.values(frm.custom_stock_data).forEach(d => {
+                        (d.row_dns || []).forEach(dn => { if (dn.docstatus === 0) unique_draft_dns.add(dn.parent); });
+                        (d.row_sis || []).forEach(si => { if (si.docstatus === 0) unique_draft_sis.add(si.parent); });
+                    });
+                }
+                const show_dn_btn = eligible_pls.length > 0 && so_route_lock !== 'si';
+
                 $bulk_btn.html(`
-                    <button class="so-btn so-btn--primary" id="btn-create-bulk-picklist" ${!eligible_for_picking ? 'disabled' : ''}
-                            title="${eligible_for_picking ? 'Pick every pickable line' : 'Nothing pickable yet'}">
-                        <i class="fa fa-clipboard"></i> Create Pick List${total_bulk_qty > 0 ? ` · ${Math.floor(total_bulk_qty)}` : ''}
-                    </button>
+                    ${pls.length > 0 ? `
+                        <button class="so-btn so-btn--primary" id="btn-view-picklists">
+                            <i class="fa fa-clipboard"></i> Pick Lists (${pls.length})
+                            ${draft_count ? `<span class="so-chip">${draft_count} draft</span>` : ''}
+                        </button>
+                        ${eligible_for_picking ? `
+                            <button class="so-btn" id="btn-create-bulk-picklist" style="margin-left:6px;"
+                                    title="Pick the remaining qty">
+                                <i class="fa fa-plus"></i> New${total_bulk_qty > 0 ? ` · ${Math.floor(total_bulk_qty)}` : ''}
+                            </button>
+                        ` : ''}
+                    ` : `
+                        <button class="so-btn so-btn--primary" id="btn-create-bulk-picklist" ${!eligible_for_picking ? 'disabled' : ''}
+                                title="${eligible_for_picking ? 'Pick every pickable line' : 'Nothing pickable yet'}">
+                            <i class="fa fa-clipboard"></i> Create Pick List${total_bulk_qty > 0 ? ` · ${Math.floor(total_bulk_qty)}` : ''}
+                        </button>
+                    `}
+                    ${show_dn_btn ? `
+                        <button class="so-btn so-btn--success" id="btn-bulk-create-dn" style="margin-left:6px;"
+                                title="DN from Pick Lists">
+                            <i class="fa fa-truck"></i> Create DN
+                            ${unique_draft_dns.size ? `<span class="so-chip" style="background:var(--so-orange); margin-left:4px;">${unique_draft_dns.size} draft</span>` : ''}
+                        </button>
+                    ` : ''}
+                    ${spo_ready.length > 0 ? `
+                        <button class="so-btn so-btn--primary" id="btn-create-spo-all" style="margin-left:6px;"
+                                title="BOM items whose raw material is on the shelf now — opens the picker with the qty each one can cover">
+                            <i class="fa fa-cogs"></i> Subcontract PO · ${spo_ready.length}
+                        </button>
+                    ` : ''}
                     ${pending_rm_count > 0 ? `
                         <button class="so-btn so-btn--warning" id="btn-create-mr-all-rm" style="margin-left:6px;"
                                 title="Raw materials of the BOM items">
@@ -1414,12 +1562,6 @@ function generate_stock_overview_table(frm, callback) {
                             <i class="fa fa-cube"></i> Finished Item MR · ${pending_fg_count}
                         </button>
                     ` : ''}
-                    ${spo_ready_count > 0 ? `
-                        <button class="so-btn so-btn--primary" id="btn-create-spo-all" style="margin-left:6px;"
-                                title="BOM items whose raw material is in stock now">
-                            <i class="fa fa-cogs"></i> Subcontract PO · ${spo_ready_count}
-                        </button>
-                    ` : ''}
                     ${dn_names.length > 0 ? `
                         <button class="so-btn so-btn--primary" id="btn-create-si-all-dns" style="margin-left:6px;"
                                 title="One SI from all submitted DNs">
@@ -1427,14 +1569,40 @@ function generate_stock_overview_table(frm, callback) {
                         </button>
                     ` : ''}
                 `);
-                if (spo_ready_count > 0) {
-                    $bulk_btn.find('#btn-create-spo-all').on('click', () => {
-                        window.so_show_spo_multi_prompt(frm.doc.name, spo_items);
-                    });
+
+                if (pls.length > 0) {
+                    $bulk_btn.find('#btn-view-picklists').on('click', () => show_so_picklists_modal(frm, pls));
                 }
                 if (eligible_for_picking) {
                     $bulk_btn.find('#btn-create-bulk-picklist').on('click', () => {
                         create_pick_list_for_bulk(frm, bulk_items, total_bulk_qty);
+                    });
+                }
+                if (show_dn_btn) {
+                    $bulk_btn.find('#btn-bulk-create-dn').on('click', () => {
+                        // Fetch what those drafts already contain, so the
+                        // modal can say which rows would be duplicated rather
+                        // than only that a draft exists. A failure here just
+                        // falls back to the id-only warning.
+                        frappe.call({
+                            method: 'erp_dacsinc_custom.order_flow_api.get_draft_dn_si_for_so',
+                            args: { sales_order: frm.doc.name }
+                        }).then(r => {
+                            const dd = (r.message || {}).draft_details || [];
+                            show_bulk_dn_si_modal(frm, eligible_pls, 'Delivery Note', already_processed_count,
+                                Array.from(unique_draft_dns), [], dd);
+                        }).catch(() => {
+                            show_bulk_dn_si_modal(frm, eligible_pls, 'Delivery Note', already_processed_count,
+                                Array.from(unique_draft_dns));
+                        });
+                    });
+                }
+                // No bulk "Create SI from Pick Lists" button by requirement —
+                // the DN route is the only one offered from here; an SI still
+                // comes from a submitted DN (Create SI (All DNs)) or per row.
+                if (spo_ready.length > 0) {
+                    $bulk_btn.find('#btn-create-spo-all').on('click', () => {
+                        window.so_show_spo_multi_prompt(frm.doc.name, spo_items);
                     });
                 }
                 if (pending_rm_count > 0) {
@@ -1458,148 +1626,32 @@ function generate_stock_overview_table(frm, callback) {
             // Fetched rather than derived client-side because the answer
             // depends on allocating one pool of raw material across every
             // competing line (see _rm_ready_for_sco). Re-renders the button
-            // row on arrival; a failure just leaves the button off rather
-            // than blocking the rest of the widget.
+            // row on arrival; a failure just leaves that one button off
+            // rather than blocking the rest of the widget.
             if (frm.doc.docstatus === 1) {
                 frappe.call({
                     method: 'erp_dacsinc_custom.order_flow_api.get_so_bom_items_for_spo',
                     args: { sales_order: frm.doc.name }
                 }).then(r => {
                     spo_items = r.message || [];
-                    if (spo_items.length && !pick_list_branch_rendered) render_create_btn();
-                }).catch(() => { /* button simply stays hidden */ });
+                    render_btn_row();
+                }).catch(() => { /* button simply stays off */ });
             }
 
             // This is the one place that manages picking for the whole order —
             // if Pick Lists already exist (from auto-creation on submit, or an
-            // earlier click here), this button opens them for review instead of
+            // earlier click here), the button opens them for review instead of
             // only ever offering to create another one.
             frappe.call({
                 method: 'erp_dacsinc_custom.order_flow_api.get_pick_lists_for_so',
                 args: { sales_order: frm.doc.name }
             }).then(r => {
-                const existing_pls = r.message || [];
-                if (!existing_pls.length) {
-                    render_create_btn();
-                    if (callback) callback();
-                    return;
-                }
-                pick_list_branch_rendered = true;
-
-                const draft_count = existing_pls.filter(x => flt(x.docstatus) === 0).length;
-                const submitted_pls = existing_pls.filter(x => flt(x.docstatus) === 1);
-                // A Pick List already Completed has nothing left to deliver
-                // or invoice — excluded. "Partly Delivered" still has a
-                // remaining un-delivered balance on its line (picked_qty
-                // minus what's already gone out), so it belongs in this
-                // flow too; show_bulk_dn_si_modal and
-                // create_dn_or_si_from_pick_lists both compute that
-                // remainder rather than the full picked_qty, so only the
-                // outstanding balance ever gets mapped into the new DN/SI.
-                // "Open" is this doctype's own core status for "nothing
-                // delivered yet" — there is no "Submitted" option here.
-                const eligible_pls = submitted_pls.filter(x => ['Open', 'Partly Delivered'].includes(x.status || 'Open'));
-                const already_processed_count = submitted_pls.length - eligible_pls.length;
-
-                const unique_draft_dns = new Set();
-                const unique_draft_sis = new Set();
-                if (frm.custom_stock_data) {
-                    Object.values(frm.custom_stock_data).forEach(d => {
-                        (d.row_dns || []).forEach(dn => {
-                            if (dn.docstatus === 0) unique_draft_dns.add(dn.parent);
-                        });
-                        (d.row_sis || []).forEach(si => {
-                            if (si.docstatus === 0) unique_draft_sis.add(si.parent);
-                        });
-                    });
-                }
-//  ${eligible_pls.length > 0 && so_route_lock !== 'dn' ? `
-//                         <button class="so-btn so-btn--primary" id="btn-bulk-create-si" style="margin-left:6px;"
-//                                 title="SI (Update Stock) from Pick Lists">
-//                             <i class="fa fa-file-text-o"></i> Create SI
-//                             ${unique_draft_sis.size ? `<span class="so-chip" style="background:var(--so-orange); margin-left:4px;">${unique_draft_sis.size} draft</span>` : ''}
-//                         </button>
-//                     ` : ''}
-                const dn_names = so_get_all_submitted_dn_names(frm);
-                const pending_rm_count = (frm.doc.docstatus === 1) ? so_collect_pending_rm(frm).length : 0;
-                const pending_fg_count = (frm.doc.docstatus === 1) ? so_collect_pending_fg(frm).length : 0;
-                $bulk_btn.html(`
-                    <button class="so-btn so-btn--primary" id="btn-view-picklists">
-                        <i class="fa fa-clipboard"></i> Pick Lists (${existing_pls.length})
-                        ${draft_count ? `<span class="so-chip">${draft_count} draft</span>` : ''}
-                    </button>
-                    ${eligible_for_picking ? `
-                        <button class="so-btn" id="btn-create-bulk-picklist" style="margin-left:6px;"
-                                title="Pick the remaining qty">
-                            <i class="fa fa-plus"></i> New${total_bulk_qty > 0 ? ` · ${Math.floor(total_bulk_qty)}` : ''}
-                        </button>
-                    ` : ''}
-                    ${eligible_pls.length > 0 && so_route_lock !== 'si' ? `
-                        <button class="so-btn so-btn--success" id="btn-bulk-create-dn" style="margin-left:6px;"
-                                title="DN from Pick Lists">
-                            <i class="fa fa-truck"></i> Create DN
-                            ${unique_draft_dns.size ? `<span class="so-chip" style="background:var(--so-orange); margin-left:4px;">${unique_draft_dns.size} draft</span>` : ''}
-                        </button>
-                    ` : ''}
-                   
-                   
-                    
-                    ${pending_rm_count > 0 ? `
-                        <button class="so-btn so-btn--warning" id="btn-create-mr-all-rm" style="margin-left:6px;"
-                                title="Raw materials of the BOM items">
-                            <i class="fa fa-flask"></i> Raw Material MR · ${pending_rm_count}
-                        </button>
-                    ` : ''}
-                    ${pending_fg_count > 0 ? `
-                        <button class="so-btn so-btn--warning" id="btn-create-mr-all-fg" style="margin-left:6px;"
-                                title="Items bought, not made">
-                            <i class="fa fa-cube"></i> Finished Item MR · ${pending_fg_count}
-                        </button>
-                    ` : ''}
-                    ${dn_names.length > 0 ? `
-                        <button class="so-btn so-btn--primary" id="btn-create-si-all-dns" style="margin-left:6px;"
-                                title="One SI from all submitted DNs">
-                            <i class="fa fa-file-text-o"></i> Create SI (All DNs)
-                        </button>
-                    ` : ''}
-                `);
-                $bulk_btn.find('#btn-view-picklists').on('click', () => show_so_picklists_modal(frm, existing_pls));
-                if (eligible_for_picking) {
-                    $bulk_btn.find('#btn-create-bulk-picklist').on('click', () => {
-                        create_pick_list_for_bulk(frm, bulk_items, total_bulk_qty);
-                    });
-                }
-                if (eligible_pls.length > 0 && so_route_lock !== 'si') {
-                    $bulk_btn.find('#btn-bulk-create-dn').on('click', () => {
-                        show_bulk_dn_si_modal(frm, eligible_pls, 'Delivery Note', already_processed_count, Array.from(unique_draft_dns));
-                    });
-                }
-                /*
-                // ORIGINAL CODE (commented out as per requirement - no bulk SI from pick list button handler):
-                if (eligible_pls.length > 0 && so_route_lock !== 'dn') {
-                    $bulk_btn.find('#btn-bulk-create-si').on('click', () => {
-                        show_bulk_dn_si_modal(frm, eligible_pls, 'Sales Invoice', already_processed_count, Array.from(unique_draft_sis));
-                    });
-                }
-                */
-                if (pending_rm_count > 0) {
-                    $bulk_btn.find('#btn-create-mr-all-rm').on('click', () => {
-                        so_make_rm_material_request_all(frm);
-                    });
-                }
-                if (pending_fg_count > 0) {
-                    $bulk_btn.find('#btn-create-mr-all-fg').on('click', () => {
-                        so_make_fg_material_request_all(frm);
-                    });
-                }
-                if (dn_names.length > 0) {
-                    $bulk_btn.find('#btn-create-si-all-dns').on('click', () => {
-                        so_make_sales_invoice_from_all_dns(frm);
-                    });
-                }
+                existing_pls = r.message || [];
+                render_btn_row();
                 if (callback) callback();
             }).catch(() => {
-                render_create_btn();
+                existing_pls = [];
+                render_btn_row();
                 if (callback) callback();
             });
         }
@@ -2014,6 +2066,15 @@ function get_rm_breakdown_html(data, so_name, docstatus, pair_key) {
         const in_process_note = (rm_status === 'In Process at Jobber' && still_just_requested > 0.001)
             ? `<div class="so-micro" style="margin-top:2px;">+ ${flt(still_just_requested, 2)} ${esc(uom)} still just requested</div>`
             : '';
+        // Pending MR, Pending PO and At Jobber were three separate columns
+        // that read 0.00 on almost every row — three columns of width spent
+        // saying "nothing on the way". They are one question ("is any of
+        // this already coming?"), so they are one column, itemised only
+        // when a part of it is actually non-zero.
+        const incoming_mr = flt(item.rm_pending_mr_total || 0);
+        const incoming_po = flt(item.rm_pending_so_linked_total || 0);
+        const incoming_jobber = flt(item.rm_transferred_to_sc_total || 0);
+        const incoming_total = incoming_mr + incoming_po + incoming_jobber;
         const rm_name = item.rm_name && item.rm_name !== item.rm_code ? item.rm_name : '';
 
         return `
@@ -2024,26 +2085,26 @@ function get_rm_breakdown_html(data, so_name, docstatus, pair_key) {
                     ${rm_name ? `<div class="so-micro so-truncate" title="${esc(rm_name)}">${esc(rm_name)}</div>` : ''}
                 </td>
                 <td>
-                    <div class="so-micro" style="font-family:monospace;"
+                    <div style="white-space:nowrap;">
+                        <span class="so-val" title="What this row's Shortfall is actually calculated from: Usable Here and anything on the way are subtracted from THIS number, not from the full order total shown below as 'Full order'.">${flt(item.rm_needed_for_shortfall || 0).toFixed(2)}</span>
+                        <span class="so-micro">${esc(uom)}</span>
+                    </div>
+                    <div class="so-micro"
                          title="This order's own finished-good shortfall (qty still to produce, after its stock/picks/MR/PO) × how much of this raw material one unit of the finished good needs.">
                         ${flt(rm.fg_shortfall || 0).toFixed(2)} &times; ${flt(item.rm_qty_per_fg || 0).toFixed(2)}<span style="white-space:nowrap;">/unit</span>
                     </div>
-                    <div style="white-space:nowrap;">
-                        <span class="so-val" title="What this row's Shortfall is actually calculated from: Stock/Pending MR/Pending PO below are subtracted from THIS number, not from the full order total shown as 'Full Order'.">${flt(item.rm_needed_for_shortfall || 0).toFixed(2)}</span>
-                        <span class="so-micro">${esc(uom)}</span>
-                    </div>
                     ${flt(item.rm_required_total || 0).toFixed(2) !== flt(item.rm_needed_for_shortfall || 0).toFixed(2)
-                        ? `<div class="so-micro" title="The full BOM requirement if this order's entire quantity were produced from scratch — this item's own finished-good stock/picks already reduce how much new production (and therefore raw material) is actually needed right now">Full Order: ${flt(item.rm_required_total || 0).toFixed(2)}</div>`
+                        ? `<div class="so-micro" title="The full BOM requirement if this order's entire quantity were produced from scratch — this item's own finished-good stock/picks already reduce how much new production (and therefore raw material) is actually needed right now">Full order: ${flt(item.rm_required_total || 0).toFixed(2)}</div>`
                         : ''}
                 </td>
                 <td>
-                    ${so_qty(flt(item.rm_available_stock || 0).toFixed(2))}
-                    <div class="so-micro" title="Counted at VV Puram - IND only">at VV Puram - IND</div>
+                    ${so_qty(flt(item.rm_available_stock || 0).toFixed(2),
+                             flt(item.rm_available_stock || 0) >= flt(item.rm_needed_for_shortfall || 0) - 0.005 ? 'pos' : 'bad')}
                     ${so_rm_alloc_breakdown(item)}
                     ${(item.rm_stock_breakdown || []).length > 1 || ((item.rm_stock_breakdown || [])[0] || {}).warehouse !== 'VV Puram - IND'
                         ? `<button class="so-btn so-btn--view" style="margin-top:2px;"
                                onclick="show_details_modal('${js_str(pair_key)}','rm_stock_details','${js_str(item.rm_code)}')">
-                               <i class="fa fa-eye"></i> View</button>`
+                               <i class="fa fa-eye"></i> Other warehouses</button>`
                         : ''}
                     ${flt(item.rm_transferred_to_other_so_total || 0) > 0
                         ? `<div class="so-micro" style="color:var(--so-red); margin-top:2px;"
@@ -2051,38 +2112,44 @@ function get_rm_breakdown_html(data, so_name, docstatus, pair_key) {
                                ⚠ ${flt(item.rm_transferred_to_other_so_total, 2).toFixed(2)} outstanding at jobber for other orders</div>`
                         : ''}
                 </td>
-                <td>${so_qty(flt(item.rm_pending_mr_total || 0).toFixed(2))}</td>
-                <td>${so_qty(flt(item.rm_pending_so_linked_total || 0).toFixed(2))}</td>
-                <td title="${flt(item.rm_transferred_to_sc_total || 0) > 0
-                ? 'Sent to the subcontractor\'s warehouse for this order and still outstanding there — not yet consumed into a Subcontracting Receipt, so it still counts as coverage. Once it\'s consumed, it shows up as finished-good stock instead and drops out of this figure.'
-                : ''}">
-                    ${so_qty(flt(item.rm_transferred_to_sc_total || 0).toFixed(2))}
+                <td title="${esc(incoming_total > 0.005 ? 'Already requested, ordered, or sent to a jobber for this order — it counts as coverage, but none of it is on the shelf yet.' : 'Nothing has been requested or ordered for this material yet.')}">
+                    ${incoming_total > 0.005
+                ? `${so_qty(incoming_total.toFixed(2), 'info')}
+                           <div class="so-rm__ledger">
+                               ${incoming_mr > 0.005 ? `<div title="Requested on a Material Request, not yet ordered"><span>On MR</span><span>${incoming_mr.toFixed(2)}</span></div>` : ''}
+                               ${incoming_po > 0.005 ? `<div title="On a Purchase Order, not yet received"><span>On PO</span><span>${incoming_po.toFixed(2)}</span></div>` : ''}
+                               ${incoming_jobber > 0.005 ? `<div title="Sent to the subcontractor's warehouse for this order and still outstanding there — not yet consumed into a Subcontracting Receipt. Once it is, it shows up as finished-good stock instead."><span>At jobber</span><span>${incoming_jobber.toFixed(2)}</span></div>` : ''}
+                           </div>`
+                : `<span class="so-val so-val--zero">—</span>`}
                 </td>
-                <td class="so-meta" style="max-width:210px; word-break:break-word; line-height:1.6;">
+                <td class="so-meta" style="word-break:break-word; line-height:1.6;">
                     ${refs.join('<br>') || '<span class="so-micro">—</span>'}
                 </td>
-                <td>
-                    <span class="so-pill ${status_pill_class}" title="${rm_status === 'In Process at Jobber'
+                <td style="text-align:left;">
+                    <div style="text-align:center;">
+                        <span class="so-pill ${status_pill_class}" title="${rm_status === 'In Process at Jobber'
                 ? 'This raw material has already been sent to the subcontractor for this order — job work has physically started on however much went, so nothing new needs requesting for that portion'
                 : rm_status === 'Requested'
                     ? 'A Material Request or Purchase Order has been raised to cover this, but nothing has arrived (or been sent to a subcontractor) yet'
                 : rm_status === 'Not Required'
                     ? 'This item already has enough stock, so this raw material is not needed right now'
+                : shortfall_qty > 0
+                    ? 'Stock usable by this order, plus anything already on the way, still falls short of what it needs'
                     : ''}">
-                        ${esc(rm_status)}
-                    </span>
+                            ${esc(rm_status)}
+                        </span>
+                    </div>
                     ${in_process_note}
-                </td>
-                <td style="min-width:200px; text-align:left;">
                     ${shortfall_qty > 0
-                ? `<div style="text-align:center; white-space:nowrap;"><span class="so-val so-val--bad">${shortfall_qty.toFixed(2)}</span> <span class="so-micro">${esc(uom)}</span></div>
-                           <div class="so-micro" style="max-width:190px;" title="Once ${shortfall_qty.toFixed(2)} ${esc(uom)} of this raw material is in stock at VV Puram, the FG-level Next Action above will offer a Subcontract PO for the remaining production.">
-                               <i class="fa fa-arrow-down"></i> Request ${shortfall_qty.toFixed(2)} ${esc(uom)} below to unblock a new Subcontract PO
+                ? `<div style="text-align:center; white-space:nowrap; margin-top:6px;">
+                               <span class="so-micro">Short by</span>
+                               <span class="so-val so-val--bad">${shortfall_qty.toFixed(2)}</span> <span class="so-micro">${esc(uom)}</span>
                            </div>
                            ${submitted ? `<button class="so-btn so-btn--primary" style="white-space:normal; text-align:left; max-width:100%;"
+                               title="${esc('Raises a Material Request for ' + shortfall_qty.toFixed(2) + ' ' + uom + '. Once that much is in stock at VV Puram, the finished good above can go out on a Subcontract PO.')}"
                                onclick="so_make_rm_material_request('${js_str(so_name)}','${js_str(item.rm_code)}',${shortfall_qty},'${js_str(uom)}','${js_str(data.warehouse || '')}')">
-                               <i class="fa fa-file-text-o"></i> Material Request</button>` : ''}`
-                : `<div style="text-align:center;"><span class="so-val so-val--zero">—</span></div>`}
+                               <i class="fa fa-file-text-o"></i> Request ${shortfall_qty.toFixed(2)} ${esc(uom)}</button>` : ''}`
+                : ''}
                 </td>
             </tr>`;
     }).join('');
@@ -2146,25 +2213,22 @@ function get_rm_breakdown_html(data, so_name, docstatus, pair_key) {
                                </span>`
             : ''}
                         <span class="so-rm__spacer"></span>
-                        <span class="so-rm__note" title="${esc('Available to This Order is this order\'s own share of the warehouse stock — material bought against another order, or already picked for a delivery, is not counted here even though it is physically present.')}">Coverage = Usable Here + Pending MR + Pending PO + At Jobber</span>
+                        <span class="so-rm__note" title="${esc('Usable Here is this order\'s own share of the warehouse stock — material bought against another order, or already picked for a delivery, is not counted here even though it is physically present. On the Way is whatever is already requested, ordered, or sitting at a jobber for this order.')}">Covered when Usable Here + On the Way &ge; Needed</span>
                     </div>
                     <div class="so-scroll-hint"><i class="fa fa-arrows-h"></i> ${__('Scroll sideways to see every column')}</div>
                     <div class="so-scroll">
                     <table style="table-layout:fixed;">
                         <thead>
                             <tr>
-                                <th style="width:13%;" title="${esc('The raw material this BOM consumes')}">Raw Material</th>
-                                <th style="width:12%;" title="${esc('Quantity this order still needs to produce, at the BOM rate per unit')}">Needed</th>
-                                <th style="width:10%;" title="${esc('Usable Here = this order\'s own share of the stock on hand. Material bought against another Sales Order, or already picked for a delivery, is physically present but not usable by this order.')}">Usable Here</th>
-                                <th style="width:7%;" title="${esc('Requested on a Material Request, not yet ordered')}">Pending MR</th>
-                                <th style="width:7%;" title="${esc('On a Purchase Order, not yet received')}">Pending PO</th>
-                                <th style="width:9%;" title="${esc('Already sent to the subcontractor and not yet consumed')}">At Jobber</th>
-                                <th style="width:11%;" title="${esc('The MR / PO documents behind the figures above')}">References</th>
-                                <th style="width:12%;" title="${esc('Covered means this order can cover the need from its own share plus what is already requested, ordered or at the jobber')}">Status</th>
-                                <th style="width:17%;" title="${esc('How much still has to be sourced before a Subcontract PO can be raised')}">Shortfall</th>
+                                <th style="width:17%;" title="${esc('The raw material this BOM consumes')}">Raw Material</th>
+                                <th style="width:13%;" title="${esc('Quantity this order still needs to produce, at the BOM rate per unit')}">Needed</th>
+                                <th style="width:23%;" title="${esc('Usable Here = this order\'s own share of the stock on hand. Material bought against another Sales Order, already picked for a delivery, or owed to a direct-sale customer is physically present but not usable by this order — open "Why?" on a row to see exactly who has claimed it.')}">Usable Here</th>
+                                <th style="width:12%;" title="${esc('Already requested on an MR, ordered on a PO, or sitting at a jobber for this order — coverage that has not arrived yet')}">On the Way</th>
+                                <th style="width:16%;" title="${esc('The MR / PO documents behind the figures above')}">References</th>
+                                <th style="width:19%;" title="${esc('Whether this order can cover the need, and what to do about it if it cannot')}">Status &amp; Next Step</th>
                             </tr>
                         </thead>
-                        <tbody>${rows || '<tr><td colspan="9" class="so-empty">No Raw Material Data Available.</td></tr>'}</tbody>
+                        <tbody>${rows || '<tr><td colspan="6" class="so-empty">No Raw Material Data Available.</td></tr>'}</tbody>
                     </table>
                     </div>
                 </div>
@@ -3844,7 +3908,14 @@ window.so_show_spo_multi_prompt = function (sales_order, items, on_done) {
 
     const row_html = (it, i) => {
         const uom = it.uom || '';
-        const blocked = (it.ready === false);
+        // Blocked means "no material at all for this line right now" — NOT
+        // "some of it is short". A line with material for 5 of its 10 units
+        // is offered at 5, capped there, with the shortfall spelled out: a
+        // partial subcontract PO is an ordinary thing to raise, and the rest
+        // stays claimable once more material lands.
+        const cap = flt(it.ready_qty !== undefined ? it.ready_qty : (it.ready === false ? 0 : it.qty));
+        const blocked = !(cap > 0.0005);
+        const partial = !blocked && cap < flt(it.qty) - 0.0005;
         // Everything already accounted for on this SO line, so the cap is
         // explainable rather than a number the user has to take on trust.
         const meta = [
@@ -3870,14 +3941,20 @@ window.so_show_spo_multi_prompt = function (sales_order, items, on_done) {
             </div>`;
         }).join('');
 
-        // A blocked line names the material that blocked it right on the row,
-        // so the reason is visible without expanding anything.
+        // A blocked or partly-covered line names the material behind it right
+        // on the row, so the reason is visible without expanding anything.
         const blocked_note = blocked ? `
             <div class="spo-blocked">
                 <i class="fa fa-ban"></i>
-                ${__('Not enough raw material')}${(it.blocked_on || []).length
+                ${__('No raw material available yet')}${(it.blocked_on || []).length
                     ? ' — ' + (it.blocked_on || []).map(esc).join(', ') : ''}
-            </div>` : '';
+            </div>` : (partial ? `
+            <div class="spo-blocked" style="color:var(--so-orange);">
+                <i class="fa fa-exclamation-triangle"></i>
+                ${__('Material on hand covers {0} of {1} — the rest stays claimable later',
+                     [fmt(cap), fmt(it.qty)])}${(it.blocked_on || []).length
+                    ? ' · ' + (it.blocked_on || []).map(esc).join(', ') : ''}
+            </div>` : '');
 
         return `
         <tr data-i="${i}" class="${blocked ? 'spo-row-blocked' : ''}">
@@ -3898,12 +3975,13 @@ window.so_show_spo_multi_prompt = function (sales_order, items, on_done) {
                     </div>
                     <div class="spo-rm" data-i="${i}" style="display:${blocked ? 'block' : 'none'};">${rm}</div>` : ''}
             </td>
-            <td class="spo-r"><span class="spo-cap">${blocked ? '—' : fmt(it.qty)}</span>
-                ${uom && !blocked ? `<div class="spo-sub">${esc(uom)}</div>` : ''}</td>
+            <td class="spo-r"><span class="spo-cap">${blocked ? '—' : fmt(cap)}</span>
+                ${uom && !blocked ? `<div class="spo-sub">${esc(uom)}</div>` : ''}
+                ${partial ? `<div class="spo-sub" title="${esc(__('Still outstanding on this line'))}">${__('of')} ${fmt(it.qty)}</div>` : ''}</td>
             <td class="spo-r">
                 ${blocked ? `<span class="spo-sub">${__('blocked')}</span>` : `
                 <input type="number" class="spo-qty" data-i="${i}"
-                       value="${fmt(it.qty)}" min="0" max="${flt(it.qty)}" step="any">
+                       value="${fmt(cap)}" min="0" max="${flt(cap)}" step="any">
                 <div class="spo-err" data-i="${i}"></div>`}
             </td>
             <td class="spo-wh">${esc(it.warehouse || '')}</td>
@@ -3922,7 +4000,8 @@ window.so_show_spo_multi_prompt = function (sales_order, items, on_done) {
                 const i = $(el).data('i');
                 const it = items[i];
                 const qty = flt(dialog.$wrapper.find(`.spo-qty[data-i="${i}"]`).val());
-                if (!(qty > 0) || qty > flt(it.qty) + 0.0005) { bad = true; return; }
+                const cap = flt(it.ready_qty !== undefined ? it.ready_qty : it.qty);
+                if (!(qty > 0) || qty > cap + 0.0005) { bad = true; return; }
                 chosen.push({ item_code: it.item_code, qty: qty });
             });
             if (bad) {
@@ -4033,7 +4112,7 @@ window.so_show_spo_multi_prompt = function (sales_order, items, on_done) {
         <div class="spo-wrap">
             <div class="spo-note">
                 <i class="fa fa-info-circle" style="margin-top:2px;"></i>
-                <span>${__('Raw material for these items is in stock. Order the full quantity, or lower it to order part now — the rest stays available later.')}</span>
+                <span>${__('Can Make is what the raw material on hand covers right now — the whole line where everything is in stock, a smaller batch where only part of it is. Lower a qty to order less; whatever is left stays claimable once more material arrives.')}</span>
             </div>
             <div class="spo-card">
                 <table class="spo-tbl">
@@ -4060,7 +4139,10 @@ window.so_show_spo_multi_prompt = function (sales_order, items, on_done) {
             const idx = $(el).data('i');
             const $q = $w.find(`.spo-qty[data-i="${idx}"]`);
             const qty = flt($q.val());
-            const cap = flt(items[idx].qty);
+            // Cap on what material actually covers right now, not the full
+            // outstanding qty — see ready_qty in _rm_ready_for_sco.
+            const it = items[idx];
+            const cap = flt(it.ready_qty !== undefined ? it.ready_qty : it.qty);
             const invalid = !(qty > 0) || qty > cap + 0.0005;
             $q.toggleClass('is-bad', invalid);
             $w.find(`.spo-err[data-i="${idx}"]`).text(
@@ -4926,7 +5008,29 @@ function so_shortfall_actions(d, so_nm, ic_arg, pair_key, qty, submitted, allow_
     let status_note = '';
 
     if (rm_blocks_this) {
-        buttons.push(so_cmd_btn(`so_expand_rm_row('${js_str(pair_key)}')`, 'flask', 'View Raw Materials', primary));
+        // The RM block IS the headline for this line — it is why no
+        // Subcontract PO button can appear, and it outranks everything else
+        // the row could say. Name the materials, not just the fact: "RM not
+        // in stock" alone still leaves the reader to go and find out which.
+        const short_rms = ((d.rm_procurement_status || {}).rm_items_status || [])
+            .filter(i => flt(i.rm_shortfall_total || 0) > 0);
+        const names = short_rms.map(i => i.rm_code).filter(Boolean);
+        const shown = names.slice(0, 2).join(', ') + (names.length > 2 ? ` +${names.length - 2} more` : '');
+        status_note = `
+            <div class="so-micro" style="margin-top:4px;color:var(--so-red);font-weight:600;"
+                 title="${esc('A Subcontract PO cannot be raised until this BOM\'s raw material is physically in stock for this order. Request it below, or open the Raw Material Pipeline for the per-material breakdown.')}">
+                <i class="fa fa-flask"></i> RM not in stock${names.length ? ` — ${names.length} material${names.length === 1 ? '' : 's'} short` : ''}
+            </div>
+            ${shown ? `<div class="so-micro so-truncate" title="${esc(names.join(', '))}">${esc(shown)}</div>` : ''}`;
+        // Requesting the missing material is the actual next step — "View
+        // Raw Materials" only navigates to where that decision is made, so
+        // it is the follow-up here, not the headline action.
+        if (submitted && names.length) {
+            buttons.push(so_cmd_btn(`so_make_rm_material_request_all(cur_frm,'${js_str(pair_key)}')`,
+                'flask', 'Request Raw Material', primary));
+        }
+        buttons.push(so_cmd_btn(`so_expand_rm_row('${js_str(pair_key)}')`, 'list-ul', 'View Raw Materials',
+            primary && !(submitted && names.length)));
         if (has_incoming) {
             buttons.push(so_cmd_btn(`show_details_modal('${js_str(pair_key)}','incoming_docs')`, 'eye', 'Track Incoming'));
         }
@@ -5010,6 +5114,7 @@ function so_build_action_html(action_parts) {
     // actions (e.g. "ship what's already picked" + "source the rest of
     // the shortfall"), never a choice between one or the other.
     const parts = [];
+    let tagged = false;   // "Recommended" is emitted at most once per cell
     let i = 0;
     while (i < action_parts.length) {
         if (!is_btn(action_parts[i])) {
@@ -5021,13 +5126,36 @@ function so_build_action_html(action_parts) {
         while (j < action_parts.length && is_btn(action_parts[j])) j++;
         const run = action_parts.slice(i, j);
         if (run.length > 1) {
-            run.forEach((html, k) => {
-                if (k > 0) parts.push(`<span class="so-action__or">${esc(__('or'))}</span>`);
-                if (/so-btn--primary/.test(html)) {
+            // One button per line, each with its own "or" above it, made this
+            // cell three or four times taller than any other in the row —
+            // every other column then sat in a sea of blank space. The
+            // recommended action still gets its own line and its label,
+            // because it is the one to reach for; the alternatives share a
+            // single wrapped row underneath, with one "or" instead of one
+            // per button.
+            const primary_idx = run.findIndex(html => /so-btn--primary/.test(html));
+            const alts = run.filter((_, k) => k !== primary_idx);
+            // "Recommended" labels THE one action to reach for, so it is
+            // emitted once per cell — a second one lower down (this cell can
+            // hold two independent jobs, e.g. ship what's picked AND source
+            // the shortfall) only raises "which of these two is it, then?".
+            const label_primary = primary_idx >= 0 && !tagged;
+            if (primary_idx >= 0) {
+                if (label_primary) {
                     parts.push(`<span class="so-action__tag">${esc(__('Recommended'))}</span>`);
+                    tagged = true;
+                    parts.push(run[primary_idx]);
                 }
-                parts.push(html);
-            });
+            }
+            const row = label_primary ? alts : run;
+            if (row.length) {
+                // One alternative needs no "or" — sitting directly under the
+                // recommended action already reads as the other choice.
+                if (label_primary && row.length > 1) {
+                    parts.push(`<span class="so-action__or">${esc(__('or'))}</span>`);
+                }
+                parts.push(`<div class="so-action__alts">${row.join('')}</div>`);
+            }
         } else {
             parts.push(run[0]);
         }
@@ -5086,42 +5214,76 @@ function so_short(name) {
 }
 
 /**
- * Where the "Usable Here" figure comes from, as labelled figures rather than
- * a run-on line — each part named, values right-aligned so they can be read
- * down the column. Only the parts that exist are listed, so a raw material
- * nobody else has a claim on stays a single "On hand" row.
+ * Explains the "Usable Here" figure: one plain-language line stating why,
+ * plus the full claim ledger behind a closed disclosure.
  *
- * Usable Here = Yours + Unused. Picked and Held are shown because they
- * explain the gap between that and what is physically on the shelf.
+ * Usable Here = Yours + Unused — this order's own share. It is NOT
+ * "on hand minus the claims below": the same physical stock is routinely
+ * claimed by more orders than it can satisfy (502 on hand against 674 of
+ * claims is normal here), so printing on-hand and the deductions as a flat
+ * stack made the cell look like broken arithmetic. When the claims do
+ * exceed what is on hand, that over-commitment is stated outright rather
+ * than left for the reader to try (and fail) to reconcile.
  */
 function so_rm_alloc_breakdown(item) {
-    const total  = flt(item.rm_total_stock || 0);
-    const usable = flt(item.rm_available_stock || 0);
-    if (total <= usable + 0.005 && !Object.keys(item.rm_held_by || {}).length) return '';
-
+    const on_hand = flt(item.rm_total_stock || 0);
+    const usable  = flt(item.rm_available_stock || 0);
+    const picked  = flt(item.rm_picked_elsewhere || 0);
+    const sold    = flt(item.rm_sell_committed || 0);
     const held_map = item.rm_held_by || {};
-    const held_total = Object.keys(held_map).reduce((t, so) => t + flt(held_map[so]), 0);
-    const held_title = Object.keys(held_map)
-        .map(so => `${so} (${flt(held_map[so], 2).toFixed(2)})`).join(', ');
+    const held_orders = Object.keys(held_map);
+    const held_total = held_orders.reduce((t, so) => t + flt(held_map[so]), 0);
+    const held_title = held_orders.map(so => `${so} (${flt(held_map[so], 2).toFixed(2)})`).join(', ');
+    const claimed = picked + sold + held_total;
+
+    const on_hand_txt = `${on_hand.toFixed(2)} ${esc(item.rm_uom || '')}`.trim();
+
+    // Nobody else has a claim — there is nothing to explain, so don't make
+    // the reader open a disclosure to find that out.
+    if (claimed < 0.005 && on_hand <= usable + 0.005) {
+        return `<div class="so-micro" title="${esc('Counted at VV Puram - IND only')}">
+                    ${on_hand > 0.005 ? `On hand ${on_hand_txt}` : 'Nothing on hand'} · VV Puram
+                </div>`;
+    }
+
+    const summary = usable < 0.005
+        ? `On hand ${on_hand_txt} — <b>none free for this order</b>`
+        : `On hand ${on_hand_txt} — the rest is claimed elsewhere`;
 
     const line = (label, val, opts) => {
         const o = opts || {};
         if (!o.always && Math.abs(flt(val)) < 0.005) return '';
-        return `<div style="display:flex;justify-content:space-between;gap:8px;${o.style || ''}"
+        return `<div class="${o.cls || ''}" style="${o.style || ''}"
                      ${o.title ? `title="${esc(o.title)}"` : ''}>
                     <span>${label}</span><span>${flt(val, 2).toFixed(2)}</span>
                 </div>`;
     };
 
+    const over_claimed = claimed - on_hand;
+
     return `
-        <div class="so-micro" style="margin-top:4px;padding-top:4px;border-top:1px solid var(--border-color,#e2e6e9);line-height:1.5;">
-            ${line('On hand', total, {always: true, title: 'Physically in this warehouse, whoever it belongs to'})}
-            ${line('Yours', item.rm_own_earmark, {title: 'Bought against this Sales Order'})}
-            ${line('Unused', item.rm_free_stock, {title: 'Not tied to any order — shareable'})}
-            ${line('Picked', item.rm_picked_elsewhere, {title: 'Already picked for a delivery, so no longer available as raw material'})}
-            ${line('Owed to customers', item.rm_sell_committed, {style: 'color:var(--so-red);', title: 'This item is also sold directly. Quantity promised on Sales Order lines that have not shipped yet cannot also be consumed by a BOM.'})}
-            ${line('Held by others', held_total, {style: 'color:var(--so-red);', title: 'Bought against ' + held_title + '. It stays theirs until their own production uses it.'})}
-        </div>`;
+        <div class="so-micro" style="color:${usable < 0.005 ? 'var(--so-red)' : 'inherit'};">${summary}</div>
+        <details class="so-rm__why">
+            <summary>${__('Why?')}</summary>
+            <div class="so-rm__ledger">
+                ${line('On hand here', on_hand, {always: true, title: 'Physically in VV Puram - IND, whoever it belongs to'})}
+                ${line('Picked for delivery', picked, {title: 'Already picked for a delivery, so no longer available as raw material'})}
+                ${line('Owed to customers', sold, {style: 'color:var(--so-red);', title: 'This item is also sold directly. Quantity promised on Sales Order lines that have not shipped yet cannot also be consumed by a BOM.'})}
+                ${line(`Held by ${held_orders.length} other order${held_orders.length === 1 ? '' : 's'}`, held_total,
+                       {style: 'color:var(--so-red);', title: 'Bought against ' + held_title + '. It stays theirs until their own production uses it.'})}
+                ${line('Yours', item.rm_own_earmark, {style: 'color:var(--so-green);', title: 'Bought against this Sales Order'})}
+                ${line('Unused — shareable', item.rm_free_stock, {style: 'color:var(--so-green);', title: 'Not tied to any order, so this order may use it'})}
+                ${line('Usable here', usable, {always: true, cls: 'is-total',
+                       title: 'Yours + Unused. This is what this order may actually consume.'})}
+            </div>
+            ${over_claimed > 0.005
+                ? `<div class="so-micro" style="margin-top:6px;color:var(--so-red);text-align:left;"
+                        title="${esc('More has been promised out of this material than is physically here, across all orders. The figures above therefore will not sum to the quantity on hand — that is the over-commitment, not a calculation error.')}">
+                       <i class="fa fa-exclamation-triangle"></i>
+                       ${__('Over-committed by {0} — more is promised than is on hand.', [over_claimed.toFixed(2)])}
+                   </div>`
+                : ''}
+        </details>`;
 }
 
 
@@ -5176,9 +5338,44 @@ function so_buy_btn(d, so_name_arg, item_arg, qty, primary, pair_key) {
         return note + so_cmd_btn(`so_make_rm_material_request_all(cur_frm,'${js_str(pair_key || '')}')`,
             'flask', 'Request Raw Material', primary);
     }
-    return so_cmd_btn(`so_make_subcontract_po('${so_name_arg}','${item_arg}',${flt(qty)})`,
+    // Opens the same multi-item picker the header button uses, rather than
+    // creating a PO for this one line straight away. A subcontract PO almost
+    // always wants every BOM item that is ready right now on the one
+    // document (one supplier, one delivery), and the picker is also where
+    // the qty can be dialled down — a per-row "create it now" button decided
+    // both of those silently, for one item, with no way to review either.
+    return so_cmd_btn(`so_open_spo_prompt('${so_name_arg}')`,
         'cogs', 'Subcontract PO', primary);
 }
+
+/**
+ * Fetches this order's pending BOM lines and opens the Subcontract PO
+ * picker. Always a fresh fetch: raw material moves (another order's PO, a
+ * pick) between rendering the row and clicking it, and the qty each line can
+ * actually cover is allocation-dependent — see _rm_ready_for_sco.
+ *
+ * Exposed on window because the button is an inline onclick, and because the
+ * Order Flow dashboard renders this same widget.
+ */
+window.so_open_spo_prompt = function (sales_order) {
+    frappe.call({
+        method: 'erp_dacsinc_custom.order_flow_api.get_so_bom_items_for_spo',
+        args: { sales_order: sales_order },
+        freeze: true,
+        freeze_message: __('Checking raw material…')
+    }).then(r => {
+        const items = r.message || [];
+        if (!items.length) {
+            frappe.msgprint({
+                title: __('Nothing to subcontract'),
+                message: __('No BOM item on this order still has quantity left to make.'),
+                indicator: 'orange'
+            });
+            return;
+        }
+        window.so_show_spo_multi_prompt(sales_order, items);
+    });
+};
 
 // Map an ERPNext document status onto the pill palette.
 function so_doc_status(status) {
@@ -5251,6 +5448,13 @@ function get_cached_stock_row(pair_key) {
 
 
 function show_bulk_dn_si_modal(frm, submitted_pls, doctype, already_processed_count, existing_drafts) {
+    // arguments[5] = deferred Pick Lists, arguments[6] = what the existing
+    // drafts already contain. Captured here, before the Pick-List picker's
+    // early return, so both survive the re-entry below and neither depends
+    // on `arguments` resolving correctly from inside a callback.
+    const deferred_arg = arguments[5] || [];
+    const draft_details = arguments[6] || [];
+
     // Where more than one Pick List still has qty to ship, choosing WHICH of
     // them this document covers comes first — the same select-your-sources
     // step every other create-from action uses. Without it this button
@@ -5282,7 +5486,8 @@ function show_bulk_dn_si_modal(frm, submitted_pls, doctype, already_processed_co
                 // this branch running a second time on the same click.
                 show_bulk_dn_si_modal._picked = true;
                 try {
-                    show_bulk_dn_si_modal(frm, chosen, doctype, already_processed_count, existing_drafts, deferred);
+                    show_bulk_dn_si_modal(frm, chosen, doctype, already_processed_count,
+                        existing_drafts, deferred, draft_details);
                 } finally {
                     show_bulk_dn_si_modal._picked = false;
                 }
@@ -5290,7 +5495,13 @@ function show_bulk_dn_si_modal(frm, submitted_pls, doctype, already_processed_co
         });
         return;
     }
-    const deferred_pls = arguments[5] || [];
+    // What each existing draft already covers, item by item (draft_details,
+    // captured at the top). The id alone cannot answer the only question
+    // worth asking here — "is the thing I am about to create the same as the
+    // one I already have?" — which is exactly how two identical drafts got
+    // raised for the same pick (DN-26-00035 / DN-26-00036). Optional: a
+    // caller with no details just gets the plain id list it always showed.
+    const deferred_pls = deferred_arg;
     // This dialog can be opened straight from the dashboard's top-level
     // "Create DN / SI" action (order_flow.js), with no Sales Order widget
     // ever rendered on the page first — so the shared .so-* stylesheet
@@ -5338,9 +5549,43 @@ function show_bulk_dn_si_modal(frm, submitted_pls, doctype, already_processed_co
         return;
     }
 
-    const rows_html = Object.values(grouped).map(g => `
+    // Which of the rows about to be created are ALREADY on a draft. The
+    // server refuses outright when a draft covers the lot
+    // (create_dn_or_si_from_pick_lists), and nets off the overlap when it
+    // covers only part — this says so up front, on the row itself, instead
+    // of letting the user press the button to find out.
+    const on_draft_by_item = {};
+    draft_details.forEach(dd => (dd.items || []).forEach(it => {
+        const e = on_draft_by_item[it.item_code] || (on_draft_by_item[it.item_code] = { qty: 0, docs: [] });
+        e.qty += flt(it.qty);
+        if (e.docs.indexOf(dd.name) === -1) e.docs.push(dd.name);
+    }));
+
+    // Every row already sitting on a draft = pressing Create would build a
+    // second document for stock the first one already covers. The server
+    // refuses that outright (create_dn_or_si_from_pick_lists), but an error
+    // AFTER the click is the wrong place to learn it — the prompt is where
+    // the duplicate belongs, named and quantified, with the existing
+    // document offered instead of a Create button that cannot work.
+    const grouped_rows = Object.values(grouped);
+    const dup_rows = grouped_rows.filter(g => {
+        const e = on_draft_by_item[g.item_code];
+        return e && flt(e.qty) >= flt(g.qty) - 0.0001;
+    });
+    const all_duplicate = grouped_rows.length > 0 && dup_rows.length === grouped_rows.length;
+    const dup_doc_names = [...new Set(dup_rows.flatMap(g => (on_draft_by_item[g.item_code] || {}).docs || []))];
+
+    const rows_html = grouped_rows.map(g => `
         <tr>
-            <td><b>${esc(g.item_code)}</b></td>
+            <td><b>${esc(g.item_code)}</b>
+                ${on_draft_by_item[g.item_code] ? `
+                    <div class="so-micro" style="color:var(--so-red);font-weight:600;margin-top:2px;"
+                         title="${esc(__('Already mapped on an existing draft — creating this again would deliver the same stock twice. The server nets this off, and refuses outright when the draft already covers everything.'))}">
+                        <i class="fa fa-exclamation-triangle"></i>
+                        ${__('{0} already on {1}', [flt(on_draft_by_item[g.item_code].qty),
+                                                    on_draft_by_item[g.item_code].docs.join(', ')])}
+                    </div>` : ''}
+            </td>
             <td>${esc(g.warehouse || '—')}</td>
             <td>${so_qty(g.qty)}</td>
             <td class="so-meta">${Array.from(g.pick_lists).map(name =>
@@ -5351,6 +5596,23 @@ function show_bulk_dn_si_modal(frm, submitted_pls, doctype, already_processed_co
 
     const body_html = `
         <div class="so-modal">
+            ${all_duplicate ? `
+                <div class="so-alert so-alert--danger" style="border-left:3px solid var(--so-red);">
+                    <div class="so-alert__icon" style="color:var(--so-red);"><i class="fa fa-ban"></i></div>
+                    <div class="so-alert__body">
+                        <div class="so-alert__title" style="color:var(--so-red);">${__('This would be a duplicate {0}', [doctype])}</div>
+                        <div class="so-alert__text">${__('Every item below is already on {0} for this order, for the same quantity. Creating another would deliver the same stock twice — open the existing document and submit it instead.',
+                            [dup_doc_names.map(esc).join(', ') || __('an existing draft')])}</div>
+                        <div class="so-alert__actions">
+                            ${dup_doc_names.map(name => `
+                                <a class="so-draft-link" href="/app/${route_doctype}/${encodeURIComponent(name)}" target="_blank">
+                                    <i class="fa fa-external-link"></i> ${esc(name)}
+                                </a>
+                            `).join('')}
+                        </div>
+                    </div>
+                </div>
+            ` : ''}
             ${existing_drafts.length ? `
                 <div class="so-alert so-alert--warning">
                     <div class="so-alert__icon"><i class="fa fa-exclamation-triangle"></i></div>
@@ -5364,6 +5626,16 @@ function show_bulk_dn_si_modal(frm, submitted_pls, doctype, already_processed_co
                                 </a>
                             `).join('')}
                         </div>
+                        ${draft_details.length ? `
+                            <div class="so-micro" style="margin-top:8px;">
+                                ${draft_details.map(dd => `
+                                    <div style="margin-top:3px;">
+                                        <b>${esc(dd.name)}</b>${__(' already has')}:
+                                        ${(dd.items || []).map(it =>
+                                            `<span class="so-chip" style="background:var(--so-orange);color:#fff;margin-left:4px;">${esc(it.item_code)} ${flt(it.qty)} ${esc(it.uom || '')}</span>`
+                                        ).join('')}
+                                    </div>`).join('')}
+                            </div>` : ''}
                     </div>
                 </div>
             ` : ''}
@@ -5423,13 +5695,25 @@ function show_bulk_dn_si_modal(frm, submitted_pls, doctype, already_processed_co
     `;
 
     const dialog = new frappe.ui.Dialog({
-        title: __(`Create ${doctype}`),
+        title: all_duplicate ? __('{0} already exists', [doctype]) : __(`Create ${doctype}`),
         size: 'large',
         fields: [
             { fieldtype: 'HTML', fieldname: 'content' }
         ],
-        primary_action_label: __(`Create ${doctype}`),
+        // Nothing left to create — the only useful button is the one that
+        // opens what already exists. Offering "Create" here would only lead
+        // to the server's refusal.
+        primary_action_label: all_duplicate
+            ? __('Open {0}', [dup_doc_names[0] || doctype])
+            : __(`Create ${doctype}`),
         primary_action: () => {
+            if (all_duplicate) {
+                dialog.hide();
+                if (dup_doc_names[0]) {
+                    window.open(frappe.utils.get_form_link(doctype, dup_doc_names[0]), '_blank');
+                }
+                return;
+            }
             dialog.hide();
             const confirm_msg = existing_drafts.length
                 ? __('A draft <b>{0}</b> ({1}) already exists for this order. Create ANOTHER one for customer <b>{2}</b> anyway?',
@@ -5477,6 +5761,9 @@ window.create_pick_list_for_bulk = create_pick_list_for_bulk;
 window.show_details_modal = show_details_modal;
 window.show_picked_others_details_modal = show_picked_others_details_modal;
 window.show_bulk_dn_si_modal = show_bulk_dn_si_modal;
+// The Order Flow dashboard's "Submit Pick List" action opens this same
+// review-and-submit table rather than redirecting to the Pick List form.
+window.show_so_picklists_modal = show_so_picklists_modal;
 // Used by the Order Flow dashboard too (it frappe.require()s this file), so
 // its create-from actions get the same select-your-sources step and the same
 // detailed preview instead of a second, thinner implementation of both.
