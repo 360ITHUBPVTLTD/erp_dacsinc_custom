@@ -103,6 +103,11 @@ frappe.ui.form.on('Material Request Item', {
     items_remove: function (frm) { if (window.so_qty_cap) window.so_qty_cap.refresh(frm); },
     qty: function (frm) { if (window.so_qty_cap) window.so_qty_cap.refresh(frm); },
     sales_order_item: function (frm) { if (window.so_qty_cap) window.so_qty_cap.refresh(frm); },
+    // A raw-material row is capped by its Sales Order's RM shortfall (see
+    // so_qty_cap.rm_note), so the note follows these too.
+    sales_order: function (frm) { if (window.so_qty_cap) window.so_qty_cap.refresh(frm); },
+    item_code: function (frm) { if (window.so_qty_cap) window.so_qty_cap.refresh(frm); },
+    custom_procurement_purpose: function (frm) { if (window.so_qty_cap) window.so_qty_cap.refresh(frm); },
 });
 
 
@@ -276,9 +281,10 @@ function render_fulfillment_dialog(frm, data) {
     // the live recalculation on checkbox toggle (see chk-rm-order below)
     // produce byte-identical markup — otherwise the two were free to drift,
     // e.g. one hiding a zero row the other didn't.
-    const render_coverage_breakdown = (need, stock, mr, po, shortage) => `
+    const render_coverage_breakdown = (need, stock, mr, po, shortage, jobber = 0) => `
         <table style="width:100%; font-size:11px; border-collapse:collapse; line-height:1.4;">
             <tr><td style="color:#475569;">Total Needed</td><td class="text-right font-weight-bold rm-need-val">${need.toFixed(2)}</td></tr>
+            ${jobber > 0 ? `<tr><td style="color:#7c3aed;">&minus; Already at Jobber</td><td class="text-right" style="color:#7c3aed;">${jobber.toFixed(2)}</td></tr>` : ''}
             ${stock > 0 ? `<tr><td style="color:#059669;">&minus; In Stock</td><td class="text-right" style="color:#059669;">${stock.toFixed(2)}</td></tr>` : ''}
             ${mr > 0 ? `<tr><td style="color:#d97706;">&minus; Pending MR</td><td class="text-right rm-mr-val" style="color:#d97706;">${mr.toFixed(2)}</td></tr>` : ''}
             ${po > 0 ? `<tr><td style="color:#2563eb;">&minus; Pending PO</td><td class="text-right rm-po-val" style="color:#2563eb;">${po.toFixed(2)}</td></tr>` : ''}
@@ -310,7 +316,10 @@ function render_fulfillment_dialog(frm, data) {
             <td class="text-center p-2"><input type="checkbox" class="chk-rm" data-idx="${i}" ${rm.final_shortage <= 0 ? 'disabled' : ''}></td>
             <td class="p-2">
                 <b style="color:#111827;">${link('Item', rm.item_code)}</b><br>
-                <small style="color:#059669; font-weight:700;" title="Shared across every order that needs this material — not reserved for any one of them. Requesting or consuming it here reduces what's left for all of them, not just the ones checked below.">Stock: ${(Number(rm.available) || 0).toFixed(2)}</small>
+                <small style="color:#059669; font-weight:700;" title="Stock the listed orders may use: each order's own reserved raw material plus unclaimed stock — the same figure as each Sales Order's RM table. Orders already fully covered are not listed.">In stock for these orders: ${(Number(rm.available) || 0).toFixed(2)}</small>
+                ${Object.keys(rm.reserved_for_others || {}).length
+                    ? `<br><small style="color:#b91c1c;" title="${frappe.utils.escape_html('On the shelf but reserved for: ' + Object.entries(rm.reserved_for_others).map(([so, q]) => so + ' (' + q + ')').join(', ') + ' — not usable for the orders listed here.')}"><i class="fa fa-lock"></i> ${Object.values(rm.reserved_for_others).reduce((a, q) => a + (Number(q) || 0), 0).toFixed(2)} reserved for other orders</small>`
+                    : ''}
                 ${(Number(rm.sent_to_jobber_qty) || 0) > 0
                     ? `<br><small style="color:#d62222; font-weight:700;" title="This much of this raw material is currently outstanding at a subcontractor (sent but not yet consumed into finished goods) across every Sales Order that shares it — a shared batch purchase, once partly committed to subcontracting elsewhere, is why Stock reads lower than the full purchase would suggest.">⚠ ${(Number(rm.sent_to_jobber_qty) || 0).toFixed(2)} outstanding at jobber</small>`
                     : ''}
@@ -332,6 +341,9 @@ function render_fulfillment_dialog(frm, data) {
                                     ${(Number(o.fg_covered) || 0) > 0 ? `<div title="This order's own finished-good qty ordered, minus what's already covered by its own stock/picks/MR/PO — the remainder is what still needs producing, and only THAT drives raw material demand.">
                                         Ordered ${(Number(o.fg_order_qty) || 0).toFixed(2)} &minus; ${(Number(o.fg_covered) || 0).toFixed(2)} already covered = ${(Number(o.fg_qty) || 0).toFixed(2)} to produce</div>` : ''}
                                     <span title="${o.fg_item_code || ''}: qty-to-make &times; BOM qty per unit">${(Number(o.fg_qty) || 0).toFixed(2)} &times; ${(Number(o.bom_qty_per_unit) || 0).toFixed(2)}/unit = ${(Number(o.qty) || 0).toFixed(2)}</span>
+                                    ${(Number(o.so_stock_qty) || 0) > 0 || (Number(o.so_mr_qty) || 0) > 0 || (Number(o.so_po_qty) || 0) > 0
+                                        ? `<div title="This order's own stock, MR and PO for this raw material">&minus; own stock ${(Number(o.so_stock_qty) || 0).toFixed(2)}${(Number(o.so_mr_qty) || 0) > 0 ? ` &minus; MR ${(Number(o.so_mr_qty)).toFixed(2)}` : ''}${(Number(o.so_po_qty) || 0) > 0 ? ` &minus; PO ${(Number(o.so_po_qty)).toFixed(2)}` : ''} = <b style="color:#b91c1c;">${(Number(o.net_qty) || 0).toFixed(2)} to request</b></div>`
+                                        : `<div><b style="color:#b91c1c;">${(Number(o.net_qty) || 0).toFixed(2)} to request</b></div>`}
                                 </div>` : ''}
                             </div>
                         </div>`).join('')}
@@ -340,7 +352,7 @@ function render_fulfillment_dialog(frm, data) {
             <td class="p-2">${format_mr_po_links(rm.item_code, rm.mr_links, rm.po_links)}</td>
             <td class="p-2 rm-coverage-cell">${render_coverage_breakdown(
                 rm.qty_needed, Number(rm.available) || 0, Number(rm.open_supply_qty) || 0,
-                Number(rm.po_supply_qty) || 0, rm.final_shortage)}</td>
+                Number(rm.po_supply_qty) || 0, rm.final_shortage, Number(rm.jobber_qty) || 0)}</td>
             <td class="p-2 text-center" style="background:#ecfdf5;"><input type="number" min="0" class="form-control form-control-sm text-center qty-rm font-weight-bold" style="border:0; background:transparent;" value="${rm.final_shortage.toFixed(2)}"></td>
         </tr>`;
     });
@@ -398,15 +410,18 @@ function render_fulfillment_dialog(frm, data) {
         $tr.find('.rm-orders-checked-count').text(included.size);
 
         const new_need = checked_orders.reduce((sum, o) => sum + (Number(o.qty) || 0), 0);
-        const stock = Number(rm.available) || 0;
+        // Each order brings only its OWN stock (see so_stock_qty) — never
+        // another order's reserved raw material.
+        const stock = checked_orders.reduce((sum, o) => sum + (Number(o.so_stock_qty) || 0), 0);
         const new_mr = (Number(rm.general_mr_qty) || 0)
             + checked_orders.reduce((sum, o) => sum + (Number(o.so_mr_qty) || 0), 0);
         const new_po = (Number(rm.general_po_qty) || 0)
             + checked_orders.reduce((sum, o) => sum + (Number(o.so_po_qty) || 0), 0);
 
-        const new_shortage = Math.max(0, new_need - stock - new_mr - new_po);
+        const jobber = checked_orders.reduce((sum, o) => sum + (Number(o.so_jobber_qty) || 0), 0);
+        const new_shortage = Math.max(0, new_need - jobber - stock - new_mr - new_po);
 
-        $tr.find('.rm-coverage-cell').html(render_coverage_breakdown(new_need, stock, new_mr, new_po, new_shortage));
+        $tr.find('.rm-coverage-cell').html(render_coverage_breakdown(new_need, stock, new_mr, new_po, new_shortage, jobber));
         $tr.find('.qty-rm').val(new_shortage.toFixed(2));
 
         // Nothing left to request once every linked order is excluded (or
@@ -455,7 +470,10 @@ function process_submission(d, frm, data) {
         let included = new Set();
         $tr.find('.chk-rm-order:checked').each(function() { included.add($(this).data('so')); });
         let orders = (rm.linked_orders || []).filter(o => included.has(o.name));
-        let total_need = orders.reduce((s, o) => s + (o.qty || 0), 0);
+        // Split by what each order still NEEDS (after its own stock/MR/PO),
+        // not by its gross BOM share.
+        const need_of = (o) => (o.net_qty != null ? Number(o.net_qty) : Number(o.qty)) || 0;
+        let total_need = orders.reduce((s, o) => s + need_of(o), 0);
 
         if (!orders.length || total_need <= 0) {
             // No traceable per-order share — fall back to one untracked row
@@ -466,7 +484,7 @@ function process_submission(d, frm, data) {
         }
 
         orders.forEach(o => {
-            let share_qty = q * ((o.qty || 0) / total_need);
+            let share_qty = q * (need_of(o) / total_need);
             if (share_qty <= 0) return;
             to_be_added.push({
                 item_code: rm.item_code, qty: share_qty, warehouse: rm.warehouse, uom: rm.uom,

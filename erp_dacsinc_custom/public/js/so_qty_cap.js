@@ -31,9 +31,69 @@ window.so_qty_cap = {
 		if (frm.doc.docstatus !== 0) { frm.set_intro(''); return; }
 		const linked = [...new Set((frm.doc.items || [])
 			.map(it => it.sales_order_item).filter(Boolean))];
-		if (!linked.length) { frm.set_intro(''); return; }
+		const rm_rows = window.so_qty_cap.rm_rows(frm);
+		if (!linked.length && !rm_rows.length) { frm.set_intro(''); return; }
 
-		frappe.call({
+		Promise.all([
+			linked.length ? window.so_qty_cap.fg_note(frm, linked) : Promise.resolve(null),
+			rm_rows.length ? window.so_qty_cap.rm_note(frm, rm_rows) : Promise.resolve(null),
+		]).then(parts => {
+			parts = parts.filter(Boolean);
+			frm.set_intro('');
+			if (!parts.length) return;
+			const html = parts.map(p => p.html).join(' &nbsp;|&nbsp; ');
+			frm.set_intro(html, parts.some(p => p.full) ? 'orange' : 'blue');
+		});
+	},
+
+	// Material Request rows asking for RAW MATERIAL against a Sales Order —
+	// Sales Order set, and marked Raw Material (or, not yet saved, simply not
+	// tied to a line the order sells). Capped by the order's own raw-material
+	// shortfall: guard_mr_rm_not_over_so_shortfall is the enforcement, this is
+	// the note that shows the limit before the save refuses it.
+	rm_rows: function (frm) {
+		if (frm.doc.doctype !== 'Material Request') return [];
+		return (frm.doc.items || []).filter(it => it.sales_order && it.item_code
+			&& (it.custom_procurement_purpose === 'Raw Material'
+				|| (!it.custom_procurement_purpose && !it.sales_order_item)));
+	},
+
+	rm_note: function (frm, rm_rows) {
+		const pairs = [];
+		const on_this_doc = {};
+		rm_rows.forEach(it => {
+			const key = `${it.sales_order}||${it.item_code}`;
+			if (!(key in on_this_doc)) pairs.push({ sales_order: it.sales_order, item_code: it.item_code });
+			on_this_doc[key] = flt(on_this_doc[key]) + flt(it.qty);
+		});
+		return frappe.call({
+			method: 'erp_dacsinc_custom.custom_script.get_so_rm_allowances',
+			args: { rows: JSON.stringify(pairs), exclude_name: frm.doc.name || '' },
+		}).then(r => {
+			const map = (r && r.message) || {};
+			const rows = Object.keys(on_this_doc).filter(k => map[k]).map(k => {
+				const info = map[k];
+				const used = flt(on_this_doc[k]);
+				return { info, used, left: Math.max(0, flt(info.allowed) - used) };
+			});
+			if (!rows.length) return null;
+			const esc = frappe.utils.escape_html;
+			const html = rows.slice(0, 2).map(x => {
+				const bits = [__('RM needed {0}', [flt(x.info.need)])];
+				if (flt(x.info.covered) > 0.001) bits.push(__('covered {0}', [flt(x.info.covered)]));
+				if (x.used > 0.001) bits.push(__('this one {0}', [x.used]));
+				bits.push(`<b>${__('left {0}', [x.left > 0.001 ? x.left : 0])}</b>`);
+				return `<span title="${esc(__('Raw material for {0}: what its BOM lines still need, less usable stock, open POs, other Material Requests (drafts included) and material at the jobber.', [x.info.sales_order]))}">`
+					+ `${esc(x.info.item_code)} (${esc(x.info.sales_order)}) — ${bits.join(' · ')}</span>`;
+			}).join(' &nbsp;|&nbsp; ') + (rows.length > 2 ? ` &nbsp;|&nbsp; +${rows.length - 2} ${__('more')}` : '');
+			return { html, full: rows.some(x => flt(x.used) > flt(x.info.allowed) + 0.01 || x.left <= 0.001) };
+		});
+	},
+
+	// The Sales Order LINE cap (rows carrying sales_order_item) — the original
+	// note, unchanged in what it counts; see set_intro's history above.
+	fg_note: function (frm, linked) {
+		return frappe.call({
 			method: 'erp_dacsinc_custom.custom_script.get_so_item_commitments',
 			args: {
 				sales_order_items: JSON.stringify(linked),
@@ -42,7 +102,7 @@ window.so_qty_cap = {
 			},
 		}).then(r => {
 			const map = (r && r.message) || {};
-			if (!linked.some(soi => map[soi])) { frm.set_intro(''); return; }
+			if (!linked.some(soi => map[soi])) return null;
 
 			// The figure from the server EXCLUDES this document, so it is the
 			// line's allowance, not what is still free to type here. Whatever
@@ -118,11 +178,10 @@ window.so_qty_cap = {
 			}).join('\n');
 
 			const all_full = rows.every(x => x.left <= 0.001);
-			frm.set_intro('');
-			frm.set_intro(
-				`<span title="${frappe.utils.escape_html(detail)}">${brief}</span>`,
-				all_full ? 'orange' : 'blue'
-			);
+			return {
+				html: `<span title="${frappe.utils.escape_html(detail)}">${brief}</span>`,
+				full: all_full,
+			};
 		});
 	},
 };

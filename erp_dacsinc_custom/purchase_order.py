@@ -190,10 +190,14 @@ def _get_pick_list_reserved_qty(sales_order, item_code):
 import frappe
 import json
 from frappe.utils import flt, cint
-from erp_dacsinc_custom.custom_script import check_bom_raw_materials_in_stock
+from erp_dacsinc_custom.custom_script import (
+    check_bom_raw_materials_in_stock, check_bom_rm_for_so, rm_held_warning, rm_not_available_text,
+    RM_COVERED, RM_SHORT, RM_HELD)
 
 @frappe.whitelist()
-def validate_and_get_items_for_po(selected_items, is_subcontracted=0):
+def validate_and_get_items_for_po(selected_items, is_subcontracted=0, allow_held=0):
+    # allow_held is accepted only so an old cached browser tab doesn't crash;
+    # it is ignored — RM reserved for another order is never usable.
     if isinstance(selected_items, str):
         selected_items = json.loads(selected_items)
 
@@ -251,22 +255,35 @@ def validate_and_get_items_for_po(selected_items, is_subcontracted=0):
         # ── Subcontracted path ────────────────────────────────────────
         if is_subcontracted:
             service_item_code = None
-            bom_name = entry.get("bom_no") or entry.get("bom")
+            # so_item.bom_no (just read from the DB above) is the
+            # authoritative BOM the Sales Order Item itself was raised
+            # against — trusted over whatever the client payload says, since
+            # a stale dialog or a direct API call sending an empty bom_no
+            # here used to silently fall through to the Finished Good's
+            # default_bom later in _explode_rm_requirements, with no error
+            # and no visible sign that the "wrong" BOM was used for a Finished
+            # Good that has more than one.
+            bom_name = so_item.bom_no or entry.get("bom_no") or entry.get("bom")
 
             # Hard block, no override: this dialog's checkbox is already
             # disabled client-side when RM is short, but re-check here too
             # so a bypassed/stale checkbox (or a direct API call) still
             # can't get a Subcontract PO row past this point.
-            is_fulfilled, shortages = check_bom_raw_materials_in_stock(bom_name, qty_to_add, rm_bom_cache)
-            if not is_fulfilled:
-                shortage_desc = "; ".join(
-                    f"{s['item_code']} needs {s['required_qty']:.2f} {s['uom']}, only {s['available_qty']:.2f} in stock"
-                    for s in shortages
-                )
+            #
+            # Checked against THIS Sales Order's own share, the same rule as
+            # its Item Stock & Action Plan — not the warehouse total, which is
+            # what let this dialog raise an SCO on raw material the order's
+            # own widget said it didn't have (it was held for another order).
+            rm = check_bom_rm_for_so(bom_name, qty_to_add, sales_order, rm_bom_cache)
+            # One rule, no override: RM reserved for another order is as
+            # unusable as RM that isn't there (same as the SO RM table).
+            if rm["state"] != RM_COVERED:
                 rejected_items.append({
                     "sales_order": sales_order,
                     "item_name": entry.get("itemName", item_code),
-                    "reason": f"Raw materials not physically in stock — {shortage_desc}"
+                    "reason": "Raw material not available for this order — "
+                              + rm_not_available_text(rm["lines"])
+                              + ". Request RM (Material Request) for this order first."
                 })
                 continue
 
@@ -1552,12 +1569,25 @@ def get_pending_so_with_material_stock(is_subcontracted=False):
         # or "select all" would happily check a row the backend then
         # silently drops. qty_needed mirrors the client's own `to_buy` math
         # (req - linked PO - sub picks - draft picks) so the two agree.
+        #
+        # Against this Sales Order's own share, same as its widget. Strict:
+        # "short" AND "held" (on the shelf but reserved for another order)
+        # both block — rm_state only tells the dialog which label to show.
         row["rm_in_stock"] = True
+        row["rm_state"] = "covered"
         row["rm_shortage_items"] = []
+        row["rm_held_lines"] = []
+        row["rm_block_reason"] = ""
         if is_subcontracted and row.bom:
-            is_fulfilled, shortages = check_bom_raw_materials_in_stock(row.bom, to_buy, rm_bom_cache)
-            row["rm_in_stock"] = is_fulfilled
-            row["rm_shortage_items"] = shortages
+            rm = check_bom_rm_for_so(row.bom, to_buy, row.sales_order, rm_bom_cache)
+            row["rm_state"] = rm["state"]
+            row["rm_in_stock"] = rm["state"] == RM_COVERED
+            row["rm_shortage_items"] = [
+                {"item_code": l["item_code"], "uom": l["uom"], "required_qty": l["required"],
+                 "available_qty": l["own"], "reserved_for": list((l.get("held_by") or {}).keys())}
+                for l in rm["lines"] if l["state"] != RM_COVERED]
+            row["rm_held_lines"] = rm_held_warning(rm["lines"])
+            row["rm_block_reason"] = rm_not_available_text(rm["lines"])
 
         final_rows.append(row)
 
@@ -2069,14 +2099,14 @@ def get_pending_so_with_raw_materials_summary():
             si.parent as sales_order, si.item_code, si.item_name, si.qty,
             COALESCE(si.delivered_qty, 0) as delivered_qty,
             (si.qty - COALESCE(si.delivered_qty, 0)) as pending_qty,
-            so.customer,so.customer_name, si.bom_no as bom, si.uom
+            so.customer,so.customer_name, si.bom_no as bom, si.uom, si.idx
         FROM `tabSales Order Item` si
         JOIN `tabSales Order` so ON si.parent = so.name
         WHERE so.docstatus = 1 AND so.status NOT IN ('Closed', 'Cancelled', 'On Hold')
           AND IFNULL(so.custom_old_record_item_is_disabled, 0) = 0
           AND (si.qty - COALESCE(si.delivered_qty, 0)) > 0.001
           AND si.bom_no IS NOT NULL AND si.bom_no != ''
-        ORDER BY so.transaction_date DESC, so.name
+        ORDER BY so.transaction_date DESC, so.name, si.idx
     """, as_dict=1)
 
     if not so_items:
@@ -2358,19 +2388,42 @@ def get_pending_so_with_raw_materials_summary():
     for r in pick_rows_all:
         pick_by_so_item.setdefault((r.sales_order, r.item_code), []).append(r)
 
+    # 3c. The SAME stock pools the Sales Order's Item Stock & Action Plan
+    # reads (order_flow_api._rm_stock_pools), fetched once for every raw
+    # material and every finished good on screen. Reading tabBin instead is
+    # what made this dialog say "Covered" for raw material the SO's own RM
+    # table said was reserved for another order (SAL-ORD-2026-00146 vs 00147).
+    # ------------------------------------------------------------------
+    from erp_dacsinc_custom.order_flow_api import _rm_stock_pools, _rm_available_for, _rm_borrowable_from
+    from erp_dacsinc_custom.so_embroidery import held_at_jobber_by_item
+    main_wh = "VV Puram - IND"
+    rm_pools = _rm_stock_pools(set(all_bom_item_codes), main_wh) if all_bom_item_codes else {}
+    fg_pools = _rm_stock_pools(set(all_finished_good_codes), main_wh) if all_finished_good_codes else {}
+    fg_emb_held = held_at_jobber_by_item(all_finished_good_codes)
+    so_ids_all = tuple({item['sales_order'] for item in so_items}) or ("",)
+    so_direct_ewo_open = {}
+    for r in frappe.db.sql("""
+        SELECT ewo.saels_order_id AS so, c.item_code,
+               SUM(GREATEST(c.ordered_qty - IFNULL(c.received_qty, 0), 0)) AS pending
+        FROM `tabEmbroidery Work Order Item` c
+        JOIN `tabEmbroidery Work Order` ewo ON ewo.name = c.parent
+        WHERE ewo.docstatus = 1 AND IFNULL(ewo.purchase_order, '') = ''
+          AND ewo.saels_order_id IN %s
+        GROUP BY ewo.saels_order_id, c.item_code
+    """, (so_ids_all,), as_dict=1):
+        so_direct_ewo_open[(r.so, r.item_code)] = flt(r.pending)
+    ewo_claimed = set()
+    # This order's own raw material is ONE amount per material, shared by
+    # all its lines in line order — exactly like the widget's rm_alloc_used.
+    rm_used_by_so = {}
+
     # 4. Construct Final Data
     # ------------------------------------------------------------------
     for so_item in so_items:
         sales_order = so_item['sales_order']
         item_code = so_item['item_code']
 
-        # Get Picking Info (Optional context)
-        # Scoped to this exact Sales Order line (falling back to unscoped for
-        # older Pick List rows that predate sales_order_item being reliably
-        # set) — item_code + sales_order alone would also match a picked
-        # PLAIN (non-BOM) line for the same item_code on this order, silently
-        # crediting that pick against this BOM line's qty_awaiting_pick and
-        # understating the raw materials this line actually still needs.
+        # Picks of THIS line (draft + submitted, not yet delivered).
         picked_submitted = 0.0
         picked_draft = 0.0
         for r in pick_by_so_item.get((sales_order, item_code), []):
@@ -2380,28 +2433,25 @@ def get_pending_so_with_raw_materials_summary():
                 elif r.docstatus == 0:
                     picked_draft += flt(r.qty)
 
-        # Max quantity remaining — after picks/deliveries. A Subcontract PO
-        # having been raised for this line's full qty does NOT by itself mean
-        # nothing further needs sourcing: the resulting finished good can
-        # still be short of the full qty once it's out again (e.g. sent on
-        # for embroidery finishing) or otherwise not all currently on the
-        # shelf, and "was a PO raised" has no way to see that — only live
-        # stock does. So the real "already resolved, don't ask for RM again"
-        # signal is whichever is bigger of the two things that both already
-        # legitimately cover this line: physical stock (Bin doesn't move on
-        # a Pick List, only on actual delivery, so it already includes
-        # anything picked-but-undelivered) or this line's own picked total
-        # (kept as a floor in case a picked unit's stock briefly reads lower
-        # for some other reason). This also fixes the ORIGINAL version of
-        # this bug the other way around — a line fully produced and sitting
-        # in stock, just not all picked yet, correctly reads 0 remaining
-        # here without a separate "was it subcontracted" carve-out at all.
-        already_subcontracted = in_production_map.get((sales_order, item_code), 0)
-        effective_available = max(stock_map.get(item_code, 0), picked_submitted + picked_draft)
-        qty_awaiting_pick = max(0, so_item['pending_qty'] - effective_available)
+        # Qty to Make — the widget's fg_shortfall, from the same inputs:
+        #   still to cover = pending − this line's picks − its open SO-direct embroidery
+        #   free FG        = on shelf − every undelivered pick − FG stock reserved as RM
+        #                    − FG out at an SO-direct embroidery jobber
+        key = (sales_order, item_code)
+        ewo_this = 0.0
+        if key not in ewo_claimed:
+            ewo_claimed.add(key)
+            ewo_this = so_direct_ewo_open.get(key, 0.0)
+        pending_to_cover = max(0.0, flt(so_item['pending_qty']) - min(
+            flt(so_item['pending_qty']), picked_submitted + picked_draft) - ewo_this)
+        fgp = fg_pools.get(item_code) or {}
+        free_fg = max(0.0, flt(fgp.get("physical", 0)) - flt(fgp.get("picked", 0))
+                      - sum(flt(v) for v in (fgp.get("earmarked") or {}).values())
+                      - flt(fg_emb_held.get(item_code, 0)))
+        qty_awaiting_pick = flt(max(0.0, pending_to_cover - free_fg), 3)
 
-        # Available FGs
-        so_item['available_fg_stock'] = stock_map.get(item_code, 0)
+        already_subcontracted = in_production_map.get((sales_order, item_code), 0)
+        so_item['available_fg_stock'] = flt(free_fg, 3)
         so_item['fg_in_production'] = already_subcontracted
         so_item['fg_in_production_draft'] = in_production_draft_map.get((sales_order, item_code), 0)
         so_item['fg_in_production_draft_pos'] = in_production_draft_refs.get((sales_order, item_code), [])
@@ -2412,38 +2462,32 @@ def get_pending_so_with_raw_materials_summary():
         # Attach RMs
         raw_materials_list = []
         bom_rows = all_bom_items.get(so_item['bom'], [])
-        
+        used = rm_used_by_so.setdefault(sales_order, {})
+
         for rm in bom_rows:
             rm_code = rm['item_code']
-            
+            pool = rm_pools.get(rm_code) or {}
+            # This order's own share (its reserved RM + unclaimed stock), what
+            # earlier lines of the same order already took, and this line's part.
+            own_total = _rm_available_for(pool, sales_order) if pool else 0.0
+            own_left = max(0.0, flt(own_total - used.get(rm_code, 0.0), 3))
+            line_need = flt(qty_awaiting_pick * flt(rm['stock_qty_per_unit']), 3)
+            take = min(own_left, line_need)
+            used[rm_code] = flt(used.get(rm_code, 0.0) + take, 3)
+            reserved_for_others = {so: flt(q, 3) for so, q in (_rm_borrowable_from(pool, sales_order) or {}).items()}
+
             # Qty ordered specifically for this SO that hasn't arrived yet
             linked_pending = so_linked_po_map.get((sales_order, rm_code), 0)
-
-            # Total pending for this Item across all POs
             total_pending = incoming_po_map.get(rm_code, 0)
-
-            # Unallocated = Total Pending minus EVERY Sales Order's own linked
-            # share (total_so_linked_po_by_item), not just this row's own —
-            # a PO already earmarked for a DIFFERENT specific SO is not
-            # "general, could help anyone", it already belongs to that order.
-            # Subtracting only linked_pending here used to let another SO's
-            # dedicated allocation show up as free/unallocated supply for
-            # every other order that happened to need the same raw material.
+            # Unallocated = total pending minus EVERY Sales Order's own linked
+            # share — a PO earmarked for a different SO already belongs to it.
             unallocated_pending = max(0, total_pending - total_so_linked_po_by_item.get(rm_code, 0))
-
-            # The draft slice of each of those two figures. Clamped to its own
-            # parent so it can never claim more than the coverage it is part
-            # of — these are reported alongside the totals purely so the
-            # dialog can say "N of this is only on a draft PO", never as an
-            # extra deduction of their own.
+            # Draft slices, clamped to their parent figure (reported, never deducted twice).
             linked_pending_draft = min(linked_pending,
                                        so_linked_po_draft_map.get((sales_order, rm_code), 0))
             unallocated_pending_draft = min(unallocated_pending, max(
                 0, incoming_po_draft_map.get(rm_code, 0)
                 - total_so_linked_po_draft_by_item.get(rm_code, 0)))
-
-            # Same shape as the PO figures above, for Material Requests —
-            # an MR already raised for this RM covers part of the need too.
             linked_mr_pending = so_linked_mr_map.get((sales_order, rm_code), 0)
             total_mr_pending = mr_pending_map.get(rm_code, 0)
             unallocated_mr_pending = max(0, total_mr_pending - total_so_linked_mr_by_item.get(rm_code, 0))
@@ -2453,7 +2497,17 @@ def get_pending_so_with_raw_materials_summary():
                 "item_name": rm['item_name'],
                 "uom": rm['stock_uom'],
                 "bom_qty_per_unit": flt(rm['stock_qty_per_unit']),
-                "available_qty": stock_map.get(rm_code, 0),        # Only Real Warehouse Stock
+                # Stock THIS line may use: this order's reserved RM + unclaimed
+                # stock, after the order's earlier lines took theirs — the
+                # same figure as the SO RM table's "Available for this order".
+                "available_qty": flt(take, 3),
+                # For the consolidated table (so the shared free stock is
+                # counted once, and each ticked order's reserved share once):
+                "own_reserved_qty": flt((pool.get("earmarked") or {}).get(sales_order, 0), 3),
+                "free_qty": flt(max(0.0, flt(pool.get("free", 0))), 3),
+                "on_shelf_qty": flt(max(0.0, flt(pool.get("physical", 0)) - flt(pool.get("picked", 0))), 3),
+                "picked_qty": flt(pool.get("picked", 0), 3),
+                "reserved_for_others": reserved_for_others,
                 "ordered_linked_qty": linked_pending,              # Only unreceived specific POs
                 "ordered_linked_draft_qty": linked_pending_draft,  # ...still on a DRAFT PO
                 "incoming_general_qty": unallocated_pending,       # Only unreceived general POs
@@ -2859,6 +2913,20 @@ def _remaining_fg_qty(item):
     return max(0, flt(item.fg_item_qty) - flt(item.subcontracted_quantity))
 
 
+def _resolve_po_item_bom(item):
+    """The BOM a subcontracted PO Item row must be produced (and its raw
+    material calculated) against: the linked Sales Order Item's own bom_no
+    first — that is the BOM the order was actually taken on, and a Finished
+    Good can have several — then the row's own `bom`, and the Finished
+    Good's default_bom only for a row with neither (e.g. a manually added
+    row with no Sales Order behind it)."""
+    if item.get("sales_order_item"):
+        so_bom = frappe.db.get_value("Sales Order Item", item.sales_order_item, "bom_no")
+        if so_bom:
+            return so_bom
+    return item.bom or frappe.db.get_value("Item", item.fg_item, "default_bom")
+
+
 def _explode_rm_requirements(po):
     """Explodes BOM demand for every subcontracted FG row on `po` into raw
     material requirements: {rm_item_code: required_qty}.
@@ -2883,7 +2951,14 @@ def _explode_rm_requirements(po):
     SCO in a later round via ERPNext's own standard Material Transfer),
     not something to silently reduce or infer a smaller batch from.
     """
-    rm_requirements = defaultdict(float)
+    # {rm_item_code: {"required_qty": total, "sources": [...]}} — `sources`
+    # is display-only: one entry per PO row feeding this raw material, so the
+    # dialog can say which Sales Order / Finished Good / BOM each part of the
+    # total comes from, and what 1 piece of that Finished Good needs.
+    rm_requirements = defaultdict(lambda: {"required_qty": 0.0, "sources": []})
+    bom_qty_cache = {}
+    fg_names = {}
+    customer_names = {}
     for item in po.items:
         if not item.fg_item:
             continue
@@ -2891,13 +2966,50 @@ def _explode_rm_requirements(po):
         if remaining_fg_qty <= 0:
             continue
 
-        bom_name = item.bom or frappe.db.get_value("Item", item.fg_item, "default_bom")
+        bom_name = _resolve_po_item_bom(item)
         if not bom_name:
             frappe.throw(_("Please set a BOM for Finished Good: {0}").format(item.fg_item))
 
-        bom_items = frappe.get_all("BOM Item", filters={"parent": bom_name}, fields=["item_code", "qty"])
+        if bom_name not in bom_qty_cache:
+            bom_qty_cache[bom_name] = flt(frappe.db.get_value("BOM", bom_name, "quantity")) or 1.0
+        bom_qty = bom_qty_cache[bom_name]
+
+        # BOM Item.stock_qty is the qty needed for the BOM's OWN reference
+        # quantity (BOM.quantity — usually 1, but not always), in the raw
+        # material's own stock UOM — not "qty" (the row's own, possibly
+        # different, UOM) and not automatically "per 1 finished good" either.
+        # Dividing by bom_qty here mirrors the same normalization
+        # get_pending_so_with_raw_materials_summary already does for this
+        # exact BOM data; without it, a BOM whose own Quantity isn't 1, or
+        # whose Item row UOM differs from the raw material's stock UOM,
+        # silently over/under-stated Required Qty here — while Available Qty
+        # (always read from Bin.actual_qty, i.e. stock UOM) never moved,
+        # comparing the two at mismatched scale or units.
+        if item.fg_item not in fg_names:
+            fg_names[item.fg_item] = frappe.db.get_value("Item", item.fg_item, "item_name") or item.fg_item
+
+        sales_order = item.get("sales_order")
+        if not sales_order and item.get("sales_order_item"):
+            sales_order = frappe.db.get_value("Sales Order Item", item.sales_order_item, "parent")
+        if sales_order and sales_order not in customer_names:
+            customer_names[sales_order] = frappe.db.get_value("Sales Order", sales_order, "customer_name")
+
+        bom_items = frappe.get_all("BOM Item", filters={"parent": bom_name}, fields=["item_code", "stock_qty"])
         for bom_item in bom_items:
-            rm_requirements[bom_item.item_code] += flt(bom_item.qty) * remaining_fg_qty
+            per_unit = flt(bom_item.stock_qty) / bom_qty
+            qty = per_unit * remaining_fg_qty
+            rm_requirements[bom_item.item_code]["required_qty"] += qty
+            rm_requirements[bom_item.item_code]["sources"].append({
+                "po_item_row": item.name,
+                "sales_order": sales_order,
+                "customer_name": customer_names.get(sales_order),
+                "fg_item": item.fg_item,
+                "fg_item_name": fg_names[item.fg_item],
+                "fg_qty": flt(remaining_fg_qty, 3),
+                "bom": bom_name,
+                "per_unit": flt(per_unit, 4),
+                "qty": flt(qty, 3),
+            })
 
     return rm_requirements
 
@@ -2916,8 +3028,20 @@ def get_required_raw_materials_for_po(purchase_order_name):
 
     rm_requirements = _explode_rm_requirements(po)
 
+    # This PO's own share of each raw material (its Sales Orders' earmarks,
+    # fitted to real stock, plus unclaimed stock) — see rm_line_state.
+    # available_qty stays the physical figure (what ERPNext's own transfer
+    # check allows); own_qty is what the SO widgets agree is these orders'.
+    # Anything sent above own_qty is another order's material and is refused
+    # (check_rm_supply_shortfall reports it, create_subcontracting_docs blocks it).
+    from erp_dacsinc_custom.order_flow_api import _rm_stock_pools
+    from erp_dacsinc_custom.custom_script import rm_line_state
+    po_sales_orders = sorted({i.sales_order for i in po.items if i.get("sales_order")})
+    rm_pools = _rm_stock_pools(set(rm_requirements), target_warehouse) if rm_requirements else {}
+
     results = []
-    for rm_code, req_qty in rm_requirements.items():
+    for rm_code, requirement in rm_requirements.items():
+        req_qty = requirement["required_qty"]
         item_details = frappe.db.get_value("Item", rm_code, ["item_name", "stock_uom"], as_dict=1)
 
         # CHANGED: Query filtered by the specific Warehouse
@@ -2934,16 +3058,35 @@ def get_required_raw_materials_for_po(purchase_order_name):
         # 83.999999999999994), which printed as "83.999" and made a
         # perfectly sufficient 84-unit stock read as short by a thousandth
         # of a unit. required_qty gets the same treatment so the two are
-        # never compared at mismatched precision.
-        available_qty = flt(flt(stock_data.actual_qty) if stock_data else 0.0, 2)
-        required_qty = flt(req_qty, 2)
+        # never compared at mismatched precision. Both use the Stock Entry's
+        # own qty precision (System Settings float_precision, 3 here) — not
+        # 2dp, which turned a BOM like 0.125/piece × 3 = 0.375 into a
+        # displayed 0.38 that no longer matched what the SCO itself requires.
+        precision = frappe.get_precision("Stock Entry Detail", "qty") or 3
+        available_qty = flt(flt(stock_data.actual_qty) if stock_data else 0.0, precision)
+        required_qty = flt(req_qty, precision)
 
+        pool = rm_pools.get(rm_code) or {}
+        share = rm_line_state(pool, po_sales_orders, required_qty)
+        # What a transfer may actually take: on the shelf and NOT held by a
+        # Pick List (draft or submitted) for a delivery. Sending picked stock
+        # to a jobber is what left STO-PICK-2026-00101 unable to submit, so
+        # it is the dialog's ceiling, not just a warning.
+        on_shelf = flt(min(available_qty, share["on_shelf"]), precision)
         results.append({
             "item_code": rm_code,
             "item_name": item_details.item_name,
             "uom": item_details.stock_uom,
             "required_qty": required_qty,
-            "available_qty": available_qty,
+            "available_qty": on_shelf,
+            "in_warehouse_qty": available_qty,
+            "picked_qty": flt(pool.get("picked", 0), precision),
+            "picked_docs": pool.get("picked_docs") or {},
+            # No Sales Order on the PO: nothing to hold it against — own = all of it.
+            "own_qty": flt(share["own"], precision) if po_sales_orders else on_shelf,
+            "held_by": share["held_by"] if po_sales_orders else {},
+            "rm_state": share["state"] if po_sales_orders else None,
+            "sources": requirement["sources"],
         })
 
     return sorted(results, key=lambda x: x['item_name'])
@@ -3007,10 +3150,57 @@ from erpnext.controllers.subcontracting_controller import make_rm_stock_entry
 #         "ste_name": ste_doc.name
 #     }
 
+def _allocate_qty_across_rows(original_qtys, target_total, precision):
+    """Split `target_total` across rows so they sum to EXACTLY target_total
+    at `precision` decimals — never a thousandth more or less than what was
+    typed.
+
+    Works in integer units of 10**-precision, not floats: float maths on
+    values like 0.8 or 0.6 (0.8 is really 0.80000000000000004) is what made
+    the old "prorate, then ceil each row to 2dp" approach turn a typed 0.8
+    into 0.81 — even for a raw material with only one row.
+
+    Each row keeps its own original (BOM-derived) qty and only the
+    DIFFERENCE between target_total and their sum is spread across rows, in
+    proportion to their size, largest remainder first. So when target_total
+    equals the required total every row is left exactly as ERPNext computed
+    it, and when more is sent no row ever drops below what it needs.
+    """
+    scale = 10 ** precision
+    orig_units = [int(round(flt(q) * scale)) for q in original_qtys]
+    target_units = max(0, int(round(flt(target_total) * scale)))
+    if not orig_units:
+        return []
+
+    total_units = sum(orig_units)
+    if total_units <= 0:
+        base, extra = divmod(target_units, len(orig_units))
+        units = [base + (1 if i < extra else 0) for i in range(len(orig_units))]
+        return [u / scale for u in units]
+
+    delta = target_units - total_units
+    sign = 1 if delta >= 0 else -1
+    exact = [abs(delta) * u / total_units for u in orig_units]
+    share = [int(math.floor(e + 1e-9)) for e in exact]
+    for i in sorted(range(len(exact)), key=lambda i: exact[i] - share[i], reverse=True)[:abs(delta) - sum(share)]:
+        share[i] += 1
+    units = [u + sign * s for u, s in zip(orig_units, share)]
+
+    # Sending less can round a tiny row a unit below zero — move that unit
+    # onto the largest row instead, keeping the total exact.
+    for i, u in enumerate(units):
+        if u < 0:
+            units[i] = 0
+            largest = max(range(len(units)), key=lambda j: units[j])
+            units[largest] += u
+    return [u / scale for u in units]
+
+
 @frappe.whitelist()
 def check_rm_supply_shortfall(purchase_order_name, updated_materials_for_supply):
-    """Reports (never blocks) any raw material whose "Qty to Supply" is set
-    below its own Required Qty.
+    """Reports any raw material whose "Qty to Supply" is set below its own
+    Required Qty (a confirm), and BLOCKS any set above this PO's own share
+    (stock reserved for another Sales Order — `blocked`/`block_msg`).
 
     The SCO this round creates is always for the PO row's full remaining FG
     qty (see create_subcontracting_docs) — every raw material's own "Qty to
@@ -3028,27 +3218,47 @@ def check_rm_supply_shortfall(purchase_order_name, updated_materials_for_supply)
     }
     required_materials = get_required_raw_materials_for_po(purchase_order_name)
 
+    precision = frappe.get_precision("Stock Entry Detail", "qty") or 3
     short_items = []
     for m in required_materials:
-        required_qty = flt(m['required_qty'], 2)
-        supplied_qty = flt(supply_quantities.get(m['item_code'], 0), 2)
-        if required_qty - supplied_qty > 0.01:
+        required_qty = flt(m['required_qty'], precision)
+        supplied_qty = flt(supply_quantities.get(m['item_code'], 0), precision)
+        shortfall = flt(required_qty - supplied_qty, precision)
+        if shortfall > 0:
             short_items.append({
                 "item_code": m['item_code'], "uom": m['uom'],
                 "required_qty": required_qty, "supplied_qty": supplied_qty,
-                "shortfall": flt(required_qty - supplied_qty, 2),
+                "shortfall": shortfall,
             })
 
+    # Sending MORE than this PO's own share — the rest is physically there
+    # but reserved for another Sales Order. Never allowed: reported as a
+    # block (the dialog stops; create_subcontracting_docs refuses it too).
+    held_items = []
+    for m in required_materials:
+        supplied_qty = flt(supply_quantities.get(m['item_code'], 0), precision)
+        own_qty = flt(m.get('own_qty', m['available_qty']), precision)
+        if supplied_qty > own_qty + 0.001:
+            held_items.append({
+                "item_code": m['item_code'], "uom": m['uom'], "supplied_qty": supplied_qty,
+                "own_qty": own_qty,
+                "held_by": ", ".join((m.get('held_by') or {}).keys()) or "other orders",
+            })
+
+    if held_items:
+        msg = "<h5 style='color:#b91c1c;'>Reserved for another order — cannot send</h5><ul>"
+        for i in held_items:
+            msg += (f"<li><b>{i['item_code']}</b>: this PO's own stock is {i['own_qty']} {i['uom']}, "
+                    f"you entered {i['supplied_qty']}. The rest is reserved for "
+                    f"{frappe.utils.escape_html(i['held_by'])}.</li>")
+        msg += "</ul>Reduce Qty to Supply to the PO's own stock, or Request RM for the rest."
+        return {"has_shortfall": bool(short_items), "has_held": True, "blocked": True, "block_msg": msg}
+
     if not short_items:
-        return {"has_shortfall": False, "confirm_msg": ""}
+        return {"has_shortfall": False, "has_held": False, "confirm_msg": ""}
 
     confirm_msg = "<h5>Sending Less Than Required</h5>"
-    confirm_msg += (
-        "The Subcontracting Order will still be raised for the full finished-good qty, "
-        "but these raw materials are set to send less than that needs. Send the rest to "
-        "the same Subcontracting Order in a later round before it's received back, or the "
-        "Subcontracting Receipt will fail once that shortfall bites.<br><br>"
-    )
+    confirm_msg += "You are sending less than the required qty for these raw materials. Continue?<br><br>"
     confirm_msg += "<table class='table table-bordered table-sm'><thead><tr class='small'>"
     confirm_msg += "<th>Item</th><th>Required</th><th>Supplying</th><th>Short By</th></tr></thead><tbody>"
     for i in short_items:
@@ -3059,11 +3269,11 @@ def check_rm_supply_shortfall(purchase_order_name, updated_materials_for_supply)
         )
     confirm_msg += "</tbody></table>"
 
-    return {"has_shortfall": True, "confirm_msg": confirm_msg}
+    return {"has_shortfall": True, "has_held": False, "confirm_msg": confirm_msg}
 
 
 @frappe.whitelist()
-def create_subcontracting_docs(purchase_order_name, updated_materials_for_supply=None):
+def create_subcontracting_docs(purchase_order_name, updated_materials_for_supply=None, allow_held=0):
     """
     Creates a Subcontracting Order and its corresponding Material Transfer.
     Uses 'qty_to_supply' from `updated_materials_for_supply` for the Stock Entry.
@@ -3076,6 +3286,44 @@ def create_subcontracting_docs(purchase_order_name, updated_materials_for_supply
     po = frappe.get_doc("Purchase Order", purchase_order_name)
     subcontractor_warehouse = "Jobers Warehouse - IND" # Ensure this warehouse exists
 
+    # Sending more than this PO's own share takes another Sales Order's raw
+    # material. The dialog confirms that first (check_rm_supply_shortfall)
+    # and says so with allow_held — refused here otherwise, so a direct call
+    # or a stale dialog can't do it silently.
+    # Never, confirmed or not: stock held by a Pick List for a delivery.
+    # (Only when the qty is beyond what is on the shelf unpicked — within
+    # that, the reserved-for-another-order check below gives the real reason.)
+    if updated_materials_for_supply:
+        shares = {m["item_code"]: m for m in get_required_raw_materials_for_po(purchase_order_name)}
+        for row in json.loads(updated_materials_for_supply):
+            m = shares.get(row.get("item_code"))
+            if m and flt(m.get("picked_qty")) > 0.001 and flt(row.get("qty_to_supply")) > flt(m["available_qty"]) + 0.001:
+                pls = ", ".join(f"{pl} ({flt(q, 2)})" for pl, q in (m.get("picked_docs") or {}).items())
+                frappe.throw(_(
+                    "{0}: only {1} can be sent. {2} of the stock is picked for a delivery{3} and can't go to a jobber."
+                ).format(m["item_code"], flt(m["available_qty"]), flt(m.get("picked_qty")),
+                         f" ({pls})" if pls else ""),
+                    title=_("Picked for Delivery"))
+    # Never, confirmed or not: more than this PO's own share — the rest is
+    # reserved for another Sales Order (same rule as the SO RM table and the
+    # Fetch Pending SO dialog). allow_held is ignored; kept in the signature
+    # only so a cached browser tab doesn't crash.
+    shares = {m["item_code"]: m for m in get_required_raw_materials_for_po(purchase_order_name)}
+    to_send = ({r.get("item_code"): flt(r.get("qty_to_supply")) for r in json.loads(updated_materials_for_supply)}
+               if updated_materials_for_supply else
+               {code: flt(m["required_qty"]) for code, m in shares.items()})
+    for code, qty in to_send.items():
+        m = shares.get(code)
+        if m and qty > flt(m.get("own_qty", m["available_qty"])) + 0.001:
+            holders = ", ".join(m.get("held_by") or {})
+            frappe.throw(_(
+                "{0}: this Purchase Order's own raw material is {1} {2}, you are sending {3}. {4} "
+                "Send only {1} now, or Request RM (Material Request) for the rest."
+            ).format(code, flt(m.get("own_qty"), 3), m.get("uom") or "", flt(qty, 3),
+                     _("The rest on the shelf is reserved for {0}.").format(holders) if holders
+                     else _("There is no more on the shelf.")),
+                title=_("Reserved for Another Order") if holders else _("Not in Stock"))
+
     if not frappe.db.exists("Warehouse", subcontractor_warehouse):
         frappe.throw(_("Warehouse '{0}' not found. Please create it first.").format(subcontractor_warehouse))
 
@@ -3084,8 +3332,21 @@ def create_subcontracting_docs(purchase_order_name, updated_materials_for_supply
     sco.supplier = po.supplier
     target_warehouse = "VV Puram - IND" # The warehouse from which materials are transferred
     sco.set_warehouse = target_warehouse # This sets the default for the SCO items
+    # ERPNext's own mapper (SubcontractingOrder.populate_items_table) picks
+    # the SCO item's BOM by itself — the Finished Good's active
+    # "Subcontracting BOM", else its default_bom — and never looks at the PO
+    # row or the Sales Order at all. For a Finished Good with several BOMs
+    # that silently produced (and transferred raw material for) the wrong
+    # one. Setting it here, before insert, is enough: validate() re-explodes
+    # supplied_items (and so the Material Transfer below) from item.bom.
+    po_items_by_name = {row.name: row for row in po.items}
     for item in sco.items:
         item.warehouse = target_warehouse # Ensure each item also has the source warehouse
+        po_row = po_items_by_name.get(item.purchase_order_item)
+        if po_row:
+            resolved_bom = _resolve_po_item_bom(po_row)
+            if resolved_bom:
+                item.bom = resolved_bom
     sco.insert(ignore_permissions=True)
     sco.submit()
     po.add_comment("Comment", _("Created Subcontracting Order: {0}").format(sco.name))
@@ -3095,7 +3356,6 @@ def create_subcontracting_docs(purchase_order_name, updated_materials_for_supply
     ste_doc = frappe.get_doc(ste_doclist)
 
     # --- NEW: LOGIC TO UPDATE QUANTITIES BASED ON 'qty_to_supply' ---
-    qty_adjustment_notes = []
     if updated_materials_for_supply:
         supply_quantities = {
             item['item_code']: flt(item['qty_to_supply']) for item in json.loads(updated_materials_for_supply)
@@ -3141,91 +3401,20 @@ def create_subcontracting_docs(purchase_order_name, updated_materials_for_supply
         for item in ste_doc.items:
             rows_by_item[item.item_code].append(item)
 
-        # qty_adjustment_notes (see qty_adjustments in the return value)
-        # is populated below whenever a raw material's ACTUAL transferred
-        # total ends up different from what was typed in the dialog — almost
-        # always because it's split across more than one row here (one per
-        # SCO line consuming it) and each row gets rounded up independently
-        # below. That split-plus-rounding is otherwise invisible: the dialog
-        # only ever shows ONE combined figure per raw material, so a few
-        # hundredths of difference in the real Stock Entry used to look like
-        # unexplained drift rather than an expected, explainable rounding
-        # effect.
+        # Split with _allocate_qty_across_rows: the rows always sum to
+        # exactly what was typed, at the Stock Entry's own qty precision (no
+        # float drift, no per-row rounding up). The Subcontracting Receipt's
+        # "Consumed Qty must be <= Available Qty" check is why each row keeps
+        # its own BOM-derived qty and only the difference is spread — a row
+        # is never cut below what it needs unless the user chose to send
+        # less than Required in total.
+        qty_precision = frappe.get_precision("Stock Entry Detail", "qty") or 3
         for item_code, rows in rows_by_item.items():
-            target_total = flt(supply_quantities.get(item_code, 0), 2)
-            original_total = sum(flt(row.qty) for row in rows)
-
-            for row in rows:
+            target_total = flt(supply_quantities.get(item_code, 0), qty_precision)
+            allocated = _allocate_qty_across_rows([row.qty for row in rows], target_total, qty_precision)
+            for row, qty in zip(rows, allocated):
                 row.t_warehouse = subcontractor_warehouse  # Transfer to subcontractor's warehouse
-                if not target_total:
-                    row.qty = 0
-                elif original_total > 0:
-                    row.qty = flt(row.qty) * target_total / original_total
-                else:
-                    # No BOM-derived share to prorate by (shouldn't normally
-                    # happen) — split the requested total evenly instead of
-                    # applying it in full to every row.
-                    row.qty = target_total / len(rows)
-
-            # The proration above is exactly right in total but produces
-            # per-row noise like 390.244/9.756 for a clean integer the user
-            # actually typed (400) — confirmed live: an integer entered in
-            # "Raw Material Stock Check & Planning" came out as a Stock
-            # Entry with 3-decimal-place rows.
-            #
-            # Rounding each row to 2dp and having the LAST row absorb the
-            # remainder (an earlier version of this fix) is NOT safe here:
-            # the Subcontracting Receipt's own "Consumed Qty" for a row is
-            # computed later from the BOM's own (unrounded) qty-per-FG ratio
-            # — confirmed live, a row transferred at 45.450 (rounded down
-            # from 45.4545...) was 0.005 short of the 45.455 ERPNext itself
-            # later wanted to consume for that same row, hard-blocking
-            # receipt with "Consumed Qty must be <= Available Qty". Rounding
-            # DOWN can undersupply a row relative to what it will actually
-            # need to consume; rounding UP never can (a value rounded up to
-            # the next hundredth is always >= the true share, and therefore
-            # >= any reasonable rounding of it ERPNext computes later). So
-            # every row is rounded UP (ceiling) to 2dp instead — the total
-            # transferred may land a few hundredths above what was typed
-            # (immaterial for a real transfer, and still capped by the real
-            # stock clamp above), never below what any row will need.
-            if target_total:
-                import math
-                for row in rows:
-                    row.qty = math.ceil(flt(row.qty) * 100) / 100
-
-                # Ceiling-rounding every row can (rarely — at most a few
-                # hundredths per row) push the item's real total a hair
-                # above what was actually asked for and clamped to real
-                # stock above. Almost never matters in practice, but rather
-                # than let ERPNext's own submit-time "Insufficient Stock"
-                # check catch it later with a much less specific message,
-                # check it here with the exact numbers this function
-                # already knows and explain precisely why.
-                new_total = sum(flt(row.qty) for row in rows)
-                real_avail = real_stock_map.get(item_code, 0) if item_codes else 0
-                if new_total > real_avail + 0.01:
-                    frappe.throw(_(
-                        "{0}: this raw material is split across {1} rows on this Purchase Order "
-                        "(one per finished-good line consuming it) — rounding each row's share up "
-                        "to a clean 2-decimal quantity (so the Subcontracting Receipt never falls "
-                        "short later) would need {2}, but only {3} is actually in stock at {4}. "
-                        "Reduce the qty requested for this item, or consolidate the finished-good "
-                        "rows sharing it onto one Purchase Order line, and try again."
-                    ).format(
-                        frappe.bold(item_code), len(rows), flt(new_total, 2),
-                        flt(real_avail, 2), target_warehouse,
-                    ))
-
-                # Report the difference plainly instead of leaving it for the
-                # user to notice (or not) on the Stock Entry afterwards.
-                if flt(new_total - target_total, 2) > 0.001:
-                    qty_adjustment_notes.append({
-                        "item_code": item_code,
-                        "requested_qty": target_total,
-                        "actual_qty": flt(new_total, 2),
-                        "row_count": len(rows),
-                    })
+                row.qty = qty
     else:
         # If no updated_materials_for_supply, default all to 0 or original SCO quantities
         # Depending on desired default behavior. For this, we'll set to 0.
@@ -3244,21 +3433,36 @@ def create_subcontracting_docs(purchase_order_name, updated_materials_for_supply
     ste_doc.insert(ignore_permissions=True)
     ste_doc.submit()
     po.add_comment("Comment", _("Created Material Transfer: {0}").format(ste_doc.name))
-
-    if qty_adjustment_notes:
-        po.add_comment("Comment", "<br>".join([
-            _("{0}: sent {1} (asked for {2}) — split across {3} rows here (one per Sales-Order-linked "
-              "line consuming it), each rounded up to the nearest 0.01 so none of them falls short "
-              "later.").format(
-                frappe.bold(n["item_code"]), n["actual_qty"], n["requested_qty"], n["row_count"]
-            ) for n in qty_adjustment_notes
-        ]))
+    _comment_rm_sent(po, sco, ste_doc)
 
     return {
         "sco_name": sco.name,
         "ste_name": ste_doc.name,
-        "qty_adjustments": qty_adjustment_notes,
     }
+
+
+def _comment_rm_sent(po, sco, ste_doc):
+    """PO timeline record of raw material sent to the jobber vs what the SCO
+    needs (its own supplied items, i.e. each line's own BOM), per raw
+    material, flagging less / more."""
+    precision = frappe.get_precision("Stock Entry Detail", "qty") or 3
+    required, sent, uom = defaultdict(float), defaultdict(float), {}
+    for s in sco.supplied_items:
+        required[s.rm_item_code] += flt(s.required_qty)
+        uom[s.rm_item_code] = s.stock_uom
+    for r in ste_doc.items:
+        sent[r.item_code] += flt(r.qty)
+        uom.setdefault(r.item_code, r.stock_uom)
+
+    rows = [
+        [frappe.utils.escape_html(code), f"{flt(required[code], precision)} {uom.get(code) or ''}",
+         f"{flt(sent[code], precision)} {uom.get(code) or ''}",
+         _qty_diff_html(required[code], sent[code], precision)]
+        for code in sorted(set(required) | set(sent))
+    ]
+    title = _("Raw material sent to jobber — {0} / {1}").format(sco.name, ste_doc.name)
+    po.add_comment("Comment", _qty_comment_table(
+        title, [_("Raw Material"), _("Required"), _("Sent"), _("Difference")], rows))
 
 
 import frappe
@@ -3404,11 +3608,58 @@ def _get_extra_collected_qty_map(po_name):
     return {r.item_code: flt(r.qty) for r in rows}
 
 
+def _sco_line_sales_orders(sco):
+    """{SCO item name: (sales_order, customer_name)} via each SCO line's
+    purchase_order_item — one SCO can carry the same Finished Good several
+    times for different orders, so a line's own order is what tells them
+    apart."""
+    po_item_names = [i.purchase_order_item for i in sco.items if i.purchase_order_item]
+    if not po_item_names:
+        return {}
+    so_by_po_item = dict(frappe.get_all(
+        "Purchase Order Item", filters={"name": ("in", po_item_names)},
+        fields=["name", "sales_order"], as_list=True,
+    ))
+    so_names = [s for s in set(so_by_po_item.values()) if s]
+    customers = dict(frappe.get_all(
+        "Sales Order", filters={"name": ("in", so_names)},
+        fields=["name", "customer_name"], as_list=True,
+    )) if so_names else {}
+    result = {}
+    for i in sco.items:
+        so = so_by_po_item.get(i.purchase_order_item)
+        result[i.name] = (so, customers.get(so))
+    return result
+
+
+def _qty_diff_html(expected, actual, precision=3):
+    diff = flt(flt(actual, precision) - flt(expected, precision), precision)
+    if diff < 0:
+        return f'<b style="color:#b45309">{abs(diff)} less</b>'
+    if diff > 0:
+        return f'<b style="color:#1d4ed8">{diff} more</b>'
+    return '<span style="color:#15803d">as expected</span>'
+
+
+def _qty_comment_table(title, headers, rows):
+    """A small HTML table for a PO timeline comment — a permanent record of
+    exactly what was sent/received against what was expected."""
+    esc = frappe.utils.escape_html
+    head = "".join(f'<th style="text-align:left;padding:2px 8px;border-bottom:1px solid #ddd">{esc(h)}</th>' for h in headers)
+    body = "".join(
+        "<tr>" + "".join(f'<td style="padding:2px 8px">{c}</td>' for c in r) + "</tr>"
+        for r in rows
+    )
+    return f"<b>{title}</b><table style='border-collapse:collapse;margin-top:4px'><tr>{head}</tr>{body}</table>"
+
+
 @frappe.whitelist()
 def get_pending_sco_items(sco_name):
     perc = frappe.get_single("Admin Settings").allow_over_collecting_of_fg or 0.0
     sco = frappe.get_doc("Subcontracting Order", sco_name)
     extra_collected = _get_extra_collected_qty_map(sco.purchase_order)
+    line_orders = _sco_line_sales_orders(sco)
+
     items = []
     for item in sco.items:
         ordered_qty = flt(item.qty)
@@ -3420,12 +3671,17 @@ def get_pending_sco_items(sco_name):
         if received_qty >= allowed_max:
             continue
         pending_qty = max(0, ordered_qty - received_qty)
+        sales_order, customer_name = line_orders.get(item.name, (None, None))
         items.append({
             "name": item.name,
+            "item_code": item.item_code,
             "item_name": item.item_name,
             "ordered_qty": ordered_qty,
             "received_qty": received_qty,
             "pending_qty": pending_qty,
+            "bom": item.bom,
+            "sales_order": sales_order,
+            "customer_name": customer_name,
         })
     return {"items": items, "allow_over_fg_perc": perc}
 
@@ -3673,6 +3929,117 @@ def check_over_collection_limit(sco_name, items_to_receive_json):
     }
 
 
+def _comment_fg_received(po, sco, receive_log, scr_name, pr_name, se_name):
+    """PO timeline record of finished goods received from the jobber vs
+    what was still pending on each SCO line — less (line stays open) or more
+    (over-collected, via the extra Stock Entry)."""
+    if not receive_log:
+        return
+    esc = frappe.utils.escape_html
+    line_orders = _sco_line_sales_orders(sco)
+    rows = []
+    for line, pending, qty_now in receive_log:
+        so, customer = line_orders.get(line.name, (None, None))
+        order = esc(so or "—") + (f" ({esc(customer)})" if customer else "")
+        rows.append([
+            esc(line.item_name or line.item_code), order, esc(line.bom or "—"),
+            f"{flt(pending, 3)} {line.stock_uom or ''}", f"{flt(qty_now, 3)} {line.stock_uom or ''}",
+            _qty_diff_html(pending, qty_now),
+        ])
+    docs = ", ".join(d for d in [scr_name, pr_name, se_name] if d)
+    title = _("Finished goods received from jobber — {0}").format(sco.name) + (f" ({docs})" if docs else "")
+    po.add_comment("Comment", _qty_comment_table(
+        title, [_("Finished Good"), _("Sales Order"), _("BOM"), _("Pending"), _("Received"), _("Difference")], rows))
+
+
+def _fix_scr_consumption_per_sco_row(scr):
+    """Rebuild a saved (draft) Subcontracting Receipt's consumed raw materials
+    per SCO line, for any Finished Good that sits on more than one line of
+    its Subcontracting Order. Saves the SCR again if anything changed.
+
+    ERPNext core (backflush "Material Transferred for Subcontract") pools
+    transferred material per (raw material, Finished Good, SCO) — across ALL
+    lines of that Finished Good, whatever their BOM — but divides by the qty
+    to receive per (Finished Good, SCO, BOM). With the same Finished Good on
+    several lines under different BOMs, the first line is charged the whole
+    pool and the others get nothing; confirmed on SC-ORD-2026-00020 (3 Beige
+    T Shirt lines, BOM-002/003/003): line 1 "consumed" all 991 Buttons sent
+    for the three lines, against 280 sent for it, failing submit with
+    "Consumed Qty 991.0 must be <= Available Qty For Consumption 280.0".
+
+    Each affected receipt line instead consumes what was sent for ITS OWN SCO
+    line (total_supplied_qty - consumed_qty on the SCO's supplied items for
+    that line), pro rata to how much of that line's pending qty arrives now —
+    all of it when the line is fully received. Lines of a Finished Good that
+    appears only once are left exactly as ERPNext computed them.
+    """
+    if frappe.db.get_single_value(
+        "Buying Settings", "backflush_raw_materials_of_subcontract_based_on"
+    ) == "BOM":
+        return
+
+    sco_names = {it.subcontracting_order for it in scr.items if it.subcontracting_order}
+    if not sco_names:
+        return
+    sco_lines = frappe.get_all(
+        "Subcontracting Order Item",
+        filters={"parent": ("in", list(sco_names))},
+        fields=["name", "parent", "item_code", "qty", "received_qty"],
+    )
+    line_count = defaultdict(int)
+    for l in sco_lines:
+        line_count[(l.parent, l.item_code)] += 1
+    sco_line_by_name = {l.name: l for l in sco_lines}
+
+    affected = [
+        it for it in scr.items
+        if it.subcontracting_order_item in sco_line_by_name
+        and line_count[(it.subcontracting_order, it.item_code)] > 1
+    ]
+    if not affected:
+        return
+
+    precision = frappe.get_precision("Subcontracting Receipt Supplied Item", "consumed_qty") or 3
+    affected_names = {it.name for it in affected}
+    scr.supplied_items = [s for s in scr.supplied_items if s.reference_name not in affected_names]
+
+    for it in affected:
+        line = sco_line_by_name[it.subcontracting_order_item]
+        pending = flt(line.qty) - flt(line.received_qty)
+        ratio = 1.0 if flt(it.qty) >= pending - 1e-9 or pending <= 0 else flt(it.qty) / pending
+
+        for sup in frappe.get_all(
+            "Subcontracting Order Supplied Item",
+            filters={"parent": line.parent, "reference_name": line.name},
+            fields=["rm_item_code", "stock_uom", "conversion_factor", "bom_detail_no",
+                    "required_qty", "total_supplied_qty", "consumed_qty"],
+            order_by="idx",
+        ):
+            available = flt(sup.total_supplied_qty) - flt(sup.consumed_qty)
+            consumed = flt(available * ratio, precision)
+            if consumed <= 0:
+                continue
+            item_name, description = frappe.db.get_value("Item", sup.rm_item_code, ["item_name", "description"])
+            rm_obj = scr.append("supplied_items", {
+                "main_item_code": it.item_code,
+                "rm_item_code": sup.rm_item_code,
+                "item_name": item_name,
+                "description": description,
+                "stock_uom": sup.stock_uom,
+                "conversion_factor": flt(sup.conversion_factor) or 1,
+                "bom_detail_no": sup.bom_detail_no,
+                "reference_name": it.name,
+                "subcontracting_order": line.parent,
+                "required_qty": flt(flt(sup.required_qty) * flt(it.qty) / flt(line.qty), precision) if flt(line.qty) else 0,
+                "consumed_qty": consumed,
+            })
+            scr.set_rate_for_supplied_items(rm_obj, it)
+
+    for idx, row in enumerate(scr.supplied_items, start=1):
+        row.idx = idx
+    scr.save(ignore_permissions=True)
+
+
 @frappe.whitelist()
 def create_receipt_documents(sco_name, items_to_receive):
     items_to_receive = frappe.parse_json(items_to_receive)
@@ -3682,7 +4049,18 @@ def create_receipt_documents(sco_name, items_to_receive):
         frappe.throw(_("No Purchase Order linked to this SCO."))
         
     po_doc = frappe.get_doc("Purchase Order", sco.purchase_order)
-    
+
+    # Captured before any document is created (a submitted SCR changes each
+    # line's received_qty) — the PO comment written at the end compares what
+    # arrives now against what was still pending on each line.
+    sco_lines_by_name = {i.name: i for i in sco.items}
+    receive_log = []
+    for req in items_to_receive:
+        line = sco_lines_by_name.get(req.get("name"))
+        qty_now = flt(req.get("qty_to_receive"))
+        if line and qty_now > 0:
+            receive_log.append((line, max(0, flt(line.qty) - flt(line.received_qty)), qty_now))
+
     # --- FIND SERVICE ITEM IN PO (To prevent Stock Error) ---
     # We prioritize Finding a Non-Stock item in the PO
     service_item_data = {}
@@ -3784,6 +4162,7 @@ def create_receipt_documents(sco_name, items_to_receive):
     if final_scr_items:
         scr.items = final_scr_items
         scr.save(ignore_permissions=True)
+        _fix_scr_consumption_per_sco_row(scr)
         scr.submit()
         scr_name = scr.name
 
@@ -3861,6 +4240,8 @@ def create_receipt_documents(sco_name, items_to_receive):
                 "Includes extra qty received beyond SCO ordered qty (over-collection allowance):<br>"
                 + "<br>".join(extra_summary_lines)
             )
+
+    _comment_fg_received(po_doc, sco, receive_log, scr_name, pr_name, se_name)
 
     return {
         "scr_name": scr_name,
@@ -4780,6 +5161,10 @@ def get_pending_pr_items(supplier, is_subcontracted=0):
 
 @frappe.whitelist()
 def get_sco_status_for_po(purchase_order_name):
+    # A Purchase Order that was deleted (an Embroidery Work Order can still
+    # point at it) is "missing", not a 404 on every render.
+    if not purchase_order_name or not frappe.db.exists("Purchase Order", purchase_order_name):
+        return {"missing": True, "sco_exists": False, "items_pending": False, "is_panel_job_open": False}
     po_doc = frappe.get_doc("Purchase Order", purchase_order_name)
     sco_name = frappe.db.get_value("Subcontracting Order", 
         {"purchase_order": purchase_order_name, "docstatus": 1}, "name")
@@ -5583,8 +5968,14 @@ def create_full_piece_receipt(ewo_name, items_data, notes=None):
     doc.notes = notes
     if all_done:
         doc.full_piece_stage = "Received from Full Piece Jobber" # Close it
-        
+
     doc.save(ignore_permissions=True)
+
+    # Releases whichever draft Pick List(s) this EWO's rows drew stock from
+    # (see so_embroidery.py) — a no-op for a PO-linked EWO, whose rows carry
+    # no such source.
+    from erp_dacsinc_custom.so_embroidery import release_pick_list_holds
+    release_pick_list_holds(doc)
 
 
 
@@ -5644,6 +6035,11 @@ def create_full_piece_send(items_data, supplier, sco_name=None, po_name=None, no
         
     if not final_po_name:
         frappe.throw("Purchase Order not found.")
+
+    # A Sales Order line goes to Full Piece embroidery once, whether from
+    # this PO or straight from the Sales Order's stock — see so_embroidery.
+    from erp_dacsinc_custom.so_embroidery import validate_po_fp_send
+    validate_po_fp_send(final_po_name, items)
 
     ewo = frappe.new_doc("Embroidery Work Order")
     ewo.subcontracting_order = sco_name
@@ -6021,6 +6417,11 @@ def get_full_piece_dashboard_data(po_name):
             "already_assigned": int(already_sent_to_fp),
             "balance_avail": int(balance) if balance > 0 else 0
         })
+
+    # Capped by what each item's Sales Order still has left to send, so qty
+    # already sent straight from the Sales Order is not offered again here.
+    from erp_dacsinc_custom.so_embroidery import cap_po_fp_balance
+    available_items = cap_po_fp_balance(po_name, available_items)
 
     return {
         "available_items": available_items,

@@ -171,41 +171,28 @@ def can_view_tab(tab, user=None, tab_roles=None):
 
 def is_scoped_to_own_customers(tab, user=None, tab_roles=None):
     """
-    True if `user`'s ONLY reason for seeing `tab` is the Merchandiser User
-    role — i.e. they hold none of that tab's OTHER configured roles.
+    True if `user` is scoped to their own work on `tab`: they hold
+    Merchandiser User and are not an admin.
 
-    A merchandiser is expected to see only their own customers' orders. But
-    "Merchandiser User" can be combined with a broader operational role
-    (Production Manager, Accounts Executive, ...) for someone who does both
-    jobs, and that role's own reason for being on this tab is company-wide
-    visibility — scoping them down to their own customers would take away
-    access their OTHER role legitimately grants. Only a user with no other
-    tab-granting role gets narrowed.
+    A merchandiser sees the orders of the customers assigned to them, plus
+    the orders they raised themselves — never the whole company's book. The
+    callers add both halves of that (`custom_merchandiser_user = me OR
+    so.owner = me`); this function only answers whether to scope at all.
 
-    Deliberately keyed off the tab's own role configuration rather than a
-    hard-coded list of "broad" roles, so this stays correct automatically if
-    that configuration changes — no second list to keep in sync.
-
-    "All" is excluded from the "other role" check even though it's a real
-    Frappe role every user holds — it can end up in a tab's role list as a
-    byproduct of sync_admin_settings_tab_roles() picking up "roles with read
-    access to the underlying doctype" (some core doctypes grant that to All
-    by default), not as a deliberate "open this tab to literally everyone"
-    admin choice. Counting it as a legitimate "other reason" would silently
-    defeat scoping for every merchandiser the moment it appears anywhere —
-    confirmed live: with All present, is_scoped_to_own_customers("accounts")
-    returned False for a user whose only role was Merchandiser User.
+    This used to be narrower: any OTHER role that also granted the tab
+    switched scoping off, on the reasoning that a combined operational role
+    needs company-wide visibility. In practice that cancelled the scoping
+    for every real merchandiser, because the roles one must hold to do the
+    job (Sales User, DAC CRM, and the peer role Junior Merchandiser) all
+    grant the underlying doctypes — confirmed live: the site's one
+    fully-set-up merchandiser saw all 28 Sales Orders. A genuine
+    operational user who must see everything gets an admin role, which is
+    still exempt here.
     """
     user = user or frappe.session.user
     if is_admin(user):
         return False
-
-    roles = set(frappe.get_roles(user))
-    if "Merchandiser User" not in roles:
-        return False
-
-    other_roles = set((tab_roles or get_tab_roles()).get(tab) or []) - {"Merchandiser User", "All"}
-    return not (roles & other_roles)
+    return "Merchandiser User" in set(frappe.get_roles(user))
 
 
 def get_allowed_tabs(user=None):

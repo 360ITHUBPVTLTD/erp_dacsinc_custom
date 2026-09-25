@@ -70,7 +70,8 @@ doctype_list_js = {
 	"Sales Order": "public/js/sales_order_list.js",
 	"Item": "public/js/item_list.js",
 	"BOM": "public/js/bom_list.js",
-	"Customer": "public/js/customer_list.js"
+	"Customer": "public/js/customer_list.js",
+	"Warehouse": "public/js/warehouse_list.js"
 }
 
 # Svg Icons
@@ -143,13 +144,31 @@ doctype_list_js = {
 # -----------
 # Permissions evaluated in scripted ways
 
+# A merchandiser sees their own work and nothing else: the Sales Orders of
+# the customers assigned to them plus any they raised themselves, and every
+# document hanging off those orders. Both hooks are needed for each doctype —
+# permission_query_conditions filters the LIST, has_permission gates opening
+# one by URL. Registering only the first is what let a merchandiser reach any
+# hidden order by pasting its link.
 permission_query_conditions = {
     "Sales Order": "erp_dacsinc_custom.custom_script.get_sales_order_permission_query_conditions",
+    "Pick List": "erp_dacsinc_custom.custom_script.get_pick_list_permission_query_conditions",
+    "Purchase Order": "erp_dacsinc_custom.custom_script.get_purchase_order_permission_query_conditions",
+    "Material Request": "erp_dacsinc_custom.custom_script.get_material_request_permission_query_conditions",
+    "Delivery Note": "erp_dacsinc_custom.custom_script.get_delivery_note_permission_query_conditions",
+    "Sales Invoice": "erp_dacsinc_custom.custom_script.get_sales_invoice_permission_query_conditions",
+    "Purchase Receipt": "erp_dacsinc_custom.custom_script.get_purchase_receipt_permission_query_conditions",
     # "Customer": "erp_dacsinc_custom.custom_script.get_customer_permission_query_conditions",
 }
 
 has_permission = {
     "Sales Order": "erp_dacsinc_custom.custom_script.has_sales_order_permission",
+    "Pick List": "erp_dacsinc_custom.custom_script.has_pick_list_permission",
+    "Purchase Order": "erp_dacsinc_custom.custom_script.has_purchase_order_permission",
+    "Material Request": "erp_dacsinc_custom.custom_script.has_material_request_permission",
+    "Delivery Note": "erp_dacsinc_custom.custom_script.has_delivery_note_permission",
+    "Sales Invoice": "erp_dacsinc_custom.custom_script.has_sales_invoice_permission",
+    "Purchase Receipt": "erp_dacsinc_custom.custom_script.has_purchase_receipt_permission",
     # "Customer": "erp_dacsinc_custom.custom_script.has_customer_permission",
 }
 
@@ -281,15 +300,29 @@ doc_events = {
         ],
         "on_update": "erp_dacsinc_custom.order_flow_api.broadcast_order_flow_change",
         "on_cancel": "erp_dacsinc_custom.order_flow_api.broadcast_order_flow_change",
+        # Never leave an Embroidery Work Order pointing at a PO/SCO that is gone.
+        "before_cancel": "erp_dacsinc_custom.so_embroidery.guard_linked_embroidery",
+        "on_trash": "erp_dacsinc_custom.so_embroidery.guard_linked_embroidery",
     },
     "Stock Entry": {
         # A subcontracting transfer is where raw material physically leaves,
         # so it is the point where one order's material actually becomes
-        # another's. Detected before_submit (while the pools still reflect
-        # the pre-transfer position) and recorded on_submit. Warns and logs;
-        # never blocks — see flag_subcontract_rm_borrowing.
-        "before_submit": "erp_dacsinc_custom.custom_script.flag_subcontract_rm_borrowing",
-        "on_submit": "erp_dacsinc_custom.custom_script.record_subcontract_rm_borrowing",
+        # another's. Both checks run before_submit (while the pools still
+        # reflect the pre-transfer position) and BLOCK — picked stock, and
+        # stock reserved for another Sales Order, never go to a jobber.
+        "before_submit": [
+            # Hard block first: stock a Pick List (draft or submitted) holds
+            # for a delivery never goes to a jobber, whichever screen sends it.
+            "erp_dacsinc_custom.custom_script.block_subcontract_transfer_of_picked_stock",
+            "erp_dacsinc_custom.custom_script.flag_subcontract_rm_borrowing",
+        ],
+        "on_submit": [
+            "erp_dacsinc_custom.custom_script.record_subcontract_rm_borrowing",
+            # Stock moved (RM to a jobber, a receipt, a transfer) — open
+            # Sales Orders / the Order Flow page refresh without a reload.
+            "erp_dacsinc_custom.order_flow_api.broadcast_order_flow_change",
+        ],
+        "on_cancel": "erp_dacsinc_custom.order_flow_api.broadcast_order_flow_change",
     },
     "Purchase Invoice": {
         "validate": "erp_dacsinc_custom.custom_script.validate_non_zero_rate",
@@ -316,17 +349,30 @@ doc_events = {
             # Records Raw Material vs For Sale on each line, so the RM
             # allocation reads it instead of re-deriving it later.
             "erp_dacsinc_custom.procurement_purpose.set_procurement_purpose",
+            # Raw-material rows against a Sales Order can't ask for more than
+            # that order's own RM shortfall — after set_procurement_purpose,
+            # which is what marks a row as Raw Material.
+            "erp_dacsinc_custom.custom_script.guard_mr_rm_not_over_so_shortfall",
         ],
         "on_update": "erp_dacsinc_custom.order_flow_api.broadcast_order_flow_change",
         "on_cancel": "erp_dacsinc_custom.order_flow_api.broadcast_order_flow_change",
     },
     "Pick List": {
+        # A Pick List can't be finalised while some of its qty is still out
+        # at a Full Piece embroidery jobber — see so_embroidery.py.
+        "before_submit": "erp_dacsinc_custom.so_embroidery.guard_pick_list_submit",
+        # ...nor deleted / cut below the qty that is out at the jobber.
+        "validate": "erp_dacsinc_custom.so_embroidery.guard_pick_list_hold_edit",
+        "on_trash": "erp_dacsinc_custom.so_embroidery.guard_pick_list_hold_edit",
         "on_update": "erp_dacsinc_custom.order_flow_api.broadcast_order_flow_change",
         "on_cancel": "erp_dacsinc_custom.order_flow_api.broadcast_order_flow_change",
     },
     "Subcontracting Order": {
         "on_update": "erp_dacsinc_custom.order_flow_api.broadcast_order_flow_change",
         "on_cancel": "erp_dacsinc_custom.order_flow_api.broadcast_order_flow_change",
+        # Never leave an Embroidery Work Order pointing at a PO/SCO that is gone.
+        "before_cancel": "erp_dacsinc_custom.so_embroidery.guard_linked_embroidery",
+        "on_trash": "erp_dacsinc_custom.so_embroidery.guard_linked_embroidery",
     },
     "Subcontracting Receipt": {
         "on_update": "erp_dacsinc_custom.order_flow_api.broadcast_order_flow_change",
@@ -370,6 +416,10 @@ after_migrate = [
     "erp_dacsinc_custom.procurement_purpose.create_procurement_purpose_fields",
     # LR Number / Signed Copy on Sales Invoice, for the Logistics tab. Idempotent.
     "erp_dacsinc_custom.logistics_tab.create_logistics_fields",
+    # Embroidery hold fields on Pick List + the source-Pick-List field on
+    # Embroidery Work Order Item, for Full Piece embroidery sent from a
+    # Sales Order's own stock. Idempotent.
+    "erp_dacsinc_custom.so_embroidery.create_embroidery_pick_list_fields",
 ]
 
 # Ships these Custom Fields with the app rather than leaving them to be
@@ -381,12 +431,7 @@ fixtures = [
             "Material Request Item-custom_procurement_purpose",
             "Purchase Order Item-custom_procurement_purpose",
             "Purchase Receipt Item-custom_procurement_purpose",
-            "Sales Invoice-custom_lr_number",
             "Sales Invoice-custom_signed_copy",
-            # Pre-existing (created via Customize Form, 2026-02-24) — not
-            # created by this app's code, but exported alongside the two
-            # fields above since the Logistics tab now depends on it too.
-            "Sales Invoice-custom_proof_of_delivery",
         ]]],
     },
 ]
@@ -462,7 +507,9 @@ scheduler_events = {
 
 # Map Purchase Receipt to Purchase Invoice
 override_whitelisted_methods = {
-    "erpnext.stock.doctype.purchase_receipt.purchase_receipt.make_purchase_invoice": "erp_dacsinc_custom.purchase_order.make_purchase_invoice_custom"
+    "erpnext.stock.doctype.purchase_receipt.purchase_receipt.make_purchase_invoice": "erp_dacsinc_custom.purchase_order.make_purchase_invoice_custom",
+    # POS Profile "Brands" table — see pos_brand_filter.py
+    "erpnext.selling.page.point_of_sale.point_of_sale.get_items": "erp_dacsinc_custom.pos_brand_filter.get_items"
 }
 
 

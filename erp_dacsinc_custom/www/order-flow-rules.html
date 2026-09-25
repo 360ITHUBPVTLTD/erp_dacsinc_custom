@@ -1,0 +1,241 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Order Flow Rules — Dacsinc</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Newsreader:ital,wght@0,400;0,500;0,600;0,700;1,400&family=IBM+Plex+Mono:wght@400;500;600&display=swap">
+<style>
+  :root {
+    --ink: #211d1b; --ink-soft: #4a4540; --paper: #f1eee7; --surface: #fbfaf7;
+    --line: #cfc8ba; --line-soft: #e2ddd0;
+    --indigo: #2e3f6b; --indigo-soft: #e7eaf2; --clay: #a9622f; --clay-soft: #f2e5d9;
+    --pine: #3b5a4c; --pine-soft: #e2ebe6; --red: #a3342b; --red-soft: #f5e1de;
+    --blue: #2d5f8f; --blue-soft: #e1ebf4; --gold: #b8863b;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --ink: #ece7de; --ink-soft: #b9b2a4; --paper: #1b1815; --surface: #242019;
+      --line: #4a423a; --line-soft: #332e27; --indigo: #8fa3d9; --indigo-soft: #262b3c;
+      --clay: #d99a68; --clay-soft: #362a1f; --pine: #8bb39f; --pine-soft: #1f2b25;
+      --red: #e38b80; --red-soft: #3a211e; --blue: #8db8e0; --blue-soft: #1e2a36; --gold: #d9ad6b;
+    }
+  }
+  :root[data-theme="dark"] {
+    --ink: #ece7de; --ink-soft: #b9b2a4; --paper: #1b1815; --surface: #242019;
+    --line: #4a423a; --line-soft: #332e27; --indigo: #8fa3d9; --indigo-soft: #262b3c;
+    --clay: #d99a68; --clay-soft: #362a1f; --pine: #8bb39f; --pine-soft: #1f2b25;
+    --red: #e38b80; --red-soft: #3a211e; --blue: #8db8e0; --blue-soft: #1e2a36; --gold: #d9ad6b;
+  }
+  * { box-sizing: border-box; }
+  html { background: var(--paper); }
+  body { margin: 0; background: var(--paper); color: var(--ink);
+    font-family: "Newsreader", Georgia, serif; font-size: 17px; line-height: 1.6; -webkit-font-smoothing: antialiased; }
+  .mono, code { font-family: "IBM Plex Mono", Consolas, monospace; font-size: .86em; }
+  a { color: var(--indigo); }
+  .topbar { position: sticky; top: 0; z-index: 30; display: flex; align-items: center; gap: 14px; flex-wrap: wrap;
+    padding: 12px 24px; background: var(--paper); border-bottom: 1px solid var(--line-soft);
+    font-family: "IBM Plex Mono", monospace; font-size: 12.5px; }
+  .topbar__mark { font-weight: 600; } .topbar__mark span { color: var(--clay); }
+  .topbar nav { display: flex; gap: 6px; margin-left: auto; flex-wrap: wrap; }
+  .topbar nav a { padding: 5px 10px; border-radius: 3px; text-decoration: none; color: var(--ink-soft); border: 1px solid transparent; }
+  .topbar nav a:hover { border-color: var(--line); background: var(--surface); color: var(--ink); }
+  .page { max-width: 1000px; margin: 0 auto; padding: 0 16px 100px; }
+  header.masthead { padding: 44px 0 24px; border-bottom: 1px solid var(--line-soft); margin-bottom: 30px; }
+  .eyebrow { font-family: "IBM Plex Mono", monospace; font-size: 12px; letter-spacing: .09em; text-transform: uppercase; color: var(--clay); margin: 0 0 12px; }
+  h1 { font-size: clamp(1.9rem, 4vw, 2.6rem); font-weight: 600; line-height: 1.12; margin: 0 0 14px; max-width: 720px; }
+  h1 em { color: var(--indigo); }
+  .lede { font-size: 1.1em; max-width: 700px; }
+  h2 { font-size: 1.55rem; margin: 46px 0 6px; }
+  h2 .num { font-family: "IBM Plex Mono", monospace; font-size: 13px; color: var(--clay); margin-right: 8px; }
+  h3 { font-size: 1.15rem; margin: 26px 0 6px; }
+  .sub { color: var(--ink-soft); margin: 0 0 16px; max-width: 700px; }
+  .rule { border: 1.5px solid var(--indigo); background: var(--indigo-soft); border-radius: 8px; padding: 16px 20px; margin: 16px 0; }
+  .rule strong { color: var(--indigo); }
+  .flow { display: flex; flex-wrap: wrap; gap: 8px; align-items: stretch; margin: 16px 0; }
+  .step { flex: 1 1 140px; background: var(--surface); border: 1px solid var(--line); border-radius: 6px; padding: 10px 12px; font-size: 14.5px; }
+  .step b { display: block; font-family: "IBM Plex Mono", monospace; font-size: 12px; color: var(--clay); margin-bottom: 2px; }
+  .table-wrap { overflow-x: auto; margin: 12px 0 18px; border: 1px solid var(--line); border-radius: 6px; background: var(--surface); }
+  table { border-collapse: collapse; width: 100%; font-size: 14.5px; }
+  th, td { text-align: left; vertical-align: top; padding: 8px 12px; border-bottom: 1px solid var(--line-soft); }
+  th { font-family: "IBM Plex Mono", monospace; font-size: 11.5px; letter-spacing: .04em; text-transform: uppercase; color: var(--ink-soft); background: var(--paper); }
+  tr:last-child td { border-bottom: 0; }
+  .pill { display: inline-block; padding: 1px 8px; border-radius: 10px; font-family: "IBM Plex Mono", monospace; font-size: 11.5px; font-weight: 600; white-space: nowrap; }
+  .g { background: var(--pine-soft); color: var(--pine); } .r { background: var(--red-soft); color: var(--red); }
+  .b { background: var(--blue-soft); color: var(--blue); } .o { background: var(--clay-soft); color: var(--clay); }
+  .msg { font-family: "IBM Plex Mono", monospace; font-size: 12.5px; background: var(--surface); border-left: 3px solid var(--red); padding: 8px 12px; margin: 6px 0 12px; color: var(--ink-soft); }
+  ol.tests { padding-left: 22px; } ol.tests li { margin-bottom: 14px; }
+  ol.tests .exp { display: block; color: var(--ink-soft); font-size: 15px; }
+  .ok { color: var(--pine); font-weight: 600; }
+  footer { margin-top: 60px; padding-top: 18px; border-top: 1px solid var(--line-soft); color: var(--ink-soft); font-size: 14px; }
+</style>
+</head>
+<body>
+<div class="topbar">
+  <div class="topbar__mark">Dacsinc <span>/</span> Order Flow Rules</div>
+  <nav>
+    <a href="#flow">Flow</a><a href="#rules">Rules</a><a href="#screens">Screens</a>
+    <a href="#messages">Messages</a><a href="#testing">Testing</a><a href="/process-flow">Process Flow</a>
+  </nav>
+</div>
+<main class="page">
+  <header class="masthead">
+    <p class="eyebrow">Sales Order · Raw Material · Subcontract · Embroidery · Delivery</p>
+    <h1>One set of rules, <em>the same on every screen</em></h1>
+    <p class="lede">If the Sales Order says something is not allowed, the Purchase Order, Material Request and
+      Sales Tracker screens don't allow it either, and they all show the same numbers in the same words.
+      This page explains the flow, the rules, what each screen shows, and how to test it.</p>
+  </header>
+
+  <h2 id="flow"><span class="num">01</span>The flow</h2>
+  <p class="sub">Every order moves through the same steps. Items with a BOM are made by a jobber; plain (trade) items are bought as they are.</p>
+  <div class="flow">
+    <div class="step"><b>1 · Sales Order</b>Approved order. Each line shows what is still to make or buy.</div>
+    <div class="step"><b>2 · Request</b>Short raw material → <b>Request RM</b>. Short trade item → <b>Raise MR</b>.</div>
+    <div class="step"><b>3 · Buy</b>Material Request → Purchase Order → Purchase Receipt. The RM is now <b>reserved</b> for this order.</div>
+    <div class="step"><b>4 · Subcontract</b>Subcontract PO → SCO + RM sent to the jobber → Subcontracting Receipt (finished goods in).</div>
+    <div class="step"><b>5 · Pick</b>Pick List (draft → submitted). Optional: send draft-picked qty for embroidery.</div>
+    <div class="step"><b>6 · Dispatch</b>Delivery Note draft = <b>To Be Dispatched (Draft)</b>; submitted = <b>Dispatched</b>.</div>
+    <div class="step"><b>7 · Deliver</b>Sales Invoice from that DN: draft = <b>Delivered (Draft)</b>; submitted = <b>Delivered</b>, then <b>Completed</b>.</div>
+  </div>
+  <p class="sub">There is one route only. A Sales Invoice with <b>Update Stock</b> is not used for Sales Orders (it is refused), so goods always
+    go out on a Delivery Note and the invoice is made from that Delivery Note. "Needs Invoice" appears only when some delivered qty has no invoice yet.</p>
+
+  <h2 id="rules"><span class="num">02</span>The rules</h2>
+
+  <h3>Rule 1 — Only this order's own raw material counts</h3>
+  <div class="rule">An order may use <strong>its own reserved raw material</strong> (bought against it) <strong>plus unclaimed stock</strong>.
+    Stock reserved for another order, and stock on any Pick List (draft or submitted), is on the shelf but <strong>not usable</strong>.
+    If there isn't enough, the answer is <strong>Request RM</strong>. No screen offers a "use it anyway" option.</div>
+  <p class="sub">This applies to the SO RM table, the Sales Tracker's Create Subcontract PO, the PO form's Fetch Pending Sales Orders
+    and Create SCO &amp; Material Transfer dialogs, and any "Send to Subcontractor" Stock Entry, including ERPNext's own Transfer button
+    and one typed by hand.</p>
+
+  <h3>Rule 2 — Picked stock is for delivery only</h3>
+  <p class="sub">Once a Pick List (draft or submitted) holds stock, that stock can't be sent to a jobber as raw material.
+    To use it, reduce or cancel the Pick List first.</p>
+
+  <h3>Rule 3 — Send to Embroidery takes draft Pick List qty only</h3>
+  <ul>
+    <li>Only qty on a <b>draft</b> Pick List of this order can be sent. Free stock that nobody has picked can't be sent: create a Pick List first.</li>
+    <li>A <b>submitted</b> Pick List can be brought back to draft with <b>Revert to Draft</b> — on the Pick List itself, in the Sales Order's
+      Pick Lists, in the tracker's Pick Lists tab, or in the Send to Embroidery dialog — and then sent. Once a Delivery Note is made from it the
+      button is gone and it says "On DN-… — can't revert".</li>
+    <li>While goods are at the jobber the Pick List shows a big purple <b>AT JOBBER</b> label everywhere and has no Submit button.</li>
+    <li>Once a <b>Delivery Note</b> (draft or submitted) is made from that Pick List, or any of it is delivered, it <b>can't</b> be sent.</li>
+    <li>You tick the items you want to send. Nothing is ticked by default.</li>
+    <li>While goods are at the jobber, that draft Pick List can't be submitted or deleted, and its qty can't be cut below what is at the jobber.</li>
+    <li>Every trip stays on record. The Pick List (form, Pick Lists modal, tracker tab) and the Send to Embroidery row show a flag:
+      <span class="pill o">Embroidery: sent 5 · back 3 · 2 at jobber</span> while goods are out, then
+      <span class="pill g">Embroidery: sent 5 · all back</span>, with one line per EWO (sent → back).
+      On the Sales Order's Item Stock &amp; Action Plan row the flag is clickable: it opens the history, and a trip still out has
+      <b>Receive</b> right there. The row's Incoming → View dialog lists every trip too, finished ones included, with <b>Receive</b>, <b>Print</b>
+      and <b>Print All</b>.</li>
+  </ul>
+
+  <h3>Rule 4 — Delivery words follow the documents</h3>
+  <div class="table-wrap"><table>
+    <tr><th>Documents</th><th>Delivery column</th></tr>
+    <tr><td>Nothing on a Delivery Note yet</td><td><span class="pill o">Not Dispatched</span> · <span class="pill o">Picking</span> · <span class="pill b">Ready to Dispatch</span></td></tr>
+    <tr><td>Delivery Note saved, not submitted</td><td><span class="pill o">To Be Dispatched (Draft)</span></td></tr>
+    <tr><td>Delivery Note submitted</td><td><span class="pill b">✓ Dispatched</span> / <span class="pill b">Dispatched 40%</span></td></tr>
+    <tr><td>Sales Invoice for that DN saved as draft</td><td><span class="pill o">Delivered (Draft)</span></td></tr>
+    <tr><td>Sales Invoice submitted</td><td><span class="pill g">✓ Delivered</span> / <span class="pill g">Delivered 40%</span></td></tr>
+  </table></div>
+
+  <h2 id="screens"><span class="num">03</span>What each screen shows</h2>
+
+  <h3>Sales Order → Item Stock &amp; Action Plan → Raw Material table</h3>
+  <p class="sub">Title: "Raw material to make N of &lt;item&gt;". Card: Ordered · Delivered · Still to Cover · Free Finished Stock · <b>To Make</b>.</p>
+  <div class="table-wrap"><table>
+    <tr><th>Column</th><th>Meaning</th></tr>
+    <tr><td>Needed</td><td>Raw material for the pieces still to make (hover for the whole-order total).</td></tr>
+    <tr><td>In Stock for this Order</td><td>This order's own raw material. Below it in red: "+N on shelf reserved for SO-… (not usable)" and "+N picked for delivery (not usable)".</td></tr>
+    <tr><td>Requested / On the Way</td><td>Open Material Requests, Purchase Orders, and RM already at the jobber, each linked.</td></tr>
+    <tr><td>To Request</td><td>Needed − In Stock − Requested.</td></tr>
+  </table></div>
+  <div class="table-wrap"><table>
+    <tr><th>Status</th><th>When</th><th>Next step</th></tr>
+    <tr><td><span class="pill g">In Stock</span></td><td>Own stock covers it</td><td>Create the Subcontract PO</td></tr>
+    <tr><td><span class="pill b">Requested</span></td><td>An MR / PO / jobber transfer covers it</td><td>Wait. A draft MR shows <b>Submit MR</b></td></tr>
+    <tr><td><span class="pill r">Not in Stock</span></td><td>Short, nothing on the shelf</td><td>Orange <b>Request RM (N)</b> button</td></tr>
+    <tr><td><span class="pill r">Reserved for Other Order</span></td><td>Short; the shelf's stock belongs to another order</td><td>Orange <b>Request RM (N)</b> button</td></tr>
+  </table></div>
+
+  <h3>Sales Tracker — Current Stage and Action Required</h3>
+  <div class="table-wrap"><table>
+    <tr><th>Situation</th><th>Current Stage</th><th>Action Required</th></tr>
+    <tr><td>BOM raw material short for this order</td><td>Waiting for Raw Material</td><td><b>Request RM</b>, or <b>Request (2)</b> if trade items are also on the order</td></tr>
+    <tr><td>This order's own RM is in stock</td><td>RM Ready — Make Subcontract PO</td><td><b>Create Subcontract PO (qty)</b> (+ <b>Raise MR</b> for trade items)</td></tr>
+    <tr><td>Trade items only, nothing raised</td><td>New Order — Nothing Raised Yet</td><td><b>Raise MR</b></td></tr>
+    <tr><td>MR / PO raised</td><td>MR Raised / PO Raised (Awaiting Stock)</td><td>Order from MR / Track PO</td></tr>
+    <tr><td>RM with the jobber</td><td>In Job Work</td><td>Track Job Work</td></tr>
+    <tr><td>Sold item received</td><td>Stock Arrived — Create Pick List</td><td>Create Pick List</td></tr>
+    <tr><td>Draft Pick List</td><td>Draft Pick List</td><td>Submit Pick List</td></tr>
+    <tr><td>Pick List submitted</td><td>Ready for Delivery</td><td>Create Delivery Note</td></tr>
+    <tr><td>Draft Delivery Note</td><td>To Be Dispatched (Draft)</td><td>Submit DN to Dispatch</td></tr>
+    <tr><td>Delivery Note submitted</td><td>Dispatched — Create Invoice</td><td>Create Sales Invoice</td></tr>
+    <tr><td>Draft Sales Invoice</td><td>Delivered (Draft) — Submit Invoice</td><td>Submit Invoice</td></tr>
+    <tr><td>Sales Invoice submitted for everything</td><td>Completed</td><td>—</td></tr>
+  </table></div>
+  <p class="sub"><b>Request</b> opens one prompt. It first asks <b>Raw Material (RM) · n</b> or <b>Trade Items (MR) · n</b> (skipped when only one applies),
+    then lists exactly the records that are short with their qty, all ticked and editable, and creates one draft Material Request.
+    Raw material received for a BOM (tagged Raw Material) never shows as "Stock Arrived", even when the order also sells that item.
+    "N Pending — Not Picked Yet" under the action is ordered qty not yet picked or dispatched.</p>
+
+  <h3>Purchase Order form</h3>
+  <div class="table-wrap"><table>
+    <tr><th>Dialog</th><th>What it shows now</th></tr>
+    <tr><td>Fetch Pending Sales Orders (subcontracted)</td><td>A row whose RM isn't this order's own is disabled: <span class="pill r">RM Reserved for Other Order — Request RM</span> or <span class="pill r">RM Not in Stock — Request RM</span>. The server rejects it too.</td></tr>
+    <tr><td>Fetch Raw Materials from SO</td><td>"To Make" and "In Stock (usable)" are the same figures as each order's RM table; "+N reserved for other orders" is shown but not counted. Line status: <span class="pill g">In Stock</span> <span class="pill b">Requested (PO/MR)</span> <span class="pill r">To Buy N</span>.</td></tr>
+    <tr><td>Create SCO &amp; Material Transfer</td><td>"Available for this PO" = the PO's own share. Max You Can Send never goes beyond it. Sending more is refused.</td></tr>
+  </table></div>
+
+  <h3>Material Request → Procurement Planner → Consolidated BOM Components</h3>
+  <p class="sub">Each linked order brings only its own stock, its own MR/PO and RM already at the jobber for it.
+    An order that is already covered is <b>not listed</b>, and the MR is split by what each order still needs.</p>
+
+  <h2 id="messages"><span class="num">04</span>Messages you will see</h2>
+  <div class="msg">Raw material not available for this order — Fabric blue needs 60 Meter, this order has 0 (the rest on the shelf is reserved for SAL-ORD-2026-00147). Request RM (Material Request) for this order first.</div>
+  <div class="msg">Item 2 with BOM: this order's own raw material covers only 30, not 31. Request RM (Material Request) for the rest first.</div>
+  <div class="msg">Fabric blue: this Purchase Order's own raw material is 60 Meter, you are sending 65. The rest on the shelf is reserved for SAL-ORD-…. Send only 60 now, or Request RM for the rest.</div>
+  <div class="msg">This transfer sends more raw material than this Sales Order owns: … Reduce the qty to this order's own stock, or raise a Material Request (Request RM) for the rest.</div>
+  <div class="msg">Only 0 of Item 1 without BOM can be sent now — only qty on a DRAFT Pick List of this order can go to embroidery …</div>
+  <div class="msg">Pick List STO-PICK-… cannot go back to draft: Delivery Note DN-… is already made from it. Goods on a Delivery Note cannot be sent for embroidery.</div>
+  <div class="msg">Pick List qty can't go below 5 — that much is out at a Full Piece embroidery jobber (EM-…). Receive it back first.</div>
+
+  <h2 id="testing"><span class="num">05</span>How to test</h2>
+  <p class="sub">Use two dummy orders for the same BOM item, e.g. <b>A</b> and <b>B</b> (SAL-ORD-2026-00146 / 00147 style). Buy the raw material against <b>A</b> only
+    (Request RM on A → MR → PO → Purchase Receipt).</p>
+  <ol class="tests">
+    <li>Open <b>B</b>'s RM table.<span class="exp">Expect: <span class="pill r">Reserved for Other Order</span>, "+60 on shelf reserved for A (not usable)", orange Request RM (60).</span></li>
+    <li>Open <b>A</b>'s RM table.<span class="exp">Expect: <span class="pill g">In Stock</span>, header "All RM in stock — ready for Subcontract PO".</span></li>
+    <li>Sales Tracker, both rows.<span class="exp">Expect: B "Waiting for Raw Material → Request RM"; A "RM Ready — Make Subcontract PO" with Create Subcontract PO (qty).</span></li>
+    <li>New subcontracted PO → Fetch Pending Sales Orders.<span class="exp">Expect: B's row disabled with "RM Reserved for Other Order — Request RM"; A's row selectable.</span></li>
+    <li>Sales Tracker → A → Create Subcontract PO with qty + 1.<span class="exp">Expect: refused, "own raw material covers only …". With the exact qty: the PO draft opens.</span></li>
+    <li>Submit that PO → Create SCO &amp; Material Transfer, type more than "Available for this PO".<span class="exp">Expect: red "Reserved for another order — cannot send" (or "no more on the shelf"). With the exact qty: SCO + transfer are created.</span></li>
+    <li>From the SCO, try ERPNext's Transfer Material for extra RM.<span class="exp">Expect: the Stock Entry refuses on submit.</span></li>
+    <li>PO → Fetch Raw Materials from SO; compare with A's and B's RM tables.<span class="exp">Expect: identical To Make and In Stock figures.</span></li>
+    <li>Material Request → Procurement Planner → Consolidated BOM Components.<span class="exp">Expect: A not listed (its RM is at the jobber); B asks for its full need.</span></li>
+    <li>Tracker → B → Request.<span class="exp">Expect: the prompt lists Fabric blue 60 and fabric red 30 (plus a choice step if B also has trade items). Create → one draft MR.</span></li>
+    <li>Embroidery: on an order with free stock but no Pick List, open Send to Embroidery.<span class="exp">Expect: Can Send "—", "No draft Pick List — create a Pick List first".</span></li>
+    <li>Create a draft Pick List, reopen, tick one item, send part.<span class="exp">Expect: EWO created; that Pick List can't be submitted, deleted, or cut below the sent qty.</span></li>
+    <li>Submit a Pick List, reopen Send to Embroidery.<span class="exp">Expect: "is submitted — Revert to Draft". Reverting creates a new draft that can be sent.</span></li>
+    <li>Receive part of it back (Job Work / Embroidery - FP), then the rest.<span class="exp">Expect: the Pick List flag goes from "sent 5 · back 3 · 2 at jobber" to "sent 5 · all back"; the history line stays; the Pick List can be submitted again.</span></li>
+    <li>Make a Delivery Note from a submitted Pick List.<span class="exp">Expect: "on Delivery Note … cannot send"; revert refused.</span></li>
+    <li>Deliver one line of a multi-line order and invoice it in full.<span class="exp">Expect: no "Needs Invoice" / "Create Sales Invoice"; Delivery shows "Delivered n%".</span></li>
+    <li>Try a Sales Invoice with Update Stock ticked for a Sales Order.<span class="exp">Expect: refused, "use a Delivery Note".</span></li>
+    <li>Delivery column: save a DN, submit it, then make the invoice.<span class="exp">Expect: To Be Dispatched (Draft) → ✓ Dispatched → Delivered (Draft) (invoice saved) → ✓ Delivered.</span></li>
+  </ol>
+
+  <h3>Automated check — 25 Sep 2026</h3>
+  <p class="sub">The same scenarios were run on this site against fresh test orders, inside a transaction that was rolled back afterwards
+    (nothing was saved): <span class="ok">41 of 41 checks passed</span>, plus an 11-step order lifecycle (New Order → MR → PO → Pick List → DN draft → Dispatched → SI draft → part-invoiced → Completed) with every Current Stage and Action Required correct. The PO prompt, the MR planner and the SO RM table showed zero
+    differences on SAL-ORD-2026-00146 and the two test orders. Delivery chip labels were checked for all eight states.</p>
+
+  <footer>Technical details: <code>apps/erp_dacsinc_custom/docs/so-rm-po-subcontracting-flow.md</code> ("One rule"),
+    <code>order-flow-dashboard.md</code>, <code>so-full-piece-embroidery.md</code>.</footer>
+</main>
+</body>
+</html>

@@ -11,7 +11,8 @@
   "column_break_okaj",
   "ordered_qty",
   "received_qty",
-  "pending_qty"
+  "pending_qty",
+  "source_pick_lists"
  ],
  "fields": [
   {
@@ -52,13 +53,20 @@
    "fieldtype": "Float",
    "in_list_view": 1,
    "label": "Pending Qty "
+  },
+  {
+   "allow_on_submit": 1,
+   "fieldname": "source_pick_lists",
+   "fieldtype": "Small Text",
+   "hidden": 1,
+   "label": "Source Pick Lists (JSON)"
   }
  ],
  "grid_page_length": 50,
  "index_web_pages_for_search": 1,
  "istable": 1,
  "links": [],
- "modified": "2025-11-29 14:24:14.926578",
+ "modified": "2026-09-24 15:11:36.573420",
  "modified_by": "Administrator",
  "module": "Erp Dacsinc Custom",
  "name": "Embroidery Work Order Item",
