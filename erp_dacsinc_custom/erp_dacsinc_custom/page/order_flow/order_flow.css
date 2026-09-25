@@ -1489,3 +1489,28 @@ td > .of-action-btn {
     color: var(--of-blue);
     border-color: var(--of-blue);
 }
+
+/* Purchase Flow / Job Work PO rows: Open PO beside a Print button — same
+   wrapping pattern as .of-ewo-actions above, so the icon-only Print button
+   sits next to Open PO instead of dropping to its own line, left-aligned
+   under it, whenever the Action column is narrower than both together. */
+.of-po-actions {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    flex-wrap: wrap;
+    justify-content: center;
+}
+
+.of-po-print-btn,
+.of-sco-print-btn {
+    padding: 0 8px;
+    min-width: 28px;
+    color: var(--text-muted);
+}
+
+.of-po-print-btn:hover,
+.of-sco-print-btn:hover {
+    color: var(--of-blue);
+    border-color: var(--of-blue);
+}

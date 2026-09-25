@@ -23,9 +23,9 @@ const OF_SEEN_KEY = 'dac_order_flow_last_seen';
 // a different label or a stale count.
 const OF_STAGES = [
     { key: 'all',              label: 'All Open',           mod: '',          tile: 'info',      hint: 'Total active Sales Orders' },
-    { key: 'need_to_bill',     label: 'Need to Bill',       mod: 'bill',      tile: 'need-bill', hint: 'Delivered 100% — needs Sales Invoice' },
+    { key: 'need_to_bill',     label: 'Dispatched — Invoice Pending', mod: 'bill', tile: 'need-bill', hint: 'Delivery Note submitted (dispatched) — create the Sales Invoice to mark it Delivered' },
     { key: 'draft_pick_list',  label: 'Draft Pick List',    mod: 'draft',     tile: 'draft',     hint: 'Pick List in draft — needs submit' },
-    { key: 'ready_to_deliver', label: 'Ready for Delivery', mod: 'dn',        tile: 'dn',        hint: 'Pick List submitted — needs Delivery Note' },
+    { key: 'ready_to_deliver', label: 'Ready to Dispatch',  mod: 'dn',        tile: 'dn',        hint: 'Pick List submitted — create/submit the Delivery Note (a draft DN = To Be Dispatched)' },
     { key: 'stock_received',   label: 'Stock Arrived',      mod: 'rcpt',      tile: 'rcpt',      hint: 'Receipt done — needs Pick List' },
     { key: 'receipt_draft',    label: 'Receiving (Draft PR)', mod: 'draft',   tile: 'draft',     hint: 'Draft Receipt exists — not posted to stock yet, needs submit' },
     { key: 'in_jobwork',       label: 'In Job Work',        mod: 'jw',        tile: 'jw',        hint: 'Active subcontracting POs' },
@@ -34,8 +34,8 @@ const OF_STAGES = [
     // Not a stage: an order can sit at ANY stage while its raw material is
     // ready to be subcontracted, so this filters on its own row flag
     // (rm_ready_for_sco) rather than on stage_key. See OF_FLAG_STAGES.
-    { key: 'rm_ready_for_sco', label: 'RM Ready — Make SCO PO', mod: 'jw',      tile: 'jw',        hint: 'Raw material has arrived and is in stock — a Subcontract PO can be raised now' },
-    { key: 'newly_created',    label: 'Newly Created',      mod: 'new',       tile: 'new',       hint: 'New order — nothing raised yet' },
+    { key: 'rm_ready_for_sco', label: 'RM Ready — Make Subcontract PO', mod: 'jw',      tile: 'jw',        hint: 'This order\'s own raw material is in stock — a Subcontract PO can be raised now' },
+    { key: 'newly_created',    label: 'Nothing Raised Yet', mod: 'new',       tile: 'new',       hint: 'Nothing raised yet — waiting for raw material, RM ready for a Subcontract PO, or trade items to buy' },
     { key: 'overdue',          label: 'Overdue',            mod: 'due',       tile: 'bad',       hint: 'Past delivery date' },
     { key: 'completed',        label: 'Completed',          mod: 'ok',        tile: 'ok',        hint: 'Fully delivered and billed, or closed' }
 ];
@@ -140,7 +140,7 @@ class OrderFlow {
         // for any user whose landing tab happens to be Tracker.
         this.active = null;
         this.allowed_tabs = [];
-        this.tracker_subtab = 'so'; // 'so' | 'mr'
+        this.tracker_subtab = 'so'; // 'so' | 'mr' | 'fp' | 'pn'
         this.pur_subtab = 'po'; // 'po' | 'receipt' | 'bill'
         this.job_subtab = 'po'; // 'po' | 'receipt'
         this.acc_subtab = 'receivables'; // 'receivables' | 'supplier' | 'jobber'
@@ -164,7 +164,7 @@ class OrderFlow {
         this.docstatus_filter = {
             purchase: { po: '', receipt: '' },
             jobwork: { po: '', receipt: '', ewo_fp: '', ewo_pn: '' },
-            tracker: { mr: '' },
+            tracker: { mr: '', ewo_fp: '', ewo_pn: '' },
         };
 
         // Per-tab pagination state. A tab whose data is one list (stock,
@@ -177,6 +177,8 @@ class OrderFlow {
             tracker: {
                 so: { page: 1, page_size: 100 },
                 mr: { page: 1, page_size: 100 },
+                ewo_fp: { page: 1, page_size: 100 },
+                ewo_pn: { page: 1, page_size: 100 },
             },
             purchase: {
                 po: { page: 1, page_size: 100 },
@@ -499,9 +501,10 @@ class OrderFlow {
                     .filter(`[data-subtab="${sub}"]`).addClass('is-active');
                 this.$body.find('#of-stage-bar').toggleClass('of-hidden', sub !== 'so');
                 this.$body.find('#of-tracker-industry').toggle(sub === 'so');
-                ['so', 'mr'].forEach(s => {
+                ['so', 'mr', 'fp', 'pn'].forEach(s => {
                     this.$body.find(`#of-tracker-sec-${s}`).toggleClass('of-hidden', s !== sub);
                 });
+                this.set_tracker_count(this._tracker_data);
             } else if (parent_tab === 'purchase') {
                 this.pur_subtab = sub;
                 this.$body.find('#of-panel-purchase .of-subtab').removeClass('is-active')
@@ -772,6 +775,18 @@ class OrderFlow {
         // same server method the Sales Order widget submits through
         // (update_and_submit_pick_list with no row edits), so all of its own
         // validation applies identically here.
+        // "Order Status" under a Sales Order number — where every item is now.
+        this.$body.on('click', '.of-order-status', (e) => {
+            e.preventDefault(); e.stopPropagation();
+            const so = $(e.currentTarget).data('so');
+            frappe.require('/assets/erp_dacsinc_custom/js/sales_order.js', () => window.so_show_order_status(so));
+        });
+
+        this.$body.on('click', '.of-pl-revert', (e) => {
+            e.preventDefault(); e.stopPropagation();
+            of_revert_pick_list($(e.currentTarget).data('pl'), () => this.refresh(true));
+        });
+
         this.$body.on('click', '.of-pl-submit', (e) => {
             e.preventDefault();
             e.stopPropagation();
@@ -1061,7 +1076,11 @@ class OrderFlow {
                         }).then(draft_res => {
                             const drafts = draft_res.message || {};
                             frappe.require('/assets/erp_dacsinc_custom/js/sales_order.js', () => {
-                                show_bulk_dn_si_modal(mock_frm, pls, 'Sales Invoice', 0, drafts.draft_sis || [], [], drafts.draft_details || []);
+                                // ORIGINAL (commented out as per requirement — SI with Update Stock is not used):
+                                // show_bulk_dn_si_modal(mock_frm, pls, 'Sales Invoice', 0, drafts.draft_sis || [], [], drafts.draft_details || []);
+                                // Picked stock ships on a Delivery Note first; the invoice is made from that DN.
+                                frappe.show_alert({ message: __('Picked qty goes on a Delivery Note first — invoice the Delivery Note after it is submitted.'), indicator: 'blue' }, 6);
+                                show_bulk_dn_si_modal(mock_frm, pls, 'Delivery Note', 0, drafts.draft_dns || [], [], drafts.draft_details || []);
                             });
                         });
                     } else {
@@ -1199,45 +1218,11 @@ class OrderFlow {
                     preview_title: __('Review Purchase Order — from Material Request'),
                     confirm_label: __('Create Purchase Order')
                 });
-            } else if (action === 'make_mr' && so) {
-                // "Create Subcontract PO" / "Raise MR / Subcontract PO" both
-                // land here. If any BOM item on this order has its raw
-                // material in stock right now, offer those directly instead
-                // of bouncing the user to the Sales Order to hunt for the
-                // per-row button — the whole point of this column is that
-                // the next action is one click. Anything NOT in that list
-                // (plain trade items, or BOM items still short) still needs
-                // the order's own widget, so with nothing ready this falls
-                // back to exactly the old behaviour.
-                frappe.call({
-                    method: 'erp_dacsinc_custom.order_flow_api.get_so_bom_items_for_spo',
-                    args: { sales_order: so },
-                    freeze: true,
-                    freeze_message: __('Checking raw material…')
-                }).then(r => {
-                    const ready = (r && r.message) || [];
-                    if (ready.length) {
-                        frappe.require('/assets/erp_dacsinc_custom/js/sales_order.js', () => {
-                            if (typeof window.so_show_spo_multi_prompt !== 'function') {
-                                window.open(frappe.utils.get_form_link('Sales Order', so), '_blank');
-                                return;
-                            }
-                            window.so_show_spo_multi_prompt(so, ready, () => this.refresh(true));
-                        });
-                        return;
-                    }
-                    // No BOM line at all on this order — "Raise MR from SO"
-                    // (plain trade items). Same complaint as the BOM case: the
-                    // per-item numbers already exist in the widget, so open its
-                    // "Finished Item MR" prompt directly instead of sending the
-                    // user to the Sales Order to find the same button. Loaded
-                    // into an OFF-SCREEN container — never appended to the
-                    // page — purely to populate custom_stock_data the same way
-                    // the visible widget does; nothing about this is shown.
-                    this.open_fg_mr_prompt_from_tracker(so);
-                }).catch(() => {
-                    window.open(frappe.utils.get_form_link('Sales Order', so), '_blank');
-                });
+            } else if ((action === 'request' || action === 'make_mr') && so) {
+                // One prompt: choose Raw Material (for BOM items) or Trade
+                // Items (bought as-is), see exactly what is short, request it.
+                // (It used to open the Subcontract PO picker instead.)
+                of_show_request_prompt(so, () => this.refresh(true));
             }
         });
 
@@ -1429,6 +1414,24 @@ class OrderFlow {
             of_print_ewo($(e.currentTarget).data('name'));
         });
 
+        // Purchase Flow tab's own Print — every row there is a plain
+        // (non-subcontracted) PO, so it always prints itself.
+        this.$body.on('click', '.of-po-print-btn', (e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            of_print_po($(e.currentTarget).data('name'));
+        });
+        // Job Work tab's Print — every row there IS subcontracted, so this
+        // prints its Subcontracting Order instead (see of_print_sco); the
+        // button itself only renders once one exists (sco_name), same gate
+        // the Purchase Order form's own "Print SCO"/"Print PO" toolbar
+        // buttons use.
+        this.$body.on('click', '.of-sco-print-btn', (e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            of_print_sco($(e.currentTarget).data('name'));
+        });
+
         // Uniform Embroidery Receive Click Handler
         this.$body.on('click', '.of-receive-btn', (e) => {
             const transfer_id = $(e.currentTarget).data('id');
@@ -1498,66 +1501,39 @@ class OrderFlow {
             this.prompt_create_transfer();
         });
 
-        // ── Logistics tab: inline LR Number save ────────────────────
-        this.$body.on('click', '.of-logi-save-lr-btn', (e) => {
-            const $btn = $(e.currentTarget);
-            const name = $btn.data('name');
-            const lr_number = this.$body.find(`.of-logi-lr-input[data-name="${name}"]`).val();
-            $btn.prop('disabled', true);
-            frappe.call({
-                method: 'erp_dacsinc_custom.order_flow_api.update_logistics_fields',
-                args: { sales_invoice: name, lr_number }
-            }).then(() => {
-                frappe.show_alert({ message: __('LR Number saved.'), color: 'green' });
-                this.refresh(true);
-            }).catch(() => {
-                $btn.prop('disabled', false);
-            });
-        });
-        this.$body.on('keydown', '.of-logi-lr-input', (e) => {
-            if (e.key !== 'Enter') return;
-            e.preventDefault();
-            const name = $(e.currentTarget).data('name');
-            this.$body.find(`.of-logi-save-lr-btn[data-name="${name}"]`).trigger('click');
-        });
-
-        // ── Logistics tab: inline Signed Copy attach ────────────────
-        this.$body.on('click', '.of-logi-attach-btn', (e) => {
-            const name = $(e.currentTarget).data('name');
-            new frappe.ui.FileUploader({
-                doctype: 'Sales Invoice',
-                docname: name,
-                fieldname: 'custom_signed_copy',
-                allow_multiple: false,
-                on_success: (file_doc) => {
+        // ── Logistics tab: one Update prompt (Transporter, LR No, Signed Copy) ──
+        // All three are allow_on_submit on Sales Invoice; saved together by
+        // order_flow_api.update_logistics_fields.
+        this.$body.on('click', '.of-logi-update-btn', (e) => {
+            const $b = $(e.currentTarget);
+            const name = $b.data('name');
+            const d = new frappe.ui.Dialog({
+                title: __('Delivery Paperwork — {0}', [name]),
+                fields: [
+                    // Only suppliers marked "Is Transporter" — same filter India
+                    // Compliance puts on the Sales Invoice form's own field.
+                    { fieldtype: 'Link', fieldname: 'transporter', label: __('Transporter'), options: 'Supplier',
+                      default: $b.attr('data-transporter') || '',
+                      get_query: () => ({ filters: { is_transporter: 1, disabled: 0 } }) },
+                    { fieldtype: 'Data', fieldname: 'lr_no', label: __('LR No'), default: $b.attr('data-lr') || '' },
+                    { fieldtype: 'Attach', fieldname: 'signed_copy', label: __('Signed Copy'), default: $b.attr('data-signed') || '' },
+                    { fieldtype: 'HTML', options: `<div class="of-micro text-muted">${__('The invoice leaves this list once it has an LR No or a Signed Copy.')}</div>` }
+                ],
+                primary_action_label: __('Update'),
+                primary_action: (v) => {
                     frappe.call({
                         method: 'erp_dacsinc_custom.order_flow_api.update_logistics_fields',
-                        args: { sales_invoice: name, signed_copy: file_doc.file_url }
-                    }).then(() => {
-                        frappe.show_alert({ message: __('Signed copy attached.'), color: 'green' });
+                        args: { sales_invoice: name, transporter: v.transporter || '', lr_no: v.lr_no || '', signed_copy: v.signed_copy || '' },
+                        freeze: true, freeze_message: __('Saving…')
+                    }).then(r => {
+                        if (!r.message) return;
+                        d.hide();
+                        frappe.show_alert({ message: __('{0} updated.', [name]), indicator: 'green' });
                         this.refresh(true);
                     });
                 }
             });
-        });
-
-        // ── Logistics tab: inline Proof of Delivery checkbox ────────
-        // Independent of LR Number / Signed Copy — toggling this never
-        // removes the row (see logistics_html/logistics_tab.py).
-        this.$body.on('change', '.of-logi-pod-checkbox', (e) => {
-            const $cb = $(e.currentTarget);
-            const name = $cb.data('name');
-            const checked = $cb.is(':checked') ? 1 : 0;
-            $cb.prop('disabled', true);
-            frappe.call({
-                method: 'erp_dacsinc_custom.order_flow_api.update_logistics_fields',
-                args: { sales_invoice: name, proof_of_delivery: checked }
-            }).then(() => {
-                frappe.show_alert({ message: __('Proof of Delivery updated.'), color: 'green' });
-                this.refresh(true);
-            }).catch(() => {
-                $cb.prop('checked', !checked).prop('disabled', false);
-            });
+            d.show();
         });
 
         // Click to redirect logic for Sales Tracker flow links and status chips
@@ -1718,20 +1694,24 @@ class OrderFlow {
         OF_TABS.forEach(t => {
             this.$body.find(`#of-panel-${t.key}`).toggleClass('of-hidden', t.key !== tab);
         });
-        this.$body.find('#of-stage-bar').toggleClass('of-hidden', tab !== 'tracker' || this.tracker_subtab === 'mr');
+        this.$body.find('#of-stage-bar').toggleClass('of-hidden', tab !== 'tracker' || this.tracker_subtab !== 'so');
         this.$body.find('#of-approval-stage').toggle(tab === 'approval');
         this.$body.find('#of-uniform-status').toggle(tab === 'uniform');
         this.$body.find('#of-stock-warehouse').toggle(tab === 'stock');
-        this.$body.find('#of-tracker-industry').toggle(tab === 'tracker' && this.tracker_subtab !== 'mr');
+        this.$body.find('#of-tracker-industry').toggle(tab === 'tracker' && this.tracker_subtab === 'so');
         // Scope/days scope Sales-Order-linked activity, which the Stock
         // Tracker's global item report has none of.
-        this.$body.find('#of-scope, #of-days').toggle(tab !== 'stock');
+        // Stock Tracker is a live report (neither applies); SO Approvals lists
+        // what is pending approval, so "Open / All" has no meaning there —
+        // its "Last N days" still applies.
+        this.$body.find('#of-days').toggle(tab !== 'stock');
+        this.$body.find('#of-scope').toggle(tab !== 'stock' && tab !== 'approval');
         this.update_merchandiser_visibility();
 
         // Dynamic context-aware search placeholder
         const placeholders = {
             tracker: __('Search Sales Order #, Customer PO #, Customer, Item…'),
-            purchase: __('Search Purchase Order #, Supplier, Sales Order, Item…'),
+            purchase: __('Search Purchase Order #, Supplier, Sales Order, Item, LR Number…'),
             jobwork: __('Search Job Work #, Supplier, Purchase Order, Sales Order…'),
             stock: __('Search item code, item name…'),
             picklist: __('Search Pick List #, Customer, Sales Order, Item, Warehouse…'),
@@ -1845,7 +1825,9 @@ class OrderFlow {
         if (this.active === 'tracker') {
             frappe.call({
                 method: 'erp_dacsinc_custom.order_flow_api.get_summary',
-                args: { days: this.days, scope: this.scope, search: this.search || null, approval_stage: this.approval_stage_filter || null, industry: this.tracker_industry_filter || null }
+                // Same filters as the rows below it — merchandiser included — so a
+                // stage card's count always equals what clicking it lists.
+                args: { days: this.days, scope: this.scope, search: this.search || null, merchandiser: this.merchandiser_filter || null, approval_stage: this.approval_stage_filter || null, industry: this.tracker_industry_filter || null }
             }).then(r => {
                 const s = r.message || {};
                 this.render_tracker_summary(s);
@@ -2629,7 +2611,10 @@ class OrderFlow {
         try {
             const panel = this.$body.find(`#of-panel-${this.active}`);
             let html = '';
-            if (this.active === 'tracker')  html = this.tracker_html(data);
+            if (this.active === 'tracker') {
+                html = this.tracker_html(data);
+                this.load_ewo_receive_actions(data);
+            }
             if (this.active === 'purchase') html = this.purchase_html(data);
             if (this.active === 'jobwork') {
                 html = this.jobwork_html(data);
@@ -2660,6 +2645,19 @@ class OrderFlow {
         }
     }
 
+    // The toolbar count follows the visible subtab. Subtab switches only
+    // toggle sections (no repaint), so the click handler calls this too.
+    set_tracker_count(data) {
+        data = data || {};
+        const n = {
+            so: data.total ? __('{0} order(s) match', [data.total]) : '',
+            mr: __('{0} Material Requests', [(data.material_requests || {}).total || 0]),
+            fp: __('{0} Full Piece work orders', [(data.ewo_fp || {}).total || 0]),
+            pn: __('{0} Panel work orders', [(data.ewo_pn || {}).total || 0]),
+        }[this.tracker_subtab || 'so'];
+        this.$body.find('#of-count').text(n || '');
+    }
+
     // ── Tab 1: tracker ───────────────────────────────────────────
     tracker_html(data) {
         data = data || {};
@@ -2667,12 +2665,11 @@ class OrderFlow {
         const mrs_env = data.material_requests || {};
         const mrs = mrs_env.rows || [];
         const subtab = this.tracker_subtab || 'so';
+        const ewo_fp_env = data.ewo_fp || {};
+        const ewo_pn_env = data.ewo_pn || {};
 
-        this.$body.find('#of-count').text(
-            subtab === 'so'
-                ? (data.total ? __('{0} order(s) match', [data.total]) : '')
-                : __('{0} Material Requests', [mrs_env.total || 0])
-        );
+        this._tracker_data = data;
+        this.set_tracker_count(data);
 
         const truncated_note = (subtab === 'so' && data.truncated) ? `
             <div class="of-truncated-note"><i class="fa fa-exclamation-triangle"></i>
@@ -2863,8 +2860,8 @@ class OrderFlow {
 
             if (flt_of(o.shortfall_qty) > 0.01 && !view_only) {
                 action_btn_html += `
-                    <div class="of-micro" style="margin-top:6px;color:var(--of-red);font-weight:600;" title="${of_esc('Still not delivered or picked on this order — see the Item Stock & Action Plan below for which item and why.')}">
-                        <i class="fa fa-shopping-cart"></i> ${of_round2(o.shortfall_qty)} Still Short
+                    <div class="of-micro" style="margin-top:6px;color:var(--of-red);font-weight:600;" title="${of_esc('Ordered qty not yet picked or dispatched, across every line of this order — see the Item Stock & Action Plan below for which item and why.')}">
+                        <i class="fa fa-hourglass-half"></i> ${of_round2(o.shortfall_qty)} ${__('Pending — Not Picked Yet')}
                     </div>`;
             }
 
@@ -2874,7 +2871,7 @@ class OrderFlow {
                     <div style="display:flex; align-items:center; gap:6px;">
                         <i class="fa fa-caret-right of-so-toggle" style="cursor:pointer; width:12px; font-size:14px; color:var(--text-light);" data-so="${o.name}"></i>
                         <div>
-                            ${of_so_link(o.name, {bold: true})}
+                            ${of_so_link(o.name, {bold: true})}<a href="#" class="of-order-status" data-so="${o.name}" title="${of_esc(__('Order Status — where every item of this order is right now'))}" style="display:inline-flex; align-items:center; justify-content:center; width:20px; height:20px; margin-left:4px; border-radius:4px; background:var(--of-blue-tint, rgba(52,152,219,.12)); color:var(--of-blue, #2980b9); font-size:11px; vertical-align:middle; text-decoration:none;"><i class="fa fa-map-signs"></i></a>
                             ${is_new ? '<span class="of-new-dot" title="New activity notification"></span>' : ''}
                             ${o.is_overdue ? '<span class="of-chip of-chip--bad" style="margin-left:4px;">Overdue</span>' : ''}
                             ${o.skip_delivery_note ? '<span class="of-chip" style="margin-left:4px; background:#e83e8c; color:#fff; font-size:9px; padding:2px 5px; border-radius:3px; font-weight:700;">Direct Bill</span>' : ''}
@@ -2909,10 +2906,10 @@ class OrderFlow {
                         <div class="of-micro" style="margin-top:4px;color:var(--of-orange);font-weight:600;">
                             <i class="fa fa-file-text-o"></i> + Needs Invoice
                         </div>` : ''}
-                    ${o.rm_ready_for_sco ? `
+                    ${o.rm_ready_for_sco && !st.rm_ready_stage ? `
                         <div class="of-micro" style="margin-top:4px;color:var(--of-purple);font-weight:700;"
                              title="${of_esc('Raw material for ' + flt_of(o.rm_ready_fg_qty) + ' unit(s) is in stock at VV Puram now — a Subcontracting PO can be raised for it. Counted against stock actually on hand, so two orders are never told the same material is theirs.')}">
-                            ${__('RM Ready — Make SCO PO')} (${flt_of(o.rm_ready_fg_qty)})
+                            ${__('RM Ready — Make Subcontract PO')} (${flt_of(o.rm_ready_fg_qty)})
                         </div>` : ''}
                     ${rm_stage_note_html}
                 </td>
@@ -2921,7 +2918,7 @@ class OrderFlow {
                 </td>
                 <td style="text-align:left;">${chain}${rm_chain_html}</td>
                 <td>
-                    ${of_status_chip(o.per_delivered, st.stage_key, 'delivered', o.delivery_notes, o.draft_delivery_notes, o.stock_invoices)}
+                    ${of_status_chip(o.per_delivered, st.stage_key, 'delivered', o.delivery_notes, o.draft_delivery_notes, o.stock_invoices, o.per_billed, o.needs_invoice_qty, o.draft_invoices)}
                 </td>
                 <td>
                     ${of_status_chip(o.per_billed, st.stage_key, 'billed', o.invoices, o.draft_invoices)}
@@ -2943,6 +2940,12 @@ class OrderFlow {
                 </button>
                 <button class="of-subtab ${subtab === 'mr' ? 'is-active' : ''}" data-subtab="mr">
                     <i class="fa fa-file-text-o" style="color:var(--of-purple);"></i> Material Requests
+                </button>
+                <button class="of-subtab ${subtab === 'fp' ? 'is-active' : ''}" data-subtab="fp">
+                    <i class="fa fa-magic" style="color:var(--of-orange);"></i> Embroidery - FP
+                </button>
+                <button class="of-subtab ${subtab === 'pn' ? 'is-active' : ''}" data-subtab="pn">
+                    <i class="fa fa-scissors" style="color:var(--of-red);"></i> Embroidery - Panel
                 </button>
             </div>
 
@@ -2990,6 +2993,16 @@ class OrderFlow {
                         <i class="fa fa-plus"></i> ${__('Create Material Request')}
                     </a>`, of_pagination_html('tracker', 'mr', mrs_env),
                     of_docstatus_pills('tracker', 'mr', mrs_env.docstatus_counts, this.docstatus_filter.tracker.mr))}
+            </div>
+
+            <!-- Same work orders as the Job Work tab's Embroidery subtabs, so
+                 an order's embroidery can be followed (and received back)
+                 from where the order itself is tracked. -->
+            <div id="of-tracker-sec-fp" class="${subtab !== 'fp' ? 'of-hidden' : ''}">
+                ${this.ewo_card_html('tracker', 'ewo_fp', ewo_fp_env)}
+            </div>
+            <div id="of-tracker-sec-pn" class="${subtab !== 'pn' ? 'of-hidden' : ''}">
+                ${this.ewo_card_html('tracker', 'ewo_pn', ewo_pn_env)}
             </div>`;
     }
 
@@ -3378,15 +3391,21 @@ class OrderFlow {
                     ${p.so_customer_names ? `<div class="of-micro text-muted">${of_esc(p.so_customer_names)}</div>` : ''}</td>
                 <td class="of-meta">${of_date(p.transaction_date)}
                     <div class="of-micro">exp ${of_date(p.schedule_date)}</div></td>
+                <td>${of_po_lr_html(p)}</td>
                 <td>${of_qty(p.qty)}</td>
                 <td>${of_qty(p.received_qty, flt_of(p.received_qty) > 0 ? 'pos' : null)}
                     ${of_status_chip(p.per_received)}</td>
                 <td>${of_money(p.grand_total, p.currency)}</td>
                 <td>${of_doc_status(p.status)}</td>
                 <td>
-                    <a class="of-btn" href="/app/purchase-order/${encodeURIComponent(p.name)}" target="_blank">
-                        <i class="fa fa-external-link"></i> Open PO
-                    </a>
+                    <div class="of-po-actions">
+                        <a class="of-btn" href="/app/purchase-order/${encodeURIComponent(p.name)}" target="_blank">
+                            <i class="fa fa-external-link"></i> Open PO
+                        </a>
+                        <button class="of-btn of-po-print-btn" data-name="${of_esc(p.name)}" title="${__('Print Purchase Order')}">
+                            <i class="fa fa-print"></i>
+                        </button>
+                    </div>
                 </td>
             </tr>`).join('');
 
@@ -3403,21 +3422,27 @@ class OrderFlow {
                     ${p.so_customer_names ? `<div class="of-micro text-muted">${of_esc(p.so_customer_names)}</div>` : ''}</td>
                 <td class="of-meta">${of_date(p.transaction_date)}
                     <div class="of-micro">exp ${of_date(p.schedule_date)}</div></td>
+                <td>${of_po_lr_html(p)}</td>
                 <td>${of_qty(p.qty)}</td>
                 <td>${of_qty(p.received_qty, flt_of(p.received_qty) > 0 ? 'pos' : null)}
                     ${of_status_chip(p.per_received)}</td>
                 <td>${of_money(p.grand_total, p.currency)}</td>
                 <td>${of_doc_status(p.status)}</td>
                 <td>
-                    ${p.draft_invoice ? `
-                        <a class="of-btn of-btn--warning" href="/app/purchase-invoice/${encodeURIComponent(p.draft_invoice)}" target="_blank" style="font-weight:700;">
-                            <i class="fa fa-external-link"></i> Open Draft (${p.draft_invoice})
-                        </a>
-                    ` : `
-                        <button class="of-btn of-btn--primary of-action-btn" data-action="make_purchase_invoice" data-po="${p.name}">
-                            <i class="fa fa-file-text-o"></i> Create Invoice
+                    <div class="of-po-actions">
+                        ${p.draft_invoice ? `
+                            <a class="of-btn of-btn--warning" href="/app/purchase-invoice/${encodeURIComponent(p.draft_invoice)}" target="_blank" style="font-weight:700;">
+                                <i class="fa fa-external-link"></i> Open Draft (${p.draft_invoice})
+                            </a>
+                        ` : `
+                            <button class="of-btn of-btn--primary of-action-btn" data-action="make_purchase_invoice" data-po="${p.name}">
+                                <i class="fa fa-file-text-o"></i> Create Invoice
+                            </button>
+                        `}
+                        <button class="of-btn of-po-print-btn" data-name="${of_esc(p.name)}" title="${__('Print Purchase Order')}">
+                            <i class="fa fa-print"></i>
                         </button>
-                    `}
+                    </div>
                 </td>
             </tr>`).join('');
 
@@ -3471,8 +3496,8 @@ class OrderFlow {
                 ${of_card('Purchase Orders', 'shopping-cart', `
                     <table class="of-table">
                         <thead><tr><th style="min-width:170px;">Purchase Order</th><th style="min-width:150px;">Supplier</th>
-                            <th>Sales Order</th><th>Dates</th><th>Ordered</th><th>Received</th><th>Amount</th><th>Status</th><th>Action</th></tr></thead>
-                        <tbody>${po_rows || of_empty_row(9)}</tbody>
+                            <th>Sales Order</th><th>Dates</th><th>LR Number</th><th>Ordered</th><th>Received</th><th>Amount</th><th>Status</th><th>Action</th></tr></thead>
+                        <tbody>${po_rows || of_empty_row(10)}</tbody>
                     </table>`,
                     `<a class="of-btn of-btn--primary" href="/app/purchase-order/new" target="_blank">
                         <i class="fa fa-plus"></i> ${__('Create Purchase Order')}
@@ -3497,8 +3522,8 @@ class OrderFlow {
                 ${of_card('Purchase Orders (Fully Received, Pending Invoice)', 'calculator', `
                     <table class="of-table">
                         <thead><tr><th style="min-width:170px;">Purchase Order</th><th style="min-width:150px;">Supplier</th>
-                            <th>Sales Order</th><th>Dates</th><th>Ordered</th><th>Received</th><th>Amount</th><th>Status</th><th>Action</th></tr></thead>
-                        <tbody>${bill_rows || of_empty_row(9)}</tbody>
+                            <th>Sales Order</th><th>Dates</th><th>LR Number</th><th>Ordered</th><th>Received</th><th>Amount</th><th>Status</th><th>Action</th></tr></thead>
+                        <tbody>${bill_rows || of_empty_row(10)}</tbody>
                     </table>`, null, of_pagination_html('purchase', 'bill', bill_env))}
             </div>`;
     }
@@ -3513,7 +3538,8 @@ class OrderFlow {
     load_ewo_receive_actions(data) {
         data = data || {};
         const ewos = [...((data.ewo_fp || {}).rows || []), ...((data.ewo_pn || {}).rows || [])];
-        const unique_pos = Array.from(new Set(ewos.map(e => e.purchase_order).filter(Boolean)));
+        // Only POs that still exist — a deleted one has nothing to receive.
+        const unique_pos = Array.from(new Set(ewos.filter(e => of_num(e.po_exists) !== 0).map(e => e.purchase_order).filter(Boolean)));
         unique_pos.forEach(po_name => {
             frappe.call({
                 method: 'erp_dacsinc_custom.purchase_order.get_sco_status_for_po',
@@ -3650,7 +3676,7 @@ class OrderFlow {
         }).then(res => {
             const items = (res.message && res.message.items) || [];
             let tbl = `<div class="of-scroll"><table class="table table-sm table-bordered">
-                <thead><tr class="bg-light"><th>${__('Item')}</th><th class="text-right">${__('Sent')}</th><th class="text-right">${__('Balance')}</th><th width="120">${__('Qty to Receive')}</th></tr></thead><tbody>`;
+                <thead><tr class="bg-light"><th>${__('Item')}</th><th class="text-right">${__('Sent')}</th><th class="text-right">${__('At Jobber')}</th><th width="120">${__('Receiving Now')}</th></tr></thead><tbody>`;
             items.forEach(i => {
                 const bal = of_round2(flt_of(i.ordered_qty) - flt_of(i.received_qty));
                 tbl += `<tr data-row-name="${i.name}">
@@ -3663,9 +3689,9 @@ class OrderFlow {
             tbl += `</tbody></table></div>`;
 
             const d = new frappe.ui.Dialog({
-                title: __('Confirm Full Piece Receipt for {0}', [ewo_name]),
+                title: __('Receive Back from Embroidery Jobber — {0}', [ewo_name]),
                 fields: [{ fieldtype: 'HTML', options: tbl }],
-                primary_action_label: __('Create Receipt'),
+                primary_action_label: __('Receive Back'),
                 primary_action: () => {
                     const items_to_receive = [];
                     let has_error = false;
@@ -3737,9 +3763,16 @@ class OrderFlow {
                 <td>${of_money(p.grand_total, p.currency)}</td>
                 <td>${of_doc_status(p.status)}</td>
                 <td>
-                    <a class="of-btn" href="/app/purchase-order/${encodeURIComponent(p.name)}" target="_blank">
-                        <i class="fa fa-external-link"></i> Open PO
-                    </a>
+                    <div class="of-po-actions">
+                        <a class="of-btn" href="/app/purchase-order/${encodeURIComponent(p.name)}" target="_blank">
+                            <i class="fa fa-external-link"></i> Open PO
+                        </a>
+                        ${p.sco_name ? `
+                            <button class="of-btn of-sco-print-btn" data-name="${of_esc(p.sco_name)}" title="${__('Print Subcontracting Order')}">
+                                <i class="fa fa-print"></i>
+                            </button>
+                        ` : ''}
+                    </div>
                 </td>
             </tr>`).join('');
 
@@ -3770,71 +3803,6 @@ class OrderFlow {
                 <td>${of_doc_status(r.status)}</td>
             </tr>`;
         }).join('');
-
-        // The real next action for THIS stage, not just a link to go look —
-        // same 3-step Panel lifecycle (Send to Jobber -> Receive from Jobber
-        // -> Close) and 1-step Full Piece lifecycle (Receive from Jobber,
-        // the only step still open once a row exists — create_full_piece_send
-        // itself already creates it at "Sent") the Purchase Order form
-        // offers, reachable here without leaving the dashboard.
-        const ewo_track_link = (name) => `<a class="of-btn" href="/app/embroidery-work-order/${encodeURIComponent(name)}" target="_blank" title="Open the Embroidery Work Order">
-            <i class="fa fa-external-link"></i></a>`;
-
-        const build_ewo = (list) => list.map(e => {
-            const stage = e.work_type === 'Full Piece Job Work' ? e.full_piece_stage : e.panel_stage;
-            const pending = flt_of(e.ordered_qty) - flt_of(e.received_qty);
-            const jobber_id = e.panel_jobber || e.full_piece_jobber;
-
-            let action_html;
-            if (e.work_type === 'Panel Job Work' && stage === 'Received from Jobber (Internal)') {
-                action_html = `<button class="of-btn of-btn--primary of-ewo-send-btn" data-name="${of_esc(e.name)}">
-                    <i class="fa fa-paper-plane"></i> Send to Jobber</button>`;
-            } else if (e.work_type === 'Panel Job Work' && stage === 'Sent to Panel Jobber') {
-                action_html = `<button class="of-btn of-btn--primary of-ewo-receive-panel-btn" data-name="${of_esc(e.name)}">
-                    <i class="fa fa-inbox"></i> Receive from Jobber</button>`;
-            } else if (e.work_type === 'Panel Job Work' && stage === 'Received from Panel Jobber') {
-                action_html = `<button class="of-btn of-btn--success of-ewo-close-btn" data-name="${of_esc(e.name)}">
-                    <i class="fa fa-check"></i> Close Job</button>`;
-            } else if (e.work_type === 'Full Piece Job Work' && stage === 'Sent to Full Piece Jobber') {
-                action_html = `<button class="of-btn of-btn--primary of-ewo-receive-fp-btn" data-name="${of_esc(e.name)}">
-                    <i class="fa fa-inbox"></i> Receive from Jobber</button>`;
-            } else {
-                action_html = ewo_track_link(e.name);
-            }
-
-            return `<tr class="of-ewo-row" data-ewo="${of_esc(e.name)}">
-                <td><i class="fa fa-caret-right of-ewo-items-toggle" data-ewo="${of_esc(e.name)}" style="cursor:pointer;margin-right:4px;color:var(--text-light);"></i>
-                    <a href="/app/embroidery-work-order/${encodeURIComponent(e.name)}" target="_blank" style="font-weight:700;">${of_esc(e.name)}</a>
-                    <div class="of-micro">${of_esc(e.work_type || '')}</div>
-                    ${of_creator_html(e)}</td>
-                <td style="text-align:left;">
-                    ${jobber_id ? `
-                        <a href="/app/supplier/${encodeURIComponent(jobber_id)}" target="_blank" style="font-weight:600;">${of_esc(e.jobber_name || jobber_id)}</a>
-                    ` : of_esc(e.jobber_name || '')}
-                </td>
-                <td>${of_po_links(e.purchase_order)}
-                    ${e.po_supplier_name ? `<div class="of-micro text-muted">${of_esc(e.po_supplier_name)}</div>` : ''}
-                    ${e.subcontracting_order ? `<div class="of-micro"><span class="of-chip">Subcontract</span></div>` : ''}</td>
-                <td>${of_so_links(e.sales_orders)}
-                    ${e.so_customer_names ? `<div class="of-micro text-muted">${of_esc(e.so_customer_names)}</div>` : ''}</td>
-                <td class="of-meta">${of_date(e.date)}</td>
-                <td>${of_qty(e.ordered_qty)}</td>
-                <td>${of_qty(e.received_qty, flt_of(e.received_qty) > 0 ? 'pos' : null)}</td>
-                <td>${of_qty(pending, pending > 0 ? 'warn' : null)}</td>
-                <td><span class="of-pill of-pill--planned">${of_esc(of_to_title_case(stage || e.status || ''))}</span></td>
-                <td class="of-ewo-action" data-po="${of_esc(e.purchase_order || '')}">
-                    <div class="of-ewo-actions">
-                        ${action_html}
-                        <button class="of-btn of-ewo-print-btn" data-name="${of_esc(e.name)}"
-                                title="${__('Print work order')}">
-                            <i class="fa fa-print"></i>
-                        </button>
-                    </div>
-                </td>
-            </tr>`;
-        }).join('');
-        const ewo_fp_rows = build_ewo(ewo_fp);
-        const ewo_pn_rows = build_ewo(ewo_pn);
 
         const subtab = this.job_subtab || 'po';
 
@@ -3889,26 +3857,108 @@ class OrderFlow {
             </div>
 
             <div id="of-job-sec-fp" class="${subtab !== 'fp' ? 'of-hidden' : ''}">
-                ${of_card('Embroidery Work Orders (Full Piece Work)', 'magic', `
-                    <table class="of-table">
-                        <thead><tr><th style="min-width:160px;">Work Order</th><th style="min-width:140px;">Jobber</th>
-                            <th>Purchase Order</th><th>Sales Order</th><th>Date</th>
-                            <th>Sent</th><th>Received</th><th>Pending</th><th>Stage</th><th>Action</th></tr></thead>
-                        <tbody>${ewo_fp_rows || of_empty_row(10)}</tbody>
-                    </table>`, null, of_pagination_html('jobwork', 'ewo_fp', ewo_fp_env),
-                    of_docstatus_pills('jobwork', 'ewo_fp', ewo_fp_env.docstatus_counts, this.docstatus_filter.jobwork.ewo_fp))}
+                ${this.ewo_card_html('jobwork', 'ewo_fp', ewo_fp_env)}
             </div>
 
             <div id="of-job-sec-pn" class="${subtab !== 'pn' ? 'of-hidden' : ''}">
-                ${of_card('Embroidery Work Orders (Panel Work)', 'scissors', `
-                    <table class="of-table">
-                        <thead><tr><th style="min-width:160px;">Work Order</th><th style="min-width:140px;">Jobber</th>
-                            <th>Purchase Order</th><th>Sales Order</th><th>Date</th>
-                            <th>Sent</th><th>Received</th><th>Pending</th><th>Stage</th><th>Action</th></tr></thead>
-                        <tbody>${ewo_pn_rows || of_empty_row(10)}</tbody>
-                    </table>`, null, of_pagination_html('jobwork', 'ewo_pn', ewo_pn_env),
-                    of_docstatus_pills('jobwork', 'ewo_pn', ewo_pn_env.docstatus_counts, this.docstatus_filter.jobwork.ewo_pn))}
+                ${this.ewo_card_html('jobwork', 'ewo_pn', ewo_pn_env)}
             </div>`;
+    }
+
+    // One Embroidery Work Order row, with the real next action for THIS
+    // stage rather than just a link to go look — the same 3-step Panel
+    // lifecycle (Send to Jobber -> Receive from Jobber -> Close) and 1-step
+    // Full Piece lifecycle (Receive from Jobber, the only step still open
+    // once a row exists — it is created already "Sent") the Purchase Order
+    // form offers, reachable here without leaving the dashboard. A Full
+    // Piece job sent straight from a Sales Order's stock has no Purchase
+    // Order; its receive step is the same. `view_only` (a scoped
+    // Merchandiser User on the Sales Tracker) gets the link, not the actions.
+    ewo_rows_html(list, view_only) {
+        const ewo_track_link = (name) => `<a class="of-btn" href="/app/embroidery-work-order/${encodeURIComponent(name)}" target="_blank" title="Open the Embroidery Work Order">
+            <i class="fa fa-external-link"></i></a>`;
+
+        return (list || []).map(e => {
+            const stage = e.work_type === 'Full Piece Job Work' ? e.full_piece_stage : e.panel_stage;
+            const pending = flt_of(e.ordered_qty) - flt_of(e.received_qty);
+            const jobber_id = e.panel_jobber || e.full_piece_jobber;
+
+            let action_html;
+            if (view_only) {
+                action_html = ewo_track_link(e.name);
+            } else if (e.work_type === 'Panel Job Work' && stage === 'Received from Jobber (Internal)') {
+                action_html = `<button class="of-btn of-btn--primary of-ewo-send-btn" data-name="${of_esc(e.name)}">
+                    <i class="fa fa-paper-plane"></i> Send to Jobber</button>`;
+            } else if (e.work_type === 'Panel Job Work' && stage === 'Sent to Panel Jobber') {
+                action_html = `<button class="of-btn of-btn--primary of-ewo-receive-panel-btn" data-name="${of_esc(e.name)}">
+                    <i class="fa fa-inbox"></i> Receive from Jobber</button>`;
+            } else if (e.work_type === 'Panel Job Work' && stage === 'Received from Panel Jobber') {
+                action_html = `<button class="of-btn of-btn--success of-ewo-close-btn" data-name="${of_esc(e.name)}">
+                    <i class="fa fa-check"></i> Close Job</button>`;
+            } else if (e.work_type === 'Full Piece Job Work' && stage === 'Sent to Full Piece Jobber') {
+                action_html = `<button class="of-btn of-btn--primary of-ewo-receive-fp-btn" data-name="${of_esc(e.name)}">
+                    <i class="fa fa-inbox"></i> Receive from Jobber</button>`;
+            } else {
+                action_html = ewo_track_link(e.name);
+            }
+
+            return `<tr class="of-ewo-row" data-ewo="${of_esc(e.name)}">
+                <td><i class="fa fa-caret-right of-ewo-items-toggle" data-ewo="${of_esc(e.name)}" style="cursor:pointer;margin-right:4px;color:var(--text-light);"></i>
+                    <a href="/app/embroidery-work-order/${encodeURIComponent(e.name)}" target="_blank" style="font-weight:700;">${of_esc(e.name)}</a>
+                    <div class="of-micro">${of_esc(e.work_type || '')}</div>
+                    ${of_creator_html(e)}</td>
+                <td style="text-align:left;">
+                    ${jobber_id ? `
+                        <a href="/app/supplier/${encodeURIComponent(jobber_id)}" target="_blank" style="font-weight:600;">${of_esc(e.jobber_name || jobber_id)}</a>
+                    ` : of_esc(e.jobber_name || '')}
+                </td>
+                <td>${e.purchase_order
+                        ? (of_num(e.po_exists) === 0
+                            ? `<span style="text-decoration:line-through; color:var(--text-muted);" title="${of_esc(__('This Purchase Order no longer exists (deleted) — the Embroidery Work Order still points at it.'))}">${of_esc(e.purchase_order)}</span>
+                               <div class="of-micro" style="color:var(--of-red); font-weight:600;"><i class="fa fa-unlink"></i> ${__('PO deleted')}</div>`
+                            : of_po_links(e.purchase_order))
+                        : (e.direct_sales_order
+                            ? `<span class="of-chip" title="${of_esc(__('Sent straight from the Sales Order\'s stock — no Purchase Order'))}">${__('From SO stock')}</span>`
+                            : '')}
+                    ${e.po_supplier_name ? `<div class="of-micro text-muted">${of_esc(e.po_supplier_name)}</div>` : ''}
+                    ${e.subcontracting_order ? `<div class="of-micro"><span class="of-chip">Subcontract</span></div>` : ''}</td>
+                <td>${of_so_links(e.sales_orders)}
+                    ${e.so_customer_names ? `<div class="of-micro text-muted">${of_esc(e.so_customer_names)}</div>` : ''}</td>
+                <td class="of-meta">${of_date(e.date)}</td>
+                <td>${of_qty(e.ordered_qty)}</td>
+                <td>${of_qty(e.received_qty, flt_of(e.received_qty) > 0 ? 'pos' : null)}</td>
+                <td>${of_qty(pending, pending > 0 ? 'warn' : null)}</td>
+                <td><span class="of-pill of-pill--planned">${of_esc(of_to_title_case(stage || e.status || ''))}</span></td>
+                <td class="of-ewo-action" data-po="${of_esc(view_only || of_num(e.po_exists) === 0 ? '' : (e.purchase_order || ''))}">
+                    <div class="of-ewo-actions">
+                        ${action_html}
+                        <button class="of-btn of-ewo-print-btn" data-name="${of_esc(e.name)}"
+                                title="${__('Print work order')}">
+                            <i class="fa fa-print"></i>
+                        </button>
+                    </div>
+                </td>
+            </tr>`;
+        }).join('');
+    }
+
+    // The Full Piece / Panel work-order card — `tab` is whichever tab owns
+    // the pagination and Draft/Submitted state (jobwork or tracker), `key`
+    // the sub-list (ewo_fp / ewo_pn) as the server names it.
+    ewo_card_html(tab, key, env) {
+        env = env || {};
+        const is_fp = key === 'ewo_fp';
+        const view_only = tab === 'tracker' && !!(this.perms && this.perms.tracker_scoped_to_own_customers);
+        return of_card(
+            is_fp ? 'Embroidery Work Orders (Full Piece Work)' : 'Embroidery Work Orders (Panel Work)',
+            is_fp ? 'magic' : 'scissors', `
+            <table class="of-table">
+                <thead><tr><th style="min-width:160px;">Work Order</th><th style="min-width:140px;">Jobber</th>
+                    <th>Purchase Order</th><th>Sales Order</th><th>Date</th>
+                    <th>Sent</th><th>Received</th><th>Pending</th><th>Stage</th><th>Action</th></tr></thead>
+                <tbody>${this.ewo_rows_html(env.rows, view_only) || of_empty_row(10)}</tbody>
+            </table>`, null, of_pagination_html(tab, key, env),
+            of_docstatus_pills(tab, key, env.docstatus_counts, (this.docstatus_filter[tab] || {})[key]));
     }
 
     // ── Tab 4: Accounts (Receivables, Supplier Payables & Jobber Payables) ──
@@ -4112,19 +4162,25 @@ class OrderFlow {
                 : r.status === 'Cancelled' ? 'of-pill--blocked'
                 : r.status === 'Partly Delivered' ? 'of-pill--wait'
                 : 'of-pill--planned';
-            return `<span class="of-pill ${cls}">${of_esc(r.status || '')}</span>`;
+            return `<span class="of-pill ${cls}">${of_esc(r.status || '')}</span>${of_embroidery_history_html(r.embroidery_history)}`;
         };
 
         const action_cell = (r) => {
+            if (r.next_action === 'held') {
+                return of_embroidery_hold_html(r);
+            }
             if (r.next_action === 'submit') {
                 return `<button class="of-btn of-btn--primary of-pl-submit" data-pl="${of_esc(r.name)}"
                             title="${__('Submit this Pick List')}"><i class="fa fa-check"></i> ${__('Submit')}</button>`;
             }
+            // Submitted by mistake and needed for embroidery: bring it back to
+            // draft — only while no Delivery Note has been made from it.
+            const undo = of_pl_revert_html(r);
             if (r.next_action === 'deliver') {
                 return `<span class="of-micro" style="color:var(--of-orange);font-weight:600;">
-                    ${of_round2(r.pending_delivery_qty)} ${__('awaiting DN / SI')}</span>`;
+                    ${of_round2(r.pending_delivery_qty)} ${__('awaiting Delivery Note')}</span>${undo}`;
             }
-            return '<span class="of-val--zero">—</span>';
+            return undo || '<span class="of-val--zero">—</span>';
         };
 
         const rows = rows_data.map(r => {
@@ -4232,7 +4288,7 @@ class OrderFlow {
 
             return `<tr data-so="${of_esc(o.name)}" class="of-row-main">
                 <td><i class="fa fa-caret-right of-so-toggle" data-so="${of_esc(o.name)}" style="cursor:pointer; width:12px; font-size:14px; color:var(--text-light);"></i>
-                    ${of_so_link(o.name, {bold: true})}
+                    ${of_so_link(o.name, {bold: true})}<a href="#" class="of-order-status" data-so="${o.name}" title="${of_esc(__('Order Status — where every item of this order is right now'))}" style="display:inline-flex; align-items:center; justify-content:center; width:20px; height:20px; margin-left:4px; border-radius:4px; background:var(--of-blue-tint, rgba(52,152,219,.12)); color:var(--of-blue, #2980b9); font-size:11px; vertical-align:middle; text-decoration:none;"><i class="fa fa-map-signs"></i></a>
                     ${of_creator_html(o)}</td>
                 <td style="text-align:left;">
                     <a href="/app/customer/${encodeURIComponent(o.customer)}" target="_blank" style="font-weight:600;">${of_customer_display(o.customer_name || o.customer, o.contact_person_name)}</a>
@@ -5114,7 +5170,7 @@ class OrderFlow {
             data.total
                 ? (this.scope === 'all'
                     ? __('{0} invoice(s) match', [data.total])
-                    : __('{0} invoice(s) missing proof of delivery', [data.total]))
+                    : __('{0} invoice(s) missing delivery paperwork', [data.total]))
                 : ''
         );
 
@@ -5123,24 +5179,11 @@ class OrderFlow {
             // already have their paperwork — the default "Open" scope only
             // ever returns pending ones, so every row would say the same
             // thing. See get_logistics_flow's scope handling.
-            const is_updated = !!(r.custom_lr_number || r.custom_signed_copy);
+            const is_updated = !!(r.lr_no || r.custom_signed_copy);
             const status_pill = is_updated
                 ? `<span class="of-pill of-pill--ready">${__('Updated')}</span>`
                 : `<span class="of-pill of-pill--wait">${__('Pending')}</span>`;
-            const lr_value = of_esc(r.custom_lr_number || '');
-            const signed_copy_html = r.custom_signed_copy ? `
-                <div style="display:flex; gap:4px; align-items:center; justify-content:center;">
-                    <a href="${of_esc(r.custom_signed_copy)}" target="_blank" class="of-btn of-btn--success" title="${__('View signed copy')}">
-                        <i class="fa fa-file-o"></i>
-                    </a>
-                    <button class="of-btn of-logi-attach-btn" data-name="${of_esc(r.name)}" title="${__('Replace')}">
-                        <i class="fa fa-upload"></i>
-                    </button>
-                </div>` : `
-                <button class="of-btn of-btn--primary of-logi-attach-btn" data-name="${of_esc(r.name)}">
-                    <i class="fa fa-upload"></i> ${__('Attach')}
-                </button>`;
-
+            const dash = '<span class="of-val--zero">—</span>';
             return `<tr data-name="${of_esc(r.name)}">
                 <td><a href="/app/sales-invoice/${encodeURIComponent(r.name)}" target="_blank"><b>${of_esc(r.name)}</b></a>
                     ${of_creator_html(r)}</td>
@@ -5151,21 +5194,17 @@ class OrderFlow {
                 <td class="of-meta">${of_date(r.posting_date)}</td>
                 <td style="font-weight:700;">${of_money(r.grand_total, r.currency)}</td>
                 <td>${status_pill}</td>
-                <td>
-                    <div style="display:flex; gap:4px; align-items:center;">
-                        <input type="text" class="of-logi-lr-input" data-name="${of_esc(r.name)}" value="${lr_value}"
-                               placeholder="${__('LR Number')}"
-                               style="width:110px; font-size:12px; padding:3px 6px; border:1px solid var(--border-color); border-radius:4px;">
-                        <button class="of-btn of-btn--primary of-logi-save-lr-btn" data-name="${of_esc(r.name)}" title="${__('Save')}">
-                            <i class="fa fa-check"></i>
-                        </button>
-                    </div>
-                </td>
-                <td style="text-align:center;">${signed_copy_html}</td>
+                <td>${r.transporter ? `<a href="/app/supplier/${encodeURIComponent(r.transporter)}" target="_blank">${of_esc(r.transporter_name || r.transporter)}</a>` : dash}</td>
+                <td>${r.lr_no ? `<b>${of_esc(r.lr_no)}</b>` : dash}</td>
+                <td style="text-align:center;">${r.custom_signed_copy
+                    ? `<a href="${of_esc(r.custom_signed_copy)}" target="_blank" class="of-btn of-btn--success" title="${__('View signed copy')}"><i class="fa fa-file-o"></i> ${__('View')}</a>`
+                    : dash}</td>
                 <td style="text-align:center;">
-                    <input type="checkbox" class="of-logi-pod-checkbox" data-name="${of_esc(r.name)}"
-                           ${Number(r.custom_proof_of_delivery) ? 'checked' : ''}
-                           title="${__('Proof of Delivery confirmed')}">
+                    <button class="of-btn of-btn--primary of-logi-update-btn" data-name="${of_esc(r.name)}"
+                            data-transporter="${of_esc(r.transporter || '')}" data-lr="${of_esc(r.lr_no || '')}"
+                            data-signed="${of_esc(r.custom_signed_copy || '')}">
+                        <i class="fa fa-pencil"></i> ${__('Update')}
+                    </button>
                 </td>
             </tr>`;
         }).join('');
@@ -5174,7 +5213,7 @@ class OrderFlow {
             <!-- Live Activity Notifications -->
             ${this.activity_stream_html('logistics')}
 
-            ${of_card(this.scope === 'all' ? 'Sales Invoices — Delivery Paperwork' : 'Sales Invoices Missing Proof of Delivery', 'flag-checkered', `
+            ${of_card(this.scope === 'all' ? 'Sales Invoices — Delivery Paperwork' : 'Sales Invoices Missing Delivery Paperwork', 'flag-checkered', `
                 <table class="of-table">
                     <thead>
                         <tr>
@@ -5184,12 +5223,13 @@ class OrderFlow {
                             <th>Posting Date</th>
                             <th>Grand Total</th>
                             <th>Status</th>
-                            <th>LR Number</th>
+                            <th>Transporter</th>
+                            <th>LR No</th>
                             <th>Signed Copy</th>
-                            <th>Proof of Delivery</th>
+                            <th>Action</th>
                         </tr>
                     </thead>
-                    <tbody>${rows_html || of_empty_row(9)}</tbody>
+                    <tbody>${rows_html || of_empty_row(10)}</tbody>
                 </table>`, null, of_pagination_html('logistics', null, data))}
         `;
     }
@@ -5393,6 +5433,42 @@ function of_to_title_case(str) {
 // the Purchase Order form's own linked-documents table uses, so the document
 // prints identically wherever it is printed from — if the print format is ever
 // renamed, both call sites have to change together.
+// Same is_subcontracted split the Purchase Order form itself uses for its
+// own toolbar button (public/js/purchase_order.js's refresh handler): a
+// plain PO prints itself; a subcontracted one has no Purchase Order print
+// of its own — its Subcontracting Order is what carries the real
+// quantities/rates, so THAT is what prints (of_print_sco below), once one
+// exists. Both tabs that list Purchase Orders in this dashboard only ever
+// show one kind (Purchase Flow: is_subcontracted = 0; Job Work: = 1), so
+// each row only ever needs the matching one of these two, never both.
+function of_print_po(po_name) {
+    if (!po_name) return;
+    window.open(
+        `/api/method/frappe.utils.print_format.download_pdf`
+        + `?doctype=${encodeURIComponent('Purchase Order')}`
+        + `&name=${encodeURIComponent(po_name)}`
+        + `&format=${encodeURIComponent('Purchase Order Print Format')}`
+        + `&no_letterhead=1`
+        + `&letterhead=${encodeURIComponent('No Letterhead')}`
+        + `&settings=%7B%7D`
+        + `&_lang=en`
+    );
+}
+
+function of_print_sco(sco_name) {
+    if (!sco_name) return;
+    window.open(
+        `/api/method/frappe.utils.print_format.download_pdf`
+        + `?doctype=${encodeURIComponent('Subcontracting Order')}`
+        + `&name=${encodeURIComponent(sco_name)}`
+        + `&format=${encodeURIComponent('Subcontracting Order Print Format 3')}`
+        + `&no_letterhead=1`
+        + `&letterhead=${encodeURIComponent('DAC Letter Header')}`
+        + `&settings=%7B%7D`
+        + `&_lang=en`
+    );
+}
+
 function of_print_ewo(docname) {
     if (!docname) return;
     const url = `/api/method/frappe.utils.print_format.download_pdf?`
@@ -5640,6 +5716,49 @@ function of_pagination_html(tab, sublist, state) {
         </div>`;
 }
 
+// A Pick List holding qty out at a Full Piece embroidery jobber (see
+// so_embroidery.py / Pick List's custom_embroidery_hold_qty) — shown
+// wherever a Pick List's status or its Submit action would otherwise
+// render, so "why can't I submit this" is answered right where the
+// Submit button used to be, not left to the before_submit hook's error.
+function of_embroidery_hold_html(r) {
+    return `<div style="display:inline-block;background:#6b21a8;color:#fff;border-radius:6px;padding:6px 10px;font-weight:700;font-size:12px;line-height:1.35;"
+                 title="${of_esc(__('Cannot submit until this comes back from the jobber.'))}">
+        <i class="fa fa-magic"></i> ${__('AT JOBBER')} — ${of_round2(r.embroidery_hold_qty)} ${__('sent for embroidery')}
+        <div style="font-weight:500;font-size:11px;">${__('Cannot submit until received back')}</div>
+    </div>`;
+}
+
+// "Revert to Draft" for a submitted Pick List (no Delivery Note yet), or the
+// reason it can't be.
+function of_pl_revert_html(r) {
+    if (of_num(r.docstatus) !== 1) return '';
+    if (r.revertable) {
+        return `<div style="margin-top:4px;"><button class="of-btn of-btn--warning of-pl-revert" data-pl="${of_esc(r.name)}"
+                    title="${of_esc(__('Submitted by mistake? Bring it back to draft (e.g. to send it for embroidery). Not possible once a Delivery Note is made.'))}">
+                    <i class="fa fa-undo"></i> ${__('Revert to Draft')}</button></div>`;
+    }
+    if ((r.delivery_notes || []).length) {
+        return `<div class="of-micro" style="margin-top:4px;color:var(--text-muted);" title="${of_esc(__('A Delivery Note is made from this Pick List — it can no longer go back to draft.'))}">
+            <i class="fa fa-lock"></i> ${__('On {0} — can\'t revert', [of_esc(r.delivery_notes.join(', '))])}</div>`;
+    }
+    return '';
+}
+
+function of_revert_pick_list(pl, on_done) {
+    frappe.confirm(__('Bring Pick List {0} back to draft? It is cancelled and amended as a new draft with the same qty.', [pl]), () => {
+        frappe.call({
+            method: 'erp_dacsinc_custom.so_embroidery.revert_pick_list_to_draft',
+            args: { pick_list: pl }, freeze: true, freeze_message: __('Reverting Pick List…')
+        }).then(r => {
+            if (!r.message) return;
+            frappe.show_alert({ message: __('{0} is back in draft as {1}', [pl, r.message]), indicator: 'green' }, 6);
+            if (on_done) on_done(r.message);
+        });
+    });
+}
+window.of_revert_pick_list = of_revert_pick_list;
+
 function of_qty(v, tone) {
     const n = of_round2(v);
     const cls = n ? (tone ? `of-val of-val--${tone}` : 'of-val') : 'of-val of-val--zero';
@@ -5688,7 +5807,7 @@ function of_money(v, currency) {
     }
 }
 
-function of_status_chip(pct, stage_label, context, docs, draft_docs, stock_invoices) {
+function of_status_chip(pct, stage_label, context, docs, draft_docs, stock_invoices, billed_pct, needs_invoice_qty, draft_invoices) {
     const p = flt_of(pct);
     // On a Direct Bill order the stock leaves on a Sales Invoice with "Update
     // Stock", so there is no Delivery Note to open — point at the invoice that
@@ -5709,39 +5828,37 @@ function of_status_chip(pct, stage_label, context, docs, draft_docs, stock_invoi
     };
 
     if (context === 'delivered') {
-        // A Delivery Challan saved but not submitted: the goods are packed
-        // for this order and nothing has physically gone out. per_delivered
-        // only moves on submit, so without this the column kept showing the
-        // pick/stage label it had before the DC was raised — and once the DC
-        // WAS submitted it jumped straight to "Delivered", with no state in
-        // between for "made, not yet dispatched".
+        // One flow, one status per document (Sales Order → Delivery Note →
+        // Sales Invoice made from it):
+        //   DN saved, not submitted   → To Be Dispatched (Draft)
+        //   DN submitted              → Dispatched
+        //   SI for it saved (draft)   → Delivered (Draft)
+        //   SI submitted              → Delivered
+        // Before any DN: Not Dispatched / Picking / Ready to Dispatch.
+        // "Invoiced" is judged on the QTY still to invoice (needs_invoice_qty),
+        // never per_delivered vs per_billed (qty vs amount).
+        const b = flt_of(billed_pct);
+        const pc = p > 0 && p < 100 ? ` ${p.toFixed(0)}%` : '';
         if (p < 100 && draft_docs && draft_docs.length) {
-            // Link the draft DC itself — the thing to go and submit — rather
-            // than an older submitted Delivery Note on the same order.
             docs = draft_docs;
-            return pill('of-pill--wait', 'To Be Dispatched');
+            return pill('of-pill--wait', `To Be Dispatched (Draft)${p > 0 ? ` · ${p.toFixed(0)}% sent` : ''}`);
         }
         if (p === 0) {
-            if (!stage_label) return '<span class="of-val of-val--zero">—</span>';
-            const stages_map = {
-                'newly_created':   '—',
-                'awaiting_stock':  'PO placed',
-                'in_jobwork':      'Job Work',
-                'in_embroidery':   'Embroidery',
-                'stock_received':  'Stock in',
-                'draft_pick_list': 'Pick draft',
-                'ready_to_deliver':'Ready'
-            };
-            const label = stages_map[stage_label] || '—';
-            if (label === '—') return '<span class="of-val of-val--zero">—</span>';
-            return pill('of-pill--wait', label);
-        } else if (p < 100) {
-            return pill('of-pill--dn', `${p.toFixed(0)}% Del.`);
-        } else {
-            return pill('of-pill--ready', '✓ Delivered');
+            if (stage_label === 'ready_to_deliver') return pill('of-pill--dn', 'Ready to Dispatch');
+            if (stage_label === 'draft_pick_list') return pill('of-pill--wait', 'Picking');
+            return '<span class="of-val of-val--zero" title="Nothing dispatched yet">Not Dispatched</span>';
         }
+        const to_invoice = needs_invoice_qty == null ? null : flt_of(needs_invoice_qty);
+        const invoiced = via_invoice || (to_invoice != null ? to_invoice <= 0.001 : b + 0.01 >= p);
+        if (invoiced) return pill('of-pill--ready', p >= 100 ? '✓ Delivered' : `Delivered${pc}`);
+        if (draft_invoices && draft_invoices.length) {
+            // Link the draft invoice — the thing to submit next.
+            docs = draft_invoices; context = 'billed';
+            return pill('of-pill--need-bill', `Delivered (Draft)${pc}`);
+        }
+        return pill('of-pill--dn', p >= 100 ? '✓ Dispatched' : `Dispatched${pc}`);
     }
-    
+
     if (context === 'billed') {
         if (p === 0) {
             if (stage_label === 'need_to_bill') {
@@ -5806,6 +5923,14 @@ function of_po_links(list) { return of_links(list, 'Purchase Order'); }
 function of_order_confirmation_html(p) {
     if (!p.order_confirmation_no) return '';
     return `<div class="of-micro text-muted">${__('Order Conf')}: ${of_esc(p.order_confirmation_no)}${p.order_confirmation_date ? ` (${of_date(p.order_confirmation_date)})` : ''}</div>`;
+}
+
+// LR (Lorry Receipt) Number/Date on a Purchase Order — a separate,
+// receiving-side pair of fields from the Logistics tab's own LR Number on
+// Sales Invoice (dispatch side); see docs/order-flow-dashboard.md.
+function of_po_lr_html(p) {
+    if (!p.custom_lr_number) return '<span class="of-val--zero">—</span>';
+    return `<div>${of_esc(p.custom_lr_number)}</div>${p.custom_lr_date ? `<div class="of-micro text-muted">${of_date(p.custom_lr_date)}</div>` : ''}`;
 }
 
 // Who created this document — shown under its id link on every tab.
@@ -5900,4 +6025,121 @@ function of_settlement_bar(o) {
 
 function of_empty_row(cols) {
     return `<tr><td colspan="${cols}" class="of-empty"><i class="fa fa-inbox"></i>Nothing here for these filters.</td></tr>`;
+}
+
+/**
+ * The Sales Tracker's "Request" action. Step 1 asks WHAT to request — Raw
+ * Material (for BOM items, raised as a Material Request with purpose Raw
+ * Material) or Trade Items (plain lines, bought as-is) — each showing how
+ * many records are short; step 2 lists exactly those records with their
+ * qty, ticked and editable. Figures come from
+ * order_flow_api.get_so_request_options, i.e. the Sales Order's own Item
+ * Stock & Action Plan, so the prompt never disagrees with the Sales Order.
+ */
+function of_show_request_prompt(so, on_done) {
+    frappe.call({
+        method: 'erp_dacsinc_custom.order_flow_api.get_so_request_options',
+        args: { sales_order: so }, freeze: true, freeze_message: __('Checking what is short…')
+    }).then(r => {
+        const opt = r.message || { rm: [], fg: [] };
+        const n_rm = (opt.rm || []).length, n_fg = (opt.fg || []).length;
+        if (!n_rm && !n_fg) {
+            frappe.msgprint({ title: __('Nothing to request'), indicator: 'green',
+                message: __('Everything on {0} is in stock, picked, or already on a Material Request / Purchase Order.', [so]) });
+            return;
+        }
+        const pick = (kind) => of_show_request_list(so, opt, kind, on_done);
+        if (!n_rm) return pick('fg');
+        if (!n_fg) return pick('rm');
+        const d = new frappe.ui.Dialog({
+            title: __('What do you want to request? — {0}', [so]),
+            fields: [{ fieldtype: 'HTML', fieldname: 'choice', options: `
+                <div style="display:flex; gap:12px; flex-wrap:wrap;">
+                    <button class="btn btn-default of-req-kind" data-kind="rm" style="flex:1; min-width:200px; padding:14px; text-align:left;">
+                        <div style="font-weight:700;"><i class="fa fa-sitemap"></i> ${__('Raw Material (RM)')} · ${n_rm}</div>
+                        <div class="text-muted" style="font-size:12px; white-space:normal;">${__('For BOM items — fabric, buttons… needed to make the finished goods.')}</div>
+                    </button>
+                    <button class="btn btn-default of-req-kind" data-kind="fg" style="flex:1; min-width:200px; padding:14px; text-align:left;">
+                        <div style="font-weight:700;"><i class="fa fa-shopping-cart"></i> ${__('Trade Items (MR)')} · ${n_fg}</div>
+                        <div class="text-muted" style="font-size:12px; white-space:normal;">${__('Items bought as they are — no BOM.')}</div>
+                    </button>
+                </div>` }]
+        });
+        d.$wrapper.on('click', '.of-req-kind', function () { d.hide(); pick($(this).data('kind')); });
+        d.show();
+    });
+}
+
+function of_show_request_list(so, opt, kind, on_done) {
+    const rows = kind === 'rm' ? (opt.rm || []) : (opt.fg || []);
+    const esc = (v) => frappe.utils.escape_html(v == null ? '' : String(v));
+    const fmt = (n) => { const v = flt(n); return Math.abs(v - Math.round(v)) < 0.0005 ? String(Math.round(v)) : v.toFixed(2); };
+    const body = rows.map((x, i) => `
+        <tr>
+            <td class="text-center"><input type="checkbox" class="of-req-pick" data-i="${i}" checked></td>
+            <td><b>${esc(x.item_code)}</b>${x.item_name && x.item_name !== x.item_code ? `<div class="text-muted" style="font-size:11px;">${esc(x.item_name)}</div>` : ''}</td>
+            <td style="font-size:11px;">${kind === 'rm'
+                ? `${__('For')}: ${(x.needed_by || []).map(esc).join(', ')}`
+                : `${__('Ordered')} ${fmt(x.ordered)}${flt(x.delivered) ? ` · ${__('delivered')} ${fmt(x.delivered)}` : ''}${flt(x.covered) ? ` · ${__('already on PO/MR')} ${fmt(x.covered)}` : ''}`}</td>
+            <td style="width:120px;"><input type="number" class="form-control form-control-sm text-right of-req-qty" data-i="${i}"
+                   value="${fmt(x.qty)}" min="0" max="${flt(x.qty)}" step="any"><div class="text-muted" style="font-size:10px; text-align:right;">${esc(x.uom)}</div></td>
+        </tr>`).join('');
+    const d = new frappe.ui.Dialog({
+        title: kind === 'rm' ? __('Request Raw Material — {0}', [so]) : __('Raise MR for Trade Items — {0}', [so]),
+        size: 'large',
+        fields: [{ fieldtype: 'HTML', fieldname: 'list', options: `
+            <div class="text-muted" style="font-size:12px; margin-bottom:8px;">${kind === 'rm'
+                ? __('Short for this order — stock reserved for other orders is not counted. One draft Material Request (purpose Raw Material) is created.')
+                : __('Still to buy after stock, picks and existing PO/MR. One draft Material Request is created.')}</div>
+            <table class="table table-sm table-bordered" style="font-size:12px;">
+                <thead><tr class="bg-light"><th class="text-center" style="width:32px;"></th><th>${__('Item')}</th>
+                    <th>${kind === 'rm' ? __('Needed For') : __('Why')}</th><th class="text-right">${__('Request Qty')}</th></tr></thead>
+                <tbody>${body}</tbody></table>` }],
+        primary_action_label: __('Create Material Request'),
+        primary_action: () => {
+            const items = []; let bad = false;
+            d.$wrapper.find('.of-req-pick:checked').each((n, el) => {
+                const i = $(el).data('i'), x = rows[i];
+                const q = flt(d.$wrapper.find(`.of-req-qty[data-i="${i}"]`).val());
+                // Never more than is short — the MR guard would refuse it anyway.
+                if (!(q > 0) || q > flt(x.qty) + 0.0005) { bad = true; return; }
+                const it = { item_code: x.item_code, qty: q, uom: x.uom, warehouse: x.warehouse || undefined };
+                if (kind === 'rm') it.custom_procurement_purpose = 'Raw Material';
+                items.push(it);
+            });
+            if (bad) { frappe.msgprint(__('Each ticked qty must be more than 0 and not more than what is short.')); return; }
+            if (!items.length) { frappe.msgprint(__('Tick at least one item.')); return; }
+            frappe.call({
+                method: 'erp_dacsinc_custom.custom_script.create_material_request_custom',
+                args: { items: items, company: opt.company, sales_order_name: so },
+                freeze: true, freeze_message: __('Creating Material Request…')
+            }).then(res => {
+                if (!res.message) return;
+                d.hide();
+                window.open(frappe.utils.get_form_link('Material Request', res.message), '_blank');
+                frappe.show_alert({ message: __('Material Request {0} created (Draft) — submit it.', [res.message]), indicator: 'green' }, 7);
+                if (on_done) on_done();
+            });
+        }
+    });
+    d.show();
+}
+
+
+// Same flag + per-trip lines as the Sales Order's so_embroidery_history_html
+// (kept in sync by hand — this page does not always have sales_order.js loaded).
+function of_embroidery_history_html(hist) {
+    hist = hist || [];
+    if (!hist.length) return '';
+    const sent = hist.reduce((a, t) => a + flt_of(t.sent), 0);
+    const back = hist.reduce((a, t) => a + flt_of(t.received), 0);
+    const out = Math.max(0, sent - back);
+    const flag = out > 0.001
+        ? `<span class="of-chip" style="background:#f3e8ff;color:#6b21a8;font-weight:600;"><i class="fa fa-magic"></i> ${__('Embroidery: sent {0} · back {1} · {2} at jobber', [of_round2(sent), of_round2(back), of_round2(out)])}</span>`
+        : `<span class="of-chip" style="background:#dcfce7;color:#166534;font-weight:600;"><i class="fa fa-check"></i> ${__('Embroidery: sent {0} · all back', [of_round2(sent)])}</span>`;
+    const lines = hist.map(t => `<div class="of-micro" style="margin-top:2px;">
+            <a href="/app/embroidery-work-order/${encodeURIComponent(t.ewo)}" target="_blank">${of_esc(t.ewo)}</a>
+            ${t.jobber ? ` · ${of_esc(t.jobber)}` : ''}: ${__('sent')} ${of_round2(t.sent)} → ${__('back')} ${of_round2(t.received)}${flt_of(t.at_jobber) > 0.001 ? ` <b style="color:#6b21a8;">(${of_round2(t.at_jobber)} ${__('at jobber')})</b>` : ' ✓'}
+        </div>`).join('');
+    return `<div style="margin-top:4px;">${flag}${lines}</div>`;
 }

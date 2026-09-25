@@ -24,6 +24,7 @@ from erp_dacsinc_custom.order_flow_permissions import (
     can_view_tab,
     guard_tab as _guard_tab,
     get_order_flow_permissions,
+    is_admin,
     is_scoped_to_own_customers,
 )
 from erp_dacsinc_custom.custom_script import (
@@ -48,13 +49,19 @@ from erp_dacsinc_custom.custom_script import (
 # tier) was reported on the tracker as "RM: 1 PO". The test is therefore
 # whether the line is for an item this Sales Order itself sells; only a line
 # that is neither linked to an SO line nor for a sold item is raw material.
+#
+# Except when the row SAYS it is raw material (custom_procurement_purpose =
+# "Raw Material", set by the SO's "Request RM" and carried MR -> PO -> PR):
+# that wins over the sold-item test. Without it, an order that sells Fabric
+# blue as a plain line AND uses it as BOM raw material (SAL-ORD-2026-00147)
+# read its RM receipt as "Stock Arrived (PL Needed) → Create Pick List".
 _EVENT_SQL = """
     SELECT 'Material Request' AS doctype, mr.name, mri.sales_order AS sales_order,
            mr.modified AS ts, mr.creation AS created, mr.status, mr.docstatus, mr.owner,
            NULL AS party, NULL AS party_name,
-           IF(MAX(CASE WHEN (mri.sales_order_item IS NOT NULL AND mri.sales_order_item != '')
+           IF(MAX(CASE WHEN IFNULL(mri.custom_procurement_purpose, '') != 'Raw Material' AND ((mri.sales_order_item IS NOT NULL AND mri.sales_order_item != '')
                           OR EXISTS (SELECT 1 FROM `tabSales Order Item` soi
-                                     WHERE soi.parent = mri.sales_order AND soi.item_code = mri.item_code)
+                                     WHERE soi.parent = mri.sales_order AND soi.item_code = mri.item_code))
                      THEN 1 ELSE 0 END) > 0, 0, 1) AS is_rm_tier
     FROM `tabMaterial Request Item` mri
     JOIN `tabMaterial Request` mr ON mr.name = mri.parent
@@ -66,10 +73,10 @@ _EVENT_SQL = """
     SELECT 'Purchase Order', po.name, poi.sales_order,
            po.modified, po.creation, po.status, po.docstatus, po.owner,
            po.supplier, sup.supplier_name,
-           IF(MAX(CASE WHEN (poi.sales_order_item IS NOT NULL AND poi.sales_order_item != '')
+           IF(MAX(CASE WHEN IFNULL(poi.custom_procurement_purpose, '') != 'Raw Material' AND ((poi.sales_order_item IS NOT NULL AND poi.sales_order_item != '')
                           OR EXISTS (SELECT 1 FROM `tabSales Order Item` soi
                                      WHERE soi.parent = poi.sales_order
-                                       AND soi.item_code IN (poi.item_code, IFNULL(poi.fg_item, poi.item_code)))
+                                       AND soi.item_code IN (poi.item_code, IFNULL(poi.fg_item, poi.item_code))))
                      THEN 1 ELSE 0 END) > 0, 0, 1) AS is_rm_tier
     FROM `tabPurchase Order Item` poi
     JOIN `tabPurchase Order` po ON po.name = poi.parent
@@ -82,9 +89,9 @@ _EVENT_SQL = """
     SELECT 'Purchase Receipt', pr.name, pri.sales_order,
            pr.modified, pr.creation, pr.status, pr.docstatus, pr.owner,
            pr.supplier, sup.supplier_name,
-           IF(MAX(CASE WHEN (pri.sales_order_item IS NOT NULL AND pri.sales_order_item != '')
+           IF(MAX(CASE WHEN IFNULL(pri.custom_procurement_purpose, '') != 'Raw Material' AND ((pri.sales_order_item IS NOT NULL AND pri.sales_order_item != '')
                           OR EXISTS (SELECT 1 FROM `tabSales Order Item` soi
-                                     WHERE soi.parent = pri.sales_order AND soi.item_code = pri.item_code)
+                                     WHERE soi.parent = pri.sales_order AND soi.item_code = pri.item_code))
                      THEN 1 ELSE 0 END) > 0, 0, 1) AS is_rm_tier
     FROM `tabPurchase Receipt Item` pri
     JOIN `tabPurchase Receipt` pr ON pr.name = pri.parent
@@ -97,10 +104,10 @@ _EVENT_SQL = """
     SELECT 'Subcontracting Receipt', scr.name, poi.sales_order,
            scr.modified, scr.creation, scr.status, scr.docstatus, scr.owner,
            scr.supplier, sup.supplier_name,
-           IF(MAX(CASE WHEN (poi.sales_order_item IS NOT NULL AND poi.sales_order_item != '')
+           IF(MAX(CASE WHEN IFNULL(poi.custom_procurement_purpose, '') != 'Raw Material' AND ((poi.sales_order_item IS NOT NULL AND poi.sales_order_item != '')
                           OR EXISTS (SELECT 1 FROM `tabSales Order Item` soi
                                      WHERE soi.parent = poi.sales_order
-                                       AND soi.item_code IN (poi.item_code, IFNULL(poi.fg_item, poi.item_code)))
+                                       AND soi.item_code IN (poi.item_code, IFNULL(poi.fg_item, poi.item_code))))
                      THEN 1 ELSE 0 END) > 0, 0, 1) AS is_rm_tier
     FROM `tabSubcontracting Receipt Item` scri
     JOIN `tabSubcontracting Receipt` scr ON scr.name = scri.parent
@@ -358,8 +365,8 @@ _SUBMITTED_LABELS = {
     "Purchase Receipt": "Stock received",
     "Subcontracting Receipt": "Subcontract goods received",
     "Pick List": "Pick List submitted",
-    "Delivery Note": "Delivered to customer",
-    "Sales Invoice": "Sales Invoice raised",
+    "Delivery Note": "Dispatched (Delivery Note submitted)",
+    "Sales Invoice": "Invoiced — Delivered",
     "Purchase Invoice": "Supplier bill booked",
 }
 
@@ -573,38 +580,33 @@ def is_merchandiser_user(user=None):
 
 def is_scoped_merchandiser_for_doctype(doctype, user=None):
     """
-    True if `user`'s ONLY reason for having read access to `doctype` is the
-    Merchandiser User role — i.e. none of their other roles are granted read
-    on it via the Role Permission Manager (DocPerm/Custom DocPerm).
+    True if `user` is scoped to their own customers for `doctype`: they hold
+    Merchandiser User and are not an admin.
 
-    "Merchandiser User" can be combined with a broader operational role
-    (Operation Team, Sales Manager, ...) for someone who does both jobs, and
-    that role's own reason for having doctype access is company-wide
-    visibility — narrowing them to their own customers here would take away
-    access their OTHER role legitimately grants. Confirmed live:
-    has_sales_order_permission denied a user their OWN just-created Sales
-    Order because is_merchandiser_user() alone doesn't know about that
-    combination — the customer's real merchandiser was someone else, and
-    the fact that the viewer also holds a broader role that grants Sales
-    Order access company-wide was never consulted.
+    This used to exempt anyone who ALSO held another role granting read on
+    the doctype, so a "broader operational" role would keep company-wide
+    visibility. In practice that exemption cancelled the scoping for
+    essentially every real merchandiser: the roles a merchandiser must hold
+    to do the job at all — Sales User, DAC CRM, and even the peer role
+    Junior Merchandiser — all grant Sales Order / Customer read, so holding
+    any of them switched scoping off. Confirmed live: the one merchandiser
+    on this site with a working role set saw all 28 Sales Orders, while the
+    four with no extra role saw none.
 
-    Mirrors order_flow_permissions.is_scoped_to_own_customers, but keyed off
-    the doctype's own configured roles (frappe.permissions.get_doctype_roles)
-    rather than the Order Flow page's Admin Settings tab-role lists — Sales
-    Order/Customer visibility outside that page is governed by the standard
-    Role Permission Manager, not that config. "All" is excluded from the
-    "other role" check for the same reason is_scoped_to_own_customers
-    excludes it — every user holds it, so counting it would silently defeat
-    scoping for every plain merchandiser.
+    The reason that exemption existed — a merchandiser being denied a Sales
+    Order they created themselves, for a customer assigned to someone else —
+    is now handled directly by the callers, which allow `owner = user`
+    alongside the customer check rather than dropping the scoping wholesale.
+
+    Mirrors order_flow_permissions.is_scoped_to_own_customers.
     """
     if not is_merchandiser_user(user):
         return False
-
-    from frappe.permissions import get_doctype_roles
-
-    roles = set(frappe.get_roles(user or frappe.session.user))
-    other_roles = set(get_doctype_roles(doctype, "read")) - {"Merchandiser User", "All"}
-    return not (roles & other_roles)
+    # Admin/override roles keep the whole picture — support and
+    # administration cannot work blind. Everyone else holding Merchandiser
+    # User is scoped to their own customers plus what they raised
+    # themselves, per the callers below.
+    return not is_admin(user or frappe.session.user)
 
 
 def claim_customer_merchandiser(customer, user=None):
@@ -812,7 +814,7 @@ def _get_tracker_rows(days=120, search=None, scope="open", merchandiser=None, ap
     # so the client's button-hiding can never disagree with what rows the
     # server actually returns.
     if is_scoped_to_own_customers(tab):
-        conditions.append("cust.custom_merchandiser_user = %(merch_scope)s")
+        conditions.append("(cust.custom_merchandiser_user = %(merch_scope)s OR so.owner = %(merch_scope)s)")
         params["merch_scope"] = frappe.session.user
 
     total_matching = frappe.db.sql(f"""
@@ -971,10 +973,21 @@ def _get_tracker_rows(days=120, search=None, scope="open", merchandiser=None, ap
             parent AS sales_order,
             SUM(GREATEST(0, delivered_qty - IF(rate > 0, billed_amt / rate, 0))) AS needs_invoice_qty,
             SUM(GREATEST(0, LEAST(qty, picked_qty) - delivered_qty)) AS ready_to_ship_qty,
-            SUM(GREATEST(0, qty - GREATEST(delivered_qty, LEAST(qty, picked_qty)))) AS shortfall_qty
-        FROM `tabSales Order Item`
-        WHERE parent IN %(names)s
-        GROUP BY parent
+            -- Not yet delivered, not on a submitted pick, and not on a DRAFT
+            -- Pick List either ("Pending — Not Picked Yet"). Draft picks only
+            -- move soi.picked_qty on submit, so they are added back here.
+            SUM(GREATEST(0, qty - GREATEST(delivered_qty, LEAST(qty, picked_qty))
+                             - IFNULL(dp.draft_qty, 0))) AS shortfall_qty
+        FROM `tabSales Order Item` soi
+        LEFT JOIN (
+            SELECT pli.sales_order_item, SUM(pli.qty) AS draft_qty
+            FROM `tabPick List Item` pli
+            JOIN `tabPick List` pl ON pl.name = pli.parent AND pl.docstatus = 0
+            WHERE pli.sales_order IN %(names)s
+            GROUP BY pli.sales_order_item
+        ) dp ON dp.sales_order_item = soi.name
+        WHERE soi.parent IN %(names)s
+        GROUP BY soi.parent
     """, {"names": tuple(names)}, as_dict=1):
         row = by_name.get(r.sales_order)
         if not row:
@@ -1009,6 +1022,12 @@ def _get_tracker_rows(days=120, search=None, scope="open", merchandiser=None, ap
         WHERE ev.sales_order IN %(names)s
         ORDER BY ts DESC
     """, {"names": tuple(names)}, as_dict=1)
+
+    ewo_pos = list({ev.name for ev in events if ev.doctype == "Embroidery Work Order" and ev.name})
+    pos_with_open_ewo = set(frappe.db.sql_list(f"""
+        SELECT DISTINCT ewo.purchase_order FROM `tabEmbroidery Work Order` ewo
+        WHERE ewo.docstatus = 1 AND ewo.purchase_order IN %(pos)s AND {_EWO_OPEN_SQL}
+    """, {"pos": tuple(ewo_pos)})) if ewo_pos else set()
 
     for ev in events:
         row = by_name.get(ev.sales_order)
@@ -1090,11 +1109,14 @@ def _get_tracker_rows(days=120, search=None, scope="open", merchandiser=None, ap
                     row["jobworks"].append(job_obj)
             elif dt == "Embroidery Work Order":
                 # ev.name is the Purchase Order, not the Embroidery Work Order.
+                # Only a PO with an embroidery job still open puts the order
+                # in the Embroidery stage — a finished one is history.
                 job_obj = {"name": ev.name, "doctype": "Purchase Order"}
-                if job_obj not in row["embroidery_orders"]:
-                    row["embroidery_orders"].append(job_obj)
-                if job_obj not in row["jobworks"]:
-                    row["jobworks"].append(job_obj)
+                if ev.name in pos_with_open_ewo:
+                    if job_obj not in row["embroidery_orders"]:
+                        row["embroidery_orders"].append(job_obj)
+                    if job_obj not in row["jobworks"]:
+                        row["jobworks"].append(job_obj)
             elif dt == "Sales Invoice":
                 if ev.name not in row["invoices"]:
                     row["invoices"].append(ev.name)
@@ -1142,6 +1164,32 @@ def _get_tracker_rows(days=120, search=None, scope="open", merchandiser=None, ap
             o["last_event_label"] = minor["label"]
             o["last_event_important"] = 0
 
+    # Embroidery Work Orders sent straight from the order's own stock (see
+    # so_embroidery) have no Purchase Order, so _EVENT_SQL — which reaches
+    # an EWO's order through its PO — never sees them. Added here as the
+    # EWO itself: they count in the Document Flow's Job column, and one
+    # still out at the jobber puts the order in the Embroidery stage.
+    for r in frappe.db.sql("""
+        SELECT ewo.saels_order_id AS sales_order, ewo.name,
+               SUM(GREATEST(c.ordered_qty - IFNULL(c.received_qty, 0), 0)) AS pending
+        FROM `tabEmbroidery Work Order` ewo
+        JOIN `tabEmbroidery Work Order Item` c ON c.parent = ewo.name
+        WHERE ewo.docstatus = 1 AND IFNULL(ewo.purchase_order, '') = ''
+          AND ewo.saels_order_id IN %(names)s
+        GROUP BY ewo.saels_order_id, ewo.name
+        ORDER BY ewo.creation DESC
+    """, {"names": tuple(names)}, as_dict=1):
+        row = by_name.get(r.sales_order)
+        if not row:
+            continue
+        job_obj = {"name": r.name, "doctype": "Embroidery Work Order"}
+        row["counts"]["Embroidery Work Order"] = row["counts"].get("Embroidery Work Order", 0) + 1
+        # Only a trip still out drives the stage ("Embroidery"); a finished
+        # one is history — it must not keep the order "In Job Work".
+        if flt(r.pending) > 0.001:
+            row["embroidery_orders"].append(job_obj)
+            row["jobworks"].append(job_obj)
+
     # Orders with fresh activity first; then by order date.
     orders.sort(key=lambda r: (r.get("last_event_on") or r.get("modified") or ""), reverse=True)
 
@@ -1154,13 +1202,18 @@ def _get_tracker_rows(days=120, search=None, scope="open", merchandiser=None, ap
 @frappe.whitelist()
 def get_sales_tracker(days=120, search=None, scope="open", stage_filter=None, merchandiser=None,
                        approval_stage=None, page=1, page_size=100, so_page=1, so_page_size=100,
-                       mr_page=1, mr_page_size=100, industry=None, mr_docstatus=None):
+                       mr_page=1, mr_page_size=100, industry=None, mr_docstatus=None,
+                       ewo_fp_page=1, ewo_fp_page_size=100, ewo_pn_page=1, ewo_pn_page_size=100,
+                       ewo_fp_docstatus=None, ewo_pn_docstatus=None):
     """
     Paginated view over _get_tracker_rows, with `stage_filter` applied in
     Python (stage is a computed field, not a column — see
     _compute_stage_info) before slicing to the requested page. `total` is
     the count AFTER stage_filter, matching what the pagination bar shows.
-    Also fetches material_requests for the Material Request subtab in Sales Tracker.
+    Also fetches material_requests for the Material Request subtab, and
+    ewo_fp / ewo_pn for the Embroidery - FP / Embroidery - Panel subtabs
+    (the same lists the Job Work tab shows, via _ewo_lists, but scoped by
+    this tab's merchandiser rule).
     """
     _guard()
     _guard_tab("tracker")
@@ -1222,7 +1275,7 @@ def get_sales_tracker(days=120, search=None, scope="open", stage_filter=None, me
 
     if is_scoped_to_own_customers("tracker"):
         mr_params["merch_scope"] = frappe.session.user
-        mr_conditions.append("cust.custom_merchandiser_user = %(merch_scope)s")
+        mr_conditions.append("(cust.custom_merchandiser_user = %(merch_scope)s OR so.owner = %(merch_scope)s)")
 
     _mr_from_join = """`tabMaterial Request Item` mri
         JOIN `tabMaterial Request` mr ON mr.name = mri.parent
@@ -1248,7 +1301,12 @@ def get_sales_tracker(days=120, search=None, scope="open", stage_filter=None, me
     """, mr_params, mr_page, mr_page_size)
     material_requests["docstatus_counts"] = mr_docstatus_counts
 
-    _attach_creator_names(page_rows, material_requests["rows"])
+    ewo = _ewo_lists(days=days, search=search, scope=scope, scope_tab="tracker",
+                     fp_page=ewo_fp_page, fp_page_size=ewo_fp_page_size,
+                     pn_page=ewo_pn_page, pn_page_size=ewo_pn_page_size,
+                     fp_docstatus=ewo_fp_docstatus, pn_docstatus=ewo_pn_docstatus)
+
+    _attach_creator_names(page_rows, material_requests["rows"], ewo["ewo_fp"]["rows"], ewo["ewo_pn"]["rows"])
 
     return {
         "rows": page_rows,
@@ -1257,6 +1315,8 @@ def get_sales_tracker(days=120, search=None, scope="open", stage_filter=None, me
         "page_size": effective_page_size,
         "truncated": full["truncated"],
         "material_requests": material_requests,
+        "ewo_fp": ewo["ewo_fp"],
+        "ewo_pn": ewo["ewo_pn"],
     }
 
 
@@ -1267,6 +1327,70 @@ def _fmt_qty(qty):
 
 # Stage filters that are really per-row booleans (see get_sales_tracker).
 _FLAG_FILTERS = ("rm_ready_for_sco",)
+
+
+def _multi_so_consumption_weights(rows, rm_codes):
+    """
+    {(item_code, sco): {sales_order: weight}} — for raw material sent to a
+    Subcontracting Order whose Purchase Order spans several Sales Orders,
+    how much of that item each spanned order's OWN finished-good lines on
+    the SAME Purchase Order actually call for, so `_rm_stock_pools` can
+    apportion the physical qty that left the shelf for their shared job by
+    real, causal need rather than a guess.
+
+    `rows` is [{"item_code", "sco"}, ...] — only the (item, sco) pairs that
+    actually need a weight (i.e. already known to span several orders); a
+    weight is 0 (and so contributes nothing) for a spanned order whose own
+    lines on that Purchase Order don't call for this item at all.
+
+    Every finished-good line is read against the SAME `bom_no` the Sales
+    Order Item itself carries — the one authoritative BOM reference every
+    other RM check in this app reuses (`check_bom_raw_materials_in_stock`,
+    `_rm_ready_for_sco`), not a BOM re-derived from the Item's current
+    default, which could silently disagree with what that order actually
+    built against.
+    """
+    if not rows:
+        return {}
+    scos = tuple({r["sco"] for r in rows})
+
+    po_rows = frappe.db.sql("""
+        SELECT sco.name AS sco, poi.sales_order,
+               IFNULL(NULLIF(poi.fg_item, ''), poi.item_code) AS fg_item,
+               IFNULL(poi.fg_item_qty, poi.qty) AS fg_item_qty
+        FROM `tabSubcontracting Order` sco
+        JOIN `tabPurchase Order Item` poi ON poi.parent = sco.purchase_order
+        WHERE sco.name IN %(scos)s AND IFNULL(poi.sales_order, '') != ''
+    """, {"scos": scos}, as_dict=True)
+    if not po_rows:
+        return {}
+
+    bom_by_line = {}
+    for so_name, fg_item in {(r.sales_order, r.fg_item) for r in po_rows}:
+        bom_by_line[(so_name, fg_item)] = frappe.db.get_value(
+            "Sales Order Item", {"parent": so_name, "item_code": fg_item}, "bom_no")
+
+    qty_per_fg_by_bom = {}  # bom_no -> {item_code: qty_per_fg}
+    for bom_no in {b for b in bom_by_line.values() if b}:
+        try:
+            bom_doc = frappe.get_doc("BOM", bom_no)
+        except frappe.DoesNotExistError:
+            qty_per_fg_by_bom[bom_no] = {}
+            continue
+        batch_qty = flt(bom_doc.quantity) or 1.0
+        qty_per_fg_by_bom[bom_no] = {
+            bi.item_code: flt(bi.stock_qty if bi.stock_qty else bi.qty) / batch_qty
+            for bi in bom_doc.items
+        }
+
+    weights = defaultdict(lambda: defaultdict(float))
+    for r in po_rows:
+        per_fg = qty_per_fg_by_bom.get(bom_by_line.get((r.sales_order, r.fg_item))) or {}
+        for item_code in rm_codes:
+            qty_per_fg = per_fg.get(item_code)
+            if qty_per_fg:
+                weights[(item_code, r.sco)][r.sales_order] += flt(r.fg_item_qty) * qty_per_fg
+    return weights
 
 
 def _rm_stock_pools(rm_codes, warehouse):
@@ -1300,9 +1424,13 @@ def _rm_stock_pools(rm_codes, warehouse):
 
     Attribution follows Stock Entry -> Subcontracting Order -> Purchase Order
     -> sales_order. A Subcontracting Order whose PO spans SEVERAL Sales
-    Orders is deliberately left unattributed rather than charged to whichever
-    row came back first: a wrong attribution silently moves another order's
-    earmark, which is worse than a missing one.
+    Orders apportions that consumption across them by each order's own
+    bought (earmarked) share of the same raw material — never a single
+    guessed "whichever row came back first", which would silently move
+    another order's earmark. See the apportionment comment further down for
+    why leaving it unattributed instead (the previous behaviour) was worse:
+    it let every spanned order's earmark keep reading full long after the
+    shelf emptied for their shared job.
     """
     if not rm_codes:
         return {}
@@ -1356,8 +1484,7 @@ def _rm_stock_pools(rm_codes, warehouse):
     """, as_dict=True):
         sco_so.setdefault(r.sco, set()).add(r.sales_order)
 
-    consumed = defaultdict(lambda: defaultdict(float))
-    for r in frappe.db.sql("""
+    raw_consumption_rows = frappe.db.sql("""
         SELECT sed.item_code, se.subcontracting_order AS sco, SUM(sed.qty) AS qty
         FROM `tabStock Entry Detail` sed
         JOIN `tabStock Entry` se ON se.name = sed.parent
@@ -1365,23 +1492,83 @@ def _rm_stock_pools(rm_codes, warehouse):
           AND se.purpose = 'Send to Subcontractor'
           AND IFNULL(se.subcontracting_order, '') != ''
         GROUP BY sed.item_code, se.subcontracting_order
-    """, {"codes": codes}, as_dict=True):
+    """, {"codes": codes}, as_dict=True)
+
+    # A Subcontracting Order whose PO spans SEVERAL Sales Orders used to
+    # leave this consumption unattributed entirely — safer than crediting the
+    # wrong single order, but it meant NONE of the spanned orders' earmarks
+    # ever went down for material that had, in physical fact, already left
+    # the warehouse on their behalf. `earmarked` (and every "Covered" reading
+    # built on it — the RM Pipeline, the Subcontract PO checks) stayed high
+    # long after the shelf emptied. Confirmed live on `fabric red`:
+    # SC-ORD-2026-00020 (spanning SO-00143/144/145) sent 19 units to the
+    # jobber for Item 2 with BOM lines of 10 (SO-00144) and 9 (SO-00145) —
+    # none of it ever subtracted, so SO-00144's earmark still read a full 10
+    # while only 6 units existed anywhere in the warehouse for every order
+    # combined.
+    #
+    # Apportioned instead by each spanned order's own CAUSAL share — how
+    # much of this raw material its OWN finished-good lines on that same
+    # Purchase Order actually call for, exploded through the same BOM
+    # reference (the Sales Order Item's own `bom_no`) every other RM check
+    # in this app uses. Matches this fabric red example exactly: 10/19 to
+    # SO-00144, 9/19 to SO-00145, 0 to SO-00143 (whose only line there is
+    # Beige T Shirt, whose BOM has no fabric red at all).
+    multi_so_rows = [r for r in raw_consumption_rows if len(sco_so.get(r.sco) or ()) > 1]
+    bom_weights = _multi_so_consumption_weights(multi_so_rows, codes) if multi_so_rows else {}
+
+    consumed = defaultdict(lambda: defaultdict(float))
+    for r in raw_consumption_rows:
         orders = sco_so.get(r.sco) or set()
+        if not orders:
+            continue
         if len(orders) == 1:
             consumed[r.item_code][next(iter(orders))] += flt(r.qty)
+            continue
+        weights = dict(bom_weights.get((r.item_code, r.sco)) or {})
+        total_weight = sum(weights.values())
+        if total_weight <= 0.001:
+            # No spanned order's own finished-good lines call for this raw
+            # material at all (an item outside every BOM this PO carries —
+            # a manual addition, most likely) — fall back to each order's
+            # own bought (earmarked) share of it, same reasoning as above
+            # one level up; an order that bought none of it absorbs none of
+            # the consumption either way.
+            weights = {so: flt(bought[r.item_code].get(so, 0)) for so in orders}
+            total_weight = sum(weights.values())
+        for so in orders:
+            share = (weights.get(so, 0) / total_weight) if total_weight > 0.001 else (1.0 / len(orders))
+            consumed[r.item_code][so] += flt(r.qty) * share
 
-    picked = {}
+    # Stock a Pick List holds for a delivery — DRAFT ones included, at their
+    # allocated qty, the same held-qty rule _get_global_pick_reservations and
+    # the Item Stock widget use (submitted: picked − delivered; draft:
+    # stock_qty; Completed/Cancelled Pick Lists hold nothing). Counting only
+    # submitted ones left a draft's stock looking free as raw material: an
+    # item both sold and consumed by a BOM (fabric red) was sent to a jobber
+    # off the very units a draft Pick List had allocated for its sold line,
+    # and that Pick List then refused to submit — "stock not available"
+    # (confirmed live: STO-PICK-2026-00101, 10 fabric red for SO-00141, 1
+    # left after SC-ORD-2026-00021's transfer). Picked stock is never
+    # offered as raw material, not even with the "belongs to another order"
+    # confirm — `on_shelf` everywhere is physical − picked.
+    picked = defaultdict(float)
+    picked_docs = defaultdict(dict)
     for r in frappe.db.sql("""
-        SELECT pli.item_code, SUM(pli.picked_qty) AS qty
+        SELECT pli.item_code, pl.name AS pick_list,
+               SUM(CASE WHEN pl.docstatus = 1
+                        THEN GREATEST(IFNULL(pli.picked_qty, 0) - IFNULL(pli.delivered_qty, 0), 0)
+                        ELSE IFNULL(pli.stock_qty, 0) END) AS qty
         FROM `tabPick List Item` pli
         JOIN `tabPick List` pl ON pl.name = pli.parent
-        JOIN `tabSales Order Item` soi ON soi.parent = pli.sales_order
-                                      AND soi.item_code = pli.item_code
-        WHERE pli.item_code IN %(codes)s AND pl.docstatus = 1
-          AND soi.delivered_qty < soi.qty
-        GROUP BY pli.item_code
-    """, {"codes": codes}, as_dict=True):
-        picked[r.item_code] = flt(r.qty)
+        WHERE pli.item_code IN %(codes)s AND pl.docstatus < 2
+          AND pl.status NOT IN ('Completed', 'Cancelled')
+          AND pli.warehouse = %(wh)s
+        GROUP BY pli.item_code, pl.name
+    """, {"codes": codes, "wh": warehouse}, as_dict=True):
+        if flt(r.qty) > 0.001:
+            picked[r.item_code] += flt(r.qty)
+            picked_docs[r.item_code][r.pick_list] = flt(r.qty, 3)
 
     # Stock owed to CUSTOMERS. A raw material is very often also something this
     # company sells, and a unit promised on a Sales Order line cannot also be
@@ -1395,33 +1582,102 @@ def _rm_stock_pools(rm_codes, warehouse):
     for r in frappe.db.sql("""
         SELECT soi.item_code,
                SUM(GREATEST(0, soi.qty - IFNULL(soi.delivered_qty, 0)
-                               - IFNULL(soi.picked_qty, 0))) AS qty
+                               - IFNULL(soi.picked_qty, 0) - IFNULL(dp.qty, 0))) AS qty
         FROM `tabSales Order Item` soi
         JOIN `tabSales Order` so ON so.name = soi.parent
+        -- soi.picked_qty only moves on Pick List SUBMIT; a draft's qty is
+        -- already in `picked` above, so it comes off here too.
+        LEFT JOIN (
+            SELECT pli.sales_order_item, SUM(IFNULL(pli.stock_qty, 0)) AS qty
+            FROM `tabPick List Item` pli
+            JOIN `tabPick List` pl ON pl.name = pli.parent
+            WHERE pl.docstatus = 0 AND pl.status != 'Cancelled'
+              AND IFNULL(pli.sales_order_item, '') != ''
+            GROUP BY pli.sales_order_item
+        ) dp ON dp.sales_order_item = soi.name
         WHERE soi.item_code IN %(codes)s AND so.docstatus = 1
           AND so.status NOT IN ('Closed', 'Completed', 'Cancelled')
         GROUP BY soi.item_code
     """, {"codes": codes}, as_dict=True):
         sell_demand[r.item_code] = flt(r.qty)
 
-    pools = {}
+    raw_earmarks = {}
     for code in rm_codes:
         earmarked = {}
         for so, qty in bought[code].items():
             surplus = flt(qty) - flt(consumed[code].get(so, 0))
             if surplus > 0.001:
                 earmarked[so] = flt(surplus, 3)
+        raw_earmarks[code] = earmarked
+    priority = _earmark_priority({so for e in raw_earmarks.values() for so in e})
+
+    pools = {}
+    for code in rm_codes:
+        on_paper = raw_earmarks[code]
         phys = flt(physical.get(code, 0))
         held = flt(picked.get(code, 0))
         owed = flt(sell_demand.get(code, 0))
+        # An earmark is "bought for this order, minus what this order's own
+        # subcontracting already sent out" — arithmetic on documents, not a
+        # reservation ERPNext enforces. Anything else that takes this
+        # material off the shelf (a sale of it as a finished item, a stock
+        # reconciliation, a transfer, wastage) lowers `physical` but no
+        # order's earmark. Left as-is, several orders are then each told the
+        # same few units are theirs: confirmed live on `fabric red`, 6 units
+        # on the shelf against earmarks of 6 (SO-00122) + 10 (SO-00133) +
+        # 5 (SO-00141). All three read "Covered"; the first Subcontract PO
+        # to actually send material to the jobber would take the lot and
+        # the others would hit ERPNext's own "insufficient stock".
+        #
+        # So earmarks are honoured only up to what is physically here and
+        # not already picked for a delivery, earliest-due order first — the
+        # same priority _rm_ready_for_sco gives competing candidates. A
+        # trimmed order keeps its paper figure in `earmarked_on_paper`, so
+        # the RM Pipeline can say why its share went down.
+        earmarked = _fit_earmarks_to_stock(on_paper, max(0.0, phys - held), priority)
         pools[code] = {
             "physical": phys,
             "picked": held,
+            "picked_docs": dict(picked_docs.get(code) or {}),
             "sell_committed": owed,
             "earmarked": earmarked,
+            "earmarked_on_paper": dict(on_paper),
             "free": flt(phys - sum(earmarked.values()) - held - owed, 3),
         }
     return pools
+
+
+def _earmark_priority(sales_orders):
+    """
+    {sales_order: sort key} — which order's earmark is honoured first when
+    there isn't physical stock for all of them. Open orders before closed
+    ones (a Closed/Completed order no longer needs what it bought), then
+    earliest delivery date, then name so the result is stable between loads.
+    """
+    if not sales_orders:
+        return {}
+    keys = {}
+    for r in frappe.db.sql("""
+        SELECT name, status, COALESCE(delivery_date, transaction_date) AS due
+        FROM `tabSales Order` WHERE name IN %(names)s
+    """, {"names": tuple(sales_orders)}, as_dict=True):
+        closed = 1 if r.status in ("Closed", "Completed", "Cancelled") else 0
+        keys[r.name] = (closed, str(r.due or "9999-12-31"), r.name)
+    return keys
+
+
+def _fit_earmarks_to_stock(earmarks, capacity, priority):
+    """Earmarks cut down to `capacity` in total, honoured in `priority` order."""
+    if sum(earmarks.values()) <= capacity + 0.001:
+        return dict(earmarks)
+    fitted = {}
+    left = flt(capacity, 3)
+    for so in sorted(earmarks, key=lambda s: priority.get(s, (2, "9999-12-31", s))):
+        take = min(flt(earmarks[so]), left)
+        if take > 0.001:
+            fitted[so] = flt(take, 3)
+        left = flt(left - take, 3)
+    return fitted
 
 
 def _rm_available_for(pool, sales_order):
@@ -1526,6 +1782,24 @@ def _rm_ready_for_sco(order_names):
     """, as_dict=True):
         already[r.so_item] = flt(r.qty)
 
+    # Quantities already on Pick Lists (draft or submitted) per SO line item —
+    # any quantity for which a Pick List is created should not be shown in
+    # Subcontract PO prompts or have raw material calculated for it.
+    pick_list_qty = defaultdict(float)
+    for r in frappe.db.sql("""
+        SELECT pli.sales_order_item AS so_item,
+               SUM(CASE
+                   WHEN pl.docstatus = 1 THEN GREATEST(0, IFNULL(pli.picked_qty, 0) - IFNULL(pli.delivered_qty, 0))
+                   WHEN pl.docstatus = 0 THEN IFNULL(pli.qty, 0)
+                   ELSE 0 END) AS qty
+        FROM `tabPick List Item` pli
+        JOIN `tabPick List` pl ON pl.name = pli.parent
+        WHERE pli.sales_order IN %(names)s AND pl.docstatus < 2
+          AND IFNULL(pli.sales_order_item, '') != ''
+        GROUP BY pli.sales_order_item
+    """, {"names": tuple(order_names)}, as_dict=True):
+        pick_list_qty[r.so_item] = flt(r.qty)
+
     # Explode each BOM once.
     boms = {}
     for bom_no in {c.bom_no for c in candidates if c.bom_no}:
@@ -1547,10 +1821,18 @@ def _rm_ready_for_sco(order_names):
     # order draws its own earmarked material plus whatever is genuinely free;
     # another order's earmark is borrowable, but never silently here.
     pools = _rm_stock_pools(rm_codes, target_warehouse)
+    # What is physically on the shelf and not picked, whoever it belongs to —
+    # decremented by what each candidate actually draws, like `pools`. Only
+    # used for `shelf_ready_qty`: how much MORE a line could make by using
+    # stock held for another order (the prompt's amber "use held stock",
+    # always confirmed first). Never feeds ready/ready_qty themselves.
+    shelf_left = {code: max(0.0, flt((pools.get(code) or {}).get("physical", 0))
+                            - flt((pools.get(code) or {}).get("picked", 0)))
+                  for code in rm_codes}
 
     ready = {}
     for c in candidates:
-        remaining = flt(c.qty) - flt(c.delivered_qty) - flt(already.get(c.so_item, 0))
+        remaining = flt(c.qty) - flt(c.delivered_qty) - flt(already.get(c.so_item, 0)) - flt(pick_list_qty.get(c.so_item, 0))
         if remaining <= 0.001:
             continue
         rm_lines = boms.get(c.bom_no) or []
@@ -1624,6 +1906,12 @@ def _rm_ready_for_sco(order_names):
             ready_qty = max(0.0, coverable)
         ready_qty = flt(ready_qty, 3)
 
+        shelf_ready_qty = remaining
+        for code, per in per_unit.items():
+            if per > 0:
+                shelf_ready_qty = min(shelf_ready_qty, flt(shelf_left.get(code, 0)) / per)
+        shelf_ready_qty = flt(max(ready_qty, shelf_ready_qty, 0.0), 3)
+
         # Draw what this candidate will actually consume — the partial batch
         # too, not just a fully-ready one. Without this, two lines competing
         # for the same fabric would each be offered a partial qty off the
@@ -1636,6 +1924,7 @@ def _rm_ready_for_sco(order_names):
                     draw_need.get(rm["item_code"], 0) + flt(rm["qty_per_fg"]) * ready_qty)
             for code, qty in draw_need.items():
                 _rm_draw(pools.get(code), c.sales_order, qty)
+                shelf_left[code] = max(0.0, flt(shelf_left.get(code, 0)) - qty)
 
         entry = ready.setdefault(c.sales_order, {
             "fg_qty": 0.0, "ready_count": 0, "raisable_qty": 0.0, "raisable_count": 0, "items": [],
@@ -1670,6 +1959,10 @@ def _rm_ready_for_sco(order_names):
             # material is here, 0 when none of it is. `qty` stays the full
             # outstanding qty so the prompt can still say "N of M".
             "ready_qty": ready_qty,
+            # Up to this much if stock reserved for OTHER orders were counted
+            # too — informational only (explains "it's on the shelf, but not
+            # yours"); never raisable.
+            "shelf_ready_qty": shelf_ready_qty,
             "blocked_on": blocked_on,
             "rm": rm_detail,
         })
@@ -1705,7 +1998,9 @@ def get_rm_ready_bom_items(sales_order):
     # against this, so a line with no material at all must never appear here or
     # it would become creatable. A PARTIALLY covered line does belong: it can
     # genuinely have a PO raised for `ready_qty` today (see _rm_ready_for_sco),
-    # and that endpoint caps every row at exactly that figure.
+    # and that endpoint caps every row at exactly that figure. Stock reserved
+    # for another order never makes a line raisable (strict rule — see
+    # docs/so-rm-po-subcontracting-flow.md "One rule").
     return [i for i in items if flt(i.get("ready_qty")) > 0.001]
 
 
@@ -1765,8 +2060,8 @@ def _resolve_secondary_billing_action(order):
         inv_name = draft_invoices[0]
         return {
             "action_type": "open_doc",
-            "action_label": "Open Draft Invoice",
-            "action_hint": f"Open draft Sales Invoice {inv_name}",
+            "action_label": "Submit Invoice (Draft)",
+            "action_hint": f"Open draft Sales Invoice {inv_name} and submit it — the order then reads Delivered",
             "action_btn_class": "of-btn--warning",
             "target_doc": inv_name,
             "target_doctype": "Sales Invoice",
@@ -1792,6 +2087,15 @@ def _resolve_secondary_billing_action(order):
     }
 
 
+def _needs_invoice(order):
+    """True when some delivered qty has no Sales Invoice yet (needs_invoice_qty
+    from Sales Order Item: delivered_qty − billed_amt / rate). Falls back to the
+    percentage comparison only when that figure wasn't loaded."""
+    if order.get("needs_invoice_qty") is not None:
+        return flt(order.get("needs_invoice_qty")) > 0.001
+    return flt(order.get("per_delivered")) > 0 and flt(order.get("per_billed")) < 100
+
+
 def _compute_stage_info(order):
     """
     Computes exact workflow stage & required action for a Sales Order.
@@ -1807,9 +2111,11 @@ def _compute_stage_info(order):
     """
     result = _compute_primary_stage_info(order)
 
-    delivered = flt(order.get("per_delivered"))
-    billed = flt(order.get("per_billed"))
-    if delivered > 0 and billed < 100 and result.get("stage_key") not in ("need_to_bill", "completed"):
+    # Qty delivered but not yet invoiced — NOT per_delivered vs per_billed:
+    # per_delivered is by qty and per_billed is by amount, so an order whose
+    # one delivered line is fully invoiced (SAL-ORD-2026-00147: 29% delivered
+    # by qty, 19% billed by amount) still read "+ Needs Invoice".
+    if _needs_invoice(order) and result.get("stage_key") not in ("need_to_bill", "completed"):
         result["secondary_action"] = _resolve_secondary_billing_action(order)
 
     return result
@@ -1845,7 +2151,8 @@ def _compute_primary_stage_info(order):
     draft_invoices = order.get("draft_invoices") or []
 
     skip_dn = bool(order.get("skip_delivery_note"))
-    is_completed = billed >= 100 if skip_dn else (delivered >= 100 and billed >= 100)
+    needs_invoice = _needs_invoice(order)
+    is_completed = billed >= 100 if skip_dn else (delivered >= 100 and (billed >= 100 or not needs_invoice))
     # Some of this order already shipped, and it isn't done yet — every
     # stage below this point describes what's blocking the *remaining*
     # balance, which reads as if nothing had happened at all unless it's
@@ -1895,19 +2202,27 @@ def _compute_primary_stage_info(order):
             is_ready_to_bill = True
             is_fully_picked_or_delivered = False
 
-    if is_ready_to_bill and billed < 100:
+    if is_ready_to_bill and (billed < 100 if skip_dn else needs_invoice):
+        # DN submitted = Dispatched; the invoice is what makes it Delivered.
+        # A Direct Bill order has no DN — the invoice itself dispatches it.
+        if skip_dn:
+            bill_stage_label = "Picked — Create Invoice to Deliver"
+        else:
+            bill_stage_label = ("Dispatched — Create Invoice" if is_fully_picked_or_delivered
+                                else "Partly Dispatched — Create Invoice")
         if draft_invoices:
             inv_name = draft_invoices[0]
             return {
                 "stage_key": "need_to_bill",
-                "stage_label": "Need to Bill" if is_fully_picked_or_delivered else "Need to Bill (Partial)",
+                # SI saved as draft = Delivered (Draft); submitting it = Delivered.
+                "stage_label": "Delivered (Draft) — Submit Invoice",
                 "badge_class": "of-pill--need-bill" if is_fully_picked_or_delivered else "of-pill--warn",
                 "icon": "file-text-o",
                 "target_doc": inv_name,
                 "target_doctype": "Sales Invoice",
                 "action_type": "open_doc",
-                "action_label": "Open Draft Invoice",
-                "action_hint": f"Open draft Sales Invoice {inv_name}",
+                "action_label": "Submit Invoice",
+                "action_hint": f"Open draft Sales Invoice {inv_name} and submit it — the order then reads Delivered",
                 "action_btn_class": "of-btn--warning"
             }
         else:
@@ -1915,7 +2230,7 @@ def _compute_primary_stage_info(order):
             if dns:
                 return {
                     "stage_key": "need_to_bill",
-                    "stage_label": "Need to Bill" if is_fully_picked_or_delivered else "Need to Bill (Partial)",
+                    "stage_label": bill_stage_label,
                     "badge_class": "of-pill--need-bill" if is_fully_picked_or_delivered else "of-pill--warn",
                     "icon": "file-text-o",
                     "target_doc": ",".join(dns),
@@ -1927,7 +2242,7 @@ def _compute_primary_stage_info(order):
             else:
                 return {
                     "stage_key": "need_to_bill",
-                    "stage_label": "Need to Bill" if is_fully_picked_or_delivered else "Need to Bill (Partial)",
+                    "stage_label": bill_stage_label,
                     "badge_class": "of-pill--need-bill" if is_fully_picked_or_delivered else "of-pill--warn",
                     "icon": "file-text-o",
                     "action_type": "make_invoice",
@@ -2029,13 +2344,13 @@ def _compute_primary_stage_info(order):
             if draft_dns:
                 return {
                     "stage_key": "ready_to_deliver",
-                    "stage_label": "Ready for Delivery",
+                    "stage_label": "To Be Dispatched (Draft)",
                     "badge_class": "of-pill--dn",
                     "icon": "truck",
                     "target_doc": draft_dns[0],
                     "target_doctype": "Delivery Note",
                     "action_type": "open_doc",
-                    "action_label": "To Be Dispatched",
+                    "action_label": "Submit DN to Dispatch",
                     "action_hint": (
                         f"Delivery Challan {draft_dns[0]} is saved but not submitted"
                         + (f" (+{len(draft_dns) - 1} more draft)" if len(draft_dns) > 1 else "")
@@ -2101,7 +2416,7 @@ def _compute_primary_stage_info(order):
 
         return {
             "stage_key": "stock_received",
-            "stage_label": "Stock Arrived (PL Needed)" + (" — Partial Delivery" if is_partially_delivered else ""),
+            "stage_label": "Stock Arrived — Create Pick List" + (" — Partial Delivery" if is_partially_delivered else ""),
             "badge_class": "of-pill--ready",
             "icon": "inbox",
             "action_type": "make_picklist",
@@ -2125,10 +2440,11 @@ def _compute_primary_stage_info(order):
         }
 
     if embroidery_orders:
-        # These are {"name": <Purchase Order>, "doctype": "Purchase Order"}
-        # dicts, not plain names — see get_sales_tracker's event loop, where
-        # ev.name is the Purchase Order that raised the Embroidery Work
-        # Order, never the EWO itself. Interpolating the dict directly used
+        # These are {"name", "doctype"} dicts, not plain names — see
+        # _get_tracker_rows: {"name": <Purchase Order>, "doctype": "Purchase
+        # Order"} for a PO-raised EWO (ev.name is the PO, never the EWO), and
+        # {"name": <EWO>, "doctype": "Embroidery Work Order"} for one sent
+        # straight from the Sales Order. Interpolating the dict directly used
         # to print its Python repr straight into the action label.
         ewo = embroidery_orders[0]
         ewo_name = ewo.get("name") if isinstance(ewo, dict) else ewo
@@ -2202,12 +2518,14 @@ def _compute_primary_stage_info(order):
     # was wrong for every made-to-order line.
     all_bom = bool(order.get("all_bom_items"))
     has_bom = bool(order.get("has_bom_items"))
+    # Short labels; the Request prompt then asks Raw Material vs Trade Items
+    # and lists the exact records.
     if all_bom:
-        action_label = "Create Subcontract PO"
+        action_label = "Request RM"
     elif has_bom:
-        action_label = "Raise MR / Subcontract PO"
+        action_label = "Request (2)"
     else:
-        action_label = "Raise MR from SO"
+        action_label = "Raise MR"
 
     # Calling this "Create Subcontract PO" would be a lie if the raw material
     # for it isn't physically in stock — the SO's own widget (so_buy_btn) and
@@ -2222,40 +2540,66 @@ def _compute_primary_stage_info(order):
     # nothing has happened yet, when in fact the remaining balance is a
     # genuine fresh shortfall (this is exactly the case the SO's own Item
     # Stock & Action Plan widget already flags as "Shortfall").
+    # Nothing raised yet for what is left. Say exactly what is blocking it,
+    # in the same words the Sales Order's Item Stock & Action Plan uses:
+    #   raw material short for a BOM line  → "Waiting for Raw Material" / Request RM
+    #   raw material in stock for a line   → "RM Ready — Make Subcontract PO"
+    #                                        (the Create Subcontract PO button
+    #                                        itself is rendered next to it)
+    #   plain trade items only             → "New Order" / Raise MR
+    # "Newly Created — RM Shortage" + "RM Not in Stock — Cannot Create PO Yet"
+    # used to say what you can't do instead of what to do next.
+    prefix = "Partially Delivered — " if is_partially_delivered else ""
+    stage_key = "partially_delivered" if is_partially_delivered else "newly_created"
+    has_trade = has_bom and not all_bom or not has_bom
     if has_bom and _has_bom_rm_shortage(order["name"]):
         return {
             "stage_key": "partial_rm_shortage" if is_partially_delivered else "newly_created",
-            "stage_label": "Partially Delivered — RM Shortage" if is_partially_delivered else "Newly Created — RM Shortage",
+            "stage_label": prefix + "Waiting for Raw Material",
             "badge_class": "of-pill--warn",
             "icon": "exclamation-triangle",
-            "action_type": "make_mr",
-            "action_label": "RM Not in Stock — Cannot Create PO Yet",
-            "action_btn_class": "of-btn--warning"
+            # Opens the Request prompt: choose Raw Material or Trade Items,
+            # then the exact records that are short (get_so_request_options).
+            "action_type": "request",
+            "action_label": "Request (2)" if has_trade else "Request RM",
+            "action_hint": "Raw material for a BOM item is not in stock for this order (stock reserved for other orders does not count). Open the order and use Request RM.",
+            "action_btn_class": "of-btn--warning",
+            "rm_ready_stage": bool(order.get("rm_ready_for_sco")),
+        }
+
+    if order.get("rm_ready_for_sco"):
+        return {
+            "stage_key": stage_key,
+            "stage_label": prefix + "RM Ready — Make Subcontract PO",
+            "badge_class": "of-pill--planned",
+            "icon": "cogs",
+            # The Subcontract PO button sits next to this (rm_ready_for_sco);
+            # the primary action is only for plain trade lines still to buy.
+            "action_type": "request" if has_trade else "none",
+            "action_label": "Raise MR" if has_trade else "",
+            "action_btn_class": "of-btn--warning",
+            "rm_ready_stage": True,
         }
 
     if is_partially_delivered:
         return {
             "stage_key": "partially_delivered",
-            "stage_label": "Partially Delivered — Awaiting More Stock",
+            "stage_label": "Partially Delivered — Nothing Raised for the Rest",
             "badge_class": "of-pill--warn",
             "icon": "exclamation-triangle",
-            # Still just opens the Sales Order (see the "make_mr" branch client-side)
-            # — the per-item widget there already offers the right button
-            # (Material Request / Subcontract PO) for each remaining line.
-            "action_type": "make_mr",
+            "action_type": "request",
             "action_label": action_label,
             "action_btn_class": "of-btn--warning"
         }
 
     return {
         "stage_key": "newly_created",
-        "stage_label": "Newly Created",
+        "stage_label": "New Order — Nothing Raised Yet",
         "badge_class": "of-pill--new",
         "icon": "star",
-        # Still just opens the Sales Order (see the "make_mr" branch client-side)
-        # — the per-item widget there already offers the right button
-        # (Material Request / Subcontract PO) for each line.
-        "action_type": "make_mr",
+        # Opens the Sales Order — the per-item widget there offers the right
+        # button (Material Request / Subcontract PO) for each line.
+        "action_type": "request",
         "action_label": action_label,
         "action_btn_class": "of-btn--primary"
     }
@@ -2274,14 +2618,24 @@ def _has_bom_rm_shortage(sales_order_name):
     """
     try:
         bom_rows = frappe.db.sql("""
-            SELECT item_code, bom_no, qty, delivered_qty
+            SELECT name AS so_item, item_code, bom_no, qty, delivered_qty
             FROM `tabSales Order Item`
             WHERE parent = %s AND bom_no IS NOT NULL AND bom_no != ''
         """, sales_order_name, as_dict=True)
 
         bom_cache = {}
         for row in bom_rows:
-            qty_needed = flt(row.qty) - flt(row.delivered_qty)
+            pl_qty = frappe.db.sql("""
+                SELECT SUM(CASE
+                    WHEN pl.docstatus = 1 THEN GREATEST(0, IFNULL(pli.picked_qty, 0) - IFNULL(pli.delivered_qty, 0))
+                    WHEN pl.docstatus = 0 THEN IFNULL(pli.qty, 0)
+                    ELSE 0 END) AS qty
+                FROM `tabPick List Item` pli
+                JOIN `tabPick List` pl ON pl.name = pli.parent
+                WHERE pli.sales_order_item = %s AND pl.docstatus < 2
+            """, row.so_item)[0][0] or 0.0
+
+            qty_needed = flt(row.qty) - flt(row.delivered_qty) - flt(pl_qty)
             if qty_needed <= 0:
                 continue
             # Scoped to this order: material sitting in the warehouse for a
@@ -2466,7 +2820,8 @@ def get_purchase_flow(days=120, search=None, scope="open", merchandiser=None,
             param_key = f"q_{idx}"
             conditions.append(f"""(po.name LIKE %({param_key})s OR po.supplier LIKE %({param_key})s
                                   OR sup.supplier_name LIKE %({param_key})s OR poi.sales_order LIKE %({param_key})s
-                                  OR poi.item_code LIKE %({param_key})s OR po.order_confirmation_no LIKE %({param_key})s)""")
+                                  OR poi.item_code LIKE %({param_key})s OR po.order_confirmation_no LIKE %({param_key})s
+                                  OR po.custom_lr_number LIKE %({param_key})s)""")
             params[param_key] = f"%{word}%"
     # A plain Merchandiser User only sees the lines of a PO/MR/Receipt that
     # are for their own customers — same is_scoped_to_own_customers guard as
@@ -2482,7 +2837,7 @@ def get_purchase_flow(days=120, search=None, scope="open", merchandiser=None,
     # already JOIN through to `cust` the same way).
     if is_scoped_to_own_customers("purchase"):
         params["merch_scope"] = frappe.session.user
-        conditions.append("cust.custom_merchandiser_user = %(merch_scope)s")
+        conditions.append("(cust.custom_merchandiser_user = %(merch_scope)s OR so.owner = %(merch_scope)s)")
 
     _po_from_join = """`tabPurchase Order Item` poi
         JOIN `tabPurchase Order` po ON po.name = poi.parent
@@ -2498,6 +2853,7 @@ def get_purchase_flow(days=120, search=None, scope="open", merchandiser=None,
                po.supplier, sup.supplier_name, po.is_subcontracted, po.currency,
                po.per_received, po.per_billed, po.grand_total,
                po.order_confirmation_no, po.order_confirmation_date, po.owner,
+               po.custom_lr_number, po.custom_lr_date,
                GROUP_CONCAT(DISTINCT poi.sales_order ORDER BY poi.sales_order SEPARATOR ', ') AS sales_orders,
                GROUP_CONCAT(DISTINCT so.customer_name ORDER BY so.customer_name SEPARATOR ', ') AS so_customer_names,
                COUNT(DISTINCT poi.item_code) AS item_count,
@@ -2508,7 +2864,8 @@ def get_purchase_flow(days=120, search=None, scope="open", merchandiser=None,
         GROUP BY po.name, po.transaction_date, po.schedule_date, po.status, po.docstatus,
                  po.supplier, sup.supplier_name, po.is_subcontracted, po.currency,
                  po.per_received, po.per_billed, po.grand_total,
-                 po.order_confirmation_no, po.order_confirmation_date, po.owner
+                 po.order_confirmation_no, po.order_confirmation_date, po.owner,
+                 po.custom_lr_number, po.custom_lr_date
         ORDER BY po.transaction_date DESC, po.name DESC
     """, params, po_page, po_page_size)
     purchase_orders["docstatus_counts"] = po_docstatus_counts
@@ -2522,6 +2879,7 @@ def get_purchase_flow(days=120, search=None, scope="open", merchandiser=None,
                po.supplier, sup.supplier_name, po.is_subcontracted, po.currency,
                po.per_received, po.per_billed, po.grand_total,
                po.order_confirmation_no, po.order_confirmation_date, po.owner,
+               po.custom_lr_number, po.custom_lr_date,
                GROUP_CONCAT(DISTINCT poi.sales_order ORDER BY poi.sales_order SEPARATOR ', ') AS sales_orders,
                GROUP_CONCAT(DISTINCT so.customer_name ORDER BY so.customer_name SEPARATOR ', ') AS so_customer_names,
                COUNT(DISTINCT poi.item_code) AS item_count,
@@ -2536,7 +2894,8 @@ def get_purchase_flow(days=120, search=None, scope="open", merchandiser=None,
         GROUP BY po.name, po.transaction_date, po.schedule_date, po.status, po.docstatus,
                  po.supplier, sup.supplier_name, po.is_subcontracted, po.currency,
                  po.per_received, po.per_billed, po.grand_total,
-                 po.order_confirmation_no, po.order_confirmation_date, po.owner
+                 po.order_confirmation_no, po.order_confirmation_date, po.owner,
+                 po.custom_lr_number, po.custom_lr_date
         ORDER BY po.transaction_date DESC, po.name DESC
     """, params, bill_page, bill_page_size)
 
@@ -2552,7 +2911,7 @@ def get_purchase_flow(days=120, search=None, scope="open", merchandiser=None,
             mr_conditions.append(f"(mr.name LIKE %({param_key})s OR mri.sales_order LIKE %({param_key})s OR mri.item_code LIKE %({param_key})s)")
             params[param_key] = f"%{word}%"
     if is_scoped_to_own_customers("purchase"):
-        mr_conditions.append("cust.custom_merchandiser_user = %(merch_scope)s")
+        mr_conditions.append("(cust.custom_merchandiser_user = %(merch_scope)s OR so.owner = %(merch_scope)s)")
 
     pr_conditions = ["pr.docstatus < 2", "pr.posting_date >= %(from_date)s", "IFNULL(pr.is_subcontracted, 0) = 0", _NOT_DISABLED_SO]
     scr_conditions = ["scr.docstatus < 2", "scr.posting_date >= %(from_date)s", _NOT_DISABLED_SO]
@@ -2571,8 +2930,8 @@ def get_purchase_flow(days=120, search=None, scope="open", merchandiser=None,
             scr_conditions.append(f"(scr.name LIKE %({param_key})s OR scr.supplier LIKE %({param_key})s OR sup.supplier_name LIKE %({param_key})s)")
             params[param_key] = f"%{word}%"
     if is_scoped_to_own_customers("purchase"):
-        pr_conditions.append("cust.custom_merchandiser_user = %(merch_scope)s")
-        scr_conditions.append("cust.custom_merchandiser_user = %(merch_scope)s")
+        pr_conditions.append("(cust.custom_merchandiser_user = %(merch_scope)s OR so.owner = %(merch_scope)s)")
+        scr_conditions.append("(cust.custom_merchandiser_user = %(merch_scope)s OR so.owner = %(merch_scope)s)")
 
     _pr_from_join = """`tabPurchase Receipt Item` pri
         JOIN `tabPurchase Receipt` pr ON pr.name = pri.parent
@@ -2672,6 +3031,121 @@ def get_purchase_flow(days=120, search=None, scope="open", merchandiser=None,
 # Tab 3 — Job work (subcontracting + embroidery)
 # --------------------------------------------------------------------------
 
+# An Embroidery Work Order reaches its Sales Order one of two ways: through
+# the Purchase Order that raised it (poi.sales_order), or directly, when it
+# was sent from the Sales Order's own stock (saels_order_id, no Purchase
+# Order — see so_embroidery). `so` below is whichever applies, so the
+# open-order, disabled-order and merchandiser conditions treat both the same.
+_EWO_FROM_JOIN = """`tabEmbroidery Work Order` ewo
+        LEFT JOIN `tabSupplier` fp ON fp.name = ewo.full_piece_jobber
+        LEFT JOIN `tabSupplier` pn ON pn.name = ewo.panel_jobber
+        LEFT JOIN `tabPurchase Order` po ON po.name = ewo.purchase_order
+        LEFT JOIN `tabSupplier` po_sup ON po_sup.name = po.supplier
+        LEFT JOIN `tabPurchase Order Item` poi ON poi.parent = ewo.purchase_order
+        LEFT JOIN `tabSales Order` so ON so.name = COALESCE(NULLIF(ewo.saels_order_id, ''), poi.sales_order)
+        LEFT JOIN `tabCustomer` cust ON cust.name = so.customer"""
+
+
+# An Embroidery Work Order's own `status` stays "Open" for its whole life
+# (and per_received is never updated), so "finished" has to be read from the
+# work itself: a Full Piece job is done once every piece is received back; a
+# Panel job once its stage is "Returned to Jobber (Closed)". Used by the Open
+# filter, the Job Work count, and the tracker's Embroidery / In Job Work stage.
+_EWO_OPEN_SQL = """(
+    (ewo.work_type = 'Panel Job Work' AND IFNULL(ewo.panel_stage, '') != 'Returned to Jobber (Closed)')
+    OR (ewo.work_type != 'Panel Job Work' AND EXISTS (
+        SELECT 1 FROM `tabEmbroidery Work Order Item` c_open
+        WHERE c_open.parent = ewo.name AND c_open.ordered_qty - IFNULL(c_open.received_qty, 0) > 0.001))
+)"""
+
+
+def _ewo_lists(days=180, search=None, scope="open", scope_tab="jobwork",
+               fp_page=1, fp_page_size=100, pn_page=1, pn_page_size=100,
+               fp_docstatus=None, pn_docstatus=None):
+    """
+    Full Piece and Panel Embroidery Work Orders as two independently paged
+    lists — shared by the Job Work tab and the Sales Tracker's Embroidery
+    subtabs so both show the same rows for the same filters.
+
+    `scope_tab` is whose of_tab_<tab>_roles decide merchandiser scoping: a
+    plain Merchandiser User sees only work orders for their own customers'
+    orders (or orders they raised), on whichever tab asked.
+
+    Returns {"ewo_fp", "ewo_pn", "active_count"}.
+    """
+    conditions = ["ewo.docstatus < 2", "ewo.date >= %(from_date)s", _NOT_DISABLED_SO]
+    params = {"from_date": _from_date(days)}
+
+    if scope == "open":
+        conditions.append("ewo.status NOT IN ('Closed', 'Completed', 'Cancelled')")
+        conditions.append(_EWO_OPEN_SQL)
+        # A PO that no longer exists (deleted) leaves po.status NULL — still
+        # unfinished work at the jobber, so it must not silently drop out.
+        conditions.append("(ewo.purchase_order IS NULL OR ewo.purchase_order = '' OR po.name IS NULL OR po.status NOT IN ('Closed', 'Completed', 'Cancelled'))")
+        conditions.append("(so.name IS NULL OR so.status NOT IN ('Closed', 'Completed', 'Cancelled'))")
+    elif scope == "mine":
+        conditions.append("ewo.owner = %(me)s")
+        params["me"] = frappe.session.user
+
+    if search:
+        for idx, word in enumerate(search.strip().split()):
+            param_key = f"q_{idx}"
+            conditions.append(f"""(ewo.name LIKE %({param_key})s OR ewo.purchase_order LIKE %({param_key})s
+                                  OR so.name LIKE %({param_key})s OR so.customer_name LIKE %({param_key})s
+                                  OR fp.supplier_name LIKE %({param_key})s OR pn.supplier_name LIKE %({param_key})s)""")
+            params[param_key] = f"%{word}%"
+
+    if is_scoped_to_own_customers(scope_tab):
+        params["merch_scope"] = frappe.session.user
+        conditions.append("(cust.custom_merchandiser_user = %(merch_scope)s OR so.owner = %(merch_scope)s)")
+
+    def _sql(conds):
+        return f"""
+            SELECT ewo.name, ewo.date, ewo.status, ewo.docstatus, ewo.work_type,
+                   ewo.purchase_order, ewo.subcontracting_order, ewo.completed_on,
+                   ewo.panel_stage, ewo.full_piece_stage, ewo.per_received,
+                   ewo.panel_jobber, ewo.full_piece_jobber, ewo.owner AS owner,
+                   NULLIF(ewo.saels_order_id, '') AS direct_sales_order,
+                   COALESCE(fp.supplier_name, pn.supplier_name) AS jobber_name,
+                   po.supplier AS po_supplier, po_sup.supplier_name AS po_supplier_name,
+                   -- 0 when the EWO points at a Purchase Order that was deleted:
+                   -- the page then shows it as "(deleted)" instead of a dead link.
+                   IF(IFNULL(ewo.purchase_order, '') = '' OR po.name IS NOT NULL, 1, 0) AS po_exists,
+                   (SELECT SUM(c.ordered_qty) FROM `tabEmbroidery Work Order Item` c WHERE c.parent = ewo.name) AS ordered_qty,
+                   (SELECT SUM(c.received_qty) FROM `tabEmbroidery Work Order Item` c WHERE c.parent = ewo.name) AS received_qty,
+                   COALESCE(NULLIF(ewo.saels_order_id, ''),
+                            (SELECT GROUP_CONCAT(DISTINCT poi2.sales_order ORDER BY poi2.sales_order SEPARATOR ', ')
+                               FROM `tabPurchase Order Item` poi2 WHERE poi2.parent = ewo.purchase_order)) AS sales_orders,
+                   GROUP_CONCAT(DISTINCT so.customer_name ORDER BY so.customer_name SEPARATOR ', ') AS so_customer_names
+            FROM {_EWO_FROM_JOIN}
+            WHERE {' AND '.join(conds)}
+            GROUP BY ewo.name, ewo.date, ewo.status, ewo.docstatus, ewo.work_type,
+                     ewo.purchase_order, ewo.subcontracting_order, ewo.completed_on,
+                     ewo.panel_stage, ewo.full_piece_stage, ewo.per_received,
+                     ewo.panel_jobber, ewo.full_piece_jobber, ewo.owner, ewo.saels_order_id,
+                     fp.supplier_name, pn.supplier_name, po.name, po.supplier, po_sup.supplier_name
+            ORDER BY ewo.date DESC
+        """
+
+    out = {}
+    for key, work_type, page, page_size, docstatus in (
+            ("ewo_fp", "Full Piece Job Work", fp_page, fp_page_size, fp_docstatus),
+            ("ewo_pn", "Panel Job Work", pn_page, pn_page_size, pn_docstatus)):
+        wt_params = {**params, "work_type": work_type}
+        wt_conditions = conditions + ["ewo.work_type = %(work_type)s"]
+        counts = _docstatus_pill_counts([("ewo.name", "ewo.docstatus", _EWO_FROM_JOIN, wt_conditions)], wt_params)
+        env = _paged_query(_sql(_with_docstatus(wt_conditions, "ewo.docstatus", docstatus)), wt_params, page, page_size)
+        env["docstatus_counts"] = counts
+        out[key] = env
+
+    out["active_count"] = cint(frappe.db.sql(f"""
+        SELECT COUNT(DISTINCT CASE WHEN ewo.docstatus = 1 AND {_EWO_OPEN_SQL} THEN ewo.name END)
+        FROM {_EWO_FROM_JOIN}
+        WHERE {' AND '.join(conditions)}
+    """, params)[0][0])
+    return out
+
+
 @frappe.whitelist()
 def get_jobwork_flow(days=180, search=None, scope="open", merchandiser=None,
                       po_page=1, po_page_size=100, receipt_page=1, receipt_page_size=100,
@@ -2714,7 +3188,7 @@ def get_jobwork_flow(days=180, search=None, scope="open", merchandiser=None,
     # matching lines.
     if is_scoped_to_own_customers("jobwork"):
         params["merch_scope"] = frappe.session.user
-        conditions.append("cust.custom_merchandiser_user = %(merch_scope)s")
+        conditions.append("(cust.custom_merchandiser_user = %(merch_scope)s OR so.owner = %(merch_scope)s)")
 
     _po_from_join = """`tabPurchase Order Item` poi
         JOIN `tabPurchase Order` po ON po.name = poi.parent
@@ -2729,6 +3203,8 @@ def get_jobwork_flow(days=180, search=None, scope="open", merchandiser=None,
         SELECT po.name, po.transaction_date, po.schedule_date, po.status, po.docstatus,
                po.supplier, sup.supplier_name, po.is_subcontracted, po.currency,
                po.per_received, po.per_billed, po.grand_total, po.owner,
+               (SELECT sco.name FROM `tabSubcontracting Order` sco
+                WHERE sco.purchase_order = po.name AND sco.docstatus = 1 LIMIT 1) AS sco_name,
                GROUP_CONCAT(DISTINCT poi.sales_order ORDER BY poi.sales_order SEPARATOR ', ') AS sales_orders,
                GROUP_CONCAT(DISTINCT so.customer_name ORDER BY so.customer_name SEPARATOR ', ') AS so_customer_names,
                COUNT(DISTINCT poi.item_code) AS item_count,
@@ -2745,33 +3221,25 @@ def get_jobwork_flow(days=180, search=None, scope="open", merchandiser=None,
 
     pr_conditions = ["pr.docstatus < 2", "pr.posting_date >= %(from_date)s", "pr.is_subcontracted = 1", _NOT_DISABLED_SO]
     scr_conditions = ["scr.docstatus < 2", "scr.posting_date >= %(from_date)s", _NOT_DISABLED_SO]
-    ewo_conditions = ["ewo.docstatus < 2", "ewo.date >= %(from_date)s", _NOT_DISABLED_SO]
-    
+
     if scope == "open":
         pr_conditions.append("pr.status NOT IN ('Completed', 'Cancelled')")
         pr_conditions.append("(pri.sales_order IS NULL OR pri.sales_order = '' OR so.status NOT IN ('Closed', 'Completed', 'Cancelled'))")
         scr_conditions.append("scr.status NOT IN ('Completed', 'Cancelled')")
         scr_conditions.append("(poi.sales_order IS NULL OR poi.sales_order = '' OR so.status NOT IN ('Closed', 'Completed', 'Cancelled'))")
-        ewo_conditions.append("ewo.status NOT IN ('Closed', 'Completed', 'Cancelled')")
-        ewo_conditions.append("(ewo.purchase_order IS NULL OR ewo.purchase_order = '' OR po.status NOT IN ('Closed', 'Completed', 'Cancelled'))")
-        ewo_conditions.append("(poi.sales_order IS NULL OR poi.sales_order = '' OR so.status NOT IN ('Closed', 'Completed', 'Cancelled'))")
     elif scope == "mine":
         pr_conditions.append("pr.owner = %(me)s")
         scr_conditions.append("scr.owner = %(me)s")
-        ewo_conditions.append("ewo.owner = %(me)s")
-        
+
     if search:
         for idx, word in enumerate(search.strip().split()):
             param_key = f"q_{idx}"
             pr_conditions.append(f"(pr.name LIKE %({param_key})s OR pr.supplier LIKE %({param_key})s OR sup.supplier_name LIKE %({param_key})s)")
             scr_conditions.append(f"(scr.name LIKE %({param_key})s OR scr.supplier LIKE %({param_key})s OR sup.supplier_name LIKE %({param_key})s)")
-            ewo_conditions.append(f"""(ewo.name LIKE %({param_key})s OR ewo.purchase_order LIKE %({param_key})s
-                                      OR fp.supplier_name LIKE %({param_key})s OR pn.supplier_name LIKE %({param_key})s)""")
             params[param_key] = f"%{word}%"
     if is_scoped_to_own_customers("jobwork"):
-        pr_conditions.append("cust.custom_merchandiser_user = %(merch_scope)s")
-        scr_conditions.append("cust.custom_merchandiser_user = %(merch_scope)s")
-        ewo_conditions.append("cust.custom_merchandiser_user = %(merch_scope)s")
+        pr_conditions.append("(cust.custom_merchandiser_user = %(merch_scope)s OR so.owner = %(merch_scope)s)")
+        scr_conditions.append("(cust.custom_merchandiser_user = %(merch_scope)s OR so.owner = %(merch_scope)s)")
 
     _pr_from_join = """`tabPurchase Receipt Item` pri
         JOIN `tabPurchase Receipt` pr ON pr.name = pri.parent
@@ -2830,60 +3298,11 @@ def get_jobwork_flow(days=180, search=None, scope="open", merchandiser=None,
     """, params, receipt_page, receipt_page_size)
     receipts["docstatus_counts"] = receipt_docstatus_counts
 
-    def _ewo_sql(work_type, ewo_conds):
-        return f"""
-            SELECT ewo.name, ewo.date, ewo.status, ewo.docstatus, ewo.work_type,
-                   ewo.purchase_order, ewo.subcontracting_order, ewo.completed_on,
-                   ewo.panel_stage, ewo.full_piece_stage, ewo.per_received,
-                   ewo.panel_jobber, ewo.full_piece_jobber, ewo.owner AS owner,
-                   COALESCE(fp.supplier_name, pn.supplier_name) AS jobber_name,
-                   po.supplier AS po_supplier, po_sup.supplier_name AS po_supplier_name,
-                   (SELECT SUM(c.ordered_qty) FROM `tabEmbroidery Work Order Item` c WHERE c.parent = ewo.name) AS ordered_qty,
-                   (SELECT SUM(c.received_qty) FROM `tabEmbroidery Work Order Item` c WHERE c.parent = ewo.name) AS received_qty,
-                   (SELECT GROUP_CONCAT(DISTINCT poi.sales_order ORDER BY poi.sales_order SEPARATOR ', ')
-                      FROM `tabPurchase Order Item` poi WHERE poi.parent = ewo.purchase_order) AS sales_orders,
-                   GROUP_CONCAT(DISTINCT so.customer_name ORDER BY so.customer_name SEPARATOR ', ') AS so_customer_names
-            FROM `tabEmbroidery Work Order` ewo
-            LEFT JOIN `tabSupplier` fp ON fp.name = ewo.full_piece_jobber
-            LEFT JOIN `tabSupplier` pn ON pn.name = ewo.panel_jobber
-            LEFT JOIN `tabPurchase Order` po ON po.name = ewo.purchase_order
-            LEFT JOIN `tabSupplier` po_sup ON po_sup.name = po.supplier
-            LEFT JOIN `tabPurchase Order Item` poi ON poi.parent = ewo.purchase_order
-            LEFT JOIN `tabSales Order` so ON so.name = poi.sales_order
-            LEFT JOIN `tabCustomer` cust ON cust.name = so.customer
-            WHERE {' AND '.join(ewo_conds)} AND ewo.work_type = %(work_type)s
-            GROUP BY ewo.name, ewo.date, ewo.status, ewo.docstatus, ewo.work_type,
-                     ewo.purchase_order, ewo.subcontracting_order, ewo.completed_on,
-                     ewo.panel_stage, ewo.full_piece_stage, ewo.per_received,
-                     ewo.panel_jobber, ewo.full_piece_jobber, ewo.owner, fp.supplier_name, pn.supplier_name,
-                     po.supplier, po_sup.supplier_name
-            ORDER BY ewo.date DESC
-        """
-
-    _ewo_from_join = """`tabEmbroidery Work Order` ewo
-        LEFT JOIN `tabSupplier` fp ON fp.name = ewo.full_piece_jobber
-        LEFT JOIN `tabSupplier` pn ON pn.name = ewo.panel_jobber
-        LEFT JOIN `tabPurchase Order` po ON po.name = ewo.purchase_order
-        LEFT JOIN `tabSupplier` po_sup ON po_sup.name = po.supplier
-        LEFT JOIN `tabPurchase Order Item` poi ON poi.parent = ewo.purchase_order
-        LEFT JOIN `tabSales Order` so ON so.name = poi.sales_order
-        LEFT JOIN `tabCustomer` cust ON cust.name = so.customer"""
-
-    ewo_params_fp = {**params, "work_type": "Full Piece Job Work"}
-    ewo_params_pn = {**params, "work_type": "Panel Job Work"}
-    ewo_fp_conditions_base = ewo_conditions + ["ewo.work_type = %(work_type)s"]
-    ewo_pn_conditions_base = ewo_conditions + ["ewo.work_type = %(work_type)s"]
-    ewo_fp_docstatus_counts = _docstatus_pill_counts(
-        [("ewo.name", "ewo.docstatus", _ewo_from_join, ewo_fp_conditions_base)], ewo_params_fp)
-    ewo_pn_docstatus_counts = _docstatus_pill_counts(
-        [("ewo.name", "ewo.docstatus", _ewo_from_join, ewo_pn_conditions_base)], ewo_params_pn)
-    ewo_fp_conditions = _with_docstatus(ewo_conditions, "ewo.docstatus", ewo_fp_docstatus)
-    ewo_pn_conditions = _with_docstatus(ewo_conditions, "ewo.docstatus", ewo_pn_docstatus)
-
-    ewo_fp = _paged_query(_ewo_sql("Full Piece Job Work", ewo_fp_conditions), ewo_params_fp, ewo_fp_page, ewo_fp_page_size)
-    ewo_pn = _paged_query(_ewo_sql("Panel Job Work", ewo_pn_conditions), ewo_params_pn, ewo_pn_page, ewo_pn_page_size)
-    ewo_fp["docstatus_counts"] = ewo_fp_docstatus_counts
-    ewo_pn["docstatus_counts"] = ewo_pn_docstatus_counts
+    ewo = _ewo_lists(days=days, search=search, scope=scope, scope_tab="jobwork",
+                     fp_page=ewo_fp_page, fp_page_size=ewo_fp_page_size,
+                     pn_page=ewo_pn_page, pn_page_size=ewo_pn_page_size,
+                     fp_docstatus=ewo_fp_docstatus, pn_docstatus=ewo_pn_docstatus)
+    ewo_fp, ewo_pn = ewo["ewo_fp"], ewo["ewo_pn"]
 
     # Same reasoning as get_purchase_flow's metrics block: aggregate over
     # every matching row, not just the displayed page.
@@ -2903,17 +3322,7 @@ def get_jobwork_flow(days=180, search=None, scope="open", merchandiser=None,
         ) x
     """, params, as_dict=1)[0]
 
-    active_ewos = frappe.db.sql(f"""
-        SELECT COUNT(DISTINCT CASE WHEN ewo.status NOT IN ('Completed', 'Closed') THEN ewo.name END)
-        FROM `tabEmbroidery Work Order` ewo
-        LEFT JOIN `tabSupplier` fp ON fp.name = ewo.full_piece_jobber
-        LEFT JOIN `tabSupplier` pn ON pn.name = ewo.panel_jobber
-        LEFT JOIN `tabPurchase Order` po ON po.name = ewo.purchase_order
-        LEFT JOIN `tabPurchase Order Item` poi ON poi.parent = ewo.purchase_order
-        LEFT JOIN `tabSales Order` so ON so.name = poi.sales_order
-        LEFT JOIN `tabCustomer` cust ON cust.name = so.customer
-        WHERE {' AND '.join(ewo_conditions)}
-    """, params)[0][0]
+    active_ewos = ewo["active_count"]
 
     _attach_creator_names(purchase_orders["rows"], receipts["rows"], ewo_fp["rows"], ewo_pn["rows"])
 
@@ -3062,7 +3471,7 @@ def get_accounts_flow(days=120, search=None, scope="open", merchandiser=None,
     # unambiguous WHERE condition — no multi-customer aggregation caveat.
     if is_scoped_to_own_customers("accounts"):
         params["merch_scope"] = frappe.session.user
-        si_conditions.append("cust.custom_merchandiser_user = %(merch_scope)s")
+        si_conditions.append("(cust.custom_merchandiser_user = %(merch_scope)s OR so.owner = %(merch_scope)s)")
 
     sales_invoices = _paged_query(f"""
         SELECT si.name, si.posting_date, si.due_date, si.status, si.docstatus,
@@ -3115,7 +3524,7 @@ def get_accounts_flow(days=120, search=None, scope="open", merchandiser=None,
     # up to only the matching lines" behavior as Purchase/Job Work.
     if is_scoped_to_own_customers("accounts"):
         pi_params["merch_scope"] = frappe.session.user
-        pi_conditions.append("cust.custom_merchandiser_user = %(merch_scope)s")
+        pi_conditions.append("(cust.custom_merchandiser_user = %(merch_scope)s OR so.owner = %(merch_scope)s)")
 
     def _purchase_invoice_sql(jobber_flag):
         return f"""
@@ -3219,7 +3628,7 @@ def get_logistics_flow(days=None, search=None, scope="open", page=1, page_size=1
 
     conditions = ["si.docstatus = 1"]
     if scope != "all":
-        conditions.append("IFNULL(si.custom_lr_number, '') = ''")
+        conditions.append("IFNULL(si.lr_no, '') = ''")
         conditions.append("IFNULL(si.custom_signed_copy, '') = ''")
     params = {}
 
@@ -3236,6 +3645,7 @@ def get_logistics_flow(days=None, search=None, scope="open", page=1, page_size=1
             param_key = f"q_{idx}"
             conditions.append(f"""(si.name LIKE %({param_key})s OR si.customer LIKE %({param_key})s
                                   OR si.customer_name LIKE %({param_key})s
+                                  OR si.lr_no LIKE %({param_key})s OR si.transporter_name LIKE %({param_key})s
                                   OR sii.sales_order LIKE %({param_key})s)""")
             params[param_key] = f"%{word}%"
 
@@ -3244,21 +3654,21 @@ def get_logistics_flow(days=None, search=None, scope="open", page=1, page_size=1
     # invoices here too; a combined-role user, or one actually configured on
     # of_tab_logistics_roles, sees the full company-wide queue.
     if is_scoped_to_own_customers("logistics"):
-        conditions.append("cust.custom_merchandiser_user = %(merch_scope)s")
+        conditions.append("(cust.custom_merchandiser_user = %(merch_scope)s OR si.owner = %(merch_scope)s)")
         params["merch_scope"] = frappe.session.user
 
     result = _paged_query(f"""
         SELECT si.name, si.posting_date, si.customer, si.customer_name, si.currency,
-               si.grand_total, si.owner, si.custom_proof_of_delivery,
-               si.custom_lr_number, si.custom_signed_copy,
+               si.grand_total, si.owner,
+               si.transporter, si.transporter_name, si.lr_no, si.custom_signed_copy,
                GROUP_CONCAT(DISTINCT sii.sales_order ORDER BY sii.sales_order SEPARATOR ', ') AS sales_orders
         FROM `tabSales Invoice` si
         LEFT JOIN `tabSales Invoice Item` sii ON sii.parent = si.name
         LEFT JOIN `tabCustomer` cust ON cust.name = si.customer
         WHERE {' AND '.join(conditions)}
         GROUP BY si.name, si.posting_date, si.customer, si.customer_name, si.currency,
-                 si.grand_total, si.owner, si.custom_proof_of_delivery,
-                 si.custom_lr_number, si.custom_signed_copy
+                 si.grand_total, si.owner,
+                 si.transporter, si.transporter_name, si.lr_no, si.custom_signed_copy
         ORDER BY si.posting_date ASC, si.name ASC
     """, params, page, page_size)
 
@@ -3267,18 +3677,12 @@ def get_logistics_flow(days=None, search=None, scope="open", page=1, page_size=1
 
 
 @frappe.whitelist()
-def update_logistics_fields(sales_invoice, lr_number=None, signed_copy=None, proof_of_delivery=None):
+def update_logistics_fields(sales_invoice, transporter=None, lr_no=None, signed_copy=None):
     """
-    Inline update from the Logistics tab. Only whichever of
-    lr_number/signed_copy/proof_of_delivery is actually PASSED gets touched —
-    distinguished from an intentional blank by checking for None, not
-    falsiness, so clearing a field back to empty (e.g. undoing a wrong LR
-    Number) still works, while a save that only ever meant to touch one
-    field can never blank out either of the other two.
-
-    All three fields are allow_on_submit, so this updates a submitted
-    invoice the same way ERPNext's own core would for any other
-    update-after-submit field.
+    The Logistics tab's one "Update" prompt: Transporter, LR No and Signed
+    Copy for a submitted Sales Invoice, saved together. Only a value that is
+    actually PASSED is touched (None = leave it), so clearing a field back to
+    blank still works. All three are allow_on_submit (property setters).
     """
     _guard()
     _guard_tab("logistics")
@@ -3287,14 +3691,18 @@ def update_logistics_fields(sales_invoice, lr_number=None, signed_copy=None, pro
     doc.check_permission("write")
 
     changed = False
-    if lr_number is not None:
-        doc.custom_lr_number = cstr(lr_number).strip()
+    if transporter is not None:
+        transporter = cstr(transporter).strip() or None
+        if transporter and not frappe.db.get_value("Supplier", transporter, "is_transporter"):
+            frappe.throw(_("{0} is not a transporter. Pick a Supplier marked \"Is Transporter\".").format(
+                frappe.db.get_value("Supplier", transporter, "supplier_name") or transporter), title=_("Not a Transporter"))
+        doc.transporter = transporter
+        changed = True
+    if lr_no is not None:
+        doc.lr_no = cstr(lr_no).strip()
         changed = True
     if signed_copy is not None:
-        doc.custom_signed_copy = signed_copy
-        changed = True
-    if proof_of_delivery is not None:
-        doc.custom_proof_of_delivery = cint(proof_of_delivery)
+        doc.custom_signed_copy = signed_copy or None
         changed = True
 
     if changed:
@@ -3302,11 +3710,11 @@ def update_logistics_fields(sales_invoice, lr_number=None, signed_copy=None, pro
 
     return {
         "name": doc.name,
-        "custom_lr_number": doc.custom_lr_number,
+        "transporter": doc.transporter,
+        "transporter_name": doc.get("transporter_name"),
+        "lr_no": doc.lr_no,
         "custom_signed_copy": doc.custom_signed_copy,
-        "custom_proof_of_delivery": doc.custom_proof_of_delivery,
     }
-
 
 # --------------------------------------------------------------------------
 # Pick List review, for the Sales Order stock widget's "Pick Lists" button
@@ -3323,15 +3731,36 @@ def get_pick_lists_for_so(sales_order):
     row's own name, needed to edit a draft's quantity before submitting it
     (custom_script.update_and_submit_pick_list)."""
     _guard()
-    return frappe.db.sql("""
+    rows = frappe.db.sql("""
         SELECT pl.name, pl.status, pl.docstatus, pli.name AS pick_list_item,
                pli.item_code, pli.qty, pli.picked_qty, IFNULL(pli.delivered_qty, 0) AS delivered_qty,
-               pli.warehouse
+               pli.warehouse,
+               IFNULL(pl.custom_embroidery_hold_qty, 0) AS embroidery_hold_qty,
+               pl.custom_embroidery_ewo AS embroidery_ewo
         FROM `tabPick List Item` pli
         JOIN `tabPick List` pl ON pl.name = pli.parent
         WHERE pli.sales_order = %(so)s AND pl.docstatus < 2
         ORDER BY pl.docstatus ASC, pl.creation ASC
     """, {"so": sales_order}, as_dict=1)
+    # Embroidery trips each Pick List fed (sent → received), kept after the
+    # hold is released — the flag + history the Pick List prompts show.
+    from erp_dacsinc_custom.so_embroidery import embroidery_history_for_pick_lists
+    hist = embroidery_history_for_pick_lists(list({r.name for r in rows}))
+    for r in rows:
+        r["embroidery_history"] = [t for t in hist.get(r.name, []) if t["item_code"] == r.item_code]
+    # Submitted and no Delivery Note yet → can go back to draft (Revert to Draft).
+    from erp_dacsinc_custom.so_embroidery import pick_list_revert_state
+    pl_delivered = defaultdict(float)
+    for r in rows:
+        pl_delivered[r.name] += flt(r.delivered_qty)
+    state = pick_list_revert_state([{"name": n, "docstatus": next(x.docstatus for x in rows if x.name == n),
+                                     "status": next(x.status for x in rows if x.name == n),
+                                     "delivered_qty": q} for n, q in pl_delivered.items()])
+    by = {x["name"]: x for x in state}
+    for r in rows:
+        r["delivery_notes"] = by[r.name]["delivery_notes"]
+        r["revertable"] = by[r.name]["revertable"]
+    return rows
 
 
 @frappe.whitelist()
@@ -3411,7 +3840,7 @@ def get_draft_dn_si_for_so(sales_order):
 # --------------------------------------------------------------------------
 
 @frappe.whitelist()
-def get_pick_list_flow(search=None, scope="open", page=1, page_size=100):
+def get_pick_list_flow(search=None, scope="open", page=1, page_size=100, days=None):
     """
     Every Pick List still needing someone to act on it, so a draft never sits
     forgotten — a draft Pick List holds no stock and delivers nothing until
@@ -3428,11 +3857,18 @@ def get_pick_list_flow(search=None, scope="open", page=1, page_size=100):
 
     conditions = []
     params = {}
+    # "All orders" = every live Pick List, finished ones included — never a
+    # cancelled one (a Revert to Draft leaves the cancelled original behind,
+    # and each revert would otherwise add another dead row).
     if cstr(scope) == "all":
-        conditions.append("pl.docstatus < 3")
+        conditions.append("pl.docstatus < 2")
     else:
         conditions.append("pl.status IN ('Draft', 'Open', 'Partly Delivered')")
         conditions.append("pl.docstatus < 2")
+    # The page's "Last N days" — by when the Pick List was created.
+    if days:
+        conditions.append("DATE(pl.creation) >= %(from_date)s")
+        params["from_date"] = _from_date(days)
 
     if search:
         for idx, word in enumerate(cstr(search).strip().split()):
@@ -3446,10 +3882,27 @@ def get_pick_list_flow(search=None, scope="open", page=1, page_size=100):
             )
             params[key] = f"%{word}%"
 
+    # The row here is the Pick List itself, not a Sales Order, so the scope
+    # goes through its own lines: a merchandiser sees a Pick List only when
+    # it picks for an order that is theirs (their customer, or one they
+    # raised), or when they raised the Pick List themselves. Without this
+    # the one tab whose row IS the document showed every order's picks.
+    if is_scoped_to_own_customers("picklist"):
+        params["merch_scope"] = frappe.session.user
+        conditions.append("""(pl.owner = %(merch_scope)s OR EXISTS (
+            SELECT 1 FROM `tabPick List Item` pli
+            JOIN `tabSales Order` so ON so.name = pli.sales_order
+            LEFT JOIN `tabCustomer` cust ON cust.name = so.customer
+            WHERE pli.parent = pl.name
+              AND (cust.custom_merchandiser_user = %(merch_scope)s
+                   OR so.owner = %(merch_scope)s)))""")
+
     paged = _paged_query(f"""
         SELECT pl.name, pl.docstatus, pl.status, pl.purpose, pl.company,
                pl.customer, pl.customer_name, pl.parent_warehouse,
-               pl.per_delivered, pl.delivery_status, pl.modified, pl.creation, pl.owner
+               pl.per_delivered, pl.delivery_status, pl.modified, pl.creation, pl.owner,
+               IFNULL(pl.custom_embroidery_hold_qty, 0) AS embroidery_hold_qty,
+               pl.custom_embroidery_ewo AS embroidery_ewo
         FROM `tabPick List` pl
         WHERE {' AND '.join(conditions)}
         ORDER BY FIELD(pl.status, 'Draft', 'Open', 'Partly Delivered') ASC, pl.modified DESC
@@ -3507,10 +3960,21 @@ def get_pick_list_flow(search=None, scope="open", page=1, page_size=100):
         r["sales_orders"] = [s for s in ((agg.sales_orders or "").split(",") if agg else []) if s]
         r["warehouses"] = [w for w in ((agg.warehouses or "").split(",") if agg else []) if w]
         # The single thing this row is waiting on — what the tab exists to surface.
+        # Held (qty out at a Full Piece embroidery jobber — see so_embroidery.py)
+        # overrides "submit": the goods it would reserve for shipping are not
+        # physically here yet, and Pick List.before_submit refuses it anyway.
         r["next_action"] = (
-            "submit" if cint(r.docstatus) == 0
+            "held" if flt(r.get("embroidery_hold_qty")) > 0.001
+            else "submit" if cint(r.docstatus) == 0
             else ("deliver" if r["pending_delivery_qty"] > 0.001 else "none")
         )
+
+    from erp_dacsinc_custom.so_embroidery import embroidery_history_for_pick_lists
+    hist = embroidery_history_for_pick_lists(names)
+    for r in rows:
+        r["embroidery_history"] = hist.get(r.name, [])
+    from erp_dacsinc_custom.so_embroidery import pick_list_revert_state
+    pick_list_revert_state(rows)
 
     metrics = {
         "draft": sum(1 for r in rows if cint(r.docstatus) == 0),
@@ -4014,13 +4478,17 @@ def _get_primary_contact_names_map(customers):
 
 
 @frappe.whitelist()
-def get_pending_approvals(search=None, merchandiser=None, approval_stage=None, page=1, page_size=100):
+def get_pending_approvals(search=None, merchandiser=None, approval_stage=None, page=1, page_size=100, days=None):
     _guard()
     _guard_tab("approval")
     setup_sales_order_workflow()
     
     conditions = ["so.docstatus = 0", _NOT_DISABLED_SO]
     params = {}
+    # The page's "Last N days" — by order date, like the Sales Tracker.
+    if days:
+        conditions.append("so.transaction_date >= %(from_date)s")
+        params["from_date"] = _from_date(days)
 
     conditions.append("(so.workflow_state in ('Draft', 'Pending Merchandiser Approval', 'Pending Final Approval', 'Rejected') or so.workflow_state is null or so.workflow_state = '')")
     
@@ -4784,11 +5252,44 @@ def repost_bin_qty(item_code, warehouse):
 # gets rolled back later in the same request never fires a false signal.
 # Deliberately never allowed to raise — a notification side-channel must
 # never be able to break the document's own save/submit/cancel.
+def _broadcast_scope(doc):
+    """
+    (sales_orders, item_codes) a document change touches — so an open Sales
+    Order form can tell whether ITS Item Stock & Action Plan is affected and
+    refresh itself (public/js/sales_order.js, so_listen_realtime). Items are
+    included because a stock move for an item (a receipt, a transfer) changes
+    every order that uses it, not just the one it is tagged to.
+    """
+    sos, items = set(), set()
+    if doc.doctype == "Sales Order":
+        sos.add(doc.name)
+    for row in (doc.get("items") or []) + (doc.get("locations") or []):
+        for f in ("sales_order", "against_sales_order"):
+            if row.get(f):
+                sos.add(row.get(f))
+        for f in ("item_code", "fg_item", "main_item_code", "rm_item_code"):
+            if row.get(f):
+                items.add(row.get(f))
+    if doc.get("saels_order_id"):
+        sos.add(doc.get("saels_order_id"))
+    pos = {doc.get("purchase_order")} if doc.get("purchase_order") else set()
+    if doc.get("subcontracting_order"):
+        pos.add(frappe.db.get_value("Subcontracting Order", doc.get("subcontracting_order"), "purchase_order"))
+    pos |= {r.get("purchase_order") for r in (doc.get("items") or []) if r.get("purchase_order")}
+    pos.discard(None)
+    if pos:
+        sos |= set(frappe.get_all("Purchase Order Item", filters={"parent": ["in", list(pos)], "sales_order": ["is", "set"]},
+                                  pluck="sales_order", distinct=True))
+    return sorted(s for s in sos if s), sorted(items)
+
+
 def broadcast_order_flow_change(doc, method=None):
     try:
+        sales_orders, item_codes = _broadcast_scope(doc)
         frappe.publish_realtime(
             "order_flow_changed",
-            {"doctype": doc.doctype, "name": doc.name},
+            {"doctype": doc.doctype, "name": doc.name,
+             "sales_orders": sales_orders, "item_codes": item_codes},
             after_commit=True,
         )
     except Exception:
@@ -4796,3 +5297,157 @@ def broadcast_order_flow_change(doc, method=None):
 
 
 
+
+
+@frappe.whitelist()
+def get_so_request_options(sales_order):
+    """
+    Backs the Sales Tracker's "Request" prompt: what this Sales Order still
+    has to ask for, split the way the Sales Order's own Item Stock & Action
+    Plan splits it —
+
+      rm  raw material for BOM lines (Material Request, purpose Raw Material):
+          the RM table's "To Request", combined per raw material
+      fg  trade items (plain lines, bought as-is): the line's To Make/Buy
+          less anything already on a PO / MR
+
+    Read straight from get_item_stock_details_bulk (one order), so the
+    prompt can never offer a qty the Sales Order page disagrees with.
+    """
+    from erp_dacsinc_custom.custom_script import get_item_stock_details_bulk
+    so = frappe.get_doc("Sales Order", sales_order)
+    so.check_permission("read")
+    pairs = list(dict.fromkeys(
+        f"{(i.item_code or '').strip()}||{(i.bom_no or '').strip() or 'no_bom'}"
+        for i in sorted(so.items, key=lambda x: x.idx)))
+    data = get_item_stock_details_bulk(pairs, sales_order)
+
+    rm, fg = {}, []
+    for d in data.values():
+        rp = d.get("rm_procurement_status") or {}
+        if d.get("is_bom_item") and d.get("bom_no"):
+            for it in rp.get("rm_items_status") or []:
+                short = flt(it.get("rm_shortfall_total"))
+                if short <= 0.001:
+                    continue
+                key = (it["rm_code"], d.get("warehouse") or "")
+                row = rm.setdefault(key, {
+                    "item_code": it["rm_code"], "item_name": it.get("rm_name") or it["rm_code"],
+                    "uom": it.get("rm_uom") or "", "warehouse": d.get("warehouse") or "",
+                    "qty": 0.0, "needed_by": [],
+                    "reserved_for": list((it.get("rm_held_by") or {}).keys()),
+                })
+                row["qty"] = flt(row["qty"] + short, 3)
+                row["needed_by"].append(f"{d['item_code']} ({flt(short, 2)})")
+        else:
+            covered = flt(d.get("total_incoming_qty")) + flt(d.get("total_paper_coverage_qty"))
+            qty = flt(max(0.0, flt(rp.get("fg_shortfall")) - covered), 3)
+            if qty <= 0.001:
+                continue
+            fg.append({
+                "item_code": d["item_code"], "item_name": d.get("item_name") or d["item_code"],
+                "uom": d.get("stock_uom") or "", "warehouse": d.get("warehouse") or "",
+                "qty": qty, "ordered": flt(d.get("required_qty")),
+                "delivered": flt(d.get("delivered_qty")), "covered": flt(covered, 3),
+                "reserved_as_rm": flt(d.get("rm_earmarked_qty"), 3),
+            })
+    return {"company": so.company, "rm": list(rm.values()), "fg": fg}
+
+
+# The steps a Sales Order line moves through, furthest-along first — how the
+# Order Status view splits each line's qty. Labels are the dashboard's own
+# words (Delivery column, Current Stage).
+_SO_STATUS_STEPS = (
+    ("delivered", "Delivered", "ready"),               # dispatched AND invoiced
+    ("dispatched", "Dispatched", "dn"),                 # DN submitted, not invoiced yet
+    ("to_dispatch", "To Be Dispatched (Draft)", "wait"),# on a draft DN
+    ("picked", "Picked", "planned"),                    # submitted Pick List, not on a DN
+    ("picking", "Picking (Draft PL)", "draft"),         # draft Pick List
+    ("at_embroidery", "At Embroidery", "planned"),      # out at an SO-direct embroidery jobber
+    ("in_stock", "In Stock (not picked)", "ready"),     # free finished stock for this line
+    ("incoming", "On PO / Being Made", "info"),         # submitted PO / Subcontract PO / EWO
+    ("requested", "Requested (MR / draft PO)", "wait"),
+    ("not_started", "Not Started", "blocked"),
+)
+
+
+@frappe.whitelist()
+def get_so_overall_status(sales_order):
+    """
+    "Where is this order, exactly?" — every line of one Sales Order split
+    into the steps above (qty per step, summing to the line's qty), one plain
+    sentence per line, and whole-order totals. Built from the same
+    get_item_stock_details_bulk figures as the Item Stock & Action Plan, so the
+    two never disagree.
+    """
+    from erp_dacsinc_custom.custom_script import get_item_stock_details_bulk
+    so = frappe.get_doc("Sales Order", sales_order)
+    so.check_permission("read")
+    pairs = list(dict.fromkeys(
+        f"{(i.item_code or '').strip()}||{(i.bom_no or '').strip() or 'no_bom'}"
+        for i in sorted(so.items, key=lambda x: x.idx)))
+    data = get_item_stock_details_bulk(pairs, sales_order)
+
+    lines, totals = [], defaultdict(float)
+    for pair in pairs:
+        d = data.get(pair) or {}
+        item_code, bom = pair.split("||", 1)
+        rows = [i for i in so.items if (i.item_code or "").strip() == item_code
+                and ((i.bom_no or "").strip() or "no_bom") == bom]
+        ordered = sum(flt(i.qty) for i in rows)
+        delivered = min(ordered, sum(flt(i.delivered_qty) for i in rows))
+        billed = sum(flt(i.billed_amt) / flt(i.rate) if flt(i.rate) else 0 for i in rows)
+        invoiced = min(delivered, billed)
+        rp = d.get("rm_procurement_status") or {}
+        draft_dn = sum(flt(x.get("qty")) for x in (d.get("row_dns") or []) if cint(x.get("docstatus")) == 0)
+
+        left = max(0.0, ordered - delivered)
+        steps = {"delivered": invoiced, "dispatched": max(0.0, delivered - invoiced)}
+
+        def take(key, qty):
+            nonlocal left
+            q = max(0.0, min(left, flt(qty)))
+            steps[key] = flt(q, 3)
+            left = flt(left - q, 3)
+        # Qty sent for embroidery from a DRAFT Pick List is on that Pick List
+        # AND at the jobber — it counts once, as At Embroidery.
+        held_on_draft = sum(flt(v) for v in {p.get("pick_list_name"): p.get("embroidery_hold_qty")
+                                             for p in (d.get("picked_for_this_so_details") or [])
+                                             if cint(p.get("docstatus")) == 0}.values())
+        take("to_dispatch", draft_dn)
+        take("picked", max(0.0, flt(d.get("picked_submitted_undelivered_qty")) - draft_dn))
+        take("at_embroidery", d.get("embroidery_this_so_qty"))
+        take("picking", max(0.0, flt(d.get("picked_draft_qty_so")) - held_on_draft))
+        take("in_stock", rp.get("fg_free_stock") if rp.get("fg_free_stock") is not None else 0)
+        take("incoming", d.get("total_incoming_qty"))
+        take("requested", d.get("total_paper_coverage_qty"))
+        steps["not_started"] = flt(left, 3)
+
+        parts = [f"{flt(steps[k], 2):g} {lbl}" for k, lbl, _t in _SO_STATUS_STEPS if flt(steps.get(k)) > 0.001]
+        note = ""
+        if flt(steps["not_started"]) > 0.001 and d.get("is_bom_item"):
+            note = "raw material short — Request RM" if rp.get("rm_shortfall_exists") else "raw material ready — create Subcontract PO"
+        elif flt(steps["not_started"]) > 0.001:
+            note = "nothing raised yet — Raise MR / PO"
+        for k in steps:
+            totals[k] += flt(steps[k])
+        totals["ordered"] += ordered
+        lines.append({
+            "item_code": item_code, "item_name": d.get("item_name") or item_code,
+            "bom_no": None if bom == "no_bom" else bom, "uom": d.get("stock_uom"),
+            "ordered": flt(ordered, 3), "steps": {k: flt(v, 3) for k, v in steps.items()},
+            "where": " · ".join(parts) or "—", "note": note,
+            "done": flt(invoiced, 3) >= flt(ordered, 3) - 0.001,
+        })
+
+    ordered_total = flt(totals["ordered"]) or 1.0
+    return {
+        "sales_order": so.name, "customer": so.customer, "customer_name": so.customer_name,
+        "transaction_date": str(so.transaction_date), "delivery_date": str(so.delivery_date) if so.delivery_date else None,
+        "status": so.status, "steps": [{"key": k, "label": l, "tone": t} for k, l, t in _SO_STATUS_STEPS],
+        "lines": lines,
+        "totals": {k: flt(v, 3) for k, v in totals.items()},
+        "pct_delivered": flt(100.0 * totals["delivered"] / ordered_total, 1),
+        "pct_dispatched": flt(100.0 * (totals["delivered"] + totals["dispatched"]) / ordered_total, 1),
+        "lines_done": sum(1 for l in lines if l["done"]), "lines_total": len(lines),
+    }

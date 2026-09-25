@@ -16,6 +16,10 @@ Subcontracting/Embroidery → Pick List → Delivery Note → Invoice.
   Orders** sub-tab for viewers who are neither the assigned merchandiser nor
   a final approver (see below).
 - **Sales Tracker** — all orders, their current stage and next action.
+  Sub-tabs: Sales Orders, Material Requests, **Embroidery - FP** and
+  **Embroidery - Panel** (the Job Work tab's Embroidery Work Order lists,
+  scoped to the viewer's own orders for a Merchandiser User — see
+  `docs/so-full-piece-embroidery.md`).
 - **Pick Lists** — the Pick Lists themselves (see below).
 - **Purchase Flow**, **Job Work**, **Stock Tracker**, **Pending DN/SI**,
   **Finance**, **Embroidery Transfers**, **Logistics** — each a different
@@ -45,10 +49,28 @@ here would just mean two tabs claiming the same work.
 Each row's Action column shows the one thing it is waiting on: **Submit**
 (a draft — submitting it from here calls the same
 `update_and_submit_pick_list` the Sales Order widget uses, with no row edits,
-so all of its validation applies identically), or the qty still awaiting a
-DN/SI. A draft's Picked column reads "not yet" rather than `0`, because
-`picked_qty` genuinely stays 0 until submit and a bare 0 reads like
-something went wrong.
+so all of its validation applies identically), the qty still awaiting a
+DN/SI, or — ahead of both — **held for embroidery** (see below). A draft's
+Picked column reads "not yet" rather than `0`, because `picked_qty` genuinely
+stays 0 until submit and a bare 0 reads like something went wrong.
+
+### Held for embroidery — a fourth Action state
+
+A Pick List can hold qty that is out at a Full Piece embroidery jobber,
+claimed from its own picked/allocated stock when that qty was sent straight
+from the Sales Order (see `docs/so-full-piece-embroidery.md`). While any of
+it is held, the row's `next_action` reads `held` instead of `submit` —
+ahead of "awaiting DN/SI" too, since submitting would reserve stock that
+physically is not here. The Action column shows the qty, "sent to jobber,
+need to collect", and a link to the Embroidery Work Order
+(`of_embroidery_hold_html`); the same wording and fields
+(`embroidery_hold_qty` / `embroidery_ewo`) appear in the Status column here,
+in the Sales Order widget's own "Pick Lists (N)" modal
+(`show_so_picklists_modal`), and in `get_pick_lists_for_so`'s per-row data —
+one flag, read the same way everywhere a Pick List shows up. The
+`Pick List.before_submit` hook (`so_embroidery.guard_pick_list_submit`)
+enforces the same rule server-side regardless of which UI surface a submit
+is attempted from.
 
 Visibility follows the same rule as every other tab —
 `of_tab_picklist_roles` on **Admin Settings > Tab Visibility**, empty meaning
@@ -205,6 +227,21 @@ customer name, e.g. `360ithub (Apeksha ji)`. Bulk-fetched server-side by
 `_get_primary_contact_names_map` (with the same Dynamic-Link fallback
 `verify_customer_details` itself uses), not one lookup per row.
 
+
+### The Sales Order form refreshes itself too
+
+`broadcast_order_flow_change` now sends `{doctype, name, sales_orders,
+item_codes}` (`_broadcast_scope`: the SO lines / `against_sales_order` /
+`saels_order_id` the document carries, the Sales Orders behind its Purchase
+Order or Subcontracting Order, and every item / FG / RM code on it). Stock
+Entry on_submit / on_cancel broadcasts as well (RM sent to a jobber, a
+receipt, a transfer). An open **Sales Order form** listens
+(`so_listen_realtime`, end of public/js/sales_order.js) and re-renders its
+Item Stock & Action Plan when the change names this order or any of its
+items or their raw materials — debounced 1.2 s, and deferred until an open
+popup closes so the table never changes under a dialog. The Order Flow page
+keeps refreshing on every event (re-expanding open rows, see above).
+
 ## Sales Tracker: Current Stage / Action Required
 
 `_compute_stage_info(order)` in `order_flow_api.py` is the single source of
@@ -247,6 +284,66 @@ order already shipped.
   Embroidery, In Job Work, PO Raised, MR Raised) so those stages are never
   ambiguous about whether they're covering a fresh order or the remaining
   balance of one already in progress.
+
+### Labels say what to do next, in short words
+
+When nothing is raised yet for what is left, the stage names the blocker
+(stage keys unchanged — `newly_created` / `partially_delivered` /
+`partial_rm_shortage`):
+
+| Situation | Current Stage | Action Required |
+| --- | --- | --- |
+| a BOM line's raw material is short for this order (reserved-for-other-order stock does not count) | **Waiting for Raw Material** | **Request RM**, or **Request (2)** when the order also has trade items |
+| this order's own RM is in stock for a BOM line | **RM Ready — Make Subcontract PO** | the **Create Subcontract PO (qty)** button; plus **Raise MR** if trade items are also on the order |
+| plain trade items only | **New Order — Nothing Raised Yet** | **Raise MR** |
+| Pick List submitted, draft DN saved | **To Be Dispatched (Draft)** | **Submit DN to Dispatch** |
+| DN submitted, not invoiced | **Dispatched — Create Invoice** | Create Sales Invoice |
+| Sales Invoice saved as draft | **Delivered (Draft) — Submit Invoice** | **Submit Invoice** (secondary: "Submit Invoice (Draft)") |
+| Sales Invoice submitted for everything | **Completed** | — |
+| receipt of the SOLD item arrived | **Stock Arrived — Create Pick List** | Create Pick List |
+
+The "RM Ready — Make Subcontract PO" note under the pill is hidden when the
+stage itself already says it (`rm_ready_stage`). "N Still Short" is now
+"**N Pending — Not Picked Yet**": it is ordered qty not yet picked or
+dispatched, not a confirmed shortage.
+
+### "Needs Invoice" is judged on quantity, never on the two percentages
+
+`per_delivered` is by qty and `per_billed` is by amount, so comparing them
+is wrong whenever lines have different values: SAL-ORD-2026-00147 had one
+line (Item 2 × 30) delivered on DN-26-00036 and fully invoiced on
+SINV-26-00033 — 29% delivered by qty, 19% billed by amount — and the row
+still showed "+ Needs Invoice", "Create Sales Invoice (Delivered Qty)" and
+"Dispatched 29% · Invoiced 19%". Every billing decision (`_needs_invoice`:
+the secondary action, the `need_to_bill` stage, Completed) and the Delivery
+chip now use `needs_invoice_qty` = Σ(delivered_qty − billed_amt / rate) per
+line. "N Pending — Not Picked Yet" also subtracts draft Pick List qty
+(`soi.picked_qty` only moves on submit).
+
+### One fulfillment route: Pick List → Delivery Note → Sales Invoice
+
+A Sales Invoice with Update Stock is not used for Sales Orders:
+`guard_so_fulfillment_route_lock` (SI before_submit) refuses one that
+carries a `sales_order`, the widget's "locked to DN / SI" banner is
+commented out, and the tracker's invoice action on an order with submitted
+Pick Lists opens **Create Delivery Note** instead of an Update Stock invoice.
+The old two-route code is kept commented. (No order uses Direct Bill /
+`skip_delivery_note`, and no Update Stock invoice exists against an SO.)
+Last Activity words follow the same flow: DN submit = "Dispatched",
+SI submit = "Invoiced — Delivered".
+
+### The Request prompt (`action_type: "request"`)
+
+"Request RM" / "Request (2)" / "Raise MR" (and the legacy `make_mr`) open
+`of_show_request_prompt` — it no longer opens the Subcontract PO picker.
+`get_so_request_options` reads the Sales Order's own
+`get_item_stock_details_bulk` and returns two lists: **rm** (each raw
+material's "To Request", combined across the BOM lines that need it) and
+**fg** (trade lines' To Make/Buy less anything already on PO/MR). Step 1 asks
+**Raw Material (RM) · n** or **Trade Items (MR) · n** (skipped when only one
+has records); step 2 lists exactly those records, ticked, qty editable up to
+what is short, and creates one draft Material Request (RM rows carry
+purpose Raw Material). Nothing to request → a plain "Nothing to request".
 
 `stage_key` values are used for filtering (stage tiles, `stage_filter`) and
 must stay stable; `stage_label` is free text rendered as-is and safe to
@@ -389,10 +486,40 @@ responsibility.
 `is_scoped_to_own_customers(tab)` (order_flow_permissions.py) used to only be
 called from Tracker. It's now called from Purchase, Job Work, Accounts, and
 Billing too (Approval has its own separate, deliberately different
-mechanism — see below), so a plain Merchandiser User (no other tab-granting
-role) sees only the Purchase Orders/Material Requests/Receipts/Embroidery
-Work Orders/Invoices tied to their own customers' Sales Orders, the same way
-Tracker already scoped Sales Orders themselves.
+mechanism — see below), so a Merchandiser User sees only the Purchase
+Orders/Material Requests/Receipts/Embroidery Work Orders/Invoices tied to
+their own Sales Orders, the same way Tracker already scoped Sales Orders
+themselves.
+
+**Who is scoped: anyone holding Merchandiser User, except admins.** This was
+once narrower — any OTHER role that also granted the tab (or, for the Desk
+hooks, read on the doctype) switched scoping off, on the reasoning that a
+combined operational role needs company-wide visibility. In practice that
+exemption cancelled the scoping for every real merchandiser, because the
+roles one must hold to do the job at all grant those doctypes too: `Sales
+User`, `DAC CRM`, and even the peer role `Junior Merchandiser` all appear in
+`get_doctype_roles("Sales Order", "read")`. Confirmed live before the change:
+the site's one fully-set-up merchandiser saw **all 28** Sales Orders, while
+the four with no extra role saw none. A genuine operational user who must
+see everything is given an admin role (`ADMIN_ROLES`), which is still exempt.
+
+**What "their own" means: the customer is theirs, OR they raised it.**
+Both halves are applied everywhere — `(cust.custom_merchandiser_user = me OR
+so.owner = me)` in the dashboard queries, and the same pair in
+`get_sales_order_permission_query_conditions` /
+`has_sales_order_permission`. The owner half is what makes the combined-role
+exemption unnecessary: the bug it originally existed to dodge was a
+merchandiser being denied a Sales Order **they had just created** for a
+customer assigned to someone else. `get_customer_permission_query_conditions`
+matches it (their customers, plus any customer they have raised an order
+for), so the Customer link on their own order stays readable. The Logistics
+tab's row is a Sales Invoice with no Sales Order in the query, so it uses
+`si.owner` for that half.
+
+Verified live after the change: the combined-role merchandiser goes from 28
+of 28 Sales Orders to **12** (9 through assigned customers, 5 self-created,
+2 overlapping) with **none of their own orders hidden**; Administrator still
+sees all 28; every tab query runs under scoping.
 
 **How the SQL scoping actually works, since most of these are aggregated,
 not one-row-per-Sales-Order queries.** Purchase/Job Work/the Purchase-Invoice
@@ -474,20 +601,17 @@ sub-tab* each visible row lands in. Three kinds of viewer exist:
   "View only — not your queue" instead of Approve/Reject buttons, since this
   cohort isn't the merchandiser and can't final-approve either.
 
-**Which bucket a viewer falls into is NOT a bare "do they hold Merchandiser
-User" role check** — that role can be combined with a broader operational
-role (Operation Team, Sales Manager, ...) for someone who does both jobs,
-and naively treating them as a plain merchandiser hid every order with a
-merchandiser assigned from them entirely (confirmed live: both "Pending
-Approval" and "Merchandiser Unassigned Orders" read `(0)` for such a user,
-despite orders existing). Both the client and server key off the exact same
-`is_scoped_to_own_customers("approval")` used everywhere else in this file
-(see "Merchandiser scoping now covers every tab that can show it" above) —
-`get_order_flow_permissions()` exposes it to the client as
-`approval_scoped_to_own_customers`, mirroring how `tracker_scoped_to_own_
-customers` already works for Tracker. Only someone whose *sole* reason for
-seeing this tab is Merchandiser User is scoped down; a combined-role user
-sees everything, same as every other tab already handles it.
+**Client and server decide the bucket from the exact same call** —
+`is_scoped_to_own_customers("approval")`, the one used everywhere else in
+this file (see "Merchandiser scoping now covers every tab that can show it"
+above). `get_order_flow_permissions()` exposes it to the client as
+`approval_scoped_to_own_customers`, mirroring how
+`tracker_scoped_to_own_customers` already works for Tracker, so the
+button-hiding can never disagree with the rows the server actually returns.
+Holding Merchandiser User is what scopes a viewer; admins are exempt. The
+"Other Merchandisers' Orders" bucket therefore belongs to a viewer who is
+neither scoped nor a final approver — an operational role with no
+merchandiser scoping of its own.
 
 Each row in the "Other Merchandisers' Orders" sub-tab also shows **"Created
 by: `<name>`"** under the existing "Merchandiser: `<name>`" line — the point
@@ -498,24 +622,69 @@ behalf, for example). `get_pending_approvals` joins `tabUser` on `so.owner`
 to resolve that name (`creator_name`), the same way it already did for the
 merchandiser.
 
-**The same "combined role" gap existed one level deeper, outside this page
-entirely.** `custom_script.py`'s `has_sales_order_permission` / `get_sales_
-order_permission_query_conditions` / `has_customer_permission` / `get_
-customer_permission_query_conditions` — the actual Frappe `has_permission`
-and `permission_query_conditions` hooks for Sales Order and Customer,
-wired in `hooks.py`, and the reason those doctypes are scoped for a
-merchandiser *anywhere* in Desk, not just on this page — used the same
-blunt `is_merchandiser_user()` check. Confirmed live: a combined-role user
-was denied access to a Sales Order **they themselves had just created**,
-because its customer's assigned merchandiser was someone else and
-`is_merchandiser_user()` had no way to know the viewer's other role already
-grants Sales Order access company-wide. Fixed with a new
+**The same scoping applies outside this page, in Desk.**
+`custom_script.py`'s `has_sales_order_permission` / `get_sales_order_
+permission_query_conditions` / `has_customer_permission` / `get_customer_
+permission_query_conditions` — the Frappe `has_permission` and
+`permission_query_conditions` hooks for Sales Order and Customer, wired in
+`hooks.py` — gate those doctypes for a merchandiser *anywhere* in Desk, not
+just on this page. They share the rule through
 `is_scoped_merchandiser_for_doctype(doctype, user)` in `order_flow_api.py`,
-the same "is Merchandiser User their only reason" idea as `is_scoped_to_
-own_customers`, but keyed off the doctype's own configured roles
-(`frappe.permissions.get_doctype_roles`) rather than an Order Flow tab's
-Admin Settings role list — appropriate here since these hooks govern access
-everywhere, not just within this page.
+the Desk-side counterpart of `is_scoped_to_own_customers`, and apply the
+same two halves: the customer is theirs, **or** they own the document.
+
+That owner half is load-bearing, not a nicety: without it a merchandiser who
+raised a Sales Order for a customer assigned to someone else was denied the
+order **they had just created**. The Customer hook carries the matching
+exception (their customers, plus any customer they have raised an order
+for), so the customer link on their own order stays readable. (Both Customer
+hooks are currently commented out in `hooks.py` — the scoping there is
+written and ready, but not switched on.)
+
+**Both hooks are required per doctype, and `has_permission` must mirror the
+query exactly.** `permission_query_conditions` filters the list;
+`has_permission` decides whether a document opens by URL. They drifted:
+`has_sales_order_permission` only rejected when the customer had a
+*different* merchandiser, so a customer with **none assigned** fell through
+to "allowed". Confirmed live: all 16 Sales Orders correctly hidden from a
+merchandiser's list were openable by pasting the link, every one of them for
+that reason. It now returns exactly the query's two halves.
+
+**Scoping a Sales Order alone leaks everything hanging off it.** A
+merchandiser could not see another merchandiser's order but could open its
+Pick List, Purchase Order, Material Request, Delivery Note, Invoice or
+Receipt — by URL, or straight from those doctypes' own list views, which
+carried no condition at all. `SO_LINKED_DOCTYPES` in `custom_script.py` maps
+each of those to the child table and field naming its Sales Order, and
+`_so_linked_query_conditions` / `_so_linked_has_permission` apply one rule
+across all of them: **the document is visible when it is tied to an order
+the user may see, or when they raised it themselves.** The linked-order test
+is the same predicate as the Sales Order hook, so a document can never be
+visible through an order the viewer cannot open. A document with no Sales
+Order line at all (general stock procurement) is deliberately invisible to a
+scoped merchandiser — it is not their work — while the owner half keeps them
+able to open whatever they create.
+
+The Pick Lists tab needed the same treatment in the dashboard
+(`get_pick_list_flow`): its row IS the Pick List, not a Sales Order, so it
+scopes through `Pick List Item.sales_order` plus `pl.owner`.
+
+Verified live for the site's one scoped merchandiser — list counts, and zero
+hidden records openable by URL on any of them:
+
+| Doctype | Sees | Hidden | Hidden but URL-openable |
+| --- | --- | --- | --- |
+| Sales Order | 12 of 28 | 16 | **0** (was 16) |
+| Pick List | 16 of 46 | 30 | 0 |
+| Purchase Order | 11 of 31 | 20 | 0 |
+| Material Request | 8 of 17 | 9 | 0 |
+| Delivery Note | 1 of 12 | 11 | 0 |
+| Sales Invoice | 0 of 10 | 10 | 0 |
+| Purchase Receipt | 9 of 36 | 27 | 0 |
+
+Administrator still sees all of each. Every dashboard tab runs under scoping
+(Pick Lists tab 21 → 15), and creating a new Pick List / PO / MR / DN is
+still permitted, since a new document's owner is the user raising it.
 
 **A Sales Order's own creator may approve it at the merchandiser stage,
 even for a customer whose merchandiser is someone else** — confirmed as a
@@ -641,36 +810,24 @@ exact document, and hovering still names it. Labels that carry a **quantity**
 rather than an id (`Create Pick List — 40 Still on Order`) keep it; a number
 is short and changes what you'd decide.
 
-## The Delivery column: "To Be Dispatched" for a saved-but-unsubmitted DC
+## The Delivery column: Not Dispatched → To Be Dispatched → Dispatched → Delivered
 
-A Delivery Challan that has been saved and not yet submitted means the goods
-are packed for that order and nothing has physically gone out. `per_delivered`
-only moves on submit, so the Delivery column used to keep showing whatever
-pick/stage label applied *before* the DC was raised, then jump straight to
-"✓ Delivered" the moment it was submitted — with no state in between for
-"made, not yet dispatched".
+One flow, one word per step (Sales Order → Delivery Note → Sales Invoice),
+`of_status_chip`'s `delivered` context, which now also receives `per_billed`:
 
-`get_sales_tracker` now returns `draft_delivery_notes` per row (the same way
-it already collected `draft_invoices`), and `of_status_chip`'s `delivered`
-context shows **"To Be Dispatched"** whenever a draft DC exists and the order
-is not yet 100% delivered.
+| State | Chip |
+| --- | --- |
+| nothing on a DN yet | Not Dispatched (Picking while a draft Pick List exists; Ready to Dispatch once picked) |
+| DN saved, not submitted | **To Be Dispatched (Draft)** — links the draft DN |
+| DN submitted | **✓ Dispatched** / **Dispatched 40%** |
+| Sales Invoice for it saved as draft | **Delivered (Draft)** — links the draft invoice (the thing to submit) |
+| Sales Invoice submitted (all dispatched qty invoiced) | **✓ Delivered** / **Delivered 40%** |
 
-**Action Required says the same thing, and offers the draft itself.** The
-`ready_to_deliver` stage used to keep offering "Create Delivery Note" even
-when a draft DC already existed — clicking it opened a dialog whose entire
-content was *"Delivery Note already in progress — this order already has a
-draft Delivery Note"*, i.e. an action that exists only to tell you not to
-take it. `_compute_primary_stage_info` now checks `_so_draft_delivery_notes`
-first and, when one exists, returns an `open_doc` action on that document
-labelled **"To Be Dispatched"** — the same wording as the Delivery column,
-so the two columns agree — with the id and the "+N more draft" count in the
-tooltip. Confirmed live on SAL-ORD-2026-00124 (drafts DN-26-00035 /
-DN-26-00036): the action opens DN-26-00036 instead of starting a third one.
-An order with no draft DC still reads "Create Delivery Note" exactly as
-before. The pill links to the draft DC itself — the thing
-to go and submit — rather than to an older submitted Delivery Note on the
-same order. Once the DC is submitted the column reads "✓ Delivered" exactly
-as before; this adds a state, it does not rename the existing one.
+Procurement words (PO placed, Stock in, Job Work) no longer appear in this
+column — they belong to Current Stage. Action Required agrees: a draft DN
+gives "To Be Dispatched (Draft)" → **Submit DN to Dispatch**, opening
+that DN instead of starting another one (confirmed live on
+SAL-ORD-2026-00124, drafts DN-26-00035 / DN-26-00036).
 
 ## "Submit Pick List" opens the review table, not the Pick List form
 
@@ -787,7 +944,12 @@ missing from the normal document flow.
 
 The test is therefore whether the line is for an item this Sales Order
 itself sells (for a subcontracted PO, matched on `fg_item` too). Only a line
-that is neither linked to an SO line nor for a sold item is raw material.
+that is neither linked to an SO line nor for a sold item is raw material —
+**unless the row says so**: `custom_procurement_purpose = "Raw Material"`
+(set by Request RM and carried MR → PO → PR) always makes it RM tier. An
+order that sells Fabric blue as a plain line AND uses it as BOM raw
+material (SAL-ORD-2026-00147) otherwise read its RM receipt as "Stock
+Arrived (PL Needed) → Create Pick List".
 
 ## Submitting a Pick List asks what was picked
 
@@ -893,7 +1055,7 @@ The handler calls `stopPropagation`: these rows are click-to-expand, and
 without it printing would also toggle the row open. (The row's own click guard
 already excludes `button`, so this is belt and braces.)
 
-## "RM Ready — Make SCO PO": a card that is not a stage
+## "RM Ready — Make Subcontract PO": a card that is not a stage
 
 Most filter cards map to a `stage_key`, and a stage is **exclusive** — a row
 has exactly one. "raw material has arrived, so a Subcontracting PO can be
@@ -909,8 +1071,10 @@ nothing.
 - Candidate lines are BOM lines on open orders with qty still undelivered,
   minus finished-good qty **already on a Subcontracting PO** (that part needs
   no new PO, and its raw material may already be at the jobber).
-- "In stock" means the same thing as everywhere else in this app: physically
-  in `tabBin` at VV Puram now. A pending MR or PO does not count.
+- "In stock" means the same thing as everywhere else in this app: this
+  order's own raw material physically at VV Puram now (its reserved stock
+  plus unclaimed stock — never another order's). A pending MR or PO does
+  not count.
 
 **Stock is allocated, not just compared.** `check_bom_raw_materials_in_stock`
 documents that each call is an independent snapshot, so calling it once per
@@ -1049,67 +1213,146 @@ client sent, and the existing rate lock already guarantees `rate` itself
 can't drift — so `amount` was already fully protected server-side once
 `rate` was.
 
+## Print buttons on Purchase Flow / Job Work PO rows
+
+Both tabs' PO rows carry a Print button (`fa-print`) next to Open PO,
+following the exact same `is_subcontracted` split as the Purchase Order
+form's own toolbar button (`public/js/purchase_order.js`'s refresh handler
+— "Print SCO" vs "Print PO"):
+
+- **Purchase Flow** (`get_purchase_flow` filters to
+  `is_subcontracted = 0` — every row here is a plain PO): the button always
+  prints the Purchase Order itself, format "Purchase Order Print Format"
+  (`of_print_po`). Shown on both the PO and To Bill sub-tabs.
+- **Job Work** (`get_jobwork_flow` filters to `is_subcontracted = 1` —
+  every row here is subcontracted): a subcontracted PO has no print of its
+  own — its Subcontracting Order carries the real quantities/rates — so the
+  button prints THAT instead, format "Subcontracting Order Print Format 3"
+  (`of_print_sco`), and only once one exists. `sco_name` (the PO's
+  submitted Subcontracting Order, if any — the same `docstatus = 1` match
+  `purchase_order.get_sco_status_for_po` uses) is a scalar subquery on
+  `get_jobwork_flow`'s own `purchase_orders` query; when it's null (SCO not
+  yet raised) the button is simply omitted, the same as the form only
+  offering "Create Subcontracting Docs" until one exists.
+
+Both helpers build the same `frappe.utils.print_format.download_pdf` URL
+(doctype, name, format, `no_letterhead=1`, letterhead, `_lang=en`) the form
+buttons use, so a PO or SCO prints identically from either place.
+
+## Purchase Flow tab: LR Number column
+
+The PO and To Bill sub-tabs (`get_purchase_flow` / `purchase_html`) show an
+**LR Number** column (with its date underneath, `of_po_lr_html`) reading
+`custom_lr_number` / `custom_lr_date` directly off the Purchase Order —
+this is the receiving side's own LR (Lorry Receipt) pair of fields, a
+separate customization from the Logistics tab's own `custom_lr_number` on
+**Sales Invoice** (the dispatch side, see below); the two never share a
+value or a column. The search box matches it too
+(`po.custom_lr_number LIKE ...`, alongside name/supplier/Sales Order/item).
+The Job Work tab's own Sub POs list does not carry this column — it is a
+different query (`get_jobwork_flow`) that never selected the field.
+
 ## Logistics tab
 
-Lists every **submitted** Sales Invoice still missing proof-of-delivery
-paperwork, so nothing sits un-followed-up after it leaves billing.
-`get_logistics_flow` / `update_logistics_fields`
-(`order_flow_api.py`) serve it; the fields themselves and the reasoning
-behind what does and doesn't clear the queue live in `logistics_tab.py`.
+Lists every **submitted** Sales Invoice still missing delivery paperwork, so
+nothing sits un-followed-up after it leaves billing. `get_logistics_flow` /
+`update_logistics_fields` (`order_flow_api.py`) serve it; `logistics_tab.py`
+describes the fields.
 
-- **What puts an invoice on this list**: `docstatus = 1` AND both
-  **LR Number** (`custom_lr_number`) and **Signed Copy**
-  (`custom_signed_copy`) are blank. No date filter by default — this is a
-  documentation backlog, not an activity feed, so an old invoice missing
-  its paperwork stays visible instead of silently aging out; `days` still
-  narrows it if a caller passes one.
-- **What takes it off the list**: filling in **either** LR Number or
-  Signed Copy — not both. The two are independent triggers, not a pair
-  that both need clearing.
-- **Seeing what's already been updated**: dropping off the default list is
-  the point, not a dead end — the shared `#of-scope` selector's **"All
-  orders"** option (same "Open" vs "All" convention `get_billing_flow` uses
-  for its own pending-vs-completed split) lifts the LR-Number/Signed-Copy
-  exclusion entirely, so it shows pending AND already-updated invoices
-  together. A **Status** column (Pending / Updated, driven purely by
-  whether either field is filled in) makes it obvious which is which once
-  they're mixed in the same list — meaningless under the default "Open"
-  scope, where every row is necessarily still pending. "Created by me"
-  keeps the pending-only default (a personal backlog check, not a "what
-  did I already close out" one).
-- **Proof of Delivery (`custom_proof_of_delivery`) is deliberately NOT a
-  third way to clear the queue.** It's a separate manual confirmation,
-  editable from the same row, but ticking it alone leaves the invoice on
-  the list. Letting the checkbox alone clear the row would let someone
-  mark an invoice "delivered" with no LR Number or signed copy on file at
-  all — exactly the paperwork gap this tab exists to catch.
-- **Editing style**: inline in the table row, not a dialog — an LR Number
-  text input with a Save button (also submits on Enter), a Signed Copy
-  Attach/Replace button (`frappe.ui.FileUploader`, targeting
-  `custom_signed_copy` directly on the Sales Invoice), and the Proof of
-  Delivery checkbox, each saving independently via
-  `update_logistics_fields`. All three fields are `allow_on_submit`, so
-  these are normal update-after-submit saves — no cancel/amend involved.
-  `update_logistics_fields` only touches whichever of
-  `lr_number`/`signed_copy`/`proof_of_delivery` was actually passed
-  (checked for `None`, not falsiness), so clearing one field back to blank
-  never clobbers the other two.
-- **Visibility**: governed by `of_tab_logistics_roles` on Admin Settings,
-  the same `of_tab_<tab>_roles` pattern every other tab uses (empty =
-  visible to everyone who can open the page). Also merchandiser-scoped the
-  same way Finance is — `is_scoped_to_own_customers("logistics")` limits a
-  plain Merchandiser User to their own customers' invoices.
-- **Custom fields**: LR Number and Signed Copy were added as proper Custom
-  Fields (`logistics_tab.py::create_logistics_fields`, wired into
-  `hooks.py`'s `after_migrate`, so a fresh deploy creates them) rather than
-  editing the Sales Invoice doctype directly — inserting a Custom Field
-  adds its own DB column immediately, no `bench migrate` needed for those
-  two. All three fields (including the pre-existing
-  `custom_proof_of_delivery`) are listed in `hooks.py`'s `fixtures` so they
-  export with this app, the same mechanism `custom_procurement_purpose`
-  uses. `of_tab_logistics_roles`, by contrast, is a real field on this
-  app's own Admin Settings doctype JSON — that one genuinely does need
-  `bench migrate` to appear.
+**Three things per invoice**, all editable after submit:
+
+| Column | Field | Owner |
+| --- | --- | --- |
+| Transporter | `transporter` (Link Supplier, **only suppliers with Is Transporter ticked** — the dialog's query and `update_logistics_fields` both enforce it, as India Compliance does on the form; fetches `transporter_name`, `gst_transporter_id`) | India Compliance field |
+| LR No | `lr_no` (labelled "LR No"; India Compliance's "Transport Receipt No") | India Compliance field |
+| Signed Copy | `custom_signed_copy` (Attach) | this app (`create_logistics_fields`) |
+
+India Compliance owns `transporter` / `lr_no`, so this app never edits their
+Custom Field records: "editable after submit" (also on `transporter_name` /
+`gst_transporter_id`, which change with the Transporter), the "LR No" label,
+and their position on the form — moved to where the old LR Number sat,
+after "No of Boxes / Bundles" and before Signed Copy — are **Property
+Setters** (incl. the `field_order` one Customize Form writes), exported with
+the app in `custom/sales_invoice.json` (`sync_on_migrate`). The old custom
+**LR Number** (`custom_lr_number`) and **Proof of Delivery**
+(`custom_proof_of_delivery`) fields were removed on 2026-09-25 (no invoice
+had a value in either) and are no longer in `fixtures` or
+`create_logistics_fields`, so a migrate does not bring them back. (The
+Purchase Order's own `custom_lr_number` is a different field and stays.)
+
+- **What puts an invoice on the list** (Open): `docstatus = 1` AND both
+  **LR No** and **Signed Copy** blank. No date filter by default — a
+  documentation backlog, not an activity feed; `days` narrows it if given.
+- **What takes it off**: an LR No **or** a Signed Copy. Transporter alone
+  does not.
+- **All orders** shows pending and updated together, with a Status column
+  (Pending / Updated). Search also matches LR No and transporter name.
+- **Editing**: one **Update** button per row opens a dialog with
+  Transporter, LR No and Signed Copy (pre-filled), saved together by
+  `update_logistics_fields(sales_invoice, transporter, lr_no, signed_copy)`
+  — a normal update-after-submit save. Only a value actually passed is
+  touched (None = leave it), so clearing one back to blank still works.
+- **Visibility**: `of_tab_logistics_roles` on Admin Settings, and
+  merchandiser-scoped like Finance (`is_scoped_to_own_customers("logistics")`).
+
+## Order Status — where every item of a Sales Order is right now
+
+A multi-item order can be at several places at once. **Order Status** (the small
+signpost icon right after the order number on the Sales Tracker and Pending
+DN/SI tabs — no extra line in the row — and a
+button in the Sales Order's Item Stock & Action Plan header) opens
+`so_show_order_status` → `get_so_overall_status`: each line's qty split
+across the steps, left (behind) to right (done):
+
+Not Started → Requested (MR / draft PO) → On PO / Being Made → In Stock (not
+picked) → At Embroidery → Picking (Draft PL) → Picked → To Be Dispatched
+(Draft) → Dispatched → Delivered
+
+A line's steps always sum to its ordered qty: delivered/dispatched come from
+the SO line (invoiced = billed_amt / rate), the rest of the line is handed
+out in that order from the widget's own figures (draft DN, undelivered
+submitted picks, SO-direct embroidery, draft picks — minus what a draft Pick
+List has out at embroidery, which counts once as At Embroidery — free
+finished stock, incoming PO/SCO/EWO, MR/draft-PO coverage), and whatever is
+left is Not Started, with the next step named ("raw material short — Request
+RM", "raw material ready — create Subcontract PO", "nothing raised yet").
+The header shows the whole order's bar, % delivered, % dispatched and items
+complete. Purchase Orders / receipts already have their per-item ordered vs
+received panel (see "The items toggle shows ordered vs received").
+
+### Embroidery lists: "Open" means the work is not finished
+
+An EWO's own `status` stays "Open" forever (and `per_received` stays 0), so
+Open used to list finished embroidery. `_EWO_OPEN_SQL` reads it from the work:
+a Full Piece job is finished once every piece is received back, a Panel job
+once its stage is "Returned to Jobber (Closed)". It drives the Embroidery -
+FP / Panel lists' Open filter (Sales Tracker and Job Work), the Job Work
+active count, and the tracker's Embroidery / In Job Work stage (a finished
+trip no longer keeps an order "In Job Work"). An EWO whose Purchase Order was
+deleted still shows under Open while its goods are out.
+
+## The page filters work on every tab (Open / All, Last N days, search)
+
+Every tab endpoint receives the page's `days`, `scope`, `search` (and
+merchandiser on Approvals / Tracker). Frappe silently drops an argument a
+whitelisted function doesn't declare, so a missing parameter means the
+control on screen does nothing — which is how "Last 120 days" did nothing on
+Pick Lists and SO Approvals. Rules now:
+
+- **Pick Lists**: Open = Draft / Open / Partly Delivered; **All = every live
+  Pick List, never a cancelled one** (a Revert to Draft leaves the cancelled
+  original behind); Last N days = created in the window.
+- **SO Approvals**: Last N days = order date in the window. "Open / All" is
+  hidden on this tab (it lists what is pending approval), as it is on Stock
+  Tracker (a live report, neither control applies).
+- **Sales Tracker** stage cards (`get_summary`) receive the merchandiser too,
+  so a card's count always equals what clicking it lists.
+
+Verified by calling every tab with each scope × {7, 30, 120, 3650} days and a
+search for a real document: Open ⊆ All, shorter window ⊆ longer, no closed or
+cancelled row under Open, no cancelled row under All, search finds the
+document, Draft/Submitted pills return only that docstatus, stage-card count
+= filtered rows. Repeat that sweep after changing any tab's query.
 
 ## Draft / Submitted filter pills
 

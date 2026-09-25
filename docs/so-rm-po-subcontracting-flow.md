@@ -372,38 +372,68 @@ float-noise "13.999 vs 14" reading as a shortage that isn't real):
   This is a deliberately honest middle state: it must never read as
   "Covered" (implying the stock is physically here) when it isn't.
 
-### RM Pipeline table layout: six columns, one question each
+### One rule: only this order's own raw material counts
 
-The table is read by people deciding what to buy, so each column answers
-exactly one question and shows one primary number; everything else in the
-cell is secondary. It was nine columns and became unreadable — three of
-them (Pending MR / Pending PO / At Jobber) read `0.00` on almost every row,
-and the Usable Here cell printed five same-weight numbers with no
-hierarchy.
+Every screen answers "can this order use this raw material?" the same way,
+and **no screen can override it**:
 
-| Column | The question | Primary number |
+> An order may use its **own reserved raw material** (bought against it —
+> Purchase Receipt rows with `sales_order` and purpose Raw Material, less
+> what its own subcontracting already sent) **plus unclaimed stock**.
+> Stock reserved for another order, and stock on any Pick List (draft or
+> submitted), is on the shelf but **not usable**. If it is not enough, the
+> answer is **Request RM** (a Material Request), never borrowing.
+
+The shared helpers are `_rm_stock_pools` / `_rm_available_for`
+(order_flow_api.py) and `check_bom_rm_for_so` / `rm_line_state` /
+`rm_not_available_text` (custom_script.py). `rm_line_state` still answers
+in three states (`covered` / `held` / `short`), but `held` ("on the shelf,
+reserved for another order") is **blocked exactly like `short`** — it only
+exists so the message can name the order the stock belongs to.
+
+| Where | What enforces it |
+| --- | --- |
+| SO RM table | status "Reserved for Other Order" / "Not in Stock" + **Request RM** button |
+| Sales Tracker "Create Subcontract PO" / SO "Subcontract PO" prompt | `get_rm_ready_bom_items` lists only `ready_qty > 0`; `make_subcontract_purchase_orders_bulk` caps at `ready_qty` |
+| PO "Fetch Pending Sales Orders" (subcontracted) | row disabled with "RM Reserved for Other Order — Request RM" / "RM Not in Stock — Request RM"; `validate_and_get_items_for_po` rejects any non-covered row |
+| PO "Create SCO & Material Transfer" dialog | Max You Can Send = this PO's own share; `check_rm_supply_shortfall` returns `blocked`; `create_subcontracting_docs` refuses |
+| Any "Send to Subcontractor" Stock Entry (incl. ERPNext's own Transfer button, hand-made entries) | `block_subcontract_transfer_of_picked_stock` then `flag_subcontract_rm_borrowing` (before_submit) — both **block** |
+| Material Request | `guard_mr_rm_not_over_so_shortfall` caps an order's RM request at its RM table "To Request" |
+
+`allow_held` is still accepted by the old endpoints so a cached browser tab
+does not crash, but it is ignored. (History: the rule used to be "warn and
+confirm"; a confirm on the PO side while the SO side said "no stock" is
+exactly the split the user asked to remove.)
+
+### RM table: five numbers, four statuses
+
+Header: "Raw material to make N of <item>" and one pill (worst row first):
+"N RM to request — Subcontract PO blocked" / "RM requested — waiting" /
+"All RM in stock — ready for Subcontract PO". Under it the FG card:
+Ordered · Delivered · Still to Cover · Free Finished Stock · **To Make**
+(`fg_pending_to_cover`, `fg_free_stock`, `fg_shortfall` from the server —
+To Make = Still to Cover − Free Finished Stock).
+
+| Column | Means |
+| --- | --- |
+| Raw Material | the material, and how much one piece needs |
+| Needed | for the pieces still to make (`rm_needed_for_shortfall`); hover shows the whole-order total |
+| In Stock for this Order | this order's own raw material (`rm_available_stock`); under it, in red, "+N on shelf reserved for SO-… (not usable)" and "+N picked for delivery (not usable)"; "N already counted for an earlier item" when two lines share it |
+| Requested / On the Way | open MR (submitted + draft), PO, and material already at the jobber, each linked |
+| To Request | Needed − In Stock − Requested (`rm_shortfall_total`) |
+| Status & Next Step | one status + at most one button |
+
+| Status | When | Next step |
 | --- | --- | --- |
-| Raw Material | which material | — |
-| Needed | how much this order still needs | `rm_needed_for_shortfall` (the `fg_shortfall × per-unit` calc and `Full order` sit under it, muted) |
-| Usable Here | how much of it this order may actually use | `rm_available_stock` |
-| On the Way | is any already coming | MR + PO + At-jobber summed, itemised underneath only for the non-zero parts; a plain `—` when nothing is coming |
-| References | which documents | — |
-| Status & Next Step | can we cover it, and if not what do I press | the status pill, then `Short by N`, then the Material Request button |
+| 🟢 **In Stock** | own stock covers it | "Ready — you can create the Subcontract PO" |
+| 🔵 **Requested** | an MR / PO / jobber transfer covers it | wait; a draft MR shows **Submit MR** |
+| 🔴 **Not in Stock** | short, nothing on the shelf | orange **Request RM (N)** |
+| 🔴 **Reserved for Other Order** | short, and the shelf's stock belongs to another order | orange **Request RM (N)** |
 
-**Usable Here does not equal "on hand minus the claims listed under it",
-and the table must not imply that it does.** The same physical stock is
-routinely claimed by more orders than it can satisfy — confirmed live,
-`Fabric blue` had 502.00 on hand against 673.97 of claims (51.00 picked,
-194.00 owed to direct-sale customers, 428.97 held by nine other orders).
-Printing those as a flat stack under a `0.00` figure is what made the cell
-look like broken arithmetic. So: `so_rm_alloc_breakdown` now shows one
-plain-language line (`On hand 502.00 Meter — none free for this order`),
-puts the itemised ledger behind a closed **Why?** disclosure that balances
-explicitly to `Usable here`, and when claims exceed what is on hand says so
-outright — `Over-committed by 171.97 — more is promised than is on hand` —
-rather than leaving the reader to reconcile figures that cannot reconcile.
-A material nobody else has claimed skips the disclosure entirely and stays
-a single `On hand N · VV Puram` line.
+The Request RM button is always the orange `so-btn--warning` sourcing
+button (it used to render as the plain grey variant in the held case and
+did not look like a button). `get_rm_breakdown_html` maps the server's
+finer statuses onto these four; the server statuses are unchanged.
 
 ### An RM-blocked line says so in Status, and offers the request in Next Action
 
@@ -520,66 +550,26 @@ confirmed live: typing 50 produced Stock Entry rows of 45.450 and 4.550
 (true shares 45.4545... and 4.5454...). The total was always exactly
 right; only the per-row split was ugly.
 
-The FIRST fix for this (round every row but the last to 2dp, last row
-absorbs the remainder) turned out to be actively unsafe: it rounds some
-rows *down* from their true share — 45.4545... down to 45.450 — but the
-Subcontracting Receipt's own "Consumed Qty" for that row is computed later
-from the BOM's own unrounded qty-per-FG ratio, landing at 45.455.
-Confirmed live: receiving that SCO hard-blocked with "Consumed Qty 45.455
-Meter must be less than or equal to Available Qty For Consumption 45.45
-Meter" — the rounded-down transfer was 0.005 short of what the row would
-actually need to consume.
+Rounding any row *down* below its own share is unsafe: the Subcontracting
+Receipt's "Consumed Qty" for that row is computed from the BOM ratio, so a
+row transferred at 45.450 against a need of 45.455 hard-blocked receipt
+with "Consumed Qty 45.455 Meter must be less than or equal to Available Qty
+For Consumption 45.45 Meter" (confirmed live). How the split is done now —
+exact totals, no row cut below its own need unless less than Required is
+sent in total — is described under "The Stock Entry carries exactly the
+typed qty — decimals included" in the "Create SC" section below.
 
-Rounding UP (ceiling) instead of to-nearest fixes this correctly: a value
-ceiling-rounded to 2dp is always >= its true share, and therefore >= any
-reasonable rounding of that share ERPNext computes later — so a row can
-never be transferred less than it will need to consume. Every row is now
-`math.ceil(row.qty * 100) / 100`, no "last row absorbs the remainder"
-step at all. The total transferred may land a few hundredths above what
-was typed (verified: 50 → 45.46 + 4.55 = 50.01) — immaterial for a real
-transfer. If ceiling-rounding every row for an item would need more than
-what's physically in stock (a rare edge case — at most a few hundredths
-per row), `create_subcontracting_docs` now throws a specific error naming
-the item, how many rows it's split across, how much rounding-safe transfer
-would need, and how much is actually available, rather than letting
-ERPNext's own submit-time "Insufficient Stock" check fail later with a
-much less specific message.
+### Supplying less than Required Qty warns — it does not block
 
-### Supplying less than Required Qty must be blocked, not silently accepted
-
-"Raw Material Stock Check & Planning"'s "Supply Status" column used to only
-check one direction: whether the typed "Qty to Supply" *exceeded* "Max You
-Can Send" (physical stock, or the Over Transfer Allowance — whichever
-binds). It never checked whether the typed qty fell *short* of Required
-Qty. Confirmed live: Required 110 Meter / Available 100 Meter (and
-Required 55 / Available 50 on a second raw material) let "Qty to Supply"
-sit at 100/50 with a plain green checkmark and no warning at all — the
-dialog treated "less than required, but that's all there is" as fully
-fine. "Create SCO & Material Transfer" went through, and the shortfall only
-surfaced later at Subcontracting Receipt as ERPNext's own "Consumed Qty
-must be less than or equal to Available Qty" error — the exact same failure
-mode as the ceiling-rounding case above, just reached from stock being
-genuinely insufficient instead of a proration rounding error.
-
-Both the client dialog and the server now also check the floor: a raw
-material whose "Qty to Supply" is below its Required Qty gets the same red,
-blocked treatment as exceeding the ceiling (red status icon, invalid input
-border, a per-row "N short of Required — will fail at Subcontracting
-Receipt" note, and the primary button disabled) — in the client's
-`rebuild_table`/`update_row_ui`/`primary_action` in `purchase_order.js`.
-Server-side, `create_subcontracting_docs` independently recomputes Required
-Qty per raw material via `get_required_raw_materials_for_po` (never
-trusting the client's own number) and throws, naming exactly which raw
-material(s) are short and by how much, *before* `make_subcontracting_order`
-runs — so the failure is specific and immediate rather than surfacing many
-steps later as ERPNext's own generic Stock Entry submit error.
-
-There is no "supply what you can" recovery inside this dialog: it only ever
-transfers raw material for the finished-good qty already fixed on the PO
-row, so the one real fix when stock is short is to reduce the subcontracted
-qty for the finished good(s) consuming that raw material on the Purchase
-Order itself (or bring in more stock) — never to let a partial transfer
-through and rely on it "closing the gap" later.
+Sending less raw material than Required is allowed on purpose: the jobber
+often simply gets less. What must never happen is doing it *silently* —
+the dialog once showed a plain green check for Required 110 / supplying 100,
+and the shortfall only surfaced at Subcontracting Receipt as "Consumed Qty
+must be less than or equal to Available Qty". So a short row gets an amber
+warning icon and "Sending N less than Required" note, and on "Create SCO &
+Material Transfer" `check_rm_supply_shortfall` lists every short raw
+material for the user to confirm. See "Every raw material's Qty to Supply is
+independent" in the "Create SC" section below for the full behaviour.
 
 ### "Outstanding at Jobber" — the single most important lesson here
 
@@ -665,6 +655,163 @@ Note the earmark can exceed what is physically on hand (21.00 claimed
 against 15.00 here) — the same over-commitment the RM Pipeline's "Why?"
 ledger spells out. `max(0, …)` is what keeps that from reading as negative
 availability.
+
+### A Subcontract PO spanning several Sales Orders now debits their earmarks too
+
+`_rm_stock_pools`' `earmarked[so]` is `bought − consumed`: raw material
+bought against an order, net of what that order's own subcontracting has
+already sent to a jobber. `consumed` used to come from ONE query — a
+`Send to Subcontractor` Stock Entry's `subcontracting_order`, mapped back to
+a Sales Order through that SCO's own Purchase Order — and it only ever
+filled in a value when the SCO's PO carried exactly ONE Sales Order.
+A subcontract PO carrying SEVERAL Sales Orders' finished goods in one
+document — an entirely ordinary thing to do, and how `PUR-ORD-2026-00136`
+(Beige T Shirt for SO-00143/144/145, Item 2 with BOM for SO-00144/145) is
+actually built — sent its raw material out **unattributed to any of them**:
+none of those orders' earmarks ever went down for material that had, in
+physical fact, already left the warehouse on their behalf. Every reading
+built on `earmarked` — the RM Pipeline's "In Stock" / "Available", the
+Subcontract PO buttons' own readiness check — stayed high long after the
+shelf actually emptied for their shared job. Confirmed live on `fabric
+red`: `SC-ORD-2026-00020` sent 19 units to the jobber for that PO's Item 2
+with BOM lines (10 for SO-00144, 9 for SO-00145) and none of it was ever
+subtracted — SO-00144's earmark kept reading a full 10 while only 6 units
+of `fabric red` existed anywhere in the warehouse, for every order
+combined. The widget said Covered; raising the Subcontract PO (or, further
+along, transferring the raw material to the jobber) then hit ERPNext's own
+real, un-fooled stock check and failed.
+
+`_multi_so_consumption_weights` now apportions that consumption instead of
+dropping it, by each spanned order's own **causal share** — how much of
+this raw material ITS OWN finished-good lines on that same Purchase Order
+actually call for, exploded through the same `bom_no` reference the Sales
+Order Item itself carries (never re-derived from the Item's current
+default BOM, which could silently disagree with what that order actually
+built against — two Sales Orders selling the same finished good can be
+tied to two different BOM revisions, as SO-00143's Beige T Shirt is to
+`BOM-Beige T Shirt-002` where SO-00144/145's is to `-003`). On the `fabric
+red` example this apportions the 19 units 10-to-SO-00144 / 9-to-SO-00145 —
+not a coincidence of the numbers matching what was needed; SO-00143's own
+line on that PO is Beige T Shirt only, and `-002` has no `fabric red` in it
+at all, so it correctly draws zero. A spanned order whose lines on that PO
+call for none of the item absorbs none of the consumption, so this can
+only ever draw down a real, existing claim — never invent or move one, the
+same guarantee the previous "unattributed" choice was protecting; it just
+no longer has to give up on attribution altogether to keep it. Falls back
+to each spanned order's own **bought** share (equal split if that is also
+all zero) only when no spanned order's lines call for the item at all — a
+manual addition to the PO outside every BOM it carries, the one case this
+can't reason about causally.
+
+### Picked stock is never raw material — draft Pick Lists included
+
+An item can be both sold and consumed by a BOM (fabric red). `picked` in
+`_rm_stock_pools` used to count only SUBMITTED Pick Lists, so a draft Pick
+List's allocated stock looked free as raw material: a Subcontract PO
+transfer sent it to the jobber, and the Pick List then refused to submit
+with "stock not available" (confirmed live: STO-PICK-2026-00101, 10 fabric
+red for SO-00141's sold line; `SC-ORD-2026-00021` sent 5 to the jobber and
+left 1). `picked` now uses the same held-qty rule as the Item Stock widget
+and `_get_global_pick_reservations` — submitted: picked − delivered;
+draft: stock_qty; Completed/Cancelled hold nothing — scoped to the pool's
+warehouse, with `picked_docs` naming each Pick List. `sell_committed`
+subtracts draft picks too (`soi.picked_qty` only moves on submit), so a
+draft's qty is never taken off twice.
+
+Picked stock is excluded from `on_shelf` everywhere, so it is never offered
+as raw material. The "Create SCO & Material Transfer" dialog's "Available
+for this PO" is the PO's own share (never more than on-shelf-and-not-picked),
+with "N more picked for delivery" / "N more on shelf reserved for SO-… — not
+usable" under it, and `create_subcontracting_docs` refuses anything above
+it, naming the Pick Lists or the owning order.
+
+The same rule is enforced on the Stock Entry itself —
+`block_subcontract_transfer_of_picked_stock` (Stock Entry `before_submit`,
+ahead of `flag_subcontract_rm_borrowing`, which blocks stock reserved for
+another order the same way) refuses any
+"Send to Subcontractor" entry that would take more than is free of Pick
+Lists in its source warehouse, naming them. So no route can do it: not this
+app's dialogs, not ERPNext's own Transfer button on the Subcontracting
+Order, not a Stock Entry typed by hand. There is no confirm and no
+override — the only ways forward are a smaller qty or cancelling the Pick
+List.
+
+### "Covered" is only ever backed by stock that is physically here
+
+Even with every Subcontract PO's consumption attributed, an earmark is
+still arithmetic on documents (bought − sent to jobber), not a reservation
+ERPNext enforces. Anything else that takes the material off the shelf — a
+sale of it as a finished item, a stock reconciliation, a transfer,
+wastage — lowers `physical` but no order's earmark. Several orders were
+then each told the same few units were theirs: `fabric red`, 6 units on the
+shelf, earmarks of 6 (SO-00122) + 10 (SO-00133) + 5 (SO-00141). All three
+read "Covered"; the first to actually send material to the jobber would
+take the lot, and the rest would hit ERPNext's own "insufficient stock".
+
+`_rm_stock_pools` now fits earmarks to what is physically here and not
+already picked (`_fit_earmarks_to_stock`), honouring them in
+`_earmark_priority` order: open orders before Closed/Completed ones (a
+finished order no longer needs what it bought), then earliest delivery
+date, then name — the same priority `_rm_ready_for_sco` already gives
+competing candidates. The paper figure is kept as `earmarked_on_paper`;
+the RM Pipeline's In Stock hover shows the difference as "Bought for this
+order but no longer on the shelf". On the example: SO-00122 is Completed, so
+SO-00133 keeps all 6, SO-00141 gets 0 — 6 units offered in total, exactly
+what exists — and SO-00133's Item 2 with BOM reads **Shortage 4**, with the
+Subcontract PO check agreeing (a partial batch only).
+
+**Lines of one order share it too.** Several BOM lines of the same order
+can need the same material (SO-00144: Item 2 with BOM and Beige T Shirt
+both use Fabric blue). Each line used to be compared against the order's
+FULL usable amount, counting the same metres once per line. In
+`get_item_stock_details_bulk` lines now draw in row order (`rm_alloc_used`,
+the same tie-break `_rm_ready_for_sco` uses), source by source — usable
+stock, material at the jobber, on PO, on MR, on draft MR — and each shows
+only what the lines above it left (`rm_used_by_other_lines`, in the In
+Stock hover). `rm_coverage_item_total` keeps the order-level figure for anything
+that reasons about the order as a whole. `so_rm_physically_in_stock` (the
+FG row's own RM check) reads the per-line figure, so it agrees.
+
+### A raw-material MR can't be raised twice for the same shortfall
+
+Three things let the same RM shortfall be requested again and again:
+
+- **Draft MRs covered nothing.** RM coverage counted submitted MRs only; a
+  draft was listed as a reference but the shortfall stayed, so "Request N"
+  and "Raw Material MR · N" offered the same qty after every click. Draft
+  MR qty now counts as coverage (`rm_draft_mr_total`); a row covered only
+  by a draft (server status "MR in Draft") shows 🔵 **Requested** with
+  "MR-… (Draft)" and a **Submit MR** button — never "Available".
+- **The single-row "Request N" button didn't refresh the widget** after
+  creating the MR, and didn't state Procurement Purpose. It now passes
+  `custom_procurement_purpose: 'Raw Material'` and re-reads the widget.
+- **The MR form had no cap for raw material.** The sold-line guard only
+  checks rows with a Sales Order Item, and a raw-material row never has one.
+  `guard_mr_rm_not_over_so_shortfall` (MR validate, after
+  `set_procurement_purpose`) now refuses a Raw Material row whose Sales
+  Order's RM requests would pass its actual shortfall —
+  `get_so_rm_allowances`: need (Σ `rm_needed_for_shortfall` over the
+  order's BOM lines that use it) − covered (usable stock, open POs, other
+  MRs drafts included, material at the jobber), excluding the MR being
+  saved so re-saving a draft never counts it against itself. The MR form's
+  standing note (`so_qty_cap.rm_note`) shows the same numbers per row —
+  "RM needed · covered · this one · left" — before the save. Same escape
+  hatch as the sold-line guard: a row with the Sales Order left blank is
+  unrestricted.
+
+Only raw-material MR rows count toward RM coverage now (`_RM_MR_ROW_SQL`:
+Procurement Purpose = Raw Material, or blank and not tied to a sold line of
+the same item — the rule `_rm_stock_pools` uses for receipts). An item can
+be both sold and consumed on one order (fabric red on SO-00144), and a
+request for the sold line covers nothing the BOM needs.
+
+### Stock out at a Full Piece embroidery jobber is not available to pick
+
+Stock sent to Full Piece embroidery straight from a Sales Order moves no
+stock, so the widget holds it back the same way as `rm_earmarked_qty`
+(`embroidery_held_qty` / `embroidery_this_so_qty`). The Full Piece send
+allowance is shared with the PO's own Full Piece dashboard. Both are
+described in `docs/so-full-piece-embroidery.md`.
 
 ### The FG row's Status pill and RM-block indicator
 
@@ -841,6 +988,26 @@ to tell "600 ordered, 0 received, 600 pending" (nothing has arrived) from
 the PO itself. `get_item_stock_details_bulk`'s PO queries now also select
 `ordered_qty`/`received_qty` alongside `pending_qty`, rendered as a
 "{received} of {ordered} received" sub-line under the Pending figure.
+
+### The Material Requests table stops listing an MR once it is fully ordered
+
+The same modal's "Material Requests" table is titled "Requested but not yet
+on a Purchase Order" — it exists to show what is still outstanding, not
+every MR ever raised for the line. `material_requests` (built in
+`get_item_stock_details_bulk`) keeps every MR whose status isn't `Stopped`/
+`Cancelled`, including ones long since fully ordered and received;
+`pending_qty` (`qty - ordered_qty`) correctly reads 0 for those, but the row
+itself never dropped out of the table. Confirmed live: MAT-MR-2026-00046 —
+Requested 10, Ordered 10, Not yet ordered 0, Status "Received" — still
+listed as if outstanding.
+
+The client-side `mr_rows` builder (`show_details_modal`'s `incoming_docs`
+type, `sales_order.js`) now filters to `pending_qty > 0` before rendering.
+A draft MR (`draft_material_requests`) is unaffected — it has no
+`ordered_qty` at all yet, so it is always outstanding by definition. The
+"Requested (MR)" stat tile above the table already read
+`total_mr_pending_qty` (server-computed, already 0 for a fully-ordered MR)
+and needed no change — only the row list itself was stale.
 
 ### A script-added PO row's rate silently landed at 0 on any uom mismatch
 
@@ -1129,6 +1296,32 @@ into an SCO (`subcontracted_quantity == 0`) still has its full qty as open
 capacity — and correctly makes an SO drop off this list once such a PO
 exists for it, since there's nothing further to fetch until that PO's own
 "Create SC" step happens.
+
+### All three surfaces read the same per-order stock as the SO RM table
+
+- **Fetch Raw Materials from SO** (`get_pending_so_with_raw_materials_summary`):
+  "To Make" per line is the widget's `fg_shortfall` built from the same
+  inputs, batched (FG pools: on shelf − every undelivered pick − FG stock
+  reserved as RM − FG out at an SO-direct embroidery jobber; pending − this
+  line's picks − its open SO-direct embroidery). Each RM's `available_qty`
+  is this order's own share after its earlier lines took theirs
+  (`own_reserved_qty` + `free_qty`, shared free counted once in the
+  consolidated table), with `reserved_for_others` shown but never counted.
+  Inline status: **In Stock / Requested (PO/MR) / To Buy N**.
+- **Subcontract Requirement Analysis** (`get_pending_so_with_material_stock`):
+  `rm_state` + `rm_block_reason`; any non-covered row is disabled.
+- **Procurement Planner — Consolidated BOM Components**
+  (`fetch_multi_order_requirements`): per linked order, own stock
+  (`so_stock_qty`, its reserved RM, then unclaimed stock handed out once),
+  RM already at the jobber for that order (`so_jobber_qty`, same
+  apportioning as the widget's "In Process at Jobber"), its own MR/PO →
+  `net_qty`. An order with `net_qty` 0 is **not listed** (SO-147 used to be
+  listed although its RM table said Covered, because the shelf total was
+  netted off every order combined); a row with no orders left is dropped.
+  The MR is split by `net_qty`, not the gross BOM share.
+
+Verified by comparing each surface to `get_item_stock_details_bulk` on the
+same orders (zero mismatches) — repeat that check after any change here.
 
 ### A draft Purchase Order is coverage — on all three surfaces, and it says so
 
@@ -1704,13 +1897,103 @@ figure) — MariaDB float noise on `Bin.actual_qty` (e.g. `13.999999999994`)
 otherwise makes ERPNext's own stock-sufficiency check reject a request for
 exactly the displayed "14".
 
-This dialog's own Required Qty (a straight `bom_item.qty * remaining_fg_qty`
-from `_explode_rm_requirements`) is this app's own BOM explosion, not
-ERPNext's — it's a preview/estimate of what the later Subcontracting Receipt
-will actually want to consume (computed there from
-`bom_item.qty_consumed_per_unit * row.qty * row.conversion_factor`), not a
-byte-identical recomputation. Worth knowing if the two ever need
+This dialog's own Required Qty is this app's own BOM explosion
+(`_explode_rm_requirements`), not ERPNext's — it's a preview/estimate of what
+the later Subcontracting Receipt will actually want to consume (computed
+there from `bom_item.qty_consumed_per_unit * row.qty * row.conversion_factor`),
+not a byte-identical recomputation. Worth knowing if the two ever need
 reconciling, but not a new risk introduced by anything below.
+
+#### Which BOM gets exploded, and normalizing its own reference quantity
+
+A Finished Good can have more than one active BOM. The one a subcontracted
+Purchase Order Item row is produced against is resolved by
+`_resolve_po_item_bom`, in this order: the linked **Sales Order Item's own
+`bom_no`** (via `sales_order_item`), then the row's own `bom`, and the
+Finished Good's `default_bom` only for a row with neither (e.g. a manual
+"Add Subcontract Item" row with no Sales Order behind it).
+
+Reading the Sales Order directly is not optional: **ERPNext core wipes
+`Purchase Order Item.bom` on every save** in the new subcontracting flow
+(`BuyingController.validate_for_subcontracting`, the `else` branch sets
+`item.bom = None` whenever `is_old_subcontracting_flow` is off). So any BOM
+stamped onto the PO row — by `validate_and_get_items_for_po`, or by the
+grid's own `fg_item` BOM picker — never survives to the saved PO; confirmed
+on PUR-ORD-2026-00135, all three Finished Good rows saved with `bom` null.
+The Sales Order Item's `bom_no` is the only durable record of the chosen BOM.
+A limitation that follows: a row with **no** Sales Order behind it (manual
+"Add Subcontract Item") loses its hand-picked BOM on save and falls back to
+the Finished Good's `default_bom`.
+
+Both places that turn this into raw material use it:
+
+- **The dialog's Required Qty** — `_explode_rm_requirements`.
+- **The Subcontracting Order itself** — `create_subcontracting_docs` sets
+  each SCO item's `bom` from `_resolve_po_item_bom` before `insert()`. This
+  is essential, not cosmetic: ERPNext's own mapper
+  (`SubcontractingOrder.populate_items_table`) picks the SCO item's BOM by
+  itself — the Finished Good's active *Subcontracting BOM* record, else its
+  `default_bom` — and never looks at the PO row or the Sales Order. Left
+  alone, the dialog could show the right figures while the SCO's
+  `supplied_items`, the Material Transfer built from them
+  (`make_rm_stock_entry`), and the later Subcontracting Receipt's
+  consumption all used a different BOM. Setting `item.bom` before insert is
+  enough: `validate()` re-explodes `supplied_items` from it.
+
+The dialog shows where every figure comes from, since a subcontract PO can
+carry several Finished Good rows (different Sales Orders, different BOMs)
+while the table itself has one combined row per raw material (that total is
+what gets transferred). `_explode_rm_requirements` records a display-only
+`sources` list per raw material (Sales Order, Finished Good, this round's
+qty, BOM, per-piece qty, contribution), returned by
+`get_required_raw_materials_for_po`. The client renders it twice: a
+"Finished Goods in this Subcontracting Order" table above the main one
+(Sales Order · Finished Good · qty · BOM used · raw material for 1 piece),
+and under each raw material, one line per contributing row
+(`2.5 Nos per piece × 40 = 100 Nos`). None of it feeds any calculation or
+validation.
+
+A search box above both tables matches raw material code/name, Sales Order,
+customer name, Finished Good code/name and BOM (every word typed must match
+somewhere on the row; a raw-material row matches via any of its `sources`).
+It only shows/hides rows in place — hidden rows are still validated and still
+included in the Material Transfer, so filtering can never silently drop a raw
+material from what gets sent.
+
+Confirmed live on PUR-ORD-2026-00131 (Beige T Shirt × 40; SO chose BOM-002 =
+2.5 fabric + 7 buttons, default BOM-001 = 1.5 + 6): before, 60 fabric / 240
+buttons (BOM-001); after, 100 / 280 in both the dialog and a dry-run of the
+SCO's supplied items.
+
+`get_pending_so_with_material_stock` used to trust the CLIENT's payload for
+this (`entry.get("bom_no") or entry.get("bom")`) even though it had already
+read the authoritative `so_item.bom_no` from the database a few lines above,
+for an unrelated purpose. A stale dialog, or any caller that didn't send
+`bom_no`, silently produced a row with `bom` empty — which
+`_explode_rm_requirements` then fell back to `default_bom` for, with no
+error and no visible sign that the "wrong" BOM (for a Finished Good that has
+more than one) was used. `bom_name` now reads `so_item.bom_no` first, the
+client payload only as a fallback for a caller with no Sales Order Item to
+read from at all (e.g. "Add Subcontract Item", the manual dialog, where the
+user picks the BOM directly — that path was never Sales-Order-linked and
+still isn't).
+
+Separately, `BOM Item.qty`/`stock_qty` are the quantities needed for the
+BOM's own reference batch size (`BOM.quantity` — usually 1, but not always),
+not automatically "per 1 finished good." `_explode_rm_requirements` used to
+multiply raw `bom_item.qty` (the row's own, possibly non-stock, UOM)
+straight by the Finished Good qty with no division by `BOM.quantity` —
+correct only for a BOM whose Quantity happens to be 1. It now uses
+`bom_item.stock_qty / bom.quantity`, the same normalization
+`get_pending_so_with_raw_materials_summary` already applied to this same BOM
+data (see its own `stock_qty_per_unit` above). `check_bom_raw_materials_in_stock`
+in `custom_script.py` — the single, shared "is RM physically in stock" gate
+reused by every BOM-row guard across this app (the SO-fetch dialogs, Order
+Flow's Subcontract PO action, its Sales Tracker shortage indicator) — had
+the identical gap and got the identical fix (`qty_per_fg` now divided by
+`bom_doc.quantity`), so a stock-sufficiency check and this dialog's own
+Required Qty can no longer disagree over a BOM whose reference quantity
+isn't 1.
 
 Each row's `qty_to_supply` must be persisted onto its own data object the
 first time `rebuild_table` renders it (defaulting to `required_qty`), not
@@ -1746,12 +2029,10 @@ same Finished Good (because they don't all happen to be on hand at once) is
 a normal, wanted workflow, not something to couple together or guess at.
 
 Supplying less than Required Qty for a raw material is a real, legitimate
-choice (the rest gets transferred to the **same** SCO in a later round, via
-ERPNext's own standard "Material Transfer" action on the Subcontracting
-Order itself — this app doesn't need to do anything special for that
-follow-up transfer). It shows a warning icon/note on the row (`fa-
-exclamation-triangle`, "N short of Required — the rest can be sent to this
-Subcontracting Order in a later Material Transfer") but never disables
+choice — often the jobber simply gets less, with no follow-up transfer
+planned, so neither the row note nor the confirm dialog tells the user to
+send "the rest" later. It shows a warning icon/note on the row (`fa-
+exclamation-triangle`, "Sending N less than Required") but never disables
 "Create SCO & Material Transfer" and never touches any other row. Only
 exceeding **Max You Can Send** (physical stock, or Stock Settings' Over
 Transfer Allowance) is still a hard block — that's a real ERPNext-enforced
@@ -1769,29 +2050,118 @@ any Required-Qty validation or SCO-item-qty adjustment at all — it just
 raises the SCO at full qty and applies whatever "Qty to Supply" figures were
 confirmed to the Material Transfer.
 
-#### The final Stock Entry total can differ slightly from what was typed — now explained, not silent
+#### The Stock Entry carries exactly the typed qty — decimals included
 
-The per-row ceiling-rounding described above (splitting one raw material
-across several SCO-linked rows, each rounded up to 2dp so none of them falls
-short at Subcontracting Receipt) can push a raw material's real transferred
-total a few hundredths above what was typed in the dialog — mathematically
-unavoidable at 2dp precision without risking under-supplying a specific row
-(see that section). This was already happening; it just wasn't visible
-anywhere, since the dialog only ever shows one combined figure per raw
-material and the split only happens after the SCO exists.
-`create_subcontracting_docs` now tracks every raw material where the actual
-post-rounding total (`new_total`) differs from what was requested
-(`target_total`) by more than a hundredth as `qty_adjustment_notes`, adds a
-PO comment spelling out the difference and why, and returns it as
-`qty_adjustments` — the client shows it via `frappe.msgprint` right after the
-success alert, so a "why did .02 extra appear" question never has to be
-asked; the create-time explanation is already sitting right there.
+BOMs here are often fractional per piece (0.8, 0.6, 2.5 …), so every qty in
+this flow uses the Stock Entry's own qty precision
+(`frappe.get_precision("Stock Entry Detail", "qty")` = System Settings
+`float_precision`, 3 on this site) — the dialog (`QTY_PREC`, from
+`frappe.boot.sysdefaults.float_precision`), `get_required_raw_materials_for_po`,
+`check_rm_supply_shortfall` and `create_subcontracting_docs` alike. 2dp was
+used before, which rounded e.g. 0.125/piece × 3 = 0.375 to 0.38, so the
+dialog no longer matched the SCO.
+
+When one raw material has several Stock Entry rows (one per SCO line
+consuming it — e.g. the same raw material for two Finished Good rows from
+different Sales Orders), `_allocate_qty_across_rows` splits the one typed
+figure so the rows sum to **exactly** that figure:
+
+- It works in integer thousandths, never floats. The previous approach
+  (prorate with floats, then `ceil` each row to 2dp) turned a typed 0.8 into
+  0.81 even on a single row, because 0.8 × 100 in float is
+  80.00000000000001 — about 1 in 8 simple decimal values came out a
+  hundredth high.
+- Each row keeps its own BOM-derived qty (what ERPNext computed for that
+  SCO line), and only the difference between the typed total and their sum
+  is spread across rows, in proportion to their size, largest remainder
+  first. So sending exactly Required leaves every row exactly as ERPNext
+  computed it, and sending more never cuts a row below what its own
+  Subcontracting Receipt will consume (the "Consumed Qty must be <=
+  Available Qty" failure the old ceiling-rounding existed to prevent).
+  Only when the user deliberately sends less than Required in total can a
+  row end up below its own need — which is exactly what they chose.
+
+Verified on 20,000 random cases (rows always sum to the typed total at 3dp,
+never negative, never changed when the typed total equals Required, never
+below a row's own need when sending at least Required), and end to end on
+PUR-ORD-2026-00135 (typed 239.7 / 640.45 / 140.8 / 9.6 → Stock Entry
+totals exactly 239.7 / 640.45 / 140.8 / 9.6 across 7 rows).
+
+"Max You Can Send" floors the Over Transfer Allowance cap to that precision
+rather than rounding it, so it never offers a thousandth more than ERPNext's
+own over-transfer check allows. The +/− buttons step by 1 but round the
+result to the same precision, so 10.4 + 1 shows 11.4, not
+11.400000000000002; any decimal can be typed directly.
 
 ### "Receive Goods for SCO" — over-collection produces ONE Purchase Receipt, not two
 
 `show_receive_items_dialog` in `purchase_order.js`, validated by
 `check_over_collection_limit` and submitted via `create_receipt_documents`
 in `purchase_order.py`.
+
+One SCO can carry the same Finished Good several times (different Sales
+Orders, different BOMs), so each dialog row shows the Finished Good (name,
+code, and the SCO line's own BOM) and a "Sales Order / Customer" column —
+`get_pending_sco_items` resolves the Sales Order through the SCO item's
+`purchase_order_item` → Purchase Order Item `sales_order`, and the customer
+name from that Sales Order. Display only.
+
+#### PO timeline records every send and receive, with less / more
+
+Both actions leave a table comment on the Purchase Order so short or excess
+quantities are on record, not just visible for the moment in a dialog:
+
+- **Sending raw material** (`create_subcontracting_docs` →
+  `_comment_rm_sent`): per raw material, Required (the SCO's own supplied
+  items — each line's own BOM) vs Sent (the Material Transfer's rows),
+  titled with the SCO and Stock Entry names.
+- **Receiving finished goods** (`create_receipt_documents` →
+  `_comment_fg_received`): per SCO line, Finished Good, Sales Order
+  (customer), BOM, Pending vs Received, titled with the SCO and the
+  SCR / Purchase Receipt / extra Stock Entry created. Pending is captured
+  before any document is created, since submitting the SCR changes each
+  line's `received_qty`.
+
+The Difference column reads "N less", "N more" or "as expected"
+(`_qty_diff_html`, at 3 decimals).
+
+#### Consumed raw material is rebuilt per SCO line when a Finished Good repeats
+
+ERPNext core has a pooling bug in the Subcontracting Receipt under Buying
+Settings "Backflush Raw Materials of Subcontract Based On" = "Material
+Transferred for Subcontract" (this site's setting — keep it; "BOM" makes
+every short supply fail at receipt). `SubcontractingController` pools
+transferred material per **(raw material, Finished Good, SCO)** —
+`get_available_materials` — but divides by the qty to receive per
+**(Finished Good, SCO, BOM)** — `__get_pending_qty_to_receive`. When one SCO
+has the same Finished Good on several lines under different BOMs (the normal
+case now that each line uses its own Sales Order's BOM), the first line is
+charged the entire pool and the rest get nothing. Confirmed on
+SC-ORD-2026-00020 (Beige T Shirt × 3 lines, BOM-002/003/003): line 1
+"consumed" all 991 Buttons sent for the three lines against 280 sent for it,
+and submit failed with "Row 1: Consumed Qty 991.0 Nos must be less than or
+equal to Available Qty For Consumption 280.0 Nos".
+
+`create_receipt_documents` calls `_fix_scr_consumption_per_sco_row(scr)`
+between the SCR's first save and its submit. For every receipt line whose
+Finished Good appears on more than one line of its SCO, it discards ERPNext's
+consumed rows and rebuilds them from that line's own SCO supplied items:
+consumed = (`total_supplied_qty` − `consumed_qty`) for that SCO line, times
+(qty received now ÷ that line's pending qty), or all of it when the line is
+fully received. Rates come from ERPNext's own `set_rate_for_supplied_items`,
+so valuation is unchanged in method. The rebuilt rows survive submit's
+re-validation because ERPNext only regenerates supplied items for receipt
+lines whose item/qty changed since the last save. Lines of a Finished Good
+that appears once on its SCO are left exactly as ERPNext computed them.
+Verified by dry run (rolled back): full receipt — every line consumes
+exactly what was sent for it, including a short-supplied 95.617 against 100
+required; partial receipt of 20/40 — half of that line's material, with
+rates and the Finished Good's rm cost per qty set.
+
+This is a workaround in this app, not an edit to ERPNext; it also only
+covers receipts made through "Receive Finished Goods". A Subcontracting
+Receipt made directly from ERPNext's own SCO form for such an order will
+still hit the core bug.
 
 A jobber can return more finished goods than the SCO ordered, up to Admin
 Settings' `allow_over_collecting_of_fg` % (rounded up). For each requested

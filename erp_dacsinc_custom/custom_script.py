@@ -7,6 +7,21 @@ import frappe
 # and the raw-material pool lookup it feeds can never drift apart.
 MAIN_WAREHOUSE = "VV Puram - IND"
 
+# A Material Request Item row that asks for RAW MATERIAL (for a BOM on its
+# Sales Order), as opposed to a request for a line the order SELLS — the same
+# test _rm_stock_pools applies to Purchase Receipt rows: Procurement Purpose
+# when it's set, otherwise "not tied to a sold line of this same item". An
+# item can be both on one order (fabric red is sold outright AND consumed by
+# Item 2 with BOM), and a request for the sold line covers nothing the BOM
+# needs. Expects the Material Request Item aliased as `mri`.
+_RM_MR_ROW_SQL = """(
+    mri.custom_procurement_purpose = 'Raw Material'
+    OR (IFNULL(mri.custom_procurement_purpose, '') = ''
+        AND NOT EXISTS (SELECT 1 FROM `tabSales Order Item` soi_rm
+                        WHERE soi_rm.name = mri.sales_order_item
+                          AND soi_rm.item_code = mri.item_code))
+)"""
+
 
 def copy_custom_fields(doc, method):
     if doc.custom_tax_rate:
@@ -2580,6 +2595,47 @@ def get_item_stock_details_bulk(item_bom_pairs, sales_order_name):
     for b in all_pick_blockers:
         pick_blockers_by_item[b.item_code].append(b)
 
+    # Stock sent to a Full Piece jobber straight from a Sales Order (see
+    # so_embroidery). No Stock Entry moves it, so it is still in Bin and in
+    # total_available_stock: embroidery_held_qty takes it back out, for
+    # every order, like a pick reservation. This order's own share is
+    # committed to this order the way a submitted pick is, so it also
+    # comes off what the line still needs (embroidery_this_so_qty). EWOs are
+    # keyed by item, not SO line, so when the same item sits on two lines
+    # (with and without a BOM) only the first pair carries it.
+    from erp_dacsinc_custom.so_embroidery import held_at_jobber_by_item
+    embroidery_held_by_item = (
+        held_at_jobber_by_item(all_pair_item_codes) if all_pair_item_codes != ("",) else {}
+    )
+    so_direct_ewos_by_item = defaultdict(list)
+    if so_doc:
+        for r in frappe.db.sql("""
+            SELECT ewo.name, ewo.date, ewo.status, ewo.full_piece_jobber, ewo.full_piece_stage,
+                   sup.supplier_name AS jobber_name, c.item_code, c.item_name,
+                   c.ordered_qty, IFNULL(c.received_qty, 0) AS received_qty
+            FROM `tabEmbroidery Work Order Item` c
+            JOIN `tabEmbroidery Work Order` ewo ON ewo.name = c.parent
+            LEFT JOIN `tabSupplier` sup ON sup.name = ewo.full_piece_jobber
+            WHERE ewo.docstatus = 1 AND IFNULL(ewo.purchase_order, '') = ''
+              AND ewo.saels_order_id = %s
+        """, so_doc.name, as_dict=1):
+            so_direct_ewos_by_item[r.item_code].append(r)
+    so_direct_ewo_claimed = set()
+    # Every embroidery trip of this order per item — sent AND received — so
+    # the row keeps its history after the goods come back.
+    from erp_dacsinc_custom.so_embroidery import embroidery_history_by_item
+    so_emb_history = embroidery_history_by_item(so_doc.name) if so_doc else {}
+
+    # Raw material this order may draw is ONE amount per material, but
+    # several of the order's BOM lines can need the same material (SO-00144:
+    # Item 2 with BOM and Beige T Shirt both use Fabric blue). Comparing each
+    # line against the full amount counted the same metres once per line, so
+    # both lines read "Covered" off stock that covers one. Lines draw in row
+    # order instead — the same order _rm_ready_for_sco tie-breaks lines of
+    # one order in — and each shows only what is left after the lines above
+    # it. {rm_code: {source: qty already taken}}.
+    rm_alloc_used = defaultdict(lambda: defaultdict(float))
+
     results = {}
     for pair in item_bom_pairs:
         # 1. INITIALIZE ALL VARIABLES
@@ -2805,6 +2861,28 @@ def get_item_stock_details_bulk(item_bom_pairs, sales_order_name):
             ]
         else:
             current_picks = list(raw_picks)
+
+        # Per Pick List: can a SUBMITTED one still go back to draft (no DN made
+        # from it, nothing delivered), which DNs lock it, and how much of a
+        # draft one is out at a Full Piece embroidery jobber — for the
+        # Picked (This SO) popup's Revert to Draft / AT JOBBER labels.
+        if current_picks:
+            from erp_dacsinc_custom.so_embroidery import pick_list_revert_state, PL_HOLD_QTY_FIELD, PL_HOLD_EWO_FIELD
+            pl_names = list({p.pick_list_name for p in current_picks})
+            st = {x["name"]: x for x in pick_list_revert_state([
+                {"name": n,
+                 "docstatus": next(p.docstatus for p in current_picks if p.pick_list_name == n),
+                 "status": next(p.pick_status for p in current_picks if p.pick_list_name == n),
+                 "delivered_qty": sum(flt(p.delivered_qty) for p in current_picks if p.pick_list_name == n
+                                      and p.pick_status != "Completed")}
+                for n in pl_names])}
+            holds = {r.name: r for r in frappe.get_all("Pick List", filters={"name": ["in", pl_names]},
+                                                     fields=["name", f"{PL_HOLD_QTY_FIELD} as hold_qty", f"{PL_HOLD_EWO_FIELD} as hold_ewo"])}
+            for p in current_picks:
+                p["revertable"] = st[p.pick_list_name]["revertable"]
+                p["delivery_notes"] = st[p.pick_list_name]["delivery_notes"]
+                p["embroidery_hold_qty"] = flt((holds.get(p.pick_list_name) or {}).get("hold_qty"))
+                p["embroidery_ewo"] = (holds.get(p.pick_list_name) or {}).get("hold_ewo")
 
         # Calculate Pick Lists for other rows of the same Sales Order and item code.
         # Only the UNDELIVERED remainder of a submitted sibling pick still competes
@@ -3310,23 +3388,59 @@ def get_item_stock_details_bulk(item_bom_pairs, sales_order_name):
         rm_earmarked_qty = flt(sum(rm_earmarked_by.values()), 3)
         rm_earmarked_this_so = flt(rm_earmarked_by.get(so_doc.name, 0), 3)
 
+        embroidery_held_qty = flt(embroidery_held_by_item.get(item_code, 0), 3)
+        so_direct_ewos = []
+        if item_code not in so_direct_ewo_claimed:
+            so_direct_ewo_claimed.add(item_code)
+            so_direct_ewos = so_direct_ewos_by_item.get(item_code, [])
+        embroidery_this_so_qty = flt(sum(max(0, flt(e.ordered_qty) - flt(e.received_qty))
+                                         for e in so_direct_ewos), 3)
+
+        # A submitted Pick List does NOT move stock — Bin only drops on the
+        # Delivery Note — so this order's own submitted picks (this line's,
+        # and other rows of the same order for the same item) are still in
+        # total_available_stock. They come off what the line needs below
+        # (pending_fg_for_so); leaving them in "available" as well counted the
+        # same units twice. Confirmed live on SO-00141 Beige T Shirt: 149 in
+        # stock, 143 picked for other orders, 6 picked for this one — 0 free,
+        # 34 still to make; the RM table said 28. A draft pick of this line is
+        # still this line's stock (pending doesn't subtract it), so it stays.
         truly_available_fg = max(0, total_available_stock - picked_for_others_qty
-                                 - draft_qty_for_others - rm_earmarked_qty)
-        # Qty already picked for THIS order counts as produced. Picking moves
-        # it out of total_available_stock, so without this an order whose
-        # goods are fully picked and sitting ready for a Delivery Note reads
-        # as if every unit still had to be manufactured — and its BOM then
-        # reports a full raw-material Shortage on an order that is about to
-        # ship (confirmed live: 25 of 25 picked, "Ready — Delivery Note", and
-        # the Raw Material Pipeline still demanding 56.25 Meter). Submitted
-        # picks only; a draft Pick List has committed nothing and can still be
-        # deleted. picked_sub_undelivered is already capped at what the line
-        # still owes, so it can never double-count with delivered_qty.
-        pending_fg_for_so = max(0, required_qty - delivered_qty - picked_sub_undelivered)
+                                 - draft_qty_for_others - rm_earmarked_qty - embroidery_held_qty
+                                 - picked_sub_undelivered - picked_submitted_other_rows
+                                 - picked_draft_other_rows)
+        # Qty already picked for THIS order (draft or submitted Pick List) counts as produced/staged:
+        # any quantity for which a Pick List is created should not have raw material calculated for it
+        # or be demanded for production/subcontracting.
+        total_picked_this_so = picked_sub_undelivered + picked_draft_qty_so
+        pending_fg_for_so = max(0, required_qty - delivered_qty - total_picked_this_so - embroidery_this_so_qty)
         fg_shortfall = max(0, pending_fg_for_so - truly_available_fg)
+
+        # Listed under Incoming so the row shows where those goods are, but
+        # not added to total_incoming_qty: embroidery_this_so_qty has already
+        # come off what the line needs, and counting it as incoming too would
+        # cover the same shortfall twice.
+        for e in so_direct_ewos:
+            pending = max(0, flt(e.ordered_qty) - flt(e.received_qty))
+            if pending <= 0:
+                continue
+            incoming_stock.append({
+                "doc_type": "Embroidery Work Order", "name": e.name, "date": e.date,
+                "work_type": "Full Piece Job Work", "info": e.jobber_name or e.full_piece_jobber or "Job Work",
+                "jobber_id": e.full_piece_jobber, "jobber_name": e.jobber_name, "item_name": e.item_name,
+                "status": e.status, "stage": e.full_piece_stage,
+                "expected_delivery_date": e.date, "po_ref": None,
+                "pending_qty": pending, "ordered_qty": flt(e.ordered_qty), "received_qty": flt(e.received_qty),
+                "is_ewo": 1, "is_so_direct": 1,
+            })
         
         rm_procurement_status = {
             "rm_shortfall_exists": False, "rm_items_status": [], "fg_shortfall": fg_shortfall,
+            # The two numbers fg_shortfall is made of, for the RM table's FG card:
+            # still to cover (after this line's picks / embroidery) and the
+            # finished-good stock genuinely free for it.
+            "fg_pending_to_cover": flt(pending_fg_for_so, 3),
+            "fg_free_stock": flt(truly_available_fg, 3),
             # True when at least one RM is only covered on paper (a pending MR/PO),
             # with nothing physically arrived yet — see the per-row "Requested"
             # status below. Kept distinct from rm_shortfall_exists so the header
@@ -3340,6 +3454,9 @@ def get_item_stock_details_bulk(item_bom_pairs, sales_order_name):
             # same wording used for a plain pending MR/PO nothing has moved on
             # yet) understated real, already-in-progress work.
             "rm_in_process_exists": False,
+            # True when at least one RM is only covered by a Material Request
+            # still in DRAFT — see the "MR in Draft" per-row status.
+            "rm_draft_mr_exists": False,
         }
 
         if bom_no:
@@ -3377,6 +3494,13 @@ def get_item_stock_details_bulk(item_bom_pairs, sales_order_name):
                         # _rm_stock_pools call. rm_available_stock is what THIS
                         # order may draw; these say where that number came from.
                         "rm_total_stock": 0, "rm_own_earmark": 0, "rm_free_stock": 0,
+                        # Bought against this order on paper, before being cut to
+                        # what is physically on the shelf (see _rm_stock_pools).
+                        "rm_own_earmark_on_paper": 0,
+                        # Usable stock / coverage already taken by an EARLIER BOM
+                        # line of this same order that needs the same material.
+                        "rm_used_by_other_lines": 0,
+                        "rm_draft_mr_total": 0,
                         "rm_picked_elsewhere": 0, "rm_sell_committed": 0, "rm_held_by": {},
                         "rm_stock_breakdown": [],
                         "rm_pending_so_linked_total": 0, "rm_pending_mr_total": 0,
@@ -3443,8 +3567,11 @@ def get_item_stock_details_bulk(item_bom_pairs, sales_order_name):
                         rm_map[code]["rm_total_stock"] = flt(pool.get("physical", 0), 2)
                         rm_map[code]["rm_own_earmark"] = flt(
                             (pool.get("earmarked") or {}).get(sales_order_name, 0), 2)
+                        rm_map[code]["rm_own_earmark_on_paper"] = flt(
+                            (pool.get("earmarked_on_paper") or {}).get(sales_order_name, 0), 2)
                         rm_map[code]["rm_free_stock"] = flt(max(0.0, pool.get("free", 0)), 2)
                         rm_map[code]["rm_picked_elsewhere"] = flt(pool.get("picked", 0), 2)
+                        rm_map[code]["rm_picked_docs"] = pool.get("picked_docs") or {}
                         rm_map[code]["rm_sell_committed"] = flt(pool.get("sell_committed", 0), 2)
                         rm_map[code]["rm_held_by"] = {
                             so: flt(q, 2) for so, q in
@@ -3468,8 +3595,9 @@ def get_item_stock_details_bulk(item_bom_pairs, sales_order_name):
                           AND mri.item_code IN %(items)s 
                           AND mr.docstatus = 1 
                           AND mr.status != 'Stopped'
+                          AND {_RM_MR_ROW}
                         GROUP BY mri.item_code
-                    """, {"so": sales_order_name, "items": tuple(rm_codes)}, as_dict=1)
+                    """.format(_RM_MR_ROW=_RM_MR_ROW_SQL), {"so": sales_order_name, "items": tuple(rm_codes)}, as_dict=1)
 
                     for d in mr_data:
                         if d.item_code in rm_map:
@@ -3499,19 +3627,30 @@ def get_item_stock_details_bulk(item_bom_pairs, sales_order_name):
                     # button just creates one and opens it for review/submit, so
                     # without this a click here shows no trace at all in the
                     # table until someone remembers to go submit it.
+                    #
+                    # It IS counted as coverage, though (rm_draft_mr_total): the
+                    # request exists, someone just hasn't submitted it. Leaving it
+                    # out kept the full shortfall showing after an MR was raised,
+                    # so the same "Request N" / "Raw Material MR" action was
+                    # offered again and again — one duplicate MR per click. The
+                    # row reads "MR in Draft" instead of "Covered" or "Requested",
+                    # so it's clear the draft still needs submitting.
                     draft_mr_data = frappe.db.sql("""
-                        SELECT mri.item_code, GROUP_CONCAT(DISTINCT mri.parent) as mr_list
+                        SELECT mri.item_code, GROUP_CONCAT(DISTINCT mri.parent) as mr_list,
+                               SUM(GREATEST(mri.qty - IFNULL(mri.ordered_qty, 0), 0)) AS draft_qty
                         FROM `tabMaterial Request Item` mri
                         JOIN `tabMaterial Request` mr ON mri.parent = mr.name
                         WHERE mri.sales_order = %(so)s
                           AND mri.item_code IN %(items)s
                           AND mr.docstatus = 0
+                          AND {_RM_MR_ROW}
                         GROUP BY mri.item_code
-                    """, {"so": sales_order_name, "items": tuple(rm_codes)}, as_dict=1)
+                    """.format(_RM_MR_ROW=_RM_MR_ROW_SQL), {"so": sales_order_name, "items": tuple(rm_codes)}, as_dict=1)
 
                     for d in draft_mr_data:
                         if d.item_code in rm_map:
                             rm_map[d.item_code]["draft_mr_documents"] = d.mr_list.split(",") if d.mr_list else []
+                            rm_map[d.item_code]["rm_draft_mr_total"] = flt(d.draft_qty, 3)
 
                     # 3. Purchase Orders (PO) linked to this SO (Subcontracting + Direct)
                     # Two independent sourcing paths for the same raw material can both
@@ -3692,8 +3831,47 @@ def get_item_stock_details_bulk(item_bom_pairs, sales_order_name):
                                 0, flt(flt(d.outstanding_qty, 2) - rm.get("rm_transferred_to_sc_total", 0), 2))
 
                 for rm in rm_map.values():
-                    # Coverage = Physical + PO + MR + already sent to a subcontractor
-                    # (MR is usually what's left to order). Measured against
+                    # Item-level totals, before this line's share is worked out —
+                    # what the MR guard (get_so_rm_allowances) and the bulk MR
+                    # dialog reason about for the order as a whole.
+                    rm["rm_coverage_item_total"] = flt(
+                        rm["rm_available_stock"] + rm["rm_pending_so_linked_total"]
+                        + rm.get("rm_pending_mr_total", 0) + rm.get("rm_draft_mr_total", 0)
+                        + rm.get("rm_transferred_to_sc_total", 0), 3)
+                    rm["rm_available_stock_item_total"] = flt(rm["rm_available_stock"], 2)
+
+                    # This line's share: each source as it stands after the
+                    # order's earlier lines took theirs (see rm_alloc_used). Stock
+                    # first, then what is already at the jobber for this order,
+                    # then on order, then requested — the order a line would
+                    # actually consume them in.
+                    used = rm_alloc_used[rm["rm_code"]]
+                    need_left = flt(rm["rm_needed_for_shortfall"], 3)
+                    for field in ("rm_available_stock", "rm_transferred_to_sc_total",
+                                  "rm_pending_so_linked_total", "rm_pending_mr_total",
+                                  "rm_draft_mr_total"):
+                        total = flt(rm.get(field, 0), 3)
+                        left = max(0.0, flt(total - used[field], 3))
+                        rm[field] = left
+                        take = min(need_left, left)
+                        used[field] = flt(used[field] + take, 3)
+                        need_left = flt(need_left - take, 3)
+                    rm["rm_used_by_other_lines"] = flt(
+                        rm["rm_available_stock_item_total"] - rm["rm_available_stock"], 2)
+
+                    # Physically on the shelf and not picked, whoever it belongs
+                    # to — shared across this order's lines the same way. The
+                    # part beyond this line's own share is stock held for another
+                    # order (or owed to a customer): not this order's, but real,
+                    # and what every Subcontract PO path now allows after a
+                    # confirm (see check_bom_rm_for_so's RM_HELD).
+                    real_item = max(0.0, flt(rm.get("rm_total_stock", 0)) - flt(rm.get("rm_picked_elsewhere", 0)))
+                    real_left = max(0.0, flt(real_item - used["real"], 3))
+                    used["real"] = flt(used["real"] + min(flt(rm["rm_needed_for_shortfall"]), real_left), 3)
+                    rm["rm_on_shelf_held"] = flt(max(0.0, real_left - rm["rm_available_stock"]), 2)
+
+                    # Coverage = Physical + PO + MR (submitted or draft) + already
+                    # sent to a subcontractor. Measured against
                     # rm_needed_for_shortfall — NOT rm_required_total (the "Needed"
                     # column) — because Status/Shortfall answer "is raw material
                     # action needed right now", and that is 0 whenever the finished good
@@ -3705,6 +3883,7 @@ def get_item_stock_details_bulk(item_bom_pairs, sales_order_name):
                         rm["rm_available_stock"]
                         + rm["rm_pending_so_linked_total"]
                         + rm.get("rm_pending_mr_total", 0)
+                        + rm.get("rm_draft_mr_total", 0)
                         + rm.get("rm_transferred_to_sc_total", 0)
                     )
                     # Compare at the same 2-decimal precision the table itself
@@ -3736,10 +3915,23 @@ def get_item_stock_details_bulk(item_bom_pairs, sales_order_name):
                         # level, including zero, so this must never read as
                         # "Covered" and imply real stock is sitting there.
                         rm["status"] = "Not Required"
+                    elif shortfall > 0 and flt(rm["rm_on_shelf_held"], 2) >= flt(shortfall, 2):
+                        # Short of its OWN material, but the shelf holds enough —
+                        # it belongs to another order. The amber middle state:
+                        # an SCO can still go ahead after a confirm naming the
+                        # holder; or request its own with the MR button.
+                        rm["status"] = "On Shelf — Held by Other Order"
                     elif shortfall > 0:
                         rm["status"] = "Shortage"
                     elif available_r >= needed_r:
                         rm["status"] = "Covered"
+                    elif (flt(rm.get("rm_draft_mr_total", 0), 2) > 0
+                          and flt(coverage - rm.get("rm_draft_mr_total", 0), 2) < needed_r):
+                        # Only closed by an MR that is still a draft: nothing is
+                        # requested for real until it's submitted, and the
+                        # purchasing side never sees it. Its own state so the
+                        # row says so, rather than "Requested" as if it were done.
+                        rm["status"] = "MR in Draft"
                     elif transferred_r > 0:
                         # Coverage closes without a genuine shortfall, and at
                         # least some of it is material already sent to the
@@ -3760,6 +3952,12 @@ def get_item_stock_details_bulk(item_bom_pairs, sales_order_name):
                         rm_procurement_status["rm_pending_arrival_exists"] = True
                     if rm["status"] == "In Process at Jobber":
                         rm_procurement_status["rm_in_process_exists"] = True
+                    if rm["status"] == "MR in Draft":
+                        rm_procurement_status["rm_draft_mr_exists"] = True
+                    if rm["status"] == "On Shelf — Held by Other Order":
+                        rm_procurement_status["rm_held_exists"] = True
+                    elif shortfall > 0:
+                        rm_procurement_status["rm_truly_short_exists"] = True
                     rm_procurement_status["rm_items_status"].append(rm)
 
             except Exception as e:
@@ -3800,6 +3998,10 @@ def get_item_stock_details_bulk(item_bom_pairs, sales_order_name):
             "rm_earmarked_qty": rm_earmarked_qty,
             "rm_earmarked_this_so": rm_earmarked_this_so,
             "rm_earmarked_by": rm_earmarked_by,
+            # Out at a Full Piece jobber on Sales-Order-raised EWOs: every
+            # order's (not pickable here), and this order's own share.
+            "embroidery_held_qty": embroidery_held_qty,
+            "embroidery_this_so_qty": embroidery_this_so_qty,
             "picked_submitted_other_rows": picked_submitted_other_rows, "picked_draft_other_rows": picked_draft_other_rows,
             "incoming_stock": incoming_stock, "total_incoming_qty": total_incoming_qty, "total_incoming_po_count": total_incoming_po_count, "total_incoming_ewo_count": total_incoming_ewo_count,
             "draft_purchase_orders": draft_purchase_orders, "draft_material_requests": draft_material_requests,
@@ -3815,6 +4017,7 @@ def get_item_stock_details_bulk(item_bom_pairs, sales_order_name):
             "customer_name": (so_doc.customer_name or so_doc.customer) if so_doc else None,
             "item_name": (so_items[0].item_name if so_items else item_master_map.get(item_code, {}).get("item_name")),
             "warehouse": warehouse, "stock_uom": stock_uom, "fg_shortfall_for_ewO": fg_shortfall,
+            "embroidery_history": so_emb_history.get(item_code, []),
             "so_route_lock": so_route_lock,
 
         }
@@ -4503,9 +4706,16 @@ def check_bom_raw_materials_in_stock(bom_no, qty_needed, bom_cache=None, sales_o
             """, (tuple(rm_codes), "VV Puram - IND"), as_dict=1):
                 stock_map[s.item_code] = flt(s.qty)
 
+        # BOM Item.stock_qty is the qty needed for the BOM's OWN reference
+        # quantity (BOM.quantity — usually 1, but not always), not
+        # automatically "per 1 finished good" — normalizing by it here is
+        # what makes `qty_per_fg` actually mean that, for any BOM whose own
+        # Quantity isn't 1 (same normalization get_pending_so_with_raw_materials_summary
+        # and _explode_rm_requirements apply to this same BOM data).
+        bom_batch_qty = flt(bom_doc.quantity) or 1.0
         rm_lines = []
         for bi in bom_doc.items:
-            qty_per_fg = flt(bi.stock_qty) if bi.stock_qty else flt(bi.qty)
+            qty_per_fg = (flt(bi.stock_qty) if bi.stock_qty else flt(bi.qty)) / bom_batch_qty
             rm_lines.append({
                 "item_code": bi.item_code,
                 "item_name": bi.item_name or frappe.db.get_value("Item", bi.item_code, "item_name") or bi.item_code,
@@ -4548,6 +4758,132 @@ def check_bom_raw_materials_in_stock(bom_no, qty_needed, bom_cache=None, sales_o
             })
 
     return (len(shortages) == 0), shortages
+
+
+# The three states every raw-material check shares — the SO widget's RM
+# Pipeline, the PO form's "Fetch Pending Sales Orders" dialog, the
+# Subcontract PO buttons, and "Create Subcontracting Docs" (the actual
+# transfer). Worst line wins for a whole BOM.
+RM_COVERED = "covered"   # this order's own share covers it
+RM_HELD = "held"         # physically on the shelf, but reserved for another order / owed to a customer — BLOCKED like short
+RM_SHORT = "short"       # not physically on the shelf at all
+_RM_STATE_RANK = {RM_COVERED: 0, RM_HELD: 1, RM_SHORT: 2}
+
+
+def rm_line_state(pool, sales_orders, required):
+    """
+    One raw material, `required` of it, for `sales_orders` (one order, or
+    every order a Purchase Order carries). Returns
+    {"state", "own", "on_shelf", "held_by", "owed_to_customers"}:
+
+      own        what these orders may draw as their own — their earmarks
+                 (already fitted to real stock, see _rm_stock_pools) plus
+                 unclaimed stock
+      on_shelf   physically at the main warehouse and not already picked
+                 for a delivery — what ERPNext itself will let a transfer take
+      held_by    {other_so: qty} holding the difference, so the warning can
+                 name who the material belongs to
+
+    `held` is the case the two sides of this app used to disagree on: the SO
+    said "no stock" (none of it is this order's), while the PO side read the
+    warehouse total and let the SCO go ahead on another order's material —
+    which then failed later, for THAT order, with "insufficient stock".
+    """
+    from erp_dacsinc_custom.order_flow_api import _rm_available_for, _rm_borrowable_from
+    pool = pool or {}
+    orders = [so for so in (sales_orders or []) if so]
+    free = max(0.0, flt(pool.get("free", 0)))
+    own = sum(flt((pool.get("earmarked") or {}).get(so, 0)) for so in orders) + free if orders \
+        else max(0.0, flt(pool.get("physical", 0)) - flt(pool.get("picked", 0)))
+    on_shelf = max(0.0, flt(pool.get("physical", 0)) - flt(pool.get("picked", 0)))
+    own = min(own, on_shelf)
+    required = flt(required)
+    if flt(own, 2) >= flt(required, 2):
+        state = RM_COVERED
+    elif flt(on_shelf, 2) >= flt(required, 2):
+        state = RM_HELD
+    else:
+        state = RM_SHORT
+    held_by = {}
+    for so in orders[:1]:
+        held_by = {k: v for k, v in (_rm_borrowable_from(pool, so) or {}).items() if k not in orders}
+    return {
+        "state": state,
+        "own": flt(own, 3),
+        "on_shelf": flt(on_shelf, 3),
+        "held_by": {k: flt(v, 3) for k, v in held_by.items()},
+        "owed_to_customers": flt(pool.get("sell_committed", 0), 3),
+    }
+
+
+def check_bom_rm_for_so(bom_no, qty_needed, sales_order, bom_cache=None):
+    """
+    check_bom_raw_materials_in_stock, answered in the three shared states
+    for `qty_needed` finished units of `bom_no` on `sales_order`.
+
+    Returns {"state", "lines": [{"item_code", "item_name", "uom", "required",
+    "own", "on_shelf", "held_by", "owed_to_customers", "state"}, ...]} —
+    `state` is the worst line. Callers block both RM_SHORT and RM_HELD —
+    RM_HELD only exists so the message can name which order the stock is
+    reserved for (and tell the user to Request RM), never as an override.
+    """
+    from erp_dacsinc_custom.order_flow_api import _rm_stock_pools
+    qty_needed = flt(qty_needed)
+    if not bom_no or qty_needed <= 0:
+        return {"state": RM_COVERED, "lines": []}
+    cache = bom_cache if bom_cache is not None else {}
+    # Fills cache[bom_no] with the BOM's per-unit lines (qty_per_fg already
+    # normalised by the BOM's own quantity) — the one BOM explosion every
+    # raw-material check shares.
+    check_bom_raw_materials_in_stock(bom_no, qty_needed, cache)
+    rm_lines = cache.get(bom_no) or []
+    pools = _rm_stock_pools({rm["item_code"] for rm in rm_lines}, MAIN_WAREHOUSE) if rm_lines else {}
+
+    lines, worst = [], RM_COVERED
+    for rm in rm_lines:
+        required = flt(flt(rm["qty_per_fg"]) * qty_needed, 3)
+        if required <= 0:
+            continue
+        info = rm_line_state(pools.get(rm["item_code"]), [sales_order], required)
+        lines.append({"item_code": rm["item_code"], "item_name": rm["item_name"], "uom": rm["uom"],
+                      "required": required, **info})
+        if _RM_STATE_RANK[info["state"]] > _RM_STATE_RANK[worst]:
+            worst = info["state"]
+    return {"state": worst, "lines": lines}
+
+
+def rm_held_warning(lines, sales_order=None):
+    """One line per material blocked because its stock is reserved for another order — for the error messages."""
+    parts = []
+    for l in lines or []:
+        if l.get("state") != RM_HELD:
+            continue
+        holders = ", ".join(f"{so} ({flt(q, 2)})" for so, q in (l.get("held_by") or {}).items())
+        if not holders and flt(l.get("owed_to_customers")) > 0:
+            holders = _("customers' undelivered orders")
+        parts.append(_("{0}: {1} {2} short — the stock on the shelf is reserved for {3}").format(
+            l["item_code"], flt(flt(l["required"]) - flt(l["own"]), 2), l.get("uom") or "", holders or _("another order")))
+    return parts
+
+
+def rm_not_available_text(lines):
+    """
+    "Fabric blue needs 60 Meter, this order has 0 (60 on the shelf reserved
+    for SAL-ORD-2026-00147)" for every line that is not covered — the one
+    wording every blocked-RM message uses (PO dialogs, SCO transfer, bulk SPO).
+    """
+    parts = []
+    for l in lines or []:
+        if l.get("state") == RM_COVERED:
+            continue
+        txt = _("{0} needs {1} {2}, this order has {3}").format(
+            l["item_code"], flt(l["required"], 2), l.get("uom") or "", flt(l.get("own"), 2))
+        holders = ", ".join(so for so in (l.get("held_by") or {}))
+        if l.get("state") == RM_HELD:
+            txt += _(" (the rest on the shelf is reserved for {0})").format(
+                holders or _("customers' undelivered orders"))
+        parts.append(txt)
+    return "; ".join(parts)
 
 
 def _resolve_subcontract_service_and_supplier(item_code):
@@ -4750,6 +5086,9 @@ def make_subcontract_purchase_orders_bulk(sales_order, items):
         # coverable part is expected and fine — the remainder stays
         # claimable later, because that function nets off whatever an
         # earlier partial PO already committed (`already`).
+        # Only this order's OWN raw material counts. Stock reserved for
+        # another order is never usable here, confirmed or not — the same
+        # rule the SO RM table, the PO dialogs and the transfer all apply.
         cap = flt(info.get("ready_qty"))
         # An omitted qty means "all that's possible"; an explicitly-sent 0 is
         # an error. `flt(x) or cap` would silently turn that 0 into a full PO.
@@ -4762,7 +5101,8 @@ def make_subcontract_purchase_orders_bulk(sales_order, items):
         # displayed could fail on a float remainder.
         if flt(qty, 3) > flt(cap, 3):
             frappe.throw(_(
-                "Row for {0}: only {1} can be subcontracted right now (raw material on hand), not {2}."
+                "{0}: this order's own raw material covers only {1}, not {2}. "
+                "Request RM (Material Request) for the rest first."
             ).format(item_code, flt(cap, 3), flt(qty, 3)))
 
         chosen.append((info, qty))
@@ -5421,6 +5761,18 @@ def guard_so_fulfillment_route_lock(doc, method):
     ordinary draft save.
     """
     if doc.doctype == "Sales Invoice" and not doc.update_stock:
+        return
+
+    # One route only: Sales Order → Pick List → Delivery Note → Sales Invoice
+    # (made from the DN). A Sales Invoice with Update Stock for a Sales Order
+    # is refused outright; the two-route lock below is kept for reference.
+    if doc.doctype == "Sales Invoice" and any((getattr(i, "sales_order", None) or "") for i in doc.items):
+        frappe.throw(_(
+            "Sales Invoices with Update Stock are not used for Sales Orders. Submit the Pick List, "
+            "create and submit the Delivery Note, then make the Sales Invoice from that Delivery Note "
+            "(untick Update Stock)."
+        ), title=_("Use a Delivery Note"))
+    if doc.doctype == "Delivery Note":
         return
 
     field = "against_sales_order" if doc.doctype == "Delivery Note" else "sales_order"
@@ -8859,6 +9211,136 @@ def guard_mr_item_not_over_so_need(doc, method=None):
             )
 
 
+@frappe.whitelist()
+def get_so_rm_allowances(rows, exclude_name=None):
+    """
+    How much RAW MATERIAL a Material Request may still ask for against each
+    Sales Order — the order's own raw-material shortfall, the same figure its
+    Item Stock & Action Plan offers to request.
+
+    `rows` is [{"sales_order", "item_code"}, ...]. Returns
+    {"<sales_order>||<item_code>": {"sales_order", "item_code", "uom",
+    "need", "covered", "allowed"}} for every pair where the item is actually
+    a raw material of one of that order's BOM lines; anything else is left
+    out (and so unrestricted — the same "not counted by any coverage math,
+    so not capped" rule guard_mr_item_not_over_so_need applies).
+
+    need      raw material the order's BOM lines still need, summed across
+              every line that uses it (fg_shortfall × per-unit qty)
+    covered   what already meets that need — usable stock, pending PO,
+              submitted AND draft MRs, material at the jobber — EXCLUDING
+              `exclude_name`, so a draft being re-saved isn't counted against
+              itself
+    allowed   need − covered, never negative
+
+    Why a cap is needed at all: a raw-material row has no Sales Order Item
+    (the material isn't a line the order sells), so the sold-line cap never
+    applied, and nothing stopped a second, third, fourth MR for the same
+    shortfall — the widget kept offering it, and the MR form accepted it.
+    """
+    if isinstance(rows, str):
+        rows = json.loads(rows or "[]")
+    wanted = defaultdict(set)
+    for r in rows or []:
+        if r.get("sales_order") and r.get("item_code"):
+            wanted[r["sales_order"]].add(r["item_code"])
+
+    out = {}
+    for so_name, item_codes in wanted.items():
+        so_items = frappe.get_all("Sales Order Item", filters={"parent": so_name},
+                                  fields=["item_code", "bom_no"], order_by="idx asc")
+        pairs = []
+        for it in so_items:
+            if it.bom_no:
+                key = f"{it.item_code}||{it.bom_no}"
+                if key not in pairs:
+                    pairs.append(key)
+        if not pairs:
+            continue
+        details = get_item_stock_details_bulk(pairs, so_name) or {}
+
+        own_stored = {}
+        if exclude_name and frappe.db.exists("Material Request", exclude_name):
+            for r in frappe.db.sql(f"""
+                SELECT mri.item_code, SUM(GREATEST(mri.qty - IFNULL(mri.ordered_qty, 0), 0)) AS qty
+                FROM `tabMaterial Request Item` mri
+                JOIN `tabMaterial Request` mr ON mr.name = mri.parent
+                WHERE mri.parent = %(mr)s AND mri.sales_order = %(so)s AND mr.docstatus < 2
+                  AND {_RM_MR_ROW_SQL}
+                GROUP BY mri.item_code
+            """, {"mr": exclude_name, "so": so_name}, as_dict=True):
+                own_stored[r.item_code] = flt(r.qty)
+
+        for item_code in item_codes:
+            need = 0.0
+            covered = None
+            uom = ""
+            for d in details.values():
+                for rm in ((d.get("rm_procurement_status") or {}).get("rm_items_status") or []):
+                    if rm.get("rm_code") != item_code:
+                        continue
+                    need += flt(rm.get("rm_needed_for_shortfall"))
+                    if covered is None:
+                        covered = flt(rm.get("rm_coverage_item_total"))
+                        uom = rm.get("rm_uom") or ""
+            if covered is None:
+                continue  # not a raw material of any BOM line on this order
+            covered = max(0.0, covered - flt(own_stored.get(item_code, 0)))
+            out[f"{so_name}||{item_code}"] = {
+                "sales_order": so_name,
+                "item_code": item_code,
+                "uom": uom,
+                "need": flt(need, 3),
+                "covered": flt(covered, 3),
+                "allowed": flt(max(0.0, need - covered), 3),
+            }
+    return out
+
+
+def guard_mr_rm_not_over_so_shortfall(doc, method=None):
+    """
+    Raw-material counterpart of guard_mr_item_not_over_so_need: a Material
+    Request row asking for raw material against a Sales Order may not take
+    that order's raw-material requests past its actual shortfall (see
+    get_so_rm_allowances). Runs after set_procurement_purpose, so every row
+    already says whether it is Raw Material.
+
+    The same escape hatch as the sold-line guard: a row with the Sales Order
+    left blank is not tied to any order's need and is unrestricted.
+    """
+    if doc.docstatus == 2:
+        return
+    this_doc = defaultdict(float)
+    for row in doc.get("items") or []:
+        if row.get("sales_order") and row.get("custom_procurement_purpose") == "Raw Material":
+            this_doc[(row.sales_order, row.item_code)] += flt(row.get("qty"))
+    if not this_doc:
+        return
+
+    allow = get_so_rm_allowances(
+        [{"sales_order": so, "item_code": ic} for so, ic in this_doc], doc.name or "")
+    problems = []
+    for (so, ic), qty in this_doc.items():
+        info = allow.get(f"{so}||{ic}")
+        if not info or qty <= flt(info["allowed"]) + 0.01:
+            continue
+        problems.append(_(
+            "{0} for {1}: the order's BOM lines still need {2} {3}, {4} of it is already covered "
+            "(usable stock, open Purchase Orders, other Material Requests — drafts included — and "
+            "material at the jobber). This request asks for {5}; at most {6} can go on it."
+        ).format(frappe.bold(ic), frappe.bold(so), flt(info["need"], 3), info["uom"],
+                 flt(info["covered"], 3), flt(qty, 3), frappe.bold(flt(info["allowed"], 3))))
+    if problems:
+        frappe.throw(
+            "<br><br>".join(problems)
+            + "<br><br>" + _(
+                "Reduce the qty, or submit / edit the Material Request already raised for it. To request "
+                "extra anyway, add the item on a row with the Sales Order left blank — a row not tied to "
+                "an order is unrestricted."),
+            title=_("More Raw Material Than the Order Needs"),
+        )
+
+
 def guard_po_item_not_over_so_need(doc, method=None):
     """
     A Purchase Order row fetched from (or manually linked to) a Sales Order
@@ -8988,23 +9470,71 @@ def _subcontract_transfer_sales_order(doc):
     return orders[0] if len(orders) == 1 else None
 
 
+def block_subcontract_transfer_of_picked_stock(doc, method=None):
+    """
+    before_submit on Stock Entry — HARD block, every route: a raw-material
+    transfer to a jobber may never take stock a Pick List (draft or
+    submitted) holds for a delivery. Runs on the Stock Entry itself, so it
+    covers not just this app's "Create SCO & Material Transfer" dialog
+    (which already caps there) but ERPNext's own Transfer button on the
+    Subcontracting Order and any Stock Entry typed by hand.
+
+    Confirmed live why: STO-PICK-2026-00101 had 10 fabric red allocated for
+    SO-00141's sold line while still a draft; a Send to Subcontractor took
+    that stock, and the Pick List could no longer be submitted.
+
+    Uses the same `picked` rule as _rm_stock_pools (submitted: picked −
+    delivered; draft: stock_qty; Completed/Cancelled hold nothing), read
+    before the transfer moves anything.
+    """
+    if doc.get("purpose") != "Send to Subcontractor":
+        return
+    from erp_dacsinc_custom.order_flow_api import _rm_stock_pools
+
+    wanted = defaultdict(float)  # (item_code, source warehouse) -> qty
+    for d in doc.get("items") or []:
+        if d.get("item_code") and d.get("s_warehouse") and flt(d.get("transfer_qty") or d.get("qty")) > 0:
+            wanted[(d.item_code, d.s_warehouse)] += flt(d.get("transfer_qty") or d.get("qty"))
+    if not wanted:
+        return
+
+    problems = []
+    for wh in {w for _, w in wanted}:
+        codes = {ic for ic, w in wanted if w == wh}
+        pools = _rm_stock_pools(codes, wh)
+        for ic in codes:
+            pool = pools.get(ic) or {}
+            picked = flt(pool.get("picked"))
+            if picked <= 0.001:
+                continue
+            free_of_picks = max(0.0, flt(pool.get("physical")) - picked)
+            qty = flt(wanted[(ic, wh)], 3)
+            if qty > free_of_picks + 0.001:
+                pls = ", ".join(f"{pl} ({flt(q, 2)})" for pl, q in (pool.get("picked_docs") or {}).items())
+                problems.append(_("{0}: sending {1}, but only {2} is free in {3}. {4} is picked for delivery on {5}.").format(
+                    frappe.bold(ic), qty, flt(free_of_picks, 3), wh, flt(picked, 3), pls))
+    if problems:
+        frappe.throw("<br>".join(problems) + "<br><br>"
+                     + _("Stock on a Pick List can't be sent to a jobber. Reduce the qty, or cancel that Pick List first."),
+                     title=_("Picked for Delivery"))
+
+
 def flag_subcontract_rm_borrowing(doc, method=None):
     """
-    before_submit on Stock Entry: work out whether this subcontracting
-    transfer is about to consume raw material that belongs to a DIFFERENT
-    Sales Order, and stash what it found for record_subcontract_rm_borrowing
-    to write down once the submit succeeds.
+    before_submit on Stock Entry ("Send to Subcontractor"): BLOCK a transfer
+    that would take raw material reserved for a DIFFERENT Sales Order.
 
-    Deliberately does NOT block. Borrowing is a real and sometimes necessary
-    thing to do — confirmed live, where 62 units of Fabric blue had already
-    gone out this way. What caused the damage was not the borrowing, it was
-    that the lending order only found out when its own production had nothing
-    to work with. So this makes it loud, not impossible.
+    This is the last net under every route (the PO transfer dialog, ERPNext's
+    own "Transfer Material" button on the SCO, a hand-made Stock Entry) — the
+    same one rule the SO RM table, the PO dialogs and the Sales Tracker apply:
+    stock reserved for another order is not this order's, confirmed or not.
+    The fix for "our order needs it" is a Material Request, not borrowing.
 
-    Runs before_submit so the pools still reflect the pre-transfer position;
-    by on_submit the stock ledger has already moved and every row would look
-    like it came from somewhere else.
+    Runs before_submit so the pools still reflect the pre-transfer position.
+    (Name kept for hooks.py compatibility; record_subcontract_rm_borrowing
+    now only ever sees an empty list.)
     """
+    doc._rm_borrowed = []
     if doc.get("purpose") != "Send to Subcontractor":
         return
 
@@ -9022,38 +9552,29 @@ def flag_subcontract_rm_borrowing(doc, method=None):
     warehouse = rows[0].get("s_warehouse") or "VV Puram - IND"
     pools = _rm_stock_pools({d.item_code for d in rows}, warehouse)
 
-    borrowed = []
+    # Several rows of the same raw material draw on one share.
+    sending = defaultdict(float)
     for d in rows:
-        pool = pools.get(d.item_code)
+        sending[d.item_code] += flt(d.qty)
+
+    blocked = []
+    for code, qty in sending.items():
+        pool = pools.get(code)
         own = _rm_available_for(pool, sales_order)
-        short = flt(d.qty) - own
-        if short <= 0.001:
+        if qty - own <= 0.001:
             continue
-        lenders = _rm_borrowable_from(pool, sales_order)
-        borrowed.append({
-            "item_code": d.item_code,
-            "qty": flt(d.qty, 3),
-            "own": flt(own, 3),
-            "short": flt(short, 3),
-            "lenders": lenders,
-        })
+        lenders = _rm_borrowable_from(pool, sales_order) or {}
+        blocked.append(_("{0}: sending {1}, but {2}'s own raw material is only {3} — {4}").format(
+            code, flt(qty, 3), sales_order, flt(own, 3),
+            _("the rest is reserved for {0}").format(", ".join(sorted(lenders))) if lenders
+            else _("there is no more of it for this order")))
 
-    doc._rm_borrowed = borrowed
-    if not borrowed:
-        return
-
-    lines = "<br>".join(
-        _("{0}: sending {1}, only {2} is this order's own — {3} borrowed{4}").format(
-            b["item_code"], b["qty"], b["own"], b["short"],
-            (" " + _("from") + " " + ", ".join(
-                f"{so} ({qty})" for so, qty in sorted(b["lenders"].items()))) if b["lenders"] else ""
-        ) for b in borrowed
-    )
-    frappe.msgprint(
-        _("This transfer uses raw material bought for other Sales Orders:<br>{0}<br><br>"
-          "It will go ahead, and a note will be added to every order involved so the "
-          "lending order knows to re-order.").format(lines),
-        title=_("Borrowing raw material"), indicator="orange")
+    if blocked:
+        frappe.throw(
+            _("This transfer sends more raw material than this Sales Order owns:<br>{0}<br><br>"
+              "Reduce the qty to this order's own stock, or raise a Material Request (Request RM) "
+              "for the rest.").format("<br>".join(blocked)),
+            title=_("Reserved for Another Order"))
 
 
 def record_subcontract_rm_borrowing(doc, method=None):
@@ -9795,6 +10316,36 @@ def fetch_multi_order_requirements(exclude_mr=None):
     """, {"items": rm_bin_item_codes}, as_dict=True)
     rm_bin_map = {(r.item_code, r.warehouse): flt(r.actual_qty) for r in rm_bin_rows}
 
+    # Raw material already SENT to a jobber for an order's finished good and
+    # not consumed yet — covers that order's need, exactly as the SO RM
+    # table's "In Process at Jobber" does. Same apportioning as
+    # get_item_stock_details_bulk (this order's share of the PO's fg qty),
+    # batched for every order at once: {(so, fg_item, rm): qty}.
+    rm_jobber_map = {}
+    if bom_vals_with_shortage:
+        for d in frappe.db.sql("""
+            SELECT sosi.rm_item_code AS rm, this_so.sales_order AS so, this_so.fg_item AS fg,
+                   SUM((sosi.supplied_qty - sosi.consumed_qty - sosi.returned_qty)
+                       * this_so.so_fg_qty / po_fg_totals.total_fg_qty) AS qty
+            FROM `tabSubcontracting Order Supplied Item` sosi
+            JOIN `tabSubcontracting Order` sco ON sco.name = sosi.parent AND sco.docstatus = 1
+            JOIN (
+                SELECT parent, sales_order, fg_item, SUM(fg_item_qty) AS so_fg_qty
+                FROM `tabPurchase Order Item`
+                WHERE fg_item_qty > 0 AND IFNULL(sales_order, '') != ''
+                GROUP BY parent, sales_order, fg_item
+            ) this_so ON this_so.parent = sco.purchase_order
+            JOIN (
+                SELECT parent, fg_item, SUM(fg_item_qty) AS total_fg_qty
+                FROM `tabPurchase Order Item`
+                WHERE fg_item_qty > 0 AND IFNULL(sales_order, '') != ''
+                GROUP BY parent, fg_item
+            ) po_fg_totals ON po_fg_totals.parent = sco.purchase_order AND po_fg_totals.fg_item = this_so.fg_item
+            WHERE this_so.sales_order IN %(sos)s
+            GROUP BY sosi.rm_item_code, this_so.sales_order, this_so.fg_item
+        """, {"sos": tuple({v["so_id"] for v in bom_vals_with_shortage})}, as_dict=1):
+            rm_jobber_map[(d.so, d.fg, d.rm)] = max(0.0, flt(d.qty, 3))
+
     for val in bom_vals_with_shortage:
         bom_qty = flt(bom_qty_map.get(val["bom_no"]))
         factor = val["shortage"] / bom_qty
@@ -9832,8 +10383,10 @@ def fetch_multi_order_requirements(exclude_mr=None):
             # RM row.
             linked = rm_aggregation[rm_key]["linked_orders"]
             existing_link = next((o for o in linked if o["name"] == val["so_id"]), None)
+            jobber_here = min(contribution, rm_jobber_map.get((val["so_id"], val["item_code"], exp.item_code), 0.0))
             if existing_link:
                 existing_link["qty"] += contribution
+                existing_link["so_jobber_qty"] = flt(existing_link.get("so_jobber_qty")) + jobber_here
                 existing_link["fg_order_qty"] = flt(existing_link.get("fg_order_qty")) + flt(val["order_qty"])
                 existing_link["fg_covered"] = flt(existing_link.get("fg_covered")) + max(0, flt(val["order_qty"]) - flt(val["shortage"]))
             else:
@@ -9865,6 +10418,7 @@ def fetch_multi_order_requirements(exclude_mr=None):
                     "bom_qty_per_unit": bom_qty_per_unit,
                     "so_mr_qty": max(0, flt(so_mr["qty"]) - flt(general_mr_here["total_qty"])),
                     "so_po_qty": max(0, flt(so_po["qty"]) - flt(general_po_here["total_qty"])),
+                    "so_jobber_qty": jobber_here,
                 })
 
     # Raw material currently OUTSTANDING at a subcontractor (sent but not yet
@@ -9890,6 +10444,49 @@ def fetch_multi_order_requirements(exclude_mr=None):
             GROUP BY sosi.rm_item_code
         """, (rm_item_codes_for_transfer,), as_dict=True)
         rm_transferred_map = {r.item_code: flt(r.outstanding_qty, 2) for r in rm_transfer_rows}
+
+    # Per-order stock, from the SAME pools the Sales Order's RM table reads:
+    # each linked order may use only its OWN reserved raw material plus
+    # unclaimed stock (shared, handed out once). The shelf total used to be
+    # netted off every order combined, so SAL-ORD-2026-00147's own 60 Fabric
+    # blue "covered" SAL-ORD-2026-00146 as well, and 00147 was listed even
+    # though its RM table said Covered. An order whose own stock + own MR/PO
+    # already covers its share is dropped from the row — nothing to request
+    # for it — and a row with no orders left is dropped too.
+    rm_main_codes = {k[0] for k in rm_aggregation if k[1] == MAIN_WAREHOUSE}
+    rm_order_pools = _rm_stock_pools(rm_main_codes, MAIN_WAREHOUSE) if rm_main_codes else {}
+    for rm_key in list(rm_aggregation.keys()):
+        rm = rm_aggregation[rm_key]
+        pool = rm_order_pools.get(rm_key[0]) if rm_key[1] == MAIN_WAREHOUSE else None
+        general_mr_here = flt(mr_supply_map.get((rm_key[0], rm_key[1], None), {"total_qty": 0.0})["total_qty"])
+        general_po_here = flt(po_supply_map.get((rm_key[0], rm_key[1], None), {"total_qty": 0.0})["total_qty"])
+        free_left = max(0.0, flt(pool.get("free", 0))) if pool else flt(rm["available"])
+        kept = []
+        for o in rm["linked_orders"]:
+            # Already at the jobber for this order first, then its own stock.
+            o["so_jobber_qty"] = flt(min(flt(o.get("so_jobber_qty")), flt(o["qty"])), 3)
+            need_after_jobber = flt(o["qty"]) - o["so_jobber_qty"]
+            own_left = flt((pool.get("earmarked") or {}).get(o["name"], 0)) if pool else 0.0
+            take_own = min(own_left, need_after_jobber)
+            take_free = min(free_left, need_after_jobber - take_own)
+            free_left -= take_free
+            o["so_stock_qty"] = flt(take_own + take_free, 3)
+            o["net_qty"] = flt(max(0.0, flt(o["qty"]) - o["so_jobber_qty"] - o["so_stock_qty"]
+                                   - flt(o.get("so_mr_qty")) - flt(o.get("so_po_qty"))), 3)
+            if o["net_qty"] > 0.001:
+                kept.append(o)
+        if not kept:
+            del rm_aggregation[rm_key]
+            continue
+        rm["linked_orders"] = kept
+        rm["qty_needed"] = flt(sum(flt(o["qty"]) for o in kept), 3)
+        rm["available"] = flt(sum(o["so_stock_qty"] for o in kept), 3)
+        rm["jobber_qty"] = flt(sum(o["so_jobber_qty"] for o in kept), 3)
+        rm["reserved_for_others"] = {
+            so: flt(q, 3) for so, q in ((pool or {}).get("earmarked") or {}).items()
+            if flt(q) > 0.001 and so not in {o["name"] for o in kept}}
+        rm["_so_mr_total"] = sum(flt(o.get("so_mr_qty")) for o in kept) + general_mr_here
+        rm["_so_po_total"] = sum(flt(o.get("so_po_qty")) for o in kept) + general_po_here
 
     for rm_key, rm in rm_aggregation.items():
         rm["sent_to_jobber_qty"] = rm_transferred_map.get(rm_key[0], 0.0)
@@ -9917,8 +10514,12 @@ def fetch_multi_order_requirements(exclude_mr=None):
         rm["general_mr_qty"] = flt(general_mr["total_qty"])
         rm["general_po_qty"] = flt(general_po["total_qty"])
 
+        # Only supply that belongs to the listed orders (or to no order).
+        rm["open_supply_qty"] = flt(rm.pop("_so_mr_total"), 3)
+        rm["po_supply_qty"] = flt(rm.pop("_so_po_total"), 3)
         rm["final_shortage"] = max(
-            rm["qty_needed"] - flt(rm["available"]) - rm["open_supply_qty"] - rm["po_supply_qty"], 0)
+            rm["qty_needed"] - flt(rm.get("jobber_qty")) - flt(rm["available"])
+            - rm["open_supply_qty"] - rm["po_supply_qty"], 0)
 
     return {"standard": standard_results, "raw": list(rm_aggregation.values())}
 
@@ -10529,12 +11130,17 @@ def get_sales_order_permission_query_conditions(user):
     # narrowed down — that combination needs the same company-wide
     # visibility their other role already grants everywhere else.
     if is_scoped_merchandiser_for_doctype("Sales Order", user):
-        # Filter to only show orders belonging to customers assigned to this merchandiser
-        return """exists (
+        # Their own customers' orders, PLUS anything they raised themselves.
+        # The owner half matters on its own: a merchandiser placing an order
+        # for a customer assigned to someone else must still be able to open
+        # what they just created — without it, saving a Sales Order and then
+        # being denied it is the result.
+        escaped = frappe.db.escape(user)
+        return """(exists (
             select name from tabCustomer cust
             where cust.name = `tabSales Order`.customer
             and cust.custom_merchandiser_user = {0}
-        )""".format(frappe.db.escape(user))
+        ) or `tabSales Order`.owner = {0})""".format(escaped)
 
     return ""
 
@@ -10546,9 +11152,17 @@ def has_sales_order_permission(doc, ptype=None, user=None):
         user = frappe.session.user
 
     if is_scoped_merchandiser_for_doctype("Sales Order", user):
+        # Exactly the two halves the query condition above uses, and nothing
+        # else. The old version only rejected when the customer had a
+        # DIFFERENT merchandiser, so a customer with none assigned fell
+        # through to True — and every such order, correctly hidden from the
+        # list view, opened fine by URL. Confirmed live: all 16 orders hidden
+        # from a merchandiser were reachable that way, every one of them
+        # because its customer had no merchandiser set.
+        if getattr(doc, "owner", None) == user:
+            return True
         customer_merchandiser = frappe.db.get_value("Customer", doc.customer, "custom_merchandiser_user")
-        if customer_merchandiser and customer_merchandiser != user:
-            return False
+        return customer_merchandiser == user
 
     return True
 
@@ -10560,7 +11174,15 @@ def get_customer_permission_query_conditions(user=None):
         user = frappe.session.user
 
     if is_scoped_merchandiser_for_doctype("Customer", user):
-        return "`tabCustomer`.custom_merchandiser_user = {0}".format(frappe.db.escape(user))
+        # Customers assigned to them, plus any customer they have raised a
+        # Sales Order for. Without the second half a merchandiser can open
+        # their own order (see above) but not the customer on it, which
+        # breaks the form the moment it tries to read that link.
+        escaped = frappe.db.escape(user)
+        return """(`tabCustomer`.custom_merchandiser_user = {0} or exists (
+            select so.name from `tabSales Order` so
+            where so.customer = `tabCustomer`.name and so.owner = {0}
+        ))""".format(escaped)
     return ""
 
 
@@ -10572,9 +11194,149 @@ def has_customer_permission(doc, ptype=None, user=None):
 
     if is_scoped_merchandiser_for_doctype("Customer", user):
         if doc.custom_merchandiser_user and doc.custom_merchandiser_user != user:
-            return False
+            # Still theirs to see if they have raised an order for them.
+            return bool(frappe.db.exists(
+                "Sales Order", {"customer": doc.name, "owner": user}))
 
     return True
+
+
+# --------------------------------------------------------------------------
+# Merchandiser scoping for the documents hanging off a Sales Order
+# --------------------------------------------------------------------------
+#
+# Scoping the Sales Order alone left every downstream document open: a
+# merchandiser could not see another merchandiser's order, but could open its
+# Pick List, Purchase Order, Material Request, Delivery Note, Invoice or
+# Receipt — by URL, or straight from those doctypes' own list views, which had
+# no condition on them at all. Same rule as the Sales Order itself, one level
+# out: you get the document if it is tied to an order you may see, or if you
+# raised it yourself.
+#
+# A document with NO Sales Order line (general stock procurement, say) is
+# deliberately NOT visible to a scoped merchandiser — it is not their work.
+# The owner half is what keeps them able to open whatever they create.
+#
+# {doctype: (child table, the child field naming the Sales Order)}
+SO_LINKED_DOCTYPES = {
+    "Pick List": ("Pick List Item", "sales_order"),
+    "Purchase Order": ("Purchase Order Item", "sales_order"),
+    "Material Request": ("Material Request Item", "sales_order"),
+    "Delivery Note": ("Delivery Note Item", "against_sales_order"),
+    "Sales Invoice": ("Sales Invoice Item", "sales_order"),
+    "Purchase Receipt": ("Purchase Receipt Item", "sales_order"),
+}
+
+
+def _visible_sales_order_clause(user, so_column):
+    """SQL predicate: `so_column` holds a Sales Order this user may see —
+    their customer's, or one they raised. Mirrors
+    get_sales_order_permission_query_conditions exactly, so a document can
+    never be visible through a Sales Order the user cannot open, or hidden
+    for one they can."""
+    esc = frappe.db.escape(user)
+    return """exists (
+        select so.name from `tabSales Order` so
+        left join `tabCustomer` cust on cust.name = so.customer
+        where so.name = {so_col}
+          and (cust.custom_merchandiser_user = {u} or so.owner = {u})
+    )""".format(so_col=so_column, u=esc)
+
+
+def _so_linked_query_conditions(doctype, user=None):
+    from erp_dacsinc_custom.order_flow_api import is_scoped_merchandiser_for_doctype
+
+    user = user or frappe.session.user
+    if not is_scoped_merchandiser_for_doctype(doctype, user):
+        return ""
+
+    child_table, so_field = SO_LINKED_DOCTYPES[doctype]
+    esc = frappe.db.escape(user)
+    return """(exists (
+        select child.name from `tab{child}` child
+        where child.parent = `tab{dt}`.name
+          and ifnull(child.{so_field}, '') != ''
+          and {visible}
+    ) or `tab{dt}`.owner = {u})""".format(
+        child=child_table, dt=doctype, so_field=so_field, u=esc,
+        visible=_visible_sales_order_clause(user, "child.{0}".format(so_field)),
+    )
+
+
+def _so_linked_has_permission(doctype, doc, user=None):
+    from erp_dacsinc_custom.order_flow_api import is_scoped_merchandiser_for_doctype
+
+    user = user or frappe.session.user
+    if not is_scoped_merchandiser_for_doctype(doctype, user):
+        return True
+    if getattr(doc, "owner", None) == user:
+        return True
+
+    child_table, so_field = SO_LINKED_DOCTYPES[doctype]
+    so_names = {
+        (row.get(so_field) if isinstance(row, dict) else getattr(row, so_field, None))
+        for row in (doc.get("items") or [])
+    }
+    so_names = {n for n in so_names if n}
+    if not so_names:
+        return False
+    # One query for every linked order, not one per row.
+    visible = frappe.db.sql("""
+        select so.name from `tabSales Order` so
+        left join `tabCustomer` cust on cust.name = so.customer
+        where so.name in %(names)s
+          and (cust.custom_merchandiser_user = %(user)s or so.owner = %(user)s)
+        limit 1
+    """, {"names": tuple(so_names), "user": user})
+    return bool(visible)
+
+
+def get_pick_list_permission_query_conditions(user=None):
+    return _so_linked_query_conditions("Pick List", user)
+
+
+def has_pick_list_permission(doc, ptype=None, user=None):
+    return _so_linked_has_permission("Pick List", doc, user)
+
+
+def get_purchase_order_permission_query_conditions(user=None):
+    return _so_linked_query_conditions("Purchase Order", user)
+
+
+def has_purchase_order_permission(doc, ptype=None, user=None):
+    return _so_linked_has_permission("Purchase Order", doc, user)
+
+
+def get_material_request_permission_query_conditions(user=None):
+    return _so_linked_query_conditions("Material Request", user)
+
+
+def has_material_request_permission(doc, ptype=None, user=None):
+    return _so_linked_has_permission("Material Request", doc, user)
+
+
+def get_delivery_note_permission_query_conditions(user=None):
+    return _so_linked_query_conditions("Delivery Note", user)
+
+
+def has_delivery_note_permission(doc, ptype=None, user=None):
+    return _so_linked_has_permission("Delivery Note", doc, user)
+
+
+def get_sales_invoice_permission_query_conditions(user=None):
+    return _so_linked_query_conditions("Sales Invoice", user)
+
+
+def has_sales_invoice_permission(doc, ptype=None, user=None):
+    return _so_linked_has_permission("Sales Invoice", doc, user)
+
+
+def get_purchase_receipt_permission_query_conditions(user=None):
+    return _so_linked_query_conditions("Purchase Receipt", user)
+
+
+def has_purchase_receipt_permission(doc, ptype=None, user=None):
+    return _so_linked_has_permission("Purchase Receipt", doc, user)
 
 
 def sales_invoice_validate(doc, method):
