@@ -134,6 +134,27 @@ frappe.listview_settings['Warehouse'] = frappe.listview_settings['Warehouse'] ||
                     label: __("Qty — added for each item in each warehouse"),
                     reqd: 1,
                 },
+                {
+                    // With perpetual inventory ERPNext needs a value for every
+                    // receipt. Items that already have a rate always use it.
+                    fieldname: "no_rate_action",
+                    fieldtype: "Select",
+                    label: __("Items with no valuation rate"),
+                    options: [
+                        { value: "skip", label: __("Skip them (report in the summary)") },
+                        { value: "zero", label: __("Add at zero value") },
+                        { value: "rate", label: __("Add at a rate I enter") },
+                    ],
+                    default: "skip",
+                    description: __("An item has no rate when it has no stock history, no Valuation Rate / Standard Rate and no buying price."),
+                },
+                {
+                    fieldname: "fallback_rate",
+                    fieldtype: "Currency",
+                    label: __("Rate per unit for those items"),
+                    depends_on: "eval:doc.no_rate_action == 'rate'",
+                    mandatory_depends_on: "eval:doc.no_rate_action == 'rate'",
+                },
             ],
             primary_action_label: __("Add Stock"),
             primary_action: (values) => {
@@ -160,7 +181,8 @@ frappe.listview_settings['Warehouse'] = frappe.listview_settings['Warehouse'] ||
                     () => {
                         frappe.call({
                             method: "erp_dacsinc_custom.warehouse_add_stock.add_stock_to_warehouses",
-                            args: { warehouses: warehouses, qty: values.qty, all_items: all_items ? 1 : 0, item_codes: item_codes },
+                            args: { warehouses: warehouses, qty: values.qty, all_items: all_items ? 1 : 0, item_codes: item_codes,
+                                    no_rate_action: values.no_rate_action || "skip", fallback_rate: values.fallback_rate || 0 },
                             freeze: true,
                             freeze_message: __("Starting..."),
                             callback: (r) => {

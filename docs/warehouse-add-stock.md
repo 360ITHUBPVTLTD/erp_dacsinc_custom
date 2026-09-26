@@ -34,10 +34,18 @@ warehouse** for one worker. A run is therefore:
   lane stopped moving for 15 min with no job queued (e.g. a server restart).
 - One run per user at a time. Progress is pushed over realtime; the final
   summary also arrives as a **notification (bell)**, so the page can be closed.
-- Skipped and reported (never silently dropped): variant templates,
-  batch/serial items, disabled / non-stock items, and item+warehouse pairs with
-  no valuation rate when perpetual inventory is on (same rate lookup as
-  ERPNext's `get_valuation_rate`).
+- **Items with no valuation rate** (perpetual inventory is on, so ERPNext needs
+  a value for every receipt; "no rate" = no stock history in that warehouse, no
+  Valuation Rate / Standard Rate on the Item and no buying price — same lookup
+  as ERPNext's `get_valuation_rate`). The dialog asks what to do with them:
+  **Skip them** (reported in the summary), **Add at zero value** (row gets
+  `allow_zero_valuation_rate`), or **Add at a rate I enter** (row gets that
+  `basic_rate` with `set_basic_rate_manually`). Items that have a rate always
+  keep their own. The summary says how many rows went in at zero / at the
+  entered rate. (A live run of 18,258 items once added only 39 because 18,219
+  had no rate and the only behaviour then was Skip.)
+- Always skipped and reported: variant templates, batch/serial items,
+  disabled / non-stock items.
 - All entries of a run share the remark `Bulk Add Stock <run id>`; the summary
   links to that list (e.g. to cancel a run).
 
