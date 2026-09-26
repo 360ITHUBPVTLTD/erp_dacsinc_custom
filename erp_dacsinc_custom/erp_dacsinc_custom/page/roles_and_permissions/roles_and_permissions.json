@@ -1,19 +1,22 @@
 {
  "content": null,
- "creation": "2026-08-26 12:00:00.000000",
+ "creation": "2026-08-26 12:00:00",
  "docstatus": 0,
  "doctype": "Page",
  "idx": 0,
- "modified": "2026-08-26 12:00:00.000000",
+ "modified": "2026-09-22 12:05:33.205030",
  "modified_by": "Administrator",
  "module": "Erp Dacsinc Custom",
  "name": "roles-and-permissions",
  "owner": "Administrator",
  "page_name": "roles-and-permissions",
  "roles": [
-  {"role": "System Manager"},
-  {"role": "Super Admin"},
-  {"role": "Admin"}
+  {
+   "role": "System Manager"
+  },
+  {
+   "role": "Admin"
+  }
  ],
  "script": null,
  "standard": "Yes",
