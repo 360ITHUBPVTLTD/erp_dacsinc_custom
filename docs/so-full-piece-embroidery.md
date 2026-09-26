@@ -18,7 +18,9 @@ least one item can still be sent (or brought back to draft). It opens one
 dialog: per item, the ordered qty, what has already gone out by either
 route, the qty on this order's draft Pick Lists, and the qty that can be
 sent now — each row with its own tick box. The dialog also takes the jobber, notes and
-attachments. It creates one submitted EWO with:
+attachments. The Full Piece Jobber field lists only suppliers with **Is Jobber**
+ticked (`custom_is_jobber`; `create_so_fp_embroidery` refuses any other). It
+creates one submitted EWO with:
 
 - `saels_order_id` = the Sales Order (the fieldname is misspelt on the
   doctype; it is the only Sales Order link the EWO has),
