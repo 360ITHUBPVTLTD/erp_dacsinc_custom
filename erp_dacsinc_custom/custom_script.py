@@ -382,29 +382,35 @@ def update_tax_child(doc):
 
 
 
-
 def update_barcode_child(doc):
     try:
-        # Assuming you have a custom field 'custom_barcode_input' to capture the value
-        # or checking if there's any value in 'barcode' field to append
         barcode_value = doc.get("barcode") or doc.get("custom_barcode")
-        
+        stock_uom = doc.get("stock_uom")
+
         if barcode_value:
-            # Check if this barcode already exists in the child table to avoid duplicates
+            # Check if this barcode already exists
             exists = False
-            for b in doc.get("barcodes"):
+
+            for b in doc.get("barcodes") or []:
                 if b.barcode == barcode_value:
                     exists = True
+
+                    # Update UOM for existing barcode
+                    b.uom = stock_uom
                     break
-            
+
+            # Add new barcode if it does not exist
             if not exists:
-                doc.set("barcodes", [])
                 doc.append("barcodes", {
                     "barcode": barcode_value,
-                    "barcode_type": "CODE-39"
+                    "barcode_type": "CODE-39",
+                    "uom": stock_uom
                 })
+
     except Exception as e:
-        frappe.log_error(f"Error in updating barcodes for {doc.name}: {str(e)}")
+        frappe.log_error(
+            f"Error in updating barcodes for {doc.name}: {str(e)}"
+        )
 import frappe
 
 @frappe.whitelist()
