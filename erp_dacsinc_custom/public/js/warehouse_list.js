@@ -19,16 +19,22 @@ frappe.listview_settings['Warehouse'] = frappe.listview_settings['Warehouse'] ||
             const preselected = (listview.get_checked_items() || [])
                 .filter((d) => !d.is_group)
                 .map((d) => d.name);
-            show_add_stock_dialog(listview, preselected);
+            // A run already going (it can take hours for a large catalogue)
+            // opens its live status instead of a new dialog.
+            frappe.call({ method: "erp_dacsinc_custom.warehouse_add_stock.get_add_stock_status" }).then((r) => {
+                const st = r.message;
+                if (st && (st.status === "running" || st.status === "stopping")) show_status_dialog(listview, st);
+                else show_add_stock_dialog(listview, preselected);
+            });
         });
     };
 
     // The run happens in a background job (warehouse_add_stock.py), which
     // pushes progress and the final summary over realtime. The summary also
     // lands in the notification bell, so closing this page loses nothing.
-    function watch_run(listview, run) {
+    function watch_run(listview, run, quiet) {
         const title = __("Adding Stock");
-        frappe.show_alert({
+        if (!quiet) frappe.show_alert({
             message: __("Add Stock started for {0} item(s) × {1} warehouse(s). You can keep working — you'll get a notification when it finishes.", [
                 run.items, run.warehouses,
             ]),
@@ -48,6 +54,50 @@ frappe.listview_settings['Warehouse'] = frappe.listview_settings['Warehouse'] ||
                 true);
         };
         frappe.realtime.on("dacsinc_add_stock_progress", handler);
+    }
+
+    const fmt_dur = (sec) => {
+        if (sec == null) return "—";
+        const h = Math.floor(sec / 3600), m = Math.floor((sec % 3600) / 60);
+        return h ? `${h} h ${m} min` : `${m} min`;
+    };
+
+    // Live status of a running run: progress, Stop, and Resume for lanes that
+    // stalled (e.g. after a worker restart) — they continue from where they stopped.
+    function show_status_dialog(listview, st) {
+        const d = new frappe.ui.Dialog({ title: __("Add Stock — running"), fields: [{ fieldtype: "HTML", fieldname: "body" }] });
+        const paint = (s) => {
+            const pct = s.total ? Math.round((100 * s.processed) / s.total) : 0;
+            d.fields_dict.body.$wrapper.html(`
+                <div style="font-size:13px;">
+                    <div style="margin-bottom:6px;"><b>${s.status === "stopping" ? __("Stopping…") : __("Running in the background")}</b>
+                        — ${frappe.utils.escape_html(s.warehouses.join(", "))} · ${__("qty")} ${s.qty}</div>
+                    <div style="height:10px; background:#e5e7eb; border-radius:5px; overflow:hidden;">
+                        <div style="height:100%; width:${pct}%; background:#2563eb;"></div></div>
+                    <div style="margin-top:6px;">${__("{0} of {1} items ({2}%) · {3} rows added in {4} Stock Entries", [s.processed, s.total, pct, s.added_rows, s.entries])}</div>
+                    <div class="text-muted">${__("Parallel lanes: {0} ({1} finished) · Time left: about {2}", [s.lanes, s.lanes_done, fmt_dur(s.eta_seconds)])}</div>
+                    ${s.failed_rows ? `<div style="color:#b91c1c;">${__("{0} rows failed — details in the final summary", [s.failed_rows])}</div>` : ""}
+                    ${s.stalled_lanes.length ? `<div style="color:#b45309; margin-top:6px;">${__("{0} lane(s) stopped moving (e.g. a server restart). Resume continues them from where they stopped — nothing is added twice.", [s.stalled_lanes.length])}</div>` : ""}
+                    <div style="margin-top:10px; display:flex; gap:8px;">
+                        ${s.stalled_lanes.length ? `<button class="btn btn-primary btn-sm wh-resume">${__("Resume")}</button>` : ""}
+                        ${s.status === "running" ? `<button class="btn btn-default btn-sm wh-stop">${__("Stop")}</button>` : ""}
+                        <button class="btn btn-default btn-sm wh-refresh">${__("Refresh")}</button>
+                    </div>
+                    <div class="text-muted" style="margin-top:8px; font-size:12px;">${__("You can close this — you'll get a notification (bell) when it finishes.")}</div>
+                </div>`);
+        };
+        const reload = () => frappe.call({ method: "erp_dacsinc_custom.warehouse_add_stock.get_add_stock_status" })
+            .then((r) => { if (r.message) paint(r.message); });
+        d.$wrapper.on("click", ".wh-refresh", reload);
+        d.$wrapper.on("click", ".wh-stop", () => frappe.confirm(__("Stop after the Stock Entry in progress? Everything added so far stays."), () =>
+            frappe.call({ method: "erp_dacsinc_custom.warehouse_add_stock.stop_add_stock", args: { run_id: st.run_id } })
+                .then((r) => r.message && paint(r.message))));
+        d.$wrapper.on("click", ".wh-resume", () =>
+            frappe.call({ method: "erp_dacsinc_custom.warehouse_add_stock.resume_add_stock", args: { run_id: st.run_id } })
+                .then((r) => { frappe.show_alert({ message: __("Resumed {0} lane(s)", [r.message.resumed]), indicator: "green" }); paint(r.message); }));
+        paint(st);
+        d.show();
+        watch_run(listview, { run_id: st.run_id, items: st.total, warehouses: st.warehouses.length }, true);
     }
 
     function show_add_stock_dialog(listview, preselected) {
