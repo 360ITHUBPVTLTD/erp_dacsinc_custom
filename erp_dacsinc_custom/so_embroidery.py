@@ -412,8 +412,8 @@ def _so_fp_rows(sales_order):
         draft_qty = flt(sum(src["qty"] for src in draft_sources), 3)
         sendable = flt(min(remaining, draft_qty), 3)
         submitted = _submitted_pick_lists_for(sales_order, item_code)
-        history = [_trip(r, flt(r.ordered_qty), flt(r.received_qty))
-                   for r in _so_direct_ewo_rows(sales_order=sales_order, item_code=item_code)]
+        history = _with_attachments([_trip(r, flt(r.ordered_qty), flt(r.received_qty))
+                                     for r in _so_direct_ewo_rows(sales_order=sales_order, item_code=item_code)])
         rows.append({
             "item_code": item_code,
             "item_name": names.get(item_code) or item_code,
@@ -700,6 +700,7 @@ def embroidery_history_for_pick_lists(pick_lists):
             left = max(0.0, left - claimed)
             if src.get("pick_list") in wanted:
                 out[src["pick_list"]].append(_trip(r, claimed, got))
+    _with_attachments([t for trips in out.values() for t in trips])
     return dict(out)
 
 
@@ -715,6 +716,7 @@ def embroidery_history_by_item(sales_order):
     out = defaultdict(list)
     for r in _so_direct_ewo_rows(sales_order=sales_order):
         out[r.item_code].append(_trip(r, flt(r.ordered_qty), flt(r.received_qty)))
+    _with_attachments([t for trips in out.values() for t in trips])
     return dict(out)
 
 
@@ -779,3 +781,35 @@ def guard_linked_embroidery(doc, method=None):
             "Cancel that Embroidery Work Order first."
         ).format(_(doc.doctype), doc.name, _("deleted") if method == "on_trash" else _("cancelled"), ", ".join(ewos)),
             title=_("Linked Embroidery Work Order"))
+
+
+
+_IMAGE_EXT = (".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp", ".svg", ".heic")
+
+
+def ewo_attachments(ewo_names):
+    """{ewo: [{"file_url", "file_name", "is_image"}]} — every file attached to
+    each Embroidery Work Order (design images, dispatch photos), oldest first.
+    Shown as thumbnails wherever the EWO appears on the dashboard."""
+    names = [n for n in set(ewo_names or []) if n]
+    if not names:
+        return {}
+    out = defaultdict(list)
+    for f in frappe.get_all("File", filters={"attached_to_doctype": "Embroidery Work Order",
+                                            "attached_to_name": ["in", names], "is_folder": 0},
+                            fields=["attached_to_name", "file_url", "file_name"], order_by="creation asc"):
+        if not f.file_url:
+            continue
+        out[f.attached_to_name].append({
+            "file_url": f.file_url, "file_name": f.file_name or f.file_url.rsplit("/", 1)[-1],
+            "is_image": (f.file_url or "").lower().endswith(_IMAGE_EXT),
+        })
+    return dict(out)
+
+
+def _with_attachments(trips):
+    """Adds `attachments` to each embroidery trip (one query for all)."""
+    files = ewo_attachments([t["ewo"] for t in trips])
+    for t in trips:
+        t["attachments"] = files.get(t["ewo"], [])
+    return trips

@@ -1276,7 +1276,7 @@ function generate_stock_overview_table(frm, callback) {
                         // Covered only because the rest is out being
                         // embroidered — there is no Pick List to open yet.
                         status_html = so_pill('wait', 'magic', 'At Embroidery');
-                        action_parts.push(so_cmd_btn(`so_open_doc('Embroidery Work Order','${js_str(emb_ewo.name)}')`,
+                        action_parts.push(so_cmd_btn(`so_show_embroidery_history('${so_nm}','${ic_arg}')`,
                             'external-link', 'Track Embroidery', true));
                     } else if (pl) {
                         action_parts.push(so_cmd_btn(`so_open_doc('Pick List','${js_str(pl)}')`, 'external-link', 'Open Pick List', true));
@@ -4991,6 +4991,11 @@ function doctype_route(doctype) {
 // Use for transactions (PO / Pick List / Delivery Note / Receipt …).
 function link_id_name(doctype, id, title) {
     if (!id) return em_dash();
+    // Embroidery Work Orders are internal: shown by number, never linked.
+    if (doctype === 'Embroidery Work Order') {
+        const show_t = title && String(title).trim() && String(title).trim() !== String(id).trim();
+        return `<b>${esc(id)}</b>` + (show_t ? `<div class="so-micro so-truncate" title="${esc(title)}">${esc(title)}</div>` : '');
+    }
     const url = `/app/${doctype_route(doctype)}/${encodeURIComponent(id)}`;
     const show = title && String(title).trim() && String(title).trim() !== String(id).trim();
     return `<a class="so-link" href="${url}" target="_blank" title="${esc(doctype)}: ${esc(id)}">${esc(id)}</a>`
@@ -5085,9 +5090,10 @@ function so_embroidery_history_html(hist) {
         ? `<span class="so-chip" style="background:#f3e8ff; color:#6b21a8; font-weight:600;"><i class="fa fa-magic"></i> Embroidery: sent ${f(sent)} · back ${f(back)} · ${f(out)} at jobber</span>`
         : `<span class="so-chip" style="background:#dcfce7; color:#166534; font-weight:600;"><i class="fa fa-check"></i> Embroidery: sent ${f(sent)} · all back</span>`;
     const lines = hist.map(t => `<div class="so-micro" style="margin-top:2px;">
-            <a href="/app/embroidery-work-order/${encodeURIComponent(t.ewo)}" target="_blank">${esc(t.ewo)}</a>
+            <b>${esc(t.ewo)}</b>
             ${t.date ? esc(frappe.datetime.str_to_user(t.date)) : ''}${t.jobber ? ` · ${esc(t.jobber)}` : ''}:
             sent ${f(t.sent)} → back ${f(t.received)}${flt(t.at_jobber) > 0.001 ? ` <b style="color:#6b21a8;">(${f(t.at_jobber)} at jobber)</b>` : ' ✓'}
+            ${so_ewo_thumbs(t.attachments, t.ewo)}
         </div>`).join('');
     return `<div style="margin-top:4px;">${flag}${lines}</div>`;
 }
@@ -5138,7 +5144,7 @@ function so_embroidery_trips_section(d, item_code) {
     const all = hist.map(t => t.ewo);
     const rows = hist.map(t => `
         <tr>
-            <td>${link_id_name('Embroidery Work Order', t.ewo)}</td>
+            <td>${link_id_name('Embroidery Work Order', t.ewo)}${so_ewo_thumbs(t.attachments, t.ewo)}</td>
             <td class="so-meta">${t.jobber ? esc(t.jobber) : em_dash()}</td>
             <td class="so-meta">${t.date ? fmt_date(t.date) : em_dash()}</td>
             <td>${so_qty(t.sent)}</td>
@@ -5177,8 +5183,9 @@ window.so_show_embroidery_history = function (sales_order, item_code) {
         const f = (n) => flt(n, 2).toFixed(2).replace(/\.00$/, '');
         const rows = hist.map((t, i) => `
             <tr>
-                <td><a href="/app/embroidery-work-order/${encodeURIComponent(t.ewo)}" target="_blank"><b>${esc(t.ewo)}</b></a>
-                    <div class="so-micro">${t.date ? esc(frappe.datetime.str_to_user(t.date)) : ''}${t.jobber ? ' · ' + esc(t.jobber) : ''}</div></td>
+                <td><b>${esc(t.ewo)}</b>
+                    <div class="so-micro">${t.date ? esc(frappe.datetime.str_to_user(t.date)) : ''}${t.jobber ? ' · ' + esc(t.jobber) : ''}</div>
+                    ${so_ewo_thumbs(t.attachments, t.ewo)}</td>
                 <td class="text-right">${f(t.sent)}</td>
                 <td class="text-right">${f(t.received)}</td>
                 <td class="text-right" style="font-weight:700; color:${flt(t.at_jobber) > 0.001 ? '#6b21a8' : '#166534'};">${f(t.at_jobber)}</td>
@@ -6230,6 +6237,94 @@ window.so_show_order_status = function (sales_order) {
                 <table class="table table-sm table-bordered" style="font-size:12px;">
                     <thead><tr class="bg-light"><th>${__('Item')}</th><th class="text-right">${__('Ordered')}</th><th>${__('Progress')}</th><th>${__('Where it is now')}</th></tr></thead>
                     <tbody>${rows}</tbody></table>` }]
+        });
+        d.show();
+    });
+};
+
+// Attached images / files of an Embroidery Work Order, as thumbnails:
+// up to 4 small squares (click = full size in a popup), "+N" for more,
+// a paper-clip + name for non-image files. Data: so_embroidery.ewo_attachments.
+function so_ewo_thumbs(atts, ewo) {
+    atts = atts || [];
+    if (!atts.length) return '';
+    const e = (v) => frappe.utils.escape_html(v == null ? '' : String(v));
+    const shown = atts.slice(0, 4);
+    const more = atts.length - shown.length;
+    return `<div class="ewo-thumbs" style="display:flex; flex-wrap:wrap; gap:4px; margin-top:4px; align-items:center;">
+        ${shown.map(a => a.is_image
+            ? `<a href="#" onclick="so_view_attachment('${encodeURI(a.file_url)}', '${e(ewo || '').replace(/'/g, "&#39;")}'); return false;"
+                  title="${e(a.file_name)}" style="display:inline-block; width:32px; height:32px; border:1px solid var(--border-color, #d1d8dd); border-radius:4px; overflow:hidden; background:#fff;">
+                   <img src="${encodeURI(a.file_url)}" loading="lazy" style="width:100%; height:100%; object-fit:cover; display:block;"></a>`
+            : `<a href="${encodeURI(a.file_url)}" target="_blank" title="${e(a.file_name)}" style="font-size:11px; max-width:120px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">📎 ${e(a.file_name)}</a>`).join('')}
+        ${more > 0 ? `<a href="#" data-atts="${encodeURIComponent(JSON.stringify(atts))}" onclick="so_ewo_gallery(this, '${e(ewo || '').replace(/'/g, "&#39;")}'); return false;" style="font-size:11px; font-weight:600;" title="${__('See all attachments')}">+${more}</a>` : ''}
+    </div>`;
+}
+window.so_view_attachment = function (url, ewo) {
+    const d = new frappe.ui.Dialog({
+        title: ewo ? __('Embroidery — {0}', [ewo]) : __('Attachment'),
+        size: 'large',
+        fields: [{ fieldtype: 'HTML', options: `<div style="text-align:center;">
+            <img src="${url}" style="max-width:100%; max-height:70vh; border-radius:4px;">
+            <div style="margin-top:8px;"><a href="${url}" target="_blank"><i class="fa fa-external-link"></i> ${__('Open in new tab')}</a></div></div>` }]
+    });
+    d.show();
+};
+window.so_ewo_thumbs = so_ewo_thumbs;
+
+// All attachments of one work order in a popup (the "+N" on the thumbnails).
+window.so_ewo_gallery = function (el, ewo) {
+    let atts = [];
+    try { atts = JSON.parse(decodeURIComponent(el.getAttribute('data-atts') || '[]')); } catch (e) { atts = []; }
+    const e = (v) => frappe.utils.escape_html(v == null ? '' : String(v));
+    const d = new frappe.ui.Dialog({
+        title: ewo ? __('Embroidery — {0}', [ewo]) : __('Attachments'),
+        size: 'large',
+        fields: [{ fieldtype: 'HTML', options: `<div style="display:flex; flex-wrap:wrap; gap:10px;">${atts.map(a => a.is_image
+            ? `<a href="${encodeURI(a.file_url)}" target="_blank" title="${e(a.file_name)}"><img src="${encodeURI(a.file_url)}" style="width:160px; height:160px; object-fit:cover; border:1px solid #d1d8dd; border-radius:6px;"></a>`
+            : `<a href="${encodeURI(a.file_url)}" target="_blank">📎 ${e(a.file_name)}</a>`).join('')}</div>` }]
+    });
+    d.show();
+};
+
+
+/**
+ * Every embroidery trip of one Sales Order, all items together — what the
+ * Sales Tracker opens for "Track Embroidery" / the Job count, instead of the
+ * Embroidery Work Order form (kept internal). Receive, Print and images per
+ * trip, like the per-item history.
+ */
+window.so_show_so_embroidery = function (sales_order) {
+    frappe.call({
+        method: 'erp_dacsinc_custom.so_embroidery.get_so_fp_embroidery_items',
+        args: { sales_order: sales_order }, freeze: true
+    }).then(r => {
+        const items = ((r.message || {}).items || []).filter(it => (it.embroidery_history || []).length);
+        const f = (n) => flt(n, 2).toFixed(2).replace(/\.00$/, '');
+        const trips = [];
+        items.forEach(it => (it.embroidery_history || []).forEach(t => trips.push({ ...t, item_code: it.item_code })));
+        const rows = trips.map(t => `
+            <tr>
+                <td><b>${esc(t.item_code)}</b></td>
+                <td><b>${esc(t.ewo)}</b><div class="so-micro">${t.date ? esc(frappe.datetime.str_to_user(t.date)) : ''}${t.jobber ? ' · ' + esc(t.jobber) : ''}</div>
+                    ${so_ewo_thumbs(t.attachments, t.ewo)}</td>
+                <td class="text-right">${f(t.sent)}</td><td class="text-right">${f(t.received)}</td>
+                <td class="text-right" style="font-weight:700; color:${flt(t.at_jobber) > 0.001 ? '#6b21a8' : '#166534'};">${f(t.at_jobber)}</td>
+                <td style="white-space:nowrap;">${flt(t.at_jobber) > 0.001
+                    ? `<button class="so-btn so-btn--primary" onclick="so_receive_embroidery('${js_str(t.ewo)}','${js_str(t.ewo_item || '')}',${flt(t.at_jobber)},'${js_str(sales_order)}')"><i class="fa fa-download"></i> ${__('Receive')}</button>`
+                    : `<span class="so-pill so-pill--ready"><i class="fa fa-check"></i> ${__('All back')}</span>`}
+                    <button class="so-btn" onclick="so_print_ewo('${js_str(t.ewo)}')"><i class="fa fa-print"></i></button></td>
+            </tr>`).join('');
+        const d = new frappe.ui.Dialog({
+            title: __('Embroidery — {0}', [sales_order]),
+            size: 'extra-large',
+            fields: [{ fieldtype: 'HTML', options: trips.length ? `
+                <div style="text-align:right; margin-bottom:6px;">
+                    <button class="so-btn" onclick='so_print_ewo(${JSON.stringify([...new Set(trips.map(t => t.ewo))]).replace(/'/g, "&#39;")})'><i class="fa fa-print"></i> ${__('Print All')}</button></div>
+                <table class="table table-sm table-bordered" style="font-size:12px;">
+                    <thead><tr class="bg-light"><th>${__('Item')}</th><th>${__('Work Order')}</th><th class="text-right">${__('Sent')}</th>
+                        <th class="text-right">${__('Received')}</th><th class="text-right">${__('At Jobber')}</th><th>${__('Action')}</th></tr></thead>
+                    <tbody>${rows}</tbody></table>` : `<div class="text-muted">${__('Nothing sent for embroidery from this order yet.')}</div>` }]
         });
         d.show();
     });

@@ -50,8 +50,10 @@ frappe.ui.form.on("Pick List", {
             const hist = st.history || [];
             const esc = frappe.utils.escape_html;
             const held = flt(st.hold_qty);
-            const lines = hist.map(t => `${frappe.utils.get_form_link("Embroidery Work Order", t.ewo, true)}${t.jobber ? " · " + esc(t.jobber) : ""}: `
-                + __("sent {0} → back {1}", [t.sent, t.received]) + (flt(t.at_jobber) > 0.001 ? ` <b>(${t.at_jobber} ${__("at jobber")})</b>` : " ✓")).join("<br>");
+            const thumbs = (t) => (t.attachments || []).filter(a => a.is_image).slice(0, 4).map(a =>
+                `<a href="${encodeURI(a.file_url)}" target="_blank" title="${esc(a.file_name)}"><img src="${encodeURI(a.file_url)}" style="width:28px; height:28px; object-fit:cover; border:1px solid #d1d8dd; border-radius:3px; vertical-align:middle; margin-left:4px;"></a>`).join("");
+            const lines = hist.map(t => `<b>${esc(t.ewo)}</b>${t.jobber ? " · " + esc(t.jobber) : ""}: `
+                + __("sent {0} → back {1}", [t.sent, t.received]) + (flt(t.at_jobber) > 0.001 ? ` <b>(${t.at_jobber} ${__("at jobber")})</b>` : " ✓") + thumbs(t)).join("<br>");
 
             if (held > 0.001) {
                 frm.page.set_indicator(__("At Jobber"), "purple");

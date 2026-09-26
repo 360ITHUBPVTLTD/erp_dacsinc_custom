@@ -1048,6 +1048,9 @@ class OrderFlow {
                         });
                     });
                 });
+            } else if (action === 'open_doc' && doctype === 'Embroidery Work Order' && so) {
+                // Internal document — show the order's embroidery instead of its form.
+                frappe.require('/assets/erp_dacsinc_custom/js/sales_order.js', () => window.so_show_so_embroidery(so));
             } else if (action === 'open_doc' && target && doctype) {
                 // Opens an EXISTING document (the Next Action button for most
                 // tracker stages) — a document link like any other on this
@@ -1555,6 +1558,17 @@ class OrderFlow {
             }
             
             if (!docs.length) return;
+
+            // Embroidery Work Orders are internal: the order's Embroidery popup
+            // stands in for them; every other document opens as before.
+            const so_of_row = element.closest('tr[data-so]').attr('data-so');
+            if (docs.some(d => d.doctype === 'Embroidery Work Order') && so_of_row) {
+                docs = docs.filter(d => d.doctype !== 'Embroidery Work Order');
+                if (!docs.length) {
+                    frappe.require('/assets/erp_dacsinc_custom/js/sales_order.js', () => window.so_show_so_embroidery(so_of_row));
+                    return;
+                }
+            }
 
             // Every document reference on this dashboard opens in a new tab
             // rather than navigating away from it — same as every plain <a>
@@ -3875,8 +3889,9 @@ class OrderFlow {
     // Order; its receive step is the same. `view_only` (a scoped
     // Merchandiser User on the Sales Tracker) gets the link, not the actions.
     ewo_rows_html(list, view_only) {
-        const ewo_track_link = (name) => `<a class="of-btn" href="/app/embroidery-work-order/${encodeURIComponent(name)}" target="_blank" title="Open the Embroidery Work Order">
-            <i class="fa fa-external-link"></i></a>`;
+        // Embroidery Work Orders are internal — no link to the form; the
+        // row's order opens the order-level Embroidery popup instead.
+        const ewo_track_link = (name) => '';
 
         return (list || []).map(e => {
             const stage = e.work_type === 'Full Piece Job Work' ? e.full_piece_stage : e.panel_stage;
@@ -3904,8 +3919,9 @@ class OrderFlow {
 
             return `<tr class="of-ewo-row" data-ewo="${of_esc(e.name)}">
                 <td><i class="fa fa-caret-right of-ewo-items-toggle" data-ewo="${of_esc(e.name)}" style="cursor:pointer;margin-right:4px;color:var(--text-light);"></i>
-                    <a href="/app/embroidery-work-order/${encodeURIComponent(e.name)}" target="_blank" style="font-weight:700;">${of_esc(e.name)}</a>
+                    <b>${of_esc(e.name)}</b>
                     <div class="of-micro">${of_esc(e.work_type || '')}</div>
+                    ${of_ewo_thumbs(e.attachments, e.name)}
                     ${of_creator_html(e)}</td>
                 <td style="text-align:left;">
                     ${jobber_id ? `
@@ -6138,8 +6154,54 @@ function of_embroidery_history_html(hist) {
         ? `<span class="of-chip" style="background:#f3e8ff;color:#6b21a8;font-weight:600;"><i class="fa fa-magic"></i> ${__('Embroidery: sent {0} · back {1} · {2} at jobber', [of_round2(sent), of_round2(back), of_round2(out)])}</span>`
         : `<span class="of-chip" style="background:#dcfce7;color:#166534;font-weight:600;"><i class="fa fa-check"></i> ${__('Embroidery: sent {0} · all back', [of_round2(sent)])}</span>`;
     const lines = hist.map(t => `<div class="of-micro" style="margin-top:2px;">
-            <a href="/app/embroidery-work-order/${encodeURIComponent(t.ewo)}" target="_blank">${of_esc(t.ewo)}</a>
+            <b>${of_esc(t.ewo)}</b>
             ${t.jobber ? ` · ${of_esc(t.jobber)}` : ''}: ${__('sent')} ${of_round2(t.sent)} → ${__('back')} ${of_round2(t.received)}${flt_of(t.at_jobber) > 0.001 ? ` <b style="color:#6b21a8;">(${of_round2(t.at_jobber)} ${__('at jobber')})</b>` : ' ✓'}
+            ${of_ewo_thumbs(t.attachments, t.ewo)}
         </div>`).join('');
     return `<div style="margin-top:4px;">${flag}${lines}</div>`;
 }
+
+// Attached images / files of an Embroidery Work Order, as thumbnails:
+// up to 4 small squares (click = full size in a popup), "+N" for more,
+// a paper-clip + name for non-image files. Data: so_embroidery.ewo_attachments.
+function of_ewo_thumbs(atts, ewo) {
+    atts = atts || [];
+    if (!atts.length) return '';
+    const e = (v) => frappe.utils.escape_html(v == null ? '' : String(v));
+    const shown = atts.slice(0, 4);
+    const more = atts.length - shown.length;
+    return `<div class="ewo-thumbs" style="display:flex; flex-wrap:wrap; gap:4px; margin-top:4px; align-items:center;">
+        ${shown.map(a => a.is_image
+            ? `<a href="#" onclick="of_view_attachment('${encodeURI(a.file_url)}', '${e(ewo || '').replace(/'/g, "&#39;")}'); return false;"
+                  title="${e(a.file_name)}" style="display:inline-block; width:32px; height:32px; border:1px solid var(--border-color, #d1d8dd); border-radius:4px; overflow:hidden; background:#fff;">
+                   <img src="${encodeURI(a.file_url)}" loading="lazy" style="width:100%; height:100%; object-fit:cover; display:block;"></a>`
+            : `<a href="${encodeURI(a.file_url)}" target="_blank" title="${e(a.file_name)}" style="font-size:11px; max-width:120px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">📎 ${e(a.file_name)}</a>`).join('')}
+        ${more > 0 ? `<a href="#" data-atts="${encodeURIComponent(JSON.stringify(atts))}" onclick="of_ewo_gallery(this, '${e(ewo || '').replace(/'/g, "&#39;")}'); return false;" style="font-size:11px; font-weight:600;" title="${__('See all attachments')}">+${more}</a>` : ''}
+    </div>`;
+}
+window.of_view_attachment = function (url, ewo) {
+    const d = new frappe.ui.Dialog({
+        title: ewo ? __('Embroidery — {0}', [ewo]) : __('Attachment'),
+        size: 'large',
+        fields: [{ fieldtype: 'HTML', options: `<div style="text-align:center;">
+            <img src="${url}" style="max-width:100%; max-height:70vh; border-radius:4px;">
+            <div style="margin-top:8px;"><a href="${url}" target="_blank"><i class="fa fa-external-link"></i> ${__('Open in new tab')}</a></div></div>` }]
+    });
+    d.show();
+};
+window.of_ewo_thumbs = of_ewo_thumbs;
+
+// All attachments of one work order in a popup (the "+N" on the thumbnails).
+window.of_ewo_gallery = function (el, ewo) {
+    let atts = [];
+    try { atts = JSON.parse(decodeURIComponent(el.getAttribute('data-atts') || '[]')); } catch (e) { atts = []; }
+    const e = (v) => frappe.utils.escape_html(v == null ? '' : String(v));
+    const d = new frappe.ui.Dialog({
+        title: ewo ? __('Embroidery — {0}', [ewo]) : __('Attachments'),
+        size: 'large',
+        fields: [{ fieldtype: 'HTML', options: `<div style="display:flex; flex-wrap:wrap; gap:10px;">${atts.map(a => a.is_image
+            ? `<a href="${encodeURI(a.file_url)}" target="_blank" title="${e(a.file_name)}"><img src="${encodeURI(a.file_url)}" style="width:160px; height:160px; object-fit:cover; border:1px solid #d1d8dd; border-radius:6px;"></a>`
+            : `<a href="${encodeURI(a.file_url)}" target="_blank">📎 ${e(a.file_name)}</a>`).join('')}</div>` }]
+    });
+    d.show();
+};

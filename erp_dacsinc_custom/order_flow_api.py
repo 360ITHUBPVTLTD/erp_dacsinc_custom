@@ -3136,6 +3136,11 @@ def _ewo_lists(days=180, search=None, scope="open", scope_tab="jobwork",
         counts = _docstatus_pill_counts([("ewo.name", "ewo.docstatus", _EWO_FROM_JOIN, wt_conditions)], wt_params)
         env = _paged_query(_sql(_with_docstatus(wt_conditions, "ewo.docstatus", docstatus)), wt_params, page, page_size)
         env["docstatus_counts"] = counts
+        # Attached images / files per work order — thumbnails in the row.
+        from erp_dacsinc_custom.so_embroidery import ewo_attachments
+        files = ewo_attachments([r["name"] for r in env.get("rows") or []])
+        for r in env.get("rows") or []:
+            r["attachments"] = files.get(r["name"], [])
         out[key] = env
 
     out["active_count"] = cint(frappe.db.sql(f"""
