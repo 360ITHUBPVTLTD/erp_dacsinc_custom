@@ -853,7 +853,7 @@ function show_po_full_piece_dashboard(frm) {
                 }
 
                 return `<tr>
-                        <td><a href="/app/embroidery-work-order/${doc.name}" target="_blank"><b>${doc.name}</b></a><br><small>${frappe.datetime.str_to_user(doc.date)}</small></td>
+                        <td><b>${doc.name}</b><br><small>${frappe.datetime.str_to_user(doc.date)}</small></td>
                         <td>${doc.full_piece_jobber_name}</td>
                         <td>
                             ${doc.details_html}
@@ -1173,7 +1173,7 @@ function show_panel_process_dashboard(frm) {
                 else if (doc.panel_stage === 'Received from Panel Jobber') { label = 'Return / Close'; cls = 'step-4'; }
 
                 return `<tr>
-                                <td><a href="/app/embroidery-work-order/${doc.name}" target="_blank"><b>${doc.name}</b></a><br><small class="text-muted">${frappe.datetime.str_to_user(doc.date)}</small></td>
+                                <td><b>${doc.name}</b><br><small class="text-muted">${frappe.datetime.str_to_user(doc.date)}</small></td>
                                 <td>${doc.panel_jobber_name}</td>
                                 <td>${doc.details_html}  ${image_html} </td>
                                 <td><span class="badge badge-info">${doc.panel_stage}</span></td>
@@ -3089,7 +3089,10 @@ function render_linked_docs_html(frm, docs) {
             rowsData.forEach(doc => {
                 let badge = (doc.custom_extra_fg_collect_from_jobbers || doc.is_extra) ? `<span class="badge-extra">Extra</span>` : "";
                 const docTypeSlug = frappe.router.slug(conf.doctype);
-                let col1 = `<a href="/app/${docTypeSlug}/${doc.name}" class="sc-link" target="_blank">${doc.name}</a>${badge}`;
+                // Embroidery Work Orders are internal — number only, no link.
+                let col1 = (conf.doctype === "Embroidery Work Order"
+                    ? `<b>${doc.name}</b>`
+                    : `<a href="/app/${docTypeSlug}/${doc.name}" class="sc-link" target="_blank">${doc.name}</a>`) + badge;
 
                 let middleCols = "";
                 columns[key].slice(1).forEach(col => {

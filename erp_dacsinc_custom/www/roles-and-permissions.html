@@ -130,6 +130,117 @@
     .topbar nav { display: none; }
   }
 
+  /* ── Tab permission worksheet (printable) ─────────────────── */
+  .btn-print {
+    display: inline-flex; align-items: center; gap: 8px; margin-top: 18px;
+    padding: 11px 18px; border-radius: 6px; border: 0; cursor: pointer;
+    background: var(--indigo); color: #fbfaf7;
+    font-family: "IBM Plex Mono", monospace; font-size: 13px; font-weight: 600;
+  }
+  .btn-print:hover { opacity: .88; }
+  a.btn-print { text-decoration: none; }
+  .btn-row { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 18px; }
+  .btn-row .btn-print { margin-top: 0; }
+  .btn-print.is-outline { background: transparent !important; border: 1.5px solid currentColor; }
+  .ws-legend { display: flex; flex-wrap: wrap; gap: 18px; font-size: 13px; color: var(--ink-soft); margin: 0 0 12px; }
+  .ws-legend b { color: var(--ink); }
+  .ws-box { display: inline-block; width: 13px; height: 13px; border: 1.4px solid var(--ink-soft); border-radius: 2px; vertical-align: middle; }
+  table.ws { border-collapse: collapse; width: 100%; font-size: 12px; background: var(--surface); }
+  table.ws th, table.ws td { border: 1px solid var(--line); padding: 4px 5px; }
+  table.ws thead th { background: var(--paper); font-weight: 600; vertical-align: bottom; }
+  table.ws th.role { width: 26px; height: 150px; padding: 4px 2px; }
+  table.ws th.role span {
+    writing-mode: vertical-rl; transform: rotate(180deg); white-space: nowrap;
+    display: inline-block; font-size: 11.5px; line-height: 1.1;
+  }
+  table.ws th.role span small { font-weight: 400; color: var(--clay); }
+  table.ws td.cell { text-align: center; }
+  table.ws tr.tab td { background: var(--indigo-soft); font-weight: 700; color: var(--ink); }
+  table.ws tr.tab td.label { font-size: 12.5px; }
+  table.ws tr.sub td.label { padding-left: 20px; color: var(--ink-soft); }
+  table.ws tr.sub td.label::before { content: "↳ "; color: var(--line); }
+  table.ws td.label { white-space: nowrap; }
+  table.ws td.notes { min-width: 90px; }
+  .ws-sign { display: grid; grid-template-columns: repeat(3, 1fr); gap: 24px; margin-top: 26px; font-size: 13px; }
+  .ws-sign div { border-top: 1px solid var(--ink-soft); padding-top: 6px; color: var(--ink-soft); }
+  .ws-print-head { display: none; }
+
+  /* ── Document access worksheet (one grid, small tick boxes per cell) ── */
+  .dt-legend { display: flex; flex-wrap: wrap; gap: 6px 18px; font-size: 13px; color: var(--ink-soft); margin: 0 0 12px; }
+  .dt-legend b { display: inline-block; min-width: 16px; text-align: center; color: #fff; background: var(--clay); border-radius: 3px; margin-right: 3px; }
+  table.dtm td.mcell { padding: 2px 3px; }
+  table.dtm .mini { display: grid; grid-template-columns: repeat(3, 14px); gap: 3px; justify-content: center; }
+  table.dtm .mini b {
+    display: flex; align-items: center; justify-content: center;
+    width: 14px; height: 14px; border: 1.8px solid #000; border-radius: 2px;
+    font-size: 9.5px; font-weight: 900; color: #000; line-height: 1; font-family: Arial, Helvetica, sans-serif;
+  }
+  table.dtm .mini b.own { border-color: #8a3b0f; color: #8a3b0f; }
+  table.dtm .mini b.off { border: 1px dashed #666; background: repeating-linear-gradient(45deg, #bbb, #bbb 2px, transparent 2px, transparent 4px); }
+  table.dtm td.label { font-size: 12px; }
+  table.dtm tr.tab td { font-size: 12px; }
+
+  @media print {
+    body.dt-printing .topbar, body.dt-printing header.masthead,
+    body.dt-printing section.block:not(#doctype-permissions) { display: none !important; }
+    body.dt-printing #doctype-permissions > h2, body.dt-printing #doctype-permissions .block-intro,
+    body.dt-printing #doctype-permissions .btn-print, body.dt-printing #doctype-permissions .btn-row { display: none; }
+    body.dt-printing .dt-print-head { display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 6px; }
+    body.dt-printing .page { padding: 0; }
+    body.dt-printing .table-wrap { border: 0; overflow: visible; }
+    body.dt-printing .dt-legend { font-size: 10px; margin-bottom: 5px; }
+    body.dt-printing .dt-legend b, body.dt-printing table.ws tr.tab td { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+    body.dt-printing table.ws { font-size: 10px; background: #fff; }
+    body.dt-printing table.ws th, body.dt-printing table.ws td { padding: 2px 3px; }
+    body.dt-printing table.ws th.role { height: 112px; width: 52px; }
+    body.dt-printing table.dtm td.mcell { padding: 3px 2px; }
+    body.dt-printing table.dtm .mini b { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+    body.dt-printing table.ws th.role span { font-size: 9.5px; }
+    body.dt-printing table.dtm td.label { font-size: 10px; }
+    body.dt-printing table.ws tbody { break-inside: avoid; page-break-inside: avoid; }
+    body.dt-printing table.ws thead { display: table-header-group; }
+    body.dt-printing table.ws tr.tab td { background: #e7eaf2 !important; }
+    body.dt-printing .ws-sign { margin-top: 12px; font-size: 11px; break-inside: avoid; }
+  }
+
+  /* Print: everything black and bold so it reads clearly on paper. */
+  @media print {
+    body.ws-printing, body.dt-printing { color: #000; }
+    body.ws-printing table.ws th, body.ws-printing table.ws td,
+    body.dt-printing table.ws th, body.dt-printing table.ws td { border-color: #555 !important; color: #000; }
+    body.ws-printing table.ws th.role span, body.dt-printing table.ws th.role span { font-weight: 800; color: #000; }
+    body.ws-printing table.ws tr.sub td.label, body.dt-printing table.ws tr.sub td.label { color: #000; font-weight: 700; }
+    body.ws-printing table.ws tr.sub td.label::before, body.dt-printing table.ws tr.sub td.label::before { color: #555; }
+    body.ws-printing table.ws tr.tab td, body.dt-printing table.ws tr.tab td { font-weight: 900; color: #000; background: #d5dbe8 !important; }
+    body.ws-printing .ws-legend, body.dt-printing .dt-legend, body.ws-printing .ws-legend b, body.dt-printing .dt-legend small { color: #000; font-weight: 700; }
+    body.ws-printing .ws-box { border: 1.8px solid #000; }
+    body.ws-printing .ws-print-head, body.dt-printing .dt-print-head { color: #000; }
+    body.ws-printing .ws-print-head div div, body.dt-printing .dt-print-head div div { color: #000 !important; font-weight: 600; }
+    body.ws-printing .ws-sign div, body.dt-printing .ws-sign div { color: #000; border-top: 1.5px solid #000; font-weight: 700; }
+    body.ws-printing th.role span small, body.dt-printing th.role span small { color: #8a3b0f; font-weight: 700; }
+    body.dt-printing .dt-legend b { background: #000 !important; }
+  }
+
+  @media print {
+    body.ws-printing .topbar, body.ws-printing header.masthead,
+    body.ws-printing section.block:not(#tab-permissions) { display: none !important; }
+    body.ws-printing #tab-permissions .block-intro, body.ws-printing #tab-permissions .btn-print, body.ws-printing #tab-permissions .btn-row,
+    body.ws-printing #tab-permissions > h2 { display: none; }
+    body.ws-printing .page { padding: 0; }
+    body.ws-printing .ws-legend { font-size: 10.5px; margin-bottom: 6px; }
+    body.ws-printing table.ws th, body.ws-printing table.ws td { padding: 5px 4px; }
+    body.ws-printing table.ws tbody { break-inside: avoid; page-break-inside: avoid; }
+    body.ws-printing table.ws thead { display: table-header-group; }
+    body.ws-printing table.ws th.role span { font-size: 10px; }
+    body.ws-printing .ws-sign { margin-top: 16px; font-size: 11px; }
+    body.ws-printing .ws-print-head { display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 8px; }
+    body.ws-printing .table-wrap { border: 0; overflow: visible; }
+    body.ws-printing table.ws { font-size: 10.5px; background: #fff; }
+    body.ws-printing table.ws th.role { height: 118px; width: 24px; }
+    body.ws-printing table.ws tr { page-break-inside: avoid; }
+    body.ws-printing table.ws tr.tab td { background: #e7eaf2 !important; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+  }
+
   @media print {
     :root, :root[data-theme="dark"] {
       --ink: #211d1b; --ink-soft: #4a4540; --paper: #ffffff; --surface: #fbfaf7;
@@ -160,6 +271,12 @@
     <h1 class="title">How our teams coordinate to fulfill your orders.</h1>
     <div class="prose">
       <p class="lede">An overview of the different teams involved in the order lifecycle, from quotation to manufacturing and final delivery, and their specific responsibilities.</p>
+      <div class="btn-row">
+        <a class="btn-print" href="/assets/erp_dacsinc_custom/docs/tab-access-worksheet.pdf?v=4" download="Dacsinc - Tab Access Worksheet.pdf" data-dl-name="Dacsinc - Tab Access Worksheet">⤓ Download Tab Access Worksheet (PDF)</a>
+        <button class="btn-print is-outline" type="button" onclick="printWorksheet()" style="color: var(--indigo);">⎙ Print</button>
+        <a class="btn-print" href="/assets/erp_dacsinc_custom/docs/document-access-worksheet.pdf?v=4" download="Dacsinc - Document Access Worksheet.pdf" data-dl-name="Dacsinc - Document Access Worksheet" style="background: var(--clay);">⤓ Download Document Access Worksheet (PDF)</a>
+        <button class="btn-print is-outline" type="button" onclick="printDocWorksheet()" style="color: var(--clay);">⎙ Print</button>
+      </div>
     </div>
   </header>
 
@@ -229,7 +346,168 @@
     </div>
   </section>
 
+  <section class="block" id="tab-permissions">
+    <div class="ws-print-head">
+      <div><b style="font-size:16px;">Order Flow Dashboard — Tab &amp; Sub-tab Access</b>
+        <div style="font-size:11px; color:#4a4540;">Dacsinc · decide per role which tabs and sub-tabs are visible</div></div>
+      <div style="font-size:11px;">Date: ______________</div>
+    </div>
+    <h2>Order Flow Dashboard — Tab &amp; Sub-tab Access</h2>
+    <p class="block-intro">Worksheet to decide, with the client, which role sees which tab and sub-tab of the Order Flow dashboard.
+      Print it (button above or below), tick on paper, then we configure it.</p>
+    <div class="ws-legend">
+      <span><span class="ws-box"></span> blank = not visible</span>
+      <span><b>✓</b> = can see</span>
+      <span><b>A</b> = can see <b>and act</b> (approve / create / submit from this tab)</span>
+      <span>A sub-tab needs its main tab ticked too.</span>
+    </div>
+    <div class="table-wrap"><table class="ws" id="ws-table"></table></div>
+    <div class="ws-sign">
+      <div>Client / Management — name &amp; signature</div>
+      <div>Prepared by (360 IT Hub)</div>
+      <div>Agreed on (date)</div>
+    </div>
+    <div class="btn-row">
+      <a class="btn-print" href="/assets/erp_dacsinc_custom/docs/tab-access-worksheet.pdf?v=4" download="Dacsinc - Tab Access Worksheet.pdf" data-dl-name="Dacsinc - Tab Access Worksheet">⤓ Download PDF</a>
+      <button class="btn-print is-outline" type="button" onclick="printWorksheet()" style="color: var(--indigo);">⎙ Print</button>
+    </div>
+  </section>
+
+  <section class="block" id="doctype-permissions">
+    <div class="ws-print-head dt-print-head">
+      <div><b style="font-size:16px;">Document Access — per role</b>
+        <div style="font-size:11px; color:#4a4540;">Dacsinc · tick the small boxes in each cell</div></div>
+      <div style="font-size:11px;">Date: ______________</div>
+    </div>
+    <h2>Document Access — per role</h2>
+    <p class="block-intro">One table: documents down the side, roles across the top. Each cell has six small boxes — tick what that
+      role may do with that document. Leave the cell empty for no access.</p>
+    <div class="dt-legend">
+      <span><b>V</b> View <small>(open, print, email, reports, export)</small></span>
+      <span><b>E</b> Create &amp; Edit</span>
+      <span><b>S</b> Submit / Approve</span>
+      <span><b>C</b> Cancel <small>(incl. amend)</small></span>
+      <span><b>D</b> Delete</span>
+      <span><b>O</b> Only own records</span>
+      <span><i style="display:inline-block;width:12px;height:12px;border:1px dashed #555;vertical-align:middle;background:repeating-linear-gradient(45deg,#bbb,#bbb 2px,transparent 2px,transparent 4px);"></i> shaded = not possible (document is never submitted)</span>
+    </div>
+    <div class="table-wrap"><table class="ws dtm" id="dt-table"></table></div>
+    <div class="ws-sign">
+      <div>Client / Management — name &amp; signature</div>
+      <div>Prepared by (360 IT Hub)</div>
+      <div>Agreed on (date)</div>
+    </div>
+    <div class="btn-row">
+      <a class="btn-print" href="/assets/erp_dacsinc_custom/docs/document-access-worksheet.pdf?v=4" download="Dacsinc - Document Access Worksheet.pdf" data-dl-name="Dacsinc - Document Access Worksheet" style="background: var(--clay);">⤓ Download PDF</a>
+      <button class="btn-print is-outline" type="button" onclick="printDocWorksheet()" style="color: var(--clay);">⎙ Print</button>
+    </div>
+  </section>
+
 </div>
+
+<script>
+  // Roles (Admin excluded — sees every tab). Names are the system's role names.
+  const WS_ROLES = [
+    "Accounts Executive", "Accounts Manager", "DAC CRM", "DAC CRM Head",
+    "Finance Collection Executive", "Finance Executive", "Merchandiser User",
+    "POS Admin", "POS Store Manager", "Production Assistant", "Production Manager",
+    "Purchase Executive", "Purchase Manager", "Warehouse Incharge", "Warhouse Executive",
+    ["Packing Team", "new role"], "Logistics"
+  ];
+  // Order Flow dashboard tabs and their sub-tabs, as they appear on screen.
+  const WS_TABS = [
+    ["SO Approvals", ["1. Pending Approval (my orders)", "2. Merchandiser Unassigned Orders", "3. Other Merchandisers' Orders", "4. Pending Final SO Approval", "5. Rejected Orders"]],
+    ["Sales Tracker", ["Sales Orders", "Material Requests", "Embroidery - FP", "Embroidery - Panel"]],
+    ["Pick Lists", []],
+    ["Purchase Flow", ["POs", "Receipts", "To Bill"]],
+    ["Job Work", ["Sub POs", "Sub Receipts", "Embroidery - FP", "Embroidery - Panel"]],
+    ["Stock Tracker", []],
+    ["Pending DN/SI", []],
+    ["Finance", ["Receivables", "Supplier Payables", "Jobber Payables"]],
+    ["Embroidery Transfers", []],
+    ["Logistics", []],
+  ];
+  (function buildWorksheet() {
+    const esc = (t) => String(t).replace(/&/g, "&amp;").replace(/</g, "&lt;");
+    const roleHead = WS_ROLES.map(r => Array.isArray(r)
+      ? `<th class="role"><span>${esc(r[0])} <small>(${esc(r[1])})</small></span></th>`
+      : `<th class="role"><span>${esc(r)}</span></th>`).join("");
+    const cells = WS_ROLES.map(() => `<td class="cell"></td>`).join("");
+    // One <tbody> per tab, so a printed page never splits a tab from its sub-tabs.
+    let body = "";
+    WS_TABS.forEach(([tab, subs]) => {
+      body += `<tbody><tr class="tab"><td class="label">${esc(tab)}</td>${cells}<td class="notes"></td></tr>`;
+      subs.forEach(sub => { body += `<tr class="sub"><td class="label">${esc(sub)}</td>${cells}<td class="notes"></td></tr>`; });
+      body += `</tbody>`;
+    });
+    document.getElementById("ws-table").innerHTML =
+      `<thead><tr><th style="text-align:left;">Tab / Sub-tab</th>${roleHead}<th>Notes</th></tr></thead>${body}`;
+  })();
+  // Main documents, grouped. [name, submittable]
+  const DT_GROUPS = [
+    ["Master Data", [["Customer", 0], ["Supplier", 0], ["Item", 0], ["Item Price", 0], ["Price List", 0], ["BOM", 1], ["Warehouse", 0], ["Contact & Address", 0]]],
+    ["CRM & Sales", [["Business Contacts", 0], ["Event Activity", 0], ["Lead", 0], ["Quotation", 1], ["Sales Order", 1]]],
+    ["Purchase", [["Material Request", 1], ["Purchase Order", 1], ["Purchase Receipt", 1], ["Purchase Invoice", 1]]],
+    ["Job Work & Embroidery", [["Subcontracting BOM", 0], ["Subcontracting Order", 1], ["Subcontracting Receipt", 1], ["Embroidery Work Order", 1], ["Uniform Embroidery Transfer", 0]]],
+    ["Stock & Dispatch", [["Pick List", 1], ["Stock Entry", 1], ["Stock Reconciliation", 1], ["Delivery Note", 1]]],
+    ["Accounts", [["Sales Invoice", 1], ["Payment Entry", 1], ["Journal Entry", 1]]],
+    ["POS", [["POS Profile", 0], ["POS Invoice", 1], ["POS Opening Entry", 1], ["POS Closing Entry", 1]]],
+  ];
+  (function buildDocWorksheet() {
+    const esc = (t) => String(t).replace(/&/g, "&amp;").replace(/</g, "&lt;");
+    const roleHead = WS_ROLES.map(r => Array.isArray(r)
+      ? `<th class="role"><span>${esc(r[0])} <small>(${esc(r[1])})</small></span></th>`
+      : `<th class="role"><span>${esc(r)}</span></th>`).join("");
+    // Small labelled boxes inside every cell: V E / S D / O (S only where submitted).
+    // Faint letter inside each box — the client ticks over it. S is shaded
+    // (not a box) on documents that are never submitted.
+    const mini = (sub) => `<div class="mini">
+        <b>V</b><b>E</b>${sub ? `<b>S</b>` : `<b class="off"></b>`}
+        ${sub ? `<b>C</b>` : `<b class="off"></b>`}<b>D</b><b class="own">O</b></div>`;
+    let body = "";
+    DT_GROUPS.forEach(([group, docs]) => {
+      body += `<tbody><tr class="tab"><td class="label" colspan="${WS_ROLES.length + 1}">${esc(group)}</td></tr>`;
+      docs.forEach(([doc, sub]) => {
+        const cells = WS_ROLES.map(() => `<td class="mcell">${mini(sub)}</td>`).join("");
+        body += `<tr class="sub"><td class="label">${esc(doc)}</td>${cells}</tr>`;
+      });
+      body += `</tbody>`;
+    });
+    document.getElementById("dt-table").innerHTML =
+      `<thead><tr><th style="text-align:left;">Document</th>${roleHead}</tr></thead>${body}`;
+  })();
+
+  // Download file name carries the date & time of the download, e.g.
+  // "Dacsinc - Tab Access Worksheet - 2026-09-26 11-42.pdf" (no ":" — not allowed in file names).
+  document.addEventListener("click", (e) => {
+    const a = e.target.closest("a[data-dl-name]");
+    if (!a) return;
+    const d = new Date(), p = (n) => String(n).padStart(2, "0");
+    const stamp = `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}-${p(d.getMinutes())}`;
+    a.setAttribute("download", `${a.dataset.dlName} - ${stamp}.pdf`);
+  });
+
+  // Same as printWorksheet, for the document-access sheets.
+  function printDocWorksheet() { printMode("dt-printing"); }
+
+  // Print ONLY the worksheet, A4 landscape (browser → "Save as PDF" or a printer).
+  function printWorksheet() { printMode("ws-printing"); }
+  function printMode(cls, size, after) {
+    const page = document.createElement("style");
+    page.id = "ws-page-size";
+    page.textContent = `@page { size: ${size || "A4 landscape"}; margin: 10mm; }`;
+    document.head.appendChild(page);
+    document.body.classList.add(cls);
+    const done = () => {
+      document.body.classList.remove(cls);
+      const el = document.getElementById("ws-page-size"); if (el) el.remove();
+      if (after) after();
+      window.removeEventListener("afterprint", done);
+    };
+    window.addEventListener("afterprint", done);
+    window.print();
+  }
+</script>
 
 </body>
 </html>

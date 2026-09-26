@@ -263,6 +263,37 @@ screen that follows the link breaks (the Job Work tab asked
   page never asks for its SCO status. `get_sco_status_for_po` returns
   `{"missing": true}` instead of a 404 for a PO that doesn't exist.
 
+## Attached images travel with the work order
+
+Files attached to an Embroidery Work Order (design images, dispatch photos —
+e.g. from the Send to Embroidery dialog's Attachments table) show as small
+thumbnails wherever that EWO appears: the Embroidery - FP / Panel lists
+(Sales Tracker and Job Work, via `_ewo_lists` → `attachments`), every
+embroidery-history view (the SO row's history dialog, the "Embroidery — sent
+& received" section of the Available Stock / Incoming / Picked popups, the
+Pick List history in the SO Pick Lists modal, the Pick Lists tab and the Pick
+List form — via `_with_attachments` on each trip), and the Purchase Order's
+Full Piece dashboard (its own `images`). `so_embroidery.ewo_attachments`
+reads them in one query per list. Up to 4 thumbnails, "+N" for more; a click
+opens the image full size (`so_view_attachment` / `of_view_attachment`);
+non-image files show as a paper-clip link. Private files open for anyone who
+can read the EWO (Frappe's own file permission).
+
+## The Embroidery Work Order form is internal — never linked
+
+The EWO doctype is the team's own working document, not something to expose
+to the client, so no screen links to its form. Its number is shown as plain
+text everywhere (Order Flow EWO lists, embroidery history, the SO widget's
+popups via `link_id_name`, the Pick List form, the PO's Full Piece dashboard
+and linked-documents table). Where a button used to open the EWO it now opens
+**`so_show_so_embroidery(sales_order)`** — every embroidery trip of the
+order, all items, with Receive / Print / images: the tracker's "Track
+Embroidery" stage action (`open_doc` with an EWO target) and the Document
+Flow "Job" count when it holds EWOs; the SO row's "Track Embroidery" opens
+the item's history. A PO-linked embroidery still opens its Purchase Order.
+The thumbnails' "+N" opens a gallery (`so_ewo_gallery` / `of_ewo_gallery`).
+Printing the EWO PDF is unchanged (a download, not the form).
+
 ## Where they show up
 
 - **Sales Tracker → Embroidery - FP / Embroidery - Panel** (subtabs next to
