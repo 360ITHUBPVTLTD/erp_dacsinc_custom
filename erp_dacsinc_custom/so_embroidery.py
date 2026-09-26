@@ -508,6 +508,9 @@ def create_so_fp_embroidery(sales_order, items, supplier, notes=None, attachment
         frappe.throw(_("You are not permitted to create Embroidery Work Orders."), frappe.PermissionError)
     if not supplier:
         frappe.throw(_("Select the Full Piece jobber."))
+    if not frappe.db.get_value("Supplier", supplier, "custom_is_jobber"):
+        frappe.throw(_("{0} is not a jobber. Pick a Supplier marked \"Is Jobber\".").format(
+            frappe.db.get_value("Supplier", supplier, "supplier_name") or supplier), title=_("Not a Jobber"))
 
     items = json.loads(items) if isinstance(items, str) else (items or [])
     wanted = defaultdict(float)

@@ -5635,7 +5635,9 @@ window.so_show_fp_embroidery_prompt = function (sales_order, items, on_done) {
                     </tr></thead>
                     <tbody>${rows}</tbody>
                 </table></div>` },
-            { fieldtype: 'Link', fieldname: 'supplier', label: __('Full Piece Jobber'), options: 'Supplier', reqd: 1 },
+            // Only suppliers marked as jobbers (Supplier → Is Jobber).
+            { fieldtype: 'Link', fieldname: 'supplier', label: __('Full Piece Jobber'), options: 'Supplier', reqd: 1,
+              get_query: () => ({ filters: { custom_is_jobber: 1, disabled: 0 } }) },
             { fieldtype: 'Small Text', fieldname: 'notes', label: __('Dispatch Notes') },
             { fieldtype: 'Table', fieldname: 'attachments', label: __('Attachments'),
               fields: [{ fieldtype: 'Attach', fieldname: 'file', label: __('File'), in_list_view: 1 }] }
