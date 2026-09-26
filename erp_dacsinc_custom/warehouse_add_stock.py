@@ -104,7 +104,7 @@ def _long_workers():
 
 # ---------------------------------------------------------------- start
 @frappe.whitelist()
-def add_stock_to_warehouses(warehouses, qty, all_items=0, item_codes=None):
+def add_stock_to_warehouses(warehouses, qty, all_items=0, item_codes=None, no_rate_action="skip", fallback_rate=0):
 	if "System Manager" not in frappe.get_roles():
 		frappe.throw("Only a System Manager can add stock this way.", frappe.PermissionError)
 
@@ -124,6 +124,13 @@ def add_stock_to_warehouses(warehouses, qty, all_items=0, item_codes=None):
 	if not all_items and not item_codes:
 		frappe.throw("Select at least one item.")
 	company = _validate_warehouses(warehouses)
+	# Items with no valuation rate (only matters with perpetual inventory):
+	#   skip — report them;  zero — add at zero value (allow_zero_valuation_rate);
+	#   rate — add at `fallback_rate` (items WITH a rate always keep their own).
+	no_rate_action = no_rate_action if no_rate_action in ("skip", "zero", "rate") else "skip"
+	fallback_rate = flt(fallback_rate)
+	if no_rate_action == "rate" and fallback_rate <= 0:
+		frappe.throw("Enter the rate to use for items that have no valuation rate.")
 
 	current = _current_run(frappe.session.user)
 	if current and current.get("status") in ("running", "stopping"):
@@ -139,6 +146,7 @@ def add_stock_to_warehouses(warehouses, qty, all_items=0, item_codes=None):
 		"run_id": run_id, "user": frappe.session.user, "warehouses": warehouses, "qty": qty,
 		"all_items": all_items, "item_codes": item_codes if not all_items else [],
 		"company": company, "lanes": lanes, "total_items": total, "status": "running",
+		"no_rate_action": no_rate_action, "fallback_rate": fallback_rate,
 		"started": str(now_datetime()), "remark": f"Bulk Add Stock {run_id}",
 	}
 	_save(run_id, run)
@@ -250,6 +258,8 @@ class _Lane:
 		self.perpetual = cint(erpnext.is_perpetual_inventory_enabled(self.company))
 		self.items_per_entry = max(1, ROWS_PER_ENTRY // max(1, len(self.warehouses)))
 		self.chunk_items = max(self.items_per_entry, CHUNK_ROWS // max(1, len(self.warehouses)))
+		self.no_rate_action = run.get("no_rate_action") or "skip"
+		self.fallback_rate = flt(run.get("fallback_rate"))
 
 	# -- item stream (keyset from the saved cursor, bounded by end_at)
 	def next_items(self, after, limit):
@@ -315,10 +325,17 @@ class _Lane:
 				self.skip(pending_skips, reason, item.name)
 			else:
 				for wh in self.warehouses:
+					row = {"item_code": item.name, "t_warehouse": wh, "qty": self.qty}
 					if self.perpetual and not rates.get((item.name, wh)):
-						self.skip(pending_skips, "No valuation rate — set one on the Item", f"{item.name} ({wh})")
-						continue
-					rows.append({"item_code": item.name, "t_warehouse": wh, "qty": self.qty})
+						if self.no_rate_action == "zero":
+							row["allow_zero_valuation_rate"] = 1
+						elif self.no_rate_action == "rate":
+							row["basic_rate"] = self.fallback_rate
+							row["set_basic_rate_manually"] = 1
+						else:
+							self.skip(pending_skips, "No valuation rate — set one on the Item", f"{item.name} ({wh})")
+							continue
+					rows.append(row)
 			group.append(item.name)
 			if len(group) >= self.items_per_entry:
 				self.commit_entry(group, rows, pending_skips)
@@ -352,6 +369,8 @@ class _Lane:
 			finally:
 				frappe.local.message_log = []
 		if entry:
+			self.s["zero_rows"] = cint(self.s.get("zero_rows")) + sum(1 for r in rows if r.get("allow_zero_valuation_rate"))
+			self.s["rate_rows"] = cint(self.s.get("rate_rows")) + sum(1 for r in rows if r.get("set_basic_rate_manually"))
 			self.s["added_rows"] = cint(self.s.get("added_rows")) + len(rows)
 			self.s["entries"] = cint(self.s.get("entries")) + 1
 			self.s["first_entry"] = self.s.get("first_entry") or entry
@@ -466,6 +485,12 @@ def _summary_html(run, lanes):
 		f"{t['processed']} of {run['total_items']} item(s) across {n_wh} warehouse(s) "
 		f"in <b>{t['entries']}</b> Stock Entr{'y' if t['entries'] == 1 else 'ies'}.</p>"
 	]
+	zero = sum(cint(s.get("zero_rows")) for s in lanes)
+	at_rate = sum(cint(s.get("rate_rows")) for s in lanes)
+	if zero:
+		parts.append(f"<p>{zero} row(s) had no valuation rate and were added at <b>zero value</b>.</p>")
+	if at_rate:
+		parts.append(f"<p>{at_rate} row(s) had no valuation rate and were added at <b>{flt(run.get('fallback_rate'))}</b> per unit.</p>")
 	if run.get("status") == "stopped":
 		parts.append("<p><b>Stopped on request</b> — everything counted above was saved.</p>")
 	if t["entries"]:
