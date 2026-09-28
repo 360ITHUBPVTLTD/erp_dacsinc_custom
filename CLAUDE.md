@@ -11,6 +11,12 @@ previously-buggy edge cases — are documented in `docs/`:
   Purchase Order → Subcontracting → Receipt chain: the Item Stock & Action
   Plan widget, the three raw-material "fetch" surfaces, and the coverage
   math that ties them together.
+- `docs/access-worksheets.md` — the agreed access sheet (/roles-and-permissions):
+  the source of truth for roles, Role Profiles, document permissions (with
+  linked-document dependencies) and Order Flow tab / sub-tab visibility; saving
+  it applies them. Don't hand-edit sheet roles' permissions elsewhere.
+- `docs/pos-store-scope.md` — store-wise record scoping for POS Admin / POS
+  Store Manager (Customer › POS Store).
 
 ## Rule: keep the docs current
 

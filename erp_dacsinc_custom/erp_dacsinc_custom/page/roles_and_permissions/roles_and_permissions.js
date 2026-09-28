@@ -11,10 +11,10 @@ frappe.pages['roles-and-permissions'].on_page_load = function (wrapper) {
 	};
 
 	page.set_primary_action(__('New User'), () => panel.show_new_user_dialog(), 'add');
-	page.add_menu_item(__('DAC Matrix'), () => panel.show_dac_matrix_dialog());
-	if (frappe.user.has_role("System Manager") || frappe.session.user === "Administrator") {
-		page.add_menu_item(__('Sync Permissions & Users'), () => panel.show_sync_dac_matrix_dialog());
-	}
+	// Access is decided on the agreed access sheet; saving it there applies roles &
+	// permissions. The old "DAC Matrix" / "Sync Permissions & Users" actions are retired
+	// (they re-added the spreadsheet matrix on top of the sheet).
+	page.add_menu_item(__('Access Sheet'), () => window.open('/roles-and-permissions#agreed-docs', '_blank'));
 	page.add_menu_item(__('Reload'), () => panel.refresh());
 };
 

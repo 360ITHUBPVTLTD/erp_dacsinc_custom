@@ -77,6 +77,47 @@ def _tab_field(tab):
     return f"of_tab_{tab}_roles"
 
 
+# Sub-tabs per tab, keyed as the page's data-subtab values. Each has an optional
+# role list in Admin Settings (of_sub_<tab>_<key>_roles). Empty = everyone who
+# can see the main tab — same "configuring only narrows" rule as the tabs.
+OF_SUBTABS = {
+    "approval": ("merchandiser", "unassigned", "other", "final", "rejected"),
+    "tracker": ("so", "mr", "fp", "pn"),
+    "purchase": ("po", "receipt", "bill"),
+    "jobwork": ("po", "receipt", "fp", "pn"),
+    "accounts": ("receivables", "supplier", "jobber"),
+}
+
+
+def get_allowed_subtabs(user=None, allowed_tabs=None):
+    """{tab: [sub-tab key, ...]} the user may see, for each visible tab that has sub-tabs.
+
+    Admins see every sub-tab. A broken Admin Settings read falls back to
+    "all sub-tabs", matching get_tab_roles()' defensive default.
+    """
+    user = user or frappe.session.user
+    tabs = allowed_tabs if allowed_tabs is not None else get_allowed_tabs(user)
+    out = {t: list(subs) for t, subs in OF_SUBTABS.items() if t in tabs}
+    if is_admin(user):
+        return out
+    try:
+        settings = frappe.get_cached_doc("Admin Settings")
+    except Exception:
+        return out
+    roles = set(frappe.get_roles(user))
+    for tab, subs in out.items():
+        keep = []
+        for sub in subs:
+            try:
+                allowed = [d.role for d in (settings.get(f"of_sub_{tab}_{sub}_roles") or []) if d.role]
+            except Exception:
+                allowed = []
+            if not allowed or roles & set(allowed):
+                keep.append(sub)
+        out[tab] = keep
+    return out
+
+
 # Roles that bypass tab configuration entirely and see all six tabs. Kept as
 # a tuple (not a single name) so a future "give this person everything but
 # don't make them a System Manager" role can be added in one place.
@@ -256,6 +297,8 @@ def get_order_flow_permissions():
         "final_approvers": final_users,
         "tabs": tabs,
         "allowed_tabs": allowed_tabs,
+        # {tab: [sub-tab keys]} — the page hides every other sub-tab button.
+        "allowed_subtabs": get_allowed_subtabs(allowed_tabs=allowed_tabs),
         # Single source of truth for "does this user see only their own
         # customers' orders on the Tracker tab, with no action buttons" —
         # get_sales_tracker() filters by this same function, so the client's

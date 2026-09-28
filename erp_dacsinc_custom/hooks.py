@@ -159,6 +159,12 @@ permission_query_conditions = {
     "Sales Invoice": "erp_dacsinc_custom.custom_script.get_sales_invoice_permission_query_conditions",
     "Purchase Receipt": "erp_dacsinc_custom.custom_script.get_purchase_receipt_permission_query_conditions",
     # "Customer": "erp_dacsinc_custom.custom_script.get_customer_permission_query_conditions",
+    # POS roles: store-wise (pos_scope.py). Returns "" for everyone else.
+    "Customer": "erp_dacsinc_custom.pos_scope.customer_query",
+    "POS Invoice": "erp_dacsinc_custom.pos_scope.pos_invoice_query",
+    "POS Opening Entry": "erp_dacsinc_custom.pos_scope.pos_opening_query",
+    "POS Closing Entry": "erp_dacsinc_custom.pos_scope.pos_closing_query",
+    "POS Profile": "erp_dacsinc_custom.pos_scope.pos_profile_query",
 }
 
 has_permission = {
@@ -170,6 +176,11 @@ has_permission = {
     "Sales Invoice": "erp_dacsinc_custom.custom_script.has_sales_invoice_permission",
     "Purchase Receipt": "erp_dacsinc_custom.custom_script.has_purchase_receipt_permission",
     # "Customer": "erp_dacsinc_custom.custom_script.has_customer_permission",
+    "Customer": "erp_dacsinc_custom.pos_scope.has_customer_permission",
+    "POS Invoice": "erp_dacsinc_custom.pos_scope.has_store_permission",
+    "POS Opening Entry": "erp_dacsinc_custom.pos_scope.has_store_permission",
+    "POS Closing Entry": "erp_dacsinc_custom.pos_scope.has_store_permission",
+    "POS Profile": "erp_dacsinc_custom.pos_scope.has_pos_profile_permission",
 }
 
 
@@ -186,6 +197,14 @@ has_permission = {
 # Hook on document methods and events
 
 doc_events = {
+    # A customer's first POS Invoice gives them that store (pos_scope.py).
+    "POS Invoice": {
+        "on_update": "erp_dacsinc_custom.pos_scope.set_store_from_pos_invoice",
+    },
+    # Flagging a role for the access sheet gives it its Role Profile at once.
+    "Role": {
+        "on_update": "erp_dacsinc_custom.access_sync.on_role_update",
+    },
     "User": {
         "before_validate": "erp_dacsinc_custom.erp_dacsinc_custom.doctype.user_access_profile.user_access_profile.guard_role_profile_name",
         "on_update": "erp_dacsinc_custom.erp_dacsinc_custom.doctype.user_access_profile.user_access_profile.resync_after_user_save",
@@ -282,7 +301,11 @@ doc_events = {
     #     "on_update": "erp_dacsinc_custom.custom_customer.update_customer_sharing"
     # }
     "Customer": {
-        "before_insert": "erp_dacsinc_custom.custom_customer.customer_before_insert",
+        "before_insert": [
+            "erp_dacsinc_custom.custom_customer.customer_before_insert",
+            # POS staff's new customers belong to their store (pos_scope.py).
+            "erp_dacsinc_custom.pos_scope.set_store_on_new_customer",
+        ],
         "after_insert": "erp_dacsinc_custom.custom_customer.customer_after_insert",
         "validate": "erp_dacsinc_custom.custom_customer.guard_merchandiser_user_change",
         "on_update": "erp_dacsinc_custom.custom_customer.update_customer_sharing"

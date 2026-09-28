@@ -21,6 +21,23 @@ from erp_dacsinc_custom.role_permission_matrix import ROLE_PROFILES
 
 ADMIN_ROLES = ("System Manager", "Admin", "Super Admin")
 
+
+def _sheet_profiles():
+    """Role Profiles this page offers: the ones flagged by the access sheet
+    (erp_dacsinc_custom.access_sync). Falls back to every profile only on a site
+    where the flag field doesn't exist yet (before the one-time setup ran)."""
+    from erp_dacsinc_custom.access_sync import sheet_profiles
+    return sheet_profiles() or sorted(frappe.get_all("Role Profile", pluck="name"))
+
+
+def _sheet_roles_allowed():
+    """Roles this page may add to a user: the access sheet roles, the two base
+    roles every sheet profile carries, and the admin roles."""
+    from erp_dacsinc_custom.access_sync import BASE_ROLES, ROLE_FLAG, sheet_roles
+    if not frappe.db.has_column("Role", ROLE_FLAG):
+        return None
+    return set(sheet_roles()) | set(BASE_ROLES) | set(ADMIN_ROLES)
+
 # Standard, safe-to-edit User profile fields — no roles, no password, no
 # permission-relevant fields. Anyone who can open this page can edit these
 # for anyone; the two things that stay tiered are handled separately below.
@@ -80,6 +97,8 @@ def _profile_detail(role_profile_name):
 @frappe.whitelist()
 def get_users_overview():
     _guard()
+    allowed = _sheet_roles_allowed()
+    shown_roles = (allowed - set(ADMIN_ROLES)) | {"Admin"} if allowed is not None else None
 
     uap_by_user = {
         d.name: d for d in frappe.get_all(
@@ -146,6 +165,9 @@ def get_users_overview():
         # Roles this user actually has that no selected Role Profile
         # explains — assigned directly to the user, not through a profile.
         extra_roles = sorted(current_roles_by_user.get(u.name, set()) - profile_role_union)
+        if shown_roles is not None:
+            # Only access sheet roles are shown here; HR and other roles are managed elsewhere.
+            extra_roles = [r for r in extra_roles if r in shown_roles]
 
         # Kept as the raw code in profile_fields (the edit dialog's Language
         # Link field needs that, not the display name) — language_display
@@ -167,9 +189,7 @@ def get_users_overview():
 
     return {
         "users": rows,
-        "available_role_profiles": sorted(frappe.get_all(
-            "Role Profile", pluck="name",
-        )),
+        "available_role_profiles": _sheet_profiles(),
         # Drives the page's password UI: only a System Manager may set a
         # password directly (and Frappe never stores or shows the actual
         # password value to anyone, System Manager included — passwords are
@@ -219,6 +239,11 @@ def update_user_role_profiles(user, role_profiles=None):
     unknown = [p for p in role_profiles if not frappe.db.exists("Role Profile", p)]
     if unknown:
         frappe.throw(_("Unknown Role Profile(s): {0}").format(", ".join(unknown)))
+    # Only access sheet profiles can be newly given; one the user already holds may stay.
+    offered = set(_sheet_profiles()) | set(_current_role_profiles(user))
+    not_offered = [p for p in role_profiles if p not in offered]
+    if not_offered:
+        frappe.throw(_("Not an access sheet profile: {0}").format(", ".join(not_offered)))
 
     if frappe.db.exists("User Access Profile", user):
         uap = frappe.get_doc("User Access Profile", user)
@@ -301,6 +326,10 @@ def toggle_user_role(user, role, enabled):
     enabled = frappe.utils.cint(enabled)
     if not frappe.db.exists("Role", role):
         frappe.throw(_("Role {0} does not exist.").format(role))
+
+    allowed = _sheet_roles_allowed()
+    if enabled and allowed is not None and role not in allowed:
+        frappe.throw(_("{0} is not an access sheet role. Only the roles on the agreed access sheet can be given.").format(role))
 
     user_doc = frappe.get_doc("User", user)
     if enabled:
@@ -599,7 +628,7 @@ def get_role_profiles_overview():
     users_by_profile = _users_by_role_profile(_page_user_population())
 
     profiles = []
-    for name in sorted(frappe.get_all("Role Profile", pluck="name")):
+    for name in _sheet_profiles():
         roles = sorted(roles_by_profile.get(name, []))
         profiles.append({
             "profile": name,
@@ -917,6 +946,7 @@ def apply_dac_matrix_assignments(users):
     EMPLOYEE_ROLE_PROFILE_TARGETS, and only after the caller has shown
     exactly what will change and gotten an explicit confirmation.
     """
+    frappe.throw(_("Replaced by the agreed access sheet: change access on /roles-and-permissions, and saving there applies it."))
     _guard()
     from erp_dacsinc_custom.dac_permission_matrix import EMPLOYEE_ROLE_PROFILE_TARGETS
 
@@ -959,6 +989,7 @@ def sync_dac_matrix_and_users():
     (executing all three matrix patches), and reconcile/sync all users to match exactly
     their proposed Role Profile from the spreadsheet (overwriting/setting it).
     """
+    frappe.throw(_("Replaced by the agreed access sheet: change access on /roles-and-permissions, and saving there applies it."))
     _guard()
 
     # 1. Execute all three matrix patches in order
