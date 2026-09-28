@@ -105,9 +105,54 @@ DEP_SKIP = {"DocType"}
 # only its own (if_owner), whatever the sheet says about browsing them.
 AUTO_CREATES = {"Customer": ("Contact", "Address"), "Supplier": ("Contact", "Address"), "Lead": ("Contact", "Address")}
 AUTO_MARK = "auto_create"
+READ_MARK = "general_read"  # Read on all records (not only own), from fetch / display needs
+# Records a form loads to display (address / contact details) — Read for anyone who
+# may create or edit a document linking them, whatever the sheet says about browsing.
+DISPLAY_READ = ("Address", "Contact")
 
 # Modules whose non-submittable masters are "setup masters" a master's editors may edit too.
 DEP_EDIT_MODULES = {"Setup", "Stock", "Selling", "Buying", "CRM", "Contacts", "Erp Dacsinc Custom", "GST India"}
+
+# Companion standard roles. ERPNext's screens quietly rely on the supporting
+# records its standard roles can read (Selling/Stock/Buying/Accounts/POS
+# Settings, Price List, Bin, ledgers, print formats…). A sheet role that may view
+# any document of a group gets the READ-ONLY part of that group's standard role:
+# read/select/report on the doctypes it reads (never the sheet's own documents —
+# the sheet decides those), plus the reports and pages it may open.
+COMPANIONS = {
+	"Sales User": ["Quotation", "Sales Order", "Delivery Note", "Customer", "Lead", "POS Invoice"],
+	"Stock User": ["Stock Entry", "Stock Reconciliation", "Pick List", "Delivery Note", "Purchase Receipt",
+				   "Material Request", "Item", "Warehouse", "Uniform Embroidery Transfer", "Embroidery Work Order"],
+	"Purchase User": ["Material Request", "Purchase Order", "Purchase Receipt", "Purchase Invoice", "Supplier",
+					  "Subcontracting Order", "Subcontracting Receipt"],
+	"Accounts User": ["Sales Invoice", "Payment Entry", "Journal Entry"],
+	"Manufacturing User": ["BOM", "Subcontracting BOM"],
+	"POS User": ["POS Invoice", "POS Opening Entry", "POS Closing Entry", "POS Profile"],
+}
+COMPANION_FIELDS = ("read", "select", "report")
+COMPANION_SKIP_MODULES = {"HR", "Payroll", "Core", "Custom", "Desk", "Website", "Integrations", "Automation",
+						  "Email", "Printing", "Social", "Workflow"}
+# Read by every sheet role: desk scripts look pages up (frappe.client.get_value("Page", …))
+# and forms read the module settings.
+EVERY_SHEET_ROLE_READS = ("Page", "Selling Settings", "Stock Settings", "Buying Settings", "Accounts Settings",
+						  "POS Settings", "Global Defaults")
+
+
+def _companions(direct):
+	"""{sheet role: {standard roles}} from what the role may view."""
+	out = {}
+	for std, docs in COMPANIONS.items():
+		for dt in docs:
+			for role, (flags, _o) in direct.get(dt, {}).items():
+				if "read" in flags:
+					out.setdefault(role, set()).add(std)
+	return out
+
+
+def _std_role_doctypes(std):
+	return {r[0] for r in frappe.db.sql("""select parent from tabDocPerm where role=%(r)s and permlevel=0 and `read`=1
+		union select parent from `tabCustom DocPerm` where role=%(r)s and permlevel=0 and `read`=1""", {"r": std})}
+
 
 # Order Flow dashboard: sheet tab label → key; sub-tab label → key.
 TAB_KEYS = {
@@ -332,14 +377,33 @@ def compute_doc_access(sheet):
 				if target == dt:
 					continue
 				if target in direct:
-					# A sheet document: the sheet decides. Only what picking needs.
-					level = ("select", "read") if target in fetched else ("select",)
+					# A sheet document: the sheet decides. Only what picking needs —
+					# plus Read where the form shows details from it: fetched fields,
+					# and addresses / contacts (the form loads the company's and the
+					# party's address and contact to display them).
+					level = ("select", "read", READ_MARK) if target in fetched or target in DISPLAY_READ else ("select",)
 				else:
 					level = _dep_level(target, info, is_master, own_field)
 				if level:
 					deps.setdefault(target, {}).setdefault(role, set()).update(level)
 			for target in AUTO_CREATES.get(dt, ()) if "create" in flags else ():
 				deps.setdefault(target, {}).setdefault(role, set()).update(DEP_EDIT + (AUTO_MARK,))
+
+	# Read-only companions (see COMPANIONS) — on non-sheet doctypes only.
+	std_cache = {}
+	for role, stds in _companions(direct).items():
+		for std in stds:
+			if std not in std_cache:
+				std_cache[std] = _std_role_doctypes(std)
+			for target in std_cache[std]:
+				d = info.get(target)
+				if (not d or target in direct or d.istable or d.is_virtual
+						or d.module in COMPANION_SKIP_MODULES):
+					continue
+				deps.setdefault(target, {}).setdefault(role, set()).update(COMPANION_FIELDS)
+	for role in _role_columns(sheet):
+		for target in EVERY_SHEET_ROLE_READS:
+			deps.setdefault(target, {}).setdefault(role, set()).update(("read",))
 	return direct, deps
 
 
@@ -366,6 +430,7 @@ def apply_doc_access(sheet):
 		for role, (flags, if_owner) in by_role.items():
 			dep = deps.get(dt, {}).get(role, set())
 			auto = AUTO_MARK in dep
+			general_read = READ_MARK in dep
 			need = dep & set(DEP_EDIT if auto else DEP_READ)
 			if "read" in need - flags:
 				summary["read_added_on_sheet_docs"].append(f"{role} · {dt}")
@@ -381,12 +446,13 @@ def apply_doc_access(sheet):
 				# own saves create (a Customer's Contact), only the ones it created.
 				_insert_row(dt, role, need, 1 if auto else 0)
 				if auto and not need <= {"select"}:
-					_insert_row(dt, role, {"select"}, 0)
+					# own-only row above for creating; this one for picking / displaying any
+					_insert_row(dt, role, {"select", "read"} if general_read else {"select"}, 0)
 				summary["sheet_rows"] += 1
 		touched.add(dt)
 
 	# 2. Linked documents: only ever add; take back only what we added before.
-	prev = json.loads(_state_get("derived_applied") or "{}")
+	prev = _map_get("derived_applied")
 	new_state = {}
 	for dt in sorted(set(deps) | set(prev)):
 		if dt in direct:
@@ -422,51 +488,163 @@ def apply_doc_access(sheet):
 				touched.add(dt)
 			if ours:
 				new_state.setdefault(dt, {})[role] = sorted(ours)
-	_state_set("derived_applied", json.dumps(new_state))
+	_map_set("derived_applied", new_state)
 	summary["linked_doctypes"] = len(new_state)
 
 	summary["report_roles_added"], summary["report_roles_removed"] = apply_report_access(direct)
+	summary["pages_changed"] = apply_page_access(direct)
 
 	for dt in touched:
 		frappe.clear_cache(doctype=dt)
+	frappe.clear_cache()  # page / report access is cached per user
 	return summary
 
 
+# Desk pages → sheet documents: a role that may view any of them may open the page.
+# (order-flow keeps its own Custom Role, see order_flow_permissions.)
+PAGE_DOCS = {
+	"point-of-sale": ["POS Invoice"],
+	"stock-balance": ["Stock Entry", "Stock Reconciliation", "Purchase Receipt", "Pick List"],
+	"warehouse-capacity-summary": ["Stock Entry", "Stock Reconciliation", "Purchase Receipt", "Pick List"],
+	"bom-comparison-tool": ["BOM"],
+	"sales-funnel": ["Lead", "Quotation"],
+}
+
+
+def _custom_role_roles(kind, name):
+	cr = frappe.db.get_value("Custom Role", {kind: name}, "name")
+	roles = set(frappe.get_all("Has Role", filters={"parent": cr, "parenttype": "Custom Role"}, pluck="role")) if cr else set()
+	return cr, roles
+
+
+def _set_custom_role(kind, name, roles):
+	"""Write the Custom Role of a page/report — Frappe's own way to add roles to a
+	standard page/report without editing it (edits to it are undone by migrate)."""
+	cr, _have = _custom_role_roles(kind, name)
+	roles = {r for r in roles if frappe.db.exists("Role", r)}  # a page may list a role this site lacks
+	doc = frappe.get_doc("Custom Role", cr) if cr else frappe.get_doc({"doctype": "Custom Role", kind: name})
+	doc.set("roles", [{"role": r} for r in sorted(roles)])
+	doc.flags.ignore_permissions = True
+	doc.save(ignore_permissions=True)
+
+
+def _viewers(direct, doctypes):
+	out = set()
+	for dt in doctypes:
+		out.update(r for r, (flags, _o) in direct.get(dt, {}).items() if "read" in flags)
+	return out
+
+
 def apply_report_access(direct):
-	"""View includes reports: a role that may view a document gets the reports
-	built on it (Report.ref_doctype). Additive and tracked like dependencies."""
+	"""View includes reports: a role that may view a document may run the reports
+	built on it (Report.ref_doctype). Through the report's Custom Role, which
+	*replaces* its own role list, so the report's own roles are always kept in it.
+	Additive and tracked; reports open to everyone are left alone."""
+	# Undo the direct Has Role rows an earlier version added to reports (migrate can
+	# reset those; the Custom Role is the durable way).
+	old = json.loads(_state_get("reports_applied") or "{}")
+	for rep_name, roles in old.items():
+		frappe.db.delete("Has Role", {"parent": rep_name, "parenttype": "Report", "role": ["in", roles]})
+		frappe.clear_document_cache("Report", rep_name)
+	if old:
+		_state_set("reports_applied", "{}")
+
 	want = {}
-	for dt, by_role in direct.items():
-		roles = [r for r, (flags, _o) in by_role.items() if "read" in flags]
-		if not roles:
-			continue
-		for rep_name in frappe.get_all("Report", filters={"ref_doctype": dt, "disabled": 0}, pluck="name"):
-			want.setdefault(rep_name, set()).update(roles)
-	prev = json.loads(_state_get("reports_applied") or "{}")
+	for dt in direct:
+		roles = _viewers(direct, [dt])
+		if roles:
+			for rep_name in frappe.get_all("Report", filters={"ref_doctype": dt, "disabled": 0}, pluck="name"):
+				want.setdefault(rep_name, set()).update(roles)
+	# Reports the companion standard role may run (e.g. Stock Balance for Stock User).
+	for role, stds in _companions(direct).items():
+		for rep_name in _reports_for_roles(stds):
+			want.setdefault(rep_name, set()).add(role)
+	prev = _map_get("report_custom_roles")
 	added = removed = 0
 	state = {}
 	for rep_name in sorted(set(want) | set(prev)):
-		have = set(frappe.get_all("Has Role", filters={"parent": rep_name, "parenttype": "Report"}, pluck="role"))
+		own = set(frappe.get_all("Has Role", filters={"parent": rep_name, "parenttype": "Report"}, pluck="role"))
+		cr, custom = _custom_role_roles("report", rep_name)
 		mine = set(prev.get(rep_name, []))
 		wanted = want.get(rep_name, set())
-		if not have - mine:
-			# No role list of its own = open to everyone who may report on the
-			# document; adding one would shut the others out.
-			wanted = set()
-		for role in wanted - have:
-			frappe.get_doc({"doctype": "Has Role", "parent": rep_name, "parenttype": "Report", "parentfield": "roles",
-							"role": role}).db_insert()
-			added += 1
-		for role in (mine - wanted) & have:
-			frappe.db.delete("Has Role", {"parent": rep_name, "parenttype": "Report", "role": role})
-			removed += 1
-		ours = (mine & wanted) | (wanted - have)
+		if not own and not cr:
+			continue  # no role list at all = open to everyone who may report on the document
+		base = (custom - mine) if cr else own
+		final = base | wanted
+		ours = wanted - base
+		if final != custom:
+			_set_custom_role("report", rep_name, final)
+			added += len(final - custom)
+			removed += len(custom - final)
 		if ours:
 			state[rep_name] = sorted(ours)
-		if wanted - have or (mine - wanted) & have:
-			frappe.clear_document_cache("Report", rep_name)
-	_state_set("reports_applied", json.dumps(state))
+	_map_set("report_custom_roles", state)
 	return added, removed
+
+
+def _reports_for_roles(roles):
+	roles = list(roles)
+	own = frappe.get_all("Has Role", filters={"parenttype": "Report", "role": ["in", roles]}, pluck="parent")
+	cust = frappe.db.sql("""select c.report from `tabCustom Role` c join `tabHas Role` h on h.parent=c.name
+		and h.parenttype='Custom Role' where ifnull(c.report,'')!='' and h.role in %(r)s""", {"r": roles})
+	names = set(own) | {r[0] for r in cust}
+	return set(frappe.get_all("Report", filters={"name": ["in", list(names)], "disabled": 0}, pluck="name")) if names else set()
+
+
+def apply_page_access(direct):
+	"""Desk pages (PAGE_DOCS): a role that may view a page's documents may open it.
+	Through the page's Custom Role. Is_permitted() adds a Custom Role to the page's own
+	roles, but the desk's list of pages a user can open (sidebar, search, workspace
+	shortcuts) uses ONLY the Custom Role once one exists — so the page's own roles are
+	always copied into it (and re-copied when the page is edited: on_page_update).
+	Additive, tracked."""
+	prev = json.loads(_state_get("page_custom_roles") or "{}")
+	state, changed = {}, 0
+	comp = _companions(direct)
+	comp_pages = {}
+	for role, stds in comp.items():
+		for page in frappe.get_all("Has Role", filters={"parenttype": "Page", "role": ["in", list(stds)]}, pluck="parent"):
+			comp_pages.setdefault(page, set()).add(role)
+	comp_pages.pop("order-flow", None)  # has its own Custom Role (order_flow_permissions)
+	for page in PAGE_DOCS:
+		comp_pages.pop(page, None)  # these follow their own documents only (Point of Sale → POS Invoice)
+	for page in sorted(set(PAGE_DOCS) | set(comp_pages) | set(prev)):
+		if not frappe.db.exists("Page", page):
+			continue
+		wanted = _viewers(direct, PAGE_DOCS.get(page, [])) | comp_pages.get(page, set())
+		own = set(frappe.get_all("Has Role", filters={"parent": page, "parenttype": "Page"}, pluck="role"))
+		cr, custom = _custom_role_roles("page", page)
+		mine = set(prev.get(page, []))
+		final = own | (custom - mine) | wanted
+		if final != custom and (wanted - own or cr):
+			_set_custom_role("page", page, final)
+			changed += 1
+		ours = wanted - own - (custom - mine)
+		if ours:
+			state[page] = sorted(ours)
+	_state_set("page_custom_roles", json.dumps(state))
+	return changed
+
+
+def on_page_update(doc, method=None):
+	"""Page on_update: a page whose Custom Role we manage keeps its own roles in it."""
+	_copy_own_roles("page", doc.name, "page_custom_roles", "Page")
+
+
+def on_report_update(doc, method=None):
+	"""Report on_update: same, for reports whose Custom Role we manage."""
+	_copy_own_roles("report", doc.name, "report_custom_roles", "Report")
+
+
+def _copy_own_roles(kind, name, state_key, parenttype):
+	tracked = (json.loads(_state_get(state_key) or "{}") if kind == "page" else _map_get(state_key))
+	cr, custom = _custom_role_roles(kind, name)
+	if not cr or name not in tracked:
+		return
+	own = set(frappe.get_all("Has Role", filters={"parent": name, "parenttype": parenttype}, pluck="role"))
+	if own - custom:
+		_set_custom_role(kind, name, custom | own)
+		frappe.clear_cache()
 
 
 # ------------------------------------------------------------------ Order Flow tabs
@@ -516,16 +694,89 @@ def _state_set(key, value):
 						"parentfield": "system_defaults", "defkey": key, "defvalue": value}).insert(ignore_permissions=True)
 
 
+def _map_get(key):
+	"""Tracking maps are stored one DefaultValue row per entry ("<key>:<entry>"),
+	since one row holds at most 64 KB. An older single-row value is read too."""
+	out = json.loads(_state_get(key) or "{}")
+	for r in frappe.get_all("DefaultValue", filters={"parent": STATE_PARENT, "defkey": ["like", f"{key}:%"]},
+							fields=["defkey", "defvalue"]):
+		out[r.defkey[len(key) + 1:]] = json.loads(r.defvalue or "null")
+	return {k: v for k, v in out.items() if v}
+
+
+def _map_set(key, data):
+	frappe.db.delete("DefaultValue", {"parent": STATE_PARENT, "defkey": ["like", f"{key}:%"]})
+	frappe.db.delete("DefaultValue", {"parent": STATE_PARENT, "defkey": key})
+	for entry, value in data.items():
+		frappe.get_doc({"doctype": "DefaultValue", "parent": STATE_PARENT, "parenttype": "__default",
+						"parentfield": "system_defaults", "defkey": f"{key}:{entry}"[:140],
+						"defvalue": json.dumps(value)}).db_insert()
+
+
+# Bump when the rules in this file change (dependencies, companions, pages…), so each
+# site re-applies its sheets once on the next migrate (sync_from_bundle).
+RULES_VERSION = "2026-09-28.3"
+
+
+def bundle_fingerprint(data):
+	"""Identity of the sheets' content (roles + cells), independent of who / when."""
+	import hashlib
+
+	core = {s: {"roles": (v or {}).get("roles"), "cells": (v or {}).get("cells")} for s, v in data.items()
+			if s in ("doc_access", "tab_access")}
+	return hashlib.sha1(json.dumps(core, sort_keys=True).encode()).hexdigest()
+
+
 def write_bundle():
-	"""Copy the saved sheets into the app (developer mode only), so the next deploy ships them."""
+	"""Copy the saved sheets into the app (developer mode only), so the next deploy
+	ships them. The fingerprint lets each site import a pushed sheet exactly once
+	(sync_from_bundle); this site already has it."""
 	if not frappe.conf.developer_mode:
 		return False
 	data = {s: load_sheet(s) for s in ("doc_access", "tab_access")}
+	data["fingerprint"] = bundle_fingerprint(data)
 	os.makedirs(os.path.dirname(BUNDLE_PATH), exist_ok=True)
 	with open(BUNDLE_PATH, "w") as f:
 		json.dump(data, f, indent=1, sort_keys=True)
 		f.write("\n")
+	_state_set("bundle_applied", f"{data['fingerprint']}:{RULES_VERSION}")
 	return True
+
+
+def sync_from_bundle():
+	"""after_migrate: when the code carries sheets this site hasn't taken yet (they were
+	changed and saved locally, then pushed), store them as a new version; and whenever
+	the sheets or the rules (RULES_VERSION) changed, apply them once where the sheet is
+	switched on. Runs every migrate but acts once per pushed change, so changes made on
+	the site itself stay until a newer sheet is pushed."""
+	if not frappe.db.has_column("Role", ROLE_FLAG):
+		return  # setup patch hasn't run yet on this site
+	bundle = read_bundle()
+	if not bundle.get("doc_access"):
+		return
+	fp = f"{bundle.get('fingerprint') or bundle_fingerprint(bundle)}:{RULES_VERSION}"
+	if _state_get("bundle_applied") == fp:
+		return
+	from erp_dacsinc_custom.access_worksheet import store_sheet
+
+	changed = []
+	for name in ("doc_access", "tab_access"):
+		b = bundle.get(name)
+		if not b:
+			continue
+		cur = load_sheet(name) or {}
+		if cur.get("roles") != b.get("roles") or cur.get("cells") != b.get("cells"):
+			store_sheet(name, b["roles"], b["cells"], note="from the app code")
+			changed.append(name)
+	if is_active():
+		# A new sheet, or new rules in the code: (re-)apply both sheets once.
+		for name in ("doc_access", "tab_access"):
+			sheet = load_sheet(name)
+			if sheet:
+				apply_sheet(name, sheet)
+	_state_set("bundle_applied", fp)
+	frappe.db.commit()
+	return changed
 
 
 def read_bundle():

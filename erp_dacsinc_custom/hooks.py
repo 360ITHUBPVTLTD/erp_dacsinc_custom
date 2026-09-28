@@ -49,6 +49,8 @@ app_include_css = [
 
 # include js in page
 # page_js = {"page" : "public/js/file.js"}
+# Point of Sale: walk-in name / mobile under the customer, loading indicator (pos_walkin.py)
+page_js = {"point-of-sale": "public/js/pos_page_extend.js"}
 
 # include js in doctype views  
 doctype_js = {
@@ -57,7 +59,8 @@ doctype_js = {
 	"Item": "public/js/item.js",
 	"Purchase Order": ["public/js/so_qty_cap.js", "public/js/purchase_order.js"],
 	"Purchase Invoice": "public/js/purchase_invoice.js",
-	"Material Request": ["public/js/so_qty_cap.js", "public/js/material_request.js"],
+	"Material Request": ["public/js/so_qty_cap.js", "public/js/material_request.js", "public/js/pos_stock.js"],
+	"Stock Entry": "public/js/pos_stock.js",
 	"BOM": "public/js/bom.js",
 	"Sales Invoice": "public/js/sales_invoice.js",
 	"Delivery Note": "public/js/delivery_note.js",
@@ -154,7 +157,13 @@ permission_query_conditions = {
     "Sales Order": "erp_dacsinc_custom.custom_script.get_sales_order_permission_query_conditions",
     "Pick List": "erp_dacsinc_custom.custom_script.get_pick_list_permission_query_conditions",
     "Purchase Order": "erp_dacsinc_custom.custom_script.get_purchase_order_permission_query_conditions",
-    "Material Request": "erp_dacsinc_custom.custom_script.get_material_request_permission_query_conditions",
+    "Material Request": [
+        "erp_dacsinc_custom.custom_script.get_material_request_permission_query_conditions",
+        "erp_dacsinc_custom.pos_scope.material_request_query",
+    ],
+    "Stock Entry": "erp_dacsinc_custom.pos_scope.stock_entry_query",
+    # POS logins see the Items of their stores' brands (POS Profile › Brands).
+    "Item": "erp_dacsinc_custom.pos_scope.item_query",
     "Delivery Note": "erp_dacsinc_custom.custom_script.get_delivery_note_permission_query_conditions",
     "Sales Invoice": "erp_dacsinc_custom.custom_script.get_sales_invoice_permission_query_conditions",
     "Purchase Receipt": "erp_dacsinc_custom.custom_script.get_purchase_receipt_permission_query_conditions",
@@ -171,7 +180,12 @@ has_permission = {
     "Sales Order": "erp_dacsinc_custom.custom_script.has_sales_order_permission",
     "Pick List": "erp_dacsinc_custom.custom_script.has_pick_list_permission",
     "Purchase Order": "erp_dacsinc_custom.custom_script.has_purchase_order_permission",
-    "Material Request": "erp_dacsinc_custom.custom_script.has_material_request_permission",
+    "Material Request": [
+        "erp_dacsinc_custom.custom_script.has_material_request_permission",
+        "erp_dacsinc_custom.pos_scope.has_material_request_permission",
+    ],
+    "Stock Entry": "erp_dacsinc_custom.pos_scope.has_stock_entry_permission",
+    "Item": "erp_dacsinc_custom.pos_scope.has_item_permission",
     "Delivery Note": "erp_dacsinc_custom.custom_script.has_delivery_note_permission",
     "Sales Invoice": "erp_dacsinc_custom.custom_script.has_sales_invoice_permission",
     "Purchase Receipt": "erp_dacsinc_custom.custom_script.has_purchase_receipt_permission",
@@ -201,6 +215,10 @@ doc_events = {
     "POS Invoice": {
         "on_update": "erp_dacsinc_custom.pos_scope.set_store_from_pos_invoice",
     },
+    # A page / report whose Custom Role the access sheet manages keeps the roles
+    # set on the page / report itself (access_sync.on_page_update).
+    "Page": {"on_update": "erp_dacsinc_custom.access_sync.on_page_update"},
+    "Report": {"on_update": "erp_dacsinc_custom.access_sync.on_report_update"},
     # Flagging a role for the access sheet gives it its Role Profile at once.
     "Role": {
         "on_update": "erp_dacsinc_custom.access_sync.on_role_update",
@@ -334,6 +352,8 @@ doc_events = {
         # reflect the pre-transfer position) and BLOCK — picked stock, and
         # stock reserved for another Sales Order, never go to a jobber.
         "before_submit": [
+            # POS: a transfer into a store is submitted by that store (pos_scope).
+            "erp_dacsinc_custom.pos_scope.guard_pos_transfer_submit",
             # Hard block first: stock a Pick List (draft or submitted) holds
             # for a delivery never goes to a jobber, whichever screen sends it.
             "erp_dacsinc_custom.custom_script.block_subcontract_transfer_of_picked_stock",
@@ -432,6 +452,8 @@ doc_events = {
 # of relying on a one-shot patch that could drift from the real config over
 # time.
 after_migrate = [
+    # Sheets changed locally and pushed with the code are taken once (access_sync).
+    "erp_dacsinc_custom.access_sync.sync_from_bundle",
     "erp_dacsinc_custom.order_flow_permissions.sync_order_flow_page_roles",
     "erp_dacsinc_custom.order_flow_permissions.sync_sales_order_final_approver_role",
     # Records whether a purchase is raw material or goods to sell, so the RM
@@ -532,7 +554,9 @@ scheduler_events = {
 override_whitelisted_methods = {
     "erpnext.stock.doctype.purchase_receipt.purchase_receipt.make_purchase_invoice": "erp_dacsinc_custom.purchase_order.make_purchase_invoice_custom",
     # POS Profile "Brands" table — see pos_brand_filter.py
-    "erpnext.selling.page.point_of_sale.point_of_sale.get_items": "erp_dacsinc_custom.pos_brand_filter.get_items"
+    "erpnext.selling.page.point_of_sale.point_of_sale.get_items": "erp_dacsinc_custom.pos_brand_filter.get_items",
+    # Recent Orders also searches the walk-in name / mobile — see pos_walkin.py
+    "erpnext.selling.page.point_of_sale.point_of_sale.get_past_order_list": "erp_dacsinc_custom.pos_walkin.get_past_order_list",
 }
 
 

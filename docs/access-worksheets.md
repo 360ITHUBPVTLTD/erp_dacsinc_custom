@@ -76,13 +76,46 @@ Once the site is switched on (below), saving a sheet applies it in the same tran
   - A role that may create/edit a document gets Read + Select on everything linked
     from it, child tables included.
   - On another *sheet* document it gets only Select, plus Read where the form fetches
-    from it (fetch_from). The sheet stays the decision there.
+    from it (fetch_from), or displays it: Address and Contact (`DISPLAY_READ`), since
+    forms load the company's and the party's address and contact. This is read on
+    all records, never edit. The sheet stays the decision there.
   - Masters the role may edit (Item, Customer, Supplier, Lead…) pass edit on to their
     setup masters (Brand, Item Group, UOM, Customer Group, Territory…). Company,
     Currency, Price List, Account, Cost Center and similar only ever get Read.
   - Dependency grants only add. What they added is tracked in DefaultValue
     `derived_applied`, and only that is taken back later, so hand-made rules (e.g.
     Merchandiser User's own-customer scoping and HR rows) stay.
+- **Companion standard roles** (`COMPANIONS`). ERPNext screens rely on what its
+  standard roles can read. A sheet role that may view a group's documents gets the
+  **read-only** part of the matching standard role:
+  - Sales User: selling / CRM / POS documents;
+  - Stock User: stock documents;
+  - Purchase User: purchase / subcontracting documents;
+  - Accounts User: Sales Invoice / Payment / Journal;
+  - Manufacturing User: BOM;
+  - POS User: POS documents.
+
+  That means read / select / report on the doctypes that role reads (settings,
+  Price List, Bin, ledgers, masters). It never touches the sheet's own documents,
+  and skips the HR / framework modules. The reports and desk pages that role may
+  open come too. Every sheet role also reads Page and the Selling / Stock / Buying /
+  Accounts / POS Settings and Global Defaults. So removing Sales User etc. from the
+  profiles doesn't break screens.
+- **Reports and desk pages** (Point of Sale, Stock Balance, Warehouse Capacity
+  Summary, BOM Comparison Tool, Sales Funnel) open through their **Custom Role**,
+  Frappe's own override that migrate doesn't reset.
+  - A report's Custom Role replaces its own role list, so the report's own roles
+    are always kept in it.
+  - A page's Custom Role is added to its own roles for opening it. But the desk's list
+    of pages a user can open (sidebar, search, workspace shortcuts) uses **only** the
+    Custom Role once one exists, so the page's own roles are always copied into it.
+    Page / Report `on_update` hooks re-copy them when someone edits a page's or
+    report's roles by hand. Roles a page lists that don't exist on the site are
+    skipped.
+  - Point of Sale, Stock Balance and the other PAGE_DOCS pages follow only their own
+    documents (Point of Sale → POS Invoice), not the companion roles.
+  - Tracked in DefaultValue `report_custom_roles:*` / `page_custom_roles`. Tracking
+    maps are stored one row per entry, since a row holds at most 64 KB.
 - **Order Flow tabs** → Admin Settings › Order Flow.
   - Each main tab gets `of_tab_<tab>_roles`, and each sub-tab gets
     `of_sub_<tab>_<key>_roles` (section "Sub-tab Visibility").
@@ -108,6 +141,10 @@ Once the site is switched on (below), saving a sheet applies it in the same tran
   - Users on several profiles (User Access Profile) are re-synced.
 - The Roles & Permissions desk page shows and assigns only flagged profiles and
   roles. A user may hold several.
+  - This covers the user rows, profile role lists, the Role Profiles view and the
+    doctype access overview / detail.
+  - Other roles and profiles a user still holds stay on the user, just not shown.
+    The per-user Doctype Access tab still shows real access.
 - ERPNext / HRMS remove Employee and Employee Self Service from a user who has no
   Employee record linked (User ID). Link one to keep them.
 
@@ -132,6 +169,21 @@ Once the site is switched on (below), saving a sheet applies it in the same tran
   user who would lose roles. Until then profiles keep their old extra roles; assign
   users on the Roles & Permissions page.
 
+## Sheet changes made locally reach live — once per change
+
+- Every save in developer mode rewrites `access/agreed_access.json` with a
+  `fingerprint` of the sheets' content.
+- On every migrate, `sync_from_bundle` (after_migrate) compares it with the last one
+  the site took (DefaultValue `bundle_applied`):
+  - **Different:** the pushed sheets are stored as a new version ("from the app
+    code") and, where switched on, applied.
+  - **Same:** nothing.
+- So changes made on live stay until a newer sheet is pushed. If the same sheet is
+  edited both locally and on live, the next push wins.
+- **Rule changes in the code** (dependencies, companions, pages…) bump
+  `RULES_VERSION` in `access_sync.py`. The next migrate then re-applies the site's
+  sheets once, without replacing them.
+
 ## Going live — patches (each runs once per site)
 
 1. `setup_access_sheet`:
@@ -140,6 +192,11 @@ Once the site is switched on (below), saving a sheet applies it in the same tran
    - Stores the sheets from `access/agreed_access.json` when the site has none.
 2. `setup_pos_store_scope`: adds Customer › POS Store and back-fills it (data only).
 3. `apply_access_sheet_permissions`: switches on as above. Users' roles are unchanged.
+4. `reset_access_sheet_profiles`: each sheet profile becomes exactly role + Employee +
+   ESS. Users lose the extra roles that came only through the old profile (Sales
+   User, Accounts User, Item Manager…); roles held another way stay.
+5. `apply_access_pages_and_reports`: re-applies the Document access sheet with the
+   companion rule and the page / report Custom Roles (only where switched on).
 
 Patches never re-run, and nothing is kept in fixtures, so a later migrate doesn't
 reset what was changed on the site through the sheet page.
