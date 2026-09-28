@@ -14,3 +14,4 @@ erp_dacsinc_custom.patches.apply_dac_permission_matrix
 erp_dacsinc_custom.patches.allow_so_creator_self_approval
 erp_dacsinc_custom.patches.setup_access_sheet
 erp_dacsinc_custom.patches.setup_pos_store_scope
+erp_dacsinc_custom.patches.apply_access_sheet_permissions

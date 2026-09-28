@@ -86,6 +86,9 @@ Once the site is switched on (below), saving a sheet applies it in the same tran
 - **Order Flow tabs** → Admin Settings › Order Flow.
   - Each main tab gets `of_tab_<tab>_roles`, and each sub-tab gets
     `of_sub_<tab>_<key>_roles` (section "Sub-tab Visibility").
+  - Only the sheet roles are managed there. Any other role already on a tab (Sales
+    User, Accounts Team, Inward Team…) is kept, so users not yet moved to a sheet
+    role don't lose the dashboard.
   - A tab nobody may see gets `Admin`, so it counts as configured.
   - `order_flow_permissions.get_allowed_subtabs()` feeds the page's `allowed_subtabs`,
     and the page hides the other sub-tab buttons.
@@ -108,35 +111,38 @@ Once the site is switched on (below), saving a sheet applies it in the same tran
 - ERPNext / HRMS remove Employee and Employee Self Service from a user who has no
   Employee record linked (User ID). Link one to keep them.
 
-## Switched off / on (nothing is taken away until an Admin says so)
+## Switched off / on — users' roles are never changed by applying
 
-- **Off:** a site's first state; live right after the deploy.
-  - Roles, flags and fields exist. Profiles are created only where missing, and
-    existing profiles keep their roles, so no user loses one.
-  - The sheets are stored, and saving a sheet only records it.
-  - No permission, report or Admin Settings tab is changed, and the POS store scope
-    is off.
-  - The sheet page shows "Not applied to the ERP yet".
-- **On:** an Admin presses **Apply to the ERP…** on the sheet page. The dialog first
-  lists every user who would lose roles through the profile reset. Then
-  `access_sync.activate()`:
-  1. resets the profiles to role + Employee + ESS;
-  2. applies both sheets;
-  3. records DefaultValue `active` = 1.
+- **Off** (a site's state after `setup_access_sheet`):
+  - Roles, flags, fields and missing profiles exist, and the sheets are stored.
+  - Saving a sheet only records it.
+  - No permission or tab is changed, and the POS store scope is off.
+- **On** (`access_sync.apply_permissions()`): the patch `apply_access_sheet_permissions`
+  on migrate, or **Apply to the ERP…** on the sheet page.
+  - Applies the Document access sheet (document permissions, linked documents, report
+    access) and the Order Flow tab / sub-tab roles.
+  - The patch first works the tab sheet out from the Document access sheet
+    (`derive_tab_cells()`, the same rule as the page's Refill), because the stored tab
+    sheet was never hand-made.
+  - Records DefaultValue `active` = 1. From then on every save applies at once, and
+    the POS store scope works.
+  - **No user's roles or profiles are touched.**
+- **Reset profiles…** (`reset_profiles()`, Admin only) is separate and explicit. Each
+  sheet role's profile becomes role + Employee + ESS. The dialog first lists every
+  user who would lose roles. Until then profiles keep their old extra roles; assign
+  users on the Roles & Permissions page.
 
-  From then on every save applies at once.
+## Going live — patches (each runs once per site)
 
-## Going live (one time) — `patches/setup_access_sheet.py`
+1. `setup_access_sheet`:
+   - Creates the flags (also in `custom/role.json` and `custom/role_profile.json`),
+     the roles and any missing profiles.
+   - Stores the sheets from `access/agreed_access.json` when the site has none.
+2. `setup_pos_store_scope`: adds Customer › POS Store and back-fills it (data only).
+3. `apply_access_sheet_permissions`: switches on as above. Users' roles are unchanged.
 
-- Runs once per site on migrate, with the site still switched **off**:
-  1. Creates the flags (also exported in `custom/role.json` and
-     `custom/role_profile.json`).
-  2. Creates the roles and any missing profiles.
-  3. Stores the sheets from `access/agreed_access.json` when the site has none saved.
-- `setup_pos_store_scope` adds Customer › POS Store and back-fills it (data only).
-- Nobody's access changes on deploy. Map users to profiles, then switch on.
-- The patches never run again, and nothing is kept in fixtures, so a later migrate
-  doesn't reset what was changed on the site.
+Patches never re-run, and nothing is kept in fixtures, so a later migrate doesn't
+reset what was changed on the site through the sheet page.
 
 ## Blank PDFs
 

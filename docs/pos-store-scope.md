@@ -15,7 +15,7 @@ works either way.
 |---|---|---|
 | POS Invoice / Opening / Closing Entry | all stores | their stores (`pos_profile`) |
 | POS Profile | all | their stores |
-| Customer | only POS customers (POS Store set) | their stores' customers + ones they created |
+| Customer | POS customers (POS Store set) + ones they created | their stores' customers + ones they created |
 
 Wiring:
 

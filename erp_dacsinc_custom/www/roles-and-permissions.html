@@ -1055,48 +1055,59 @@
       t.addEventListener("mouseleave", clear);
     });
   })();
-  // Applied / not applied strip, and "Apply to the ERP" (Admin only, confirmed).
+  // Applied / not applied strip. "Apply to the ERP" applies the sheets (users' roles
+  // stay); "Reset profiles…" is the separate step that trims profiles (Admin only).
   (function switchStrip() {
     const el = document.getElementById("ws-switch");
     if (!el || !WS_BOOT.signed_in) { if (el) el.remove(); return; }
     el.classList.toggle("on", WS_ACTIVE);
     el.innerHTML = WS_ACTIVE
-      ? `<span class="dot"></span><span class="txt"><b>Applied to the ERP.</b> Saving a sheet changes roles, permissions and dashboard tabs straight away.</span>`
-      : `<span class="dot"></span><span class="txt"><b>Not applied to the ERP yet.</b> Saving records the sheets only — nobody's access changes until an Admin applies them.</span>
+      ? `<span class="dot"></span><span class="txt"><b>Applied to the ERP.</b> Saving a sheet changes permissions and dashboard tabs straight away. Users' roles are only changed on the Roles &amp; Permissions page.</span>
+         ${CAN_EDIT ? `<button type="button" id="ws-reset" style="background:var(--surface);color:#b3261e;">Reset profiles…</button>` : ""}`
+      : `<span class="dot"></span><span class="txt"><b>Not applied to the ERP yet.</b> Saving records the sheets only.</span>
          ${CAN_EDIT ? `<button type="button" id="ws-activate">Apply to the ERP…</button>` : ""}`;
-    const btn = document.getElementById("ws-activate");
-    if (!btn) return;
-    btn.addEventListener("click", async () => {
+    const post = async (method) => {
+      const r = await fetch(`/api/method/erp_dacsinc_custom.access_sync.${method}`, { method: "POST", credentials: "same-origin",
+        headers: { "X-Frappe-CSRF-Token": WS_BOOT.csrf_token, "Accept": "application/json" } });
+      if (!r.ok) throw new Error((await r.text()).slice(0, 300));
+      return r.json();
+    };
+    const run = async (btn, label, method) => {
+      btn.disabled = true; btn.textContent = "Working…";
+      try { await post(method); location.reload(); }
+      catch (e) { btn.disabled = false; btn.textContent = label;
+        await askConfirm({ title: "Could not complete", body: esc2(String(e.message || e)), ok: "OK" }); }
+    };
+    const act = document.getElementById("ws-activate");
+    if (act) act.addEventListener("click", async () => {
       if (DOCS.dirty() || (TABS.dirty() && !TABS.auto)) {
         await askConfirm({ title: "Save first", body: "Save or discard your changes on both sheets before applying them.", ok: "OK" });
         return;
       }
-      btn.disabled = true; btn.textContent = "Checking…";
+      if (!await askConfirm({ title: "Apply the agreed access to the ERP?", ok: "Apply now",
+        body: `Every access sheet role gets exactly the rights on the saved Document access sheet (plus what linked documents and reports need),
+          the Order Flow tabs and sub-tabs follow the dashboard sheet, and the POS store limits switch on.
+          <b>No user's roles or profiles are changed.</b>` })) return;
+      run(act, "Apply to the ERP…", "activate");
+    });
+    const rst = document.getElementById("ws-reset");
+    if (rst) rst.addEventListener("click", async () => {
+      rst.disabled = true; rst.textContent = "Checking…";
       let users = {};
       try {
         const r = await fetch("/api/method/erp_dacsinc_custom.access_sync.get_activation_preview", { credentials: "same-origin", headers: { "Accept": "application/json" } });
         users = ((await r.json()).message || {}).users || {};
-      } catch (e) { /* preview is informative only */ }
-      btn.disabled = false; btn.textContent = "Apply to the ERP…";
+      } catch (e) { /* informative only */ }
+      rst.disabled = false; rst.textContent = "Reset profiles…";
       const items = Object.entries(users).map(([u, roles]) => `<b>${esc2(u)}</b> loses: <span class="del">${esc2(roles.join(", "))}</span>`);
-      const yes = await askConfirm({
-        title: "Apply the agreed access to the ERP?", ok: "Apply now", danger: true,
-        body: `This sets every access sheet role's permissions and the Order Flow tabs from the saved sheets, turns on the POS store limits,
-          and resets each role's profile to that role + Employee + Employee Self Service.
-          ${items.length ? `<b>${plural(items.length, "user")} lose roles</b> that came through those profiles:` : "No user loses a role through the profiles."}
-          Assign the right profiles on the Roles &amp; Permissions page afterwards.`,
-        items });
-      if (!yes) return;
-      btn.disabled = true; btn.textContent = "Applying…";
-      try {
-        const r = await fetch("/api/method/erp_dacsinc_custom.access_sync.activate", { method: "POST", credentials: "same-origin",
-          headers: { "X-Frappe-CSRF-Token": WS_BOOT.csrf_token, "Accept": "application/json" } });
-        if (!r.ok) throw new Error((await r.text()).slice(0, 300));
-        location.reload();
-      } catch (e) {
-        btn.disabled = false; btn.textContent = "Apply to the ERP…";
-        await askConfirm({ title: "Could not apply", body: esc2(String(e.message || e)), ok: "OK" });
+      if (!items.length) {
+        await askConfirm({ title: "Profiles are already clean", body: "Every sheet role's profile holds only that role + Employee + Employee Self Service.", ok: "OK" });
+        return;
       }
+      if (!await askConfirm({ title: "Reset the profiles?", ok: "Reset", danger: true,
+        body: `Each sheet role's profile becomes exactly that role + Employee + Employee Self Service.
+          <b>${plural(items.length, "user")} lose roles</b> that came through those profiles:`, items })) return;
+      run(rst, "Reset profiles…", "reset_profiles");
     });
   })();
 
