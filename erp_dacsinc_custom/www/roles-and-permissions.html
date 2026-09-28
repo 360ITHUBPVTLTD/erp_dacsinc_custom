@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Roles &amp; Responsibilities — Dacsinc</title>
+<title>Access &amp; Permissions — Dacsinc</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Newsreader:ital,wght@0,400;0,500;0,600;0,700;1,400;1,500&family=IBM+Plex+Mono:wght@400;500;600&display=swap">
 <style>
@@ -66,7 +66,7 @@
   }
   .topbar nav a:hover { border-color: var(--line); background: var(--surface); color: var(--ink); }
 
-  .page { max-width: 1000px; margin: 0 auto; padding: 0 24px 100px; }
+  .page { max-width: 1480px; margin: 0 auto; padding: 0 24px 100px; }
   .prose { max-width: 700px; }
   .prose p { color: var(--ink-soft); }
   .prose p.lede { color: var(--ink); font-size: 1.12em; }
@@ -251,6 +251,158 @@
     .page { max-width: 100%; padding: 0 8px 20px; }
     a { color: var(--ink); text-decoration: none; }
   }
+  /* ── Page tabs ── */
+  .ptabs { display: flex; gap: 4px; border-bottom: 2px solid var(--line); margin: 8px 0 22px; }
+  .ptabs button { font: 600 15px/1 inherit; font-family: inherit; padding: 12px 20px; border: 1px solid transparent; border-bottom: 0;
+    border-radius: 8px 8px 0 0; background: transparent; color: var(--ink-soft); cursor: pointer; margin-bottom: -2px; }
+  .ptabs button:hover { color: var(--ink); background: var(--line-soft); }
+  .ptabs button[aria-selected="true"] { background: var(--surface); color: var(--ink); border-color: var(--line); border-bottom: 2px solid var(--surface); }
+  .stabs { display: inline-flex; gap: 2px; padding: 3px; border-radius: 999px; background: var(--line-soft); margin: 0 0 18px; }
+  .stabs button { font: 600 13.5px/1 inherit; font-family: inherit; padding: 9px 16px; border: 0; border-radius: 999px;
+    background: transparent; color: var(--ink-soft); cursor: pointer; }
+  .stabs button[aria-selected="true"] { background: var(--surface); color: var(--ink); box-shadow: 0 1px 4px var(--shadow); }
+  .tabpanel[hidden], section.dsheet[hidden] { display: none !important; }
+  .edit-only { display: none; }
+  body.can-edit .edit-only { display: inline; }
+  .dletters { font-size: 12.5px; }
+  .dletters b { display: inline-block; min-width: 16px; text-align: center; color: #fff; background: var(--ink-soft); border-radius: 3px; margin-right: 3px; font-size: 11px; }
+
+  /* ── Applied / not applied strip ── */
+  .ws-switch { display: flex; flex-wrap: wrap; align-items: center; gap: 10px 16px; padding: 12px 16px; margin: 0 0 16px;
+    border-radius: 10px; border: 1px solid var(--line); background: var(--surface); font-size: 14px; }
+  .ws-switch .dot { width: 10px; height: 10px; border-radius: 50%; background: #c28a1a; flex: none; }
+  .ws-switch.on .dot { background: var(--pine); }
+  .ws-switch .txt { flex: 1 1 380px; color: var(--ink-soft); }
+  .ws-switch .txt b { color: var(--ink); }
+  .ws-switch button { font: 600 13.5px/1 inherit; font-family: inherit; padding: 9px 14px; border-radius: 7px; cursor: pointer;
+    border: 1px solid #b3261e; background: #b3261e; color: #fff; }
+
+  /* ── Confirmation dialog ── */
+  dialog.wsdlg { border: 1px solid var(--line); border-radius: 12px; padding: 0; max-width: 560px; width: calc(100vw - 32px);
+    background: var(--surface); color: var(--ink); box-shadow: 0 18px 50px rgba(0,0,0,.25); }
+  dialog.wsdlg::backdrop { background: rgba(20, 16, 12, .45); }
+  dialog.wsdlg form { padding: 20px 22px 18px; }
+  .wsdlg-title { margin: 0 0 8px; font-size: 19px; }
+  .wsdlg-body { color: var(--ink-soft); font-size: 14px; line-height: 1.5; }
+  .wsdlg-list { margin: 12px 0 0; padding: 8px 12px; max-height: 280px; overflow: auto; list-style: none;
+    background: var(--paper); border: 1px solid var(--line-soft); border-radius: 8px; font-size: 13px; }
+  .wsdlg-list:empty { display: none; }
+  .wsdlg-list li { padding: 3px 0; border-bottom: 1px dashed var(--line-soft); }
+  .wsdlg-list li:last-child { border-bottom: 0; }
+  .wsdlg-list .add { color: var(--pine); font-weight: 700; }
+  .wsdlg-list .del { color: #b3261e; font-weight: 700; }
+  .wsdlg-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 16px; }
+  .wsdlg-actions button { font: 600 14px/1 inherit; font-family: inherit; padding: 10px 16px; border-radius: 7px; cursor: pointer;
+    border: 1px solid var(--line); background: var(--surface); color: var(--ink); }
+  .wsdlg-actions .wsdlg-ok { background: var(--pine); border-color: var(--pine); color: #fff; }
+  .wsdlg-actions .wsdlg-ok.danger { background: #b3261e; border-color: #b3261e; }
+
+  @media print {
+    .ptabs, .stabs, dialog.wsdlg { display: none !important; }
+    body.ws-printing #panel-blank, body.dt-printing #panel-blank { display: block !important; }
+    body.ws-printing #panel-agreed, body.dt-printing #panel-agreed { display: none !important; }
+    body.sec-printing .tabpanel:has(.print-target) { display: block !important; }
+    body.sec-printing .tabpanel:not(:has(.print-target)) { display: none !important; }
+    body.sec-printing .print-target { display: block !important; }
+    .edit-only { display: none !important; }
+  }
+  /* ── Decided sheets (editable) ── */
+  .sheet-tag { display: inline-block; vertical-align: middle; margin-left: 8px; padding: 2px 9px; border-radius: 999px;
+    font: 600 11px/1.5 "IBM Plex Mono", monospace; letter-spacing: .02em; background: var(--line-soft); color: var(--ink-soft); }
+  .sheet-tag.is-live { background: var(--pine-soft); color: var(--pine); }
+  section.dsheet { padding-top: 6px; }
+  .dlegend { display: flex; flex-wrap: wrap; gap: 6px 18px; font-size: 13px; color: var(--ink-soft); margin: 0 0 12px; align-items: center; }
+  .dlegend .k { display: inline-flex; width: 16px; height: 16px; margin-right: 4px; vertical-align: -3px; }
+  .dbar { position: sticky; top: 0; z-index: 3; display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px;
+    background: var(--surface); border: 1px solid var(--line); border-radius: 8px; padding: 8px 12px; margin: 0 0 10px;
+    box-shadow: 0 2px 8px var(--shadow); font-size: 13px; }
+  .dbar .src { color: var(--ink-soft); margin-right: auto; }
+  .dbar .src b { color: var(--ink); }
+  .dbar .cnt { font: 600 12px "IBM Plex Mono", monospace; padding: 2px 8px; border-radius: 999px; background: var(--line-soft); color: var(--ink-soft); }
+  .dbar .cnt.hot { background: var(--clay-soft); color: var(--clay); }
+  .dbar button { font: 600 13px/1 inherit; font-family: inherit; padding: 7px 12px; border-radius: 6px; cursor: pointer;
+    border: 1px solid var(--line); background: var(--surface); color: var(--ink); }
+  .dbar button.pri { background: var(--pine); border-color: var(--pine); color: #fff; }
+  #decided-tabs .dbar button.pri { background: var(--indigo); border-color: var(--indigo); }
+  .dbar button:disabled { opacity: .45; cursor: default; }
+  .dbar label { display: inline-flex; gap: 5px; align-items: center; color: var(--ink-soft); cursor: pointer; }
+
+  /* one clickable box */
+  .k { box-sizing: border-box; display: flex; align-items: center; justify-content: center; width: 16px; height: 16px;
+    border-radius: 3px; font: 800 10px/1 Arial, Helvetica, sans-serif; font-style: normal; padding: 0; border: 1.5px solid; }
+  .k.on  { background: var(--pine); border-color: var(--pine); color: #fff; }
+  .k.no  { background: transparent; border-color: #d6d0c4; color: #c9c2b5; border-width: 1px;
+    background-image: linear-gradient(to top right, transparent calc(50% - .6px), #d9a39b calc(50% - .6px), #d9a39b calc(50% + .6px), transparent calc(50% + .6px)); }
+  .k.own { background: #c0661f; border-color: #c0661f; color: #fff; }
+  .k.ownno { background: transparent; border: 1px dashed #e0cdbb; color: #e0cdbb; }
+  .k.off { border: 1px dashed #999; background: repeating-linear-gradient(45deg, #ccc, #ccc 2px, transparent 2px, transparent 4px); }
+  .k.chg { box-shadow: 0 0 0 2px #2f6fd6; }
+  .k.tv { background: var(--pine); border-color: var(--pine); color: #fff; }
+  .k.ta { background: var(--indigo); border-color: var(--indigo); color: #fff; }
+  .k.tn { background: transparent; border-color: #b9b2a4; }
+  button.k { cursor: pointer; }
+  button.k:hover { transform: scale(1.15); }
+  button.k:disabled { cursor: default; transform: none; }
+  table.dsheet-t .mini { display: grid; grid-template-columns: repeat(3, 16px); gap: 3px; justify-content: center; }
+  table.dsheet-t td.mcell { padding: 3px; position: relative; }
+  table.dsheet-t td.mcell.chg { box-shadow: inset 0 0 0 2px #2f6fd6; }
+  table.dsheet-t td.tcell { text-align: center; padding: 4px 2px; }
+  table.dsheet-t td.tcell.chg { box-shadow: inset 0 0 0 2px #2f6fd6; }
+  table.dsheet-t td.tcell .k { width: 22px; height: 22px; font-size: 12px; margin: 0 auto; }
+  /* Decided sheets scroll inside their own frame: role names stay on top,
+     document / tab names stay on the left, and the hovered row + role light up. */
+  .dsheet .table-wrap { max-height: calc(100vh - 110px); overflow: auto; overscroll-behavior: contain; }
+  table.dsheet-t { border-collapse: separate; border-spacing: 0; }
+  table.dsheet-t th, table.dsheet-t td { border-width: 0 1px 1px 0; }
+  table.dsheet-t thead th { position: sticky; top: 0; z-index: 3; background: var(--paper);
+    box-shadow: inset 0 -2px 0 var(--line); height: 128px; }
+  table.dsheet-t thead th:first-child { left: 0; z-index: 4; min-width: 190px; }
+  table.dsheet-t td.label { position: sticky; left: 0; z-index: 2; background: var(--surface); box-shadow: inset -2px 0 0 var(--line); }
+  table.dsheet-t tr.tab td.label { background: var(--indigo-soft); }
+  table.dsheet-t tr.tab td.label[colspan] { box-shadow: none; }
+  table.dsheet-t thead th.role span { font-weight: 700; font-size: 12px; color: var(--ink); }
+  table.dsheet-t thead th.role.hl { background: var(--pine); }
+  table.dsheet-t thead th.role.hl span, table.dsheet-t thead th.role.hl span small { color: #fff; }
+  #decided-tabs table.dsheet-t thead th.role.hl { background: var(--indigo); }
+  table.dsheet-t tr.hl td { background: var(--pine-soft); }
+  #decided-tabs table.dsheet-t tr.hl td { background: var(--indigo-soft); }
+  table.dsheet-t tr.hl td.label { font-weight: 700; color: var(--ink); }
+  table.dsheet-t td.colhl { background: color-mix(in srgb, var(--pine-soft) 60%, transparent); }
+  #decided-tabs table.dsheet-t td.colhl { background: color-mix(in srgb, var(--indigo-soft) 70%, transparent); }
+  table.dsheet-t td.mcell:hover, table.dsheet-t td.tcell:hover { background: var(--surface) !important; box-shadow: inset 0 0 0 2px var(--ink-soft); }
+  .hover-tip { position: fixed; z-index: 50; pointer-events: none; background: var(--ink); color: var(--paper);
+    font: 600 12px/1.3 "IBM Plex Mono", monospace; padding: 5px 9px; border-radius: 6px; white-space: nowrap;
+    box-shadow: 0 4px 14px var(--shadow); display: none; }
+  .dsheet .toast { font-size: 12.5px; color: var(--pine); }
+  .dsheet .toast.err { color: #b3261e; }
+
+  @media print {
+    body.sec-printing .topbar, body.sec-printing header.masthead,
+    body.sec-printing section.block:not(.print-target) { display: none !important; }
+    body.sec-printing .print-target > h2, body.sec-printing .print-target .no-print { display: none !important; }
+    body.sec-printing .print-target .ws-print-head { display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 6px; color: #000; }
+    body.sec-printing section.dsheet { border-top: 0; padding-top: 0; width: auto; margin-left: 0; }
+    body.sec-printing .page { padding: 0; }
+    body.sec-printing .table-wrap { border: 0; overflow: visible; max-height: none; }
+    body.sec-printing table.dsheet-t th, body.sec-printing table.dsheet-t td { position: static !important; border-width: 1px; }
+    body.sec-printing table.dsheet-t { border-collapse: collapse; }
+    body.sec-printing .hover-tip { display: none !important; }
+    body.sec-printing .dlegend { font-size: 10px; margin-bottom: 5px; color: #000; font-weight: 600; }
+    body.sec-printing table.ws { font-size: 10px; background: #fff; }
+    body.sec-printing table.ws th, body.sec-printing table.ws td { padding: 2px 3px; border-color: #555 !important; color: #000; }
+    body.sec-printing table.ws th.role { height: 112px; width: 52px; }
+    body.sec-printing table.ws th.role span { font-size: 9.5px; font-weight: 800; color: #000; }
+    body.sec-printing table.ws tr.sub td.label { color: #000; font-weight: 700; }
+    body.sec-printing table.ws tr.tab td { font-weight: 900; color: #000; background: #d5dbe8 !important; }
+    body.sec-printing table.ws tbody { break-inside: avoid; page-break-inside: avoid; }
+    body.sec-printing table.ws thead { display: table-header-group; }
+    body.sec-printing td.mcell.chg, body.sec-printing td.tcell.chg { background: none !important; box-shadow: none !important; }
+    body.sec-printing .k { box-shadow: none !important; }
+    body.sec-printing .k.no { border-color: #999; color: #999; }
+    body.sec-printing .k, body.sec-printing table.ws tr.tab td { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+    body.sec-printing .ws-sign { margin-top: 12px; font-size: 11px; break-inside: avoid; }
+    body.sec-printing .ws-sign div { color: #000; border-top: 1.5px solid #000; font-weight: 700; }
+  }
 </style>
 </head>
 <body>
@@ -267,99 +419,97 @@
 <div class="page">
 
   <header class="masthead">
-    <p class="eyebrow">roles &amp; responsibilities — order lifecycle</p>
-    <h1 class="title">How our teams coordinate to fulfill your orders.</h1>
+    <p class="eyebrow">access &amp; permissions — Dacsinc ERP</p>
+    <h1 class="title">Who can see and do what in the ERP.</h1>
     <div class="prose">
-      <p class="lede">An overview of the different teams involved in the order lifecycle, from quotation to manufacturing and final delivery, and their specific responsibilities.</p>
-      <div class="btn-row">
-        <a class="btn-print" href="/assets/erp_dacsinc_custom/docs/tab-access-worksheet.pdf?v=4" download="Dacsinc - Tab Access Worksheet.pdf" data-dl-name="Dacsinc - Tab Access Worksheet">⤓ Download Tab Access Worksheet (PDF)</a>
-        <button class="btn-print is-outline" type="button" onclick="printWorksheet()" style="color: var(--indigo);">⎙ Print</button>
-        <a class="btn-print" href="/assets/erp_dacsinc_custom/docs/document-access-worksheet.pdf?v=4" download="Dacsinc - Document Access Worksheet.pdf" data-dl-name="Dacsinc - Document Access Worksheet" style="background: var(--clay);">⤓ Download Document Access Worksheet (PDF)</a>
-        <button class="btn-print is-outline" type="button" onclick="printDocWorksheet()" style="color: var(--clay);">⎙ Print</button>
-      </div>
+      <p class="lede">The agreed access for every role: which documents each role may open, create, submit, cancel or delete,
+        and which Order Flow dashboard tabs it sees. Blank worksheets for marking on paper are under the second tab.</p>
     </div>
   </header>
 
-  <section class="block" id="roles">
-    <h2>Roles &amp; Responsibilities</h2>
-    <p class="block-intro">What each role is responsible for in the order lifecycle.</p>
-    <div class="table-wrap">
-      <table class="ref-table">
-        <thead><tr><th>Role</th><th>Status</th><th>Stages it covers</th><th>What it is responsible for</th></tr></thead>
-        <tbody>
-          <tr>
-            <td class="name">Marketing Team</td>
-            <td><span class="pill pill--new">new</span></td>
-            <td class="muted">Lead, Quotation</td>
-            <td class="muted">Create/edit Leads; create, edit, and submit Quotations.</td>
-          </tr>
-          <tr>
-            <td class="name">Inside Sales</td>
-            <td><span class="pill pill--new">new</span></td>
-            <td class="muted">Quotation</td>
-            <td class="muted">Create, edit, and submit Quotations.</td>
-          </tr>
-          <tr>
-            <td class="name">Merchandiser User</td>
-            <td><span class="pill pill--existing">existing</span></td>
-            <td class="muted">Sales Order creation &amp; approval, Material Request, Pick List</td>
-            <td class="muted">Create/edit Sales Orders and move them through the approval workflow; raise Material Requests; create and submit Pick Lists. Scoped to their own customers' orders only.</td>
-          </tr>
-          <tr>
-            <td class="name">Production Team</td>
-            <td><span class="pill pill--new">new</span></td>
-            <td class="muted">Material Request, Subcontracting PO/Issue, Embroidery Issue</td>
-            <td class="muted">Raise Material Requests; create and submit Subcontracting Orders and the Stock Entries that issue material to a jobber; create and submit embroidery work.</td>
-          </tr>
-          <tr>
-            <td class="name">Purchase Team</td>
-            <td><span class="pill pill--new">new</span></td>
-            <td class="muted">Purchase Order creation</td>
-            <td class="muted">Create and edit Purchase Orders. Approval is completed by Management.</td>
-          </tr>
-          <tr>
-            <td class="name">Purchase Manager</td>
-            <td><span class="pill pill--existing">existing</span></td>
-            <td class="muted">Purchase Order approval</td>
-            <td class="muted">Standard Purchase Order access, including submit.</td>
-          </tr>
-          <tr>
-            <td class="name">Inward Team</td>
-            <td><span class="pill pill--new">new</span></td>
-            <td class="muted">GRN/PR, Subcontracting Receipt, Embroidery Receipt, Delivery Note, Stock Transfer</td>
-            <td class="muted">Create and submit Purchase Receipts and Subcontracting Receipts; log embroidery work received back; create and submit Delivery Notes; create and submit Stock Entries (covers Stock Transfer).</td>
-          </tr>
-          <tr>
-            <td class="name">Accounts Team</td>
-            <td><span class="pill pill--new">new</span></td>
-            <td class="muted">Purchase Invoice, Delivery Note, Sales Invoice</td>
-            <td class="muted">Create and submit Purchase Invoices, Delivery Notes, and Sales Invoices.</td>
-          </tr>
-          <tr>
-            <td class="name">Packing Executive (Junior Merchandiser)</td>
-            <td><span class="pill pill--existing">existing</span></td>
-            <td class="muted">Pick List Approval / Submission</td>
-            <td class="muted">Create and submit Pick Lists.</td>
-          </tr>
-        </tbody>
-      </table>
+  <nav class="ptabs" role="tablist" aria-label="Sheets">
+    <button type="button" role="tab" data-tab="agreed">Agreed access</button>
+    <button type="button" role="tab" data-tab="blank">Blank worksheets</button>
+  </nav>
+
+  <div class="tabpanel" id="panel-agreed" role="tabpanel">
+    <div class="ws-switch no-print" id="ws-switch"></div>
+    <nav class="stabs" role="tablist" aria-label="Agreed sheets">
+      <button type="button" role="tab" data-sub="docs">Document access</button>
+      <button type="button" role="tab" data-sub="tabs">Order Flow dashboard</button>
+    </nav>
+
+  <section class="block dsheet" id="decided-docs">
+    <div class="ws-print-head">
+      <div><b style="font-size:16px;">Document access by role — Dacsinc ERP</b>
+        <div style="font-size:11px; color:#4a4540;" class="js-src"></div></div>
+      <div style="font-size:11px;" class="js-printed"></div>
+    </div>
+    <h2>Document access by role</h2>
+    <p class="block-intro">What each role may do with each document in the ERP. Roles are listed across the top and documents down the side.
+      <span class="edit-only">Click a box to grant or remove a right. Granting Delete or Cancel, or removing all of a role's rights on a document,
+      asks you to confirm. Nothing changes until you press <b>Save</b>.</span></p>
+    <div class="dlegend">
+      <span><i class="k on">V</i> allowed</span>
+      <span><i class="k no">V</i> not allowed</span>
+      <span><i class="k own">O</i> only records they created</span>
+      <span><i class="k off"></i> not applicable (never submitted)</span>
+      <span class="no-print"><i class="k on chg">V</i> differs from the marked worksheet</span>
+    </div>
+    <div class="dlegend dletters">
+      <span><b>V</b> View — open, print, email, reports, export</span><span><b>E</b> Create &amp; edit</span>
+      <span><b>S</b> Submit / approve</span><span><b>C</b> Cancel / amend</span><span><b>D</b> Delete</span><span><b>O</b> Only own records</span>
+    </div>
+    <div class="dbar no-print" id="dd-bar"></div>
+    <div class="table-wrap"><table class="ws dtm dsheet-t" id="dd-table"></table></div>
+    <div class="ws-sign">
+      <div>Client / Management — name &amp; signature</div>
+      <div>Prepared by (360 IT Hub)</div>
+      <div>Agreed on (date)</div>
     </div>
   </section>
 
+  <section class="block dsheet" id="decided-tabs">
+    <div class="ws-print-head">
+      <div><b style="font-size:16px;">Order Flow dashboard — tabs by role — Dacsinc ERP</b>
+        <div style="font-size:11px; color:#4a4540;" class="js-src"></div></div>
+      <div style="font-size:11px;" class="js-printed"></div>
+    </div>
+    <h2>Order Flow dashboard — tabs by role</h2>
+    <p class="block-intro">Which tabs and sub-tabs of the Order Flow dashboard each role sees. A role is shown a tab only when it may open
+      the documents on that tab, so this sheet follows the document access.
+      <span class="edit-only">Click a cell to change it: hidden → ✓ → A → hidden. Showing a sub-tab also shows its main tab, and hiding a main tab
+      hides its sub-tabs.</span></p>
+    <div class="dlegend">
+      <span><i class="k tv">✓</i> can view</span>
+      <span><i class="k ta">A</i> can view and act (create, submit or approve from the tab)</span>
+      <span><i class="k tn"></i> hidden</span>
+      <span class="no-print"><i class="k tv chg">✓</i> changed since the last save</span>
+    </div>
+    <div class="dbar no-print" id="dt-bar"></div>
+    <div class="table-wrap"><table class="ws dsheet-t" id="td-table"></table></div>
+    <div class="ws-sign">
+      <div>Client / Management — name &amp; signature</div>
+      <div>Prepared by (360 IT Hub)</div>
+      <div>Agreed on (date)</div>
+    </div>
+  </section>
+  </div>
+
+  <div class="tabpanel" id="panel-blank" role="tabpanel">
   <section class="block" id="tab-permissions">
     <div class="ws-print-head">
       <div><b style="font-size:16px;">Order Flow Dashboard — Tab &amp; Sub-tab Access</b>
         <div style="font-size:11px; color:#4a4540;">Dacsinc · decide per role which tabs and sub-tabs are visible</div></div>
       <div style="font-size:11px;">Date: ______________</div>
     </div>
-    <h2>Order Flow Dashboard — Tab &amp; Sub-tab Access</h2>
-    <p class="block-intro">Worksheet to decide, with the client, which role sees which tab and sub-tab of the Order Flow dashboard.
-      Print it (button above or below), tick on paper, then we configure it.</p>
+    <h2>Order Flow dashboard — tabs by role <span class="sheet-tag">blank worksheet</span></h2>
+    <p class="block-intro">For marking on paper. For each role, tick the tabs and sub-tabs it should see, then sign and return the sheet.</p>
     <div class="ws-legend">
       <span><span class="ws-box"></span> blank = not visible</span>
       <span><b>✓</b> = can see</span>
-      <span><b>A</b> = can see <b>and act</b> (approve / create / submit from this tab)</span>
-      <span>A sub-tab needs its main tab ticked too.</span>
+      <span><b>A</b> = can see <b>and act</b> (create, submit or approve from the tab)</span>
+      <span>A sub-tab is shown only when its main tab is ticked too.</span>
     </div>
     <div class="table-wrap"><table class="ws" id="ws-table"></table></div>
     <div class="ws-sign">
@@ -367,8 +517,8 @@
       <div>Prepared by (360 IT Hub)</div>
       <div>Agreed on (date)</div>
     </div>
-    <div class="btn-row">
-      <a class="btn-print" href="/assets/erp_dacsinc_custom/docs/tab-access-worksheet.pdf?v=4" download="Dacsinc - Tab Access Worksheet.pdf" data-dl-name="Dacsinc - Tab Access Worksheet">⤓ Download PDF</a>
+    <div class="btn-row no-print">
+      <a class="btn-print" href="/assets/erp_dacsinc_custom/docs/tab-access-worksheet.pdf?v=5" download="Dacsinc - Tab Access Worksheet.pdf" data-dl-name="Dacsinc - Tab Access Worksheet">⤓ Download PDF</a>
       <button class="btn-print is-outline" type="button" onclick="printWorksheet()" style="color: var(--indigo);">⎙ Print</button>
     </div>
   </section>
@@ -379,9 +529,9 @@
         <div style="font-size:11px; color:#4a4540;">Dacsinc · tick the small boxes in each cell</div></div>
       <div style="font-size:11px;">Date: ______________</div>
     </div>
-    <h2>Document Access — per role</h2>
-    <p class="block-intro">One table: documents down the side, roles across the top. Each cell has six small boxes — tick what that
-      role may do with that document. Leave the cell empty for no access.</p>
+    <h2>Document access by role <span class="sheet-tag">blank worksheet</span></h2>
+    <p class="block-intro">For marking on paper. Documents are listed down the side and roles across the top. Each cell has six small boxes:
+      tick the rights that role should have for that document, and leave the cell empty for no access.</p>
     <div class="dt-legend">
       <span><b>V</b> View <small>(open, print, email, reports, export)</small></span>
       <span><b>E</b> Create &amp; Edit</span>
@@ -389,7 +539,7 @@
       <span><b>C</b> Cancel <small>(incl. amend)</small></span>
       <span><b>D</b> Delete</span>
       <span><b>O</b> Only own records</span>
-      <span><i style="display:inline-block;width:12px;height:12px;border:1px dashed #555;vertical-align:middle;background:repeating-linear-gradient(45deg,#bbb,#bbb 2px,transparent 2px,transparent 4px);"></i> shaded = not possible (document is never submitted)</span>
+      <span><i style="display:inline-block;width:12px;height:12px;border:1px dashed #555;vertical-align:middle;background:repeating-linear-gradient(45deg,#bbb,#bbb 2px,transparent 2px,transparent 4px);"></i> shaded = not applicable (this document is never submitted)</span>
     </div>
     <div class="table-wrap"><table class="ws dtm" id="dt-table"></table></div>
     <div class="ws-sign">
@@ -397,23 +547,41 @@
       <div>Prepared by (360 IT Hub)</div>
       <div>Agreed on (date)</div>
     </div>
-    <div class="btn-row">
-      <a class="btn-print" href="/assets/erp_dacsinc_custom/docs/document-access-worksheet.pdf?v=4" download="Dacsinc - Document Access Worksheet.pdf" data-dl-name="Dacsinc - Document Access Worksheet" style="background: var(--clay);">⤓ Download PDF</a>
+    <div class="btn-row no-print">
+      <a class="btn-print" href="/assets/erp_dacsinc_custom/docs/document-access-worksheet.pdf?v=5" download="Dacsinc - Document Access Worksheet.pdf" data-dl-name="Dacsinc - Document Access Worksheet" style="background: var(--clay);">⤓ Download PDF</a>
       <button class="btn-print is-outline" type="button" onclick="printDocWorksheet()" style="color: var(--clay);">⎙ Print</button>
     </div>
   </section>
+  </div>
+
+  <dialog class="wsdlg" id="ws-confirm">
+    <form method="dialog">
+      <h3 class="wsdlg-title"></h3>
+      <div class="wsdlg-body"></div>
+      <ul class="wsdlg-list"></ul>
+      <div class="wsdlg-actions">
+        <button value="cancel" type="submit" class="wsdlg-cancel">Cancel</button>
+        <button value="ok" type="submit" class="wsdlg-ok">Confirm</button>
+      </div>
+    </form>
+  </dialog>
 
 </div>
 
 <script>
-  // Roles (Admin excluded — sees every tab). Names are the system's role names.
-  const WS_ROLES = [
+  // Server data: signed-in flag, edit right, CSRF token, saved sheets.
+  const WS_BOOT = {{ ws_boot }};
+</script>
+<script>
+  // Sheet columns: the roles flagged "Access Sheet Role" (sent by the server, so a
+  // newly flagged role appears as a new column). Admin is never a column — it sees everything.
+  const WS_ROLES = (WS_BOOT.roles && WS_BOOT.roles.length ? WS_BOOT.roles : [
     "Accounts Executive", "Accounts Manager", "DAC CRM", "DAC CRM Head",
     "Finance Collection Executive", "Finance Executive", "Merchandiser User",
     "POS Admin", "POS Store Manager", "Production Assistant", "Production Manager",
     "Purchase Executive", "Purchase Manager", "Warehouse Incharge", "Warhouse Executive",
-    ["Packing Team", "new role"], "Logistics"
-  ];
+    "Packing Team", "Logistics"
+  ]);
   // Order Flow dashboard tabs and their sub-tabs, as they appear on screen.
   const WS_TABS = [
     ["SO Approvals", ["1. Pending Approval (my orders)", "2. Merchandiser Unassigned Orders", "3. Other Merchandisers' Orders", "4. Pending Final SO Approval", "5. Rejected Orders"]],
@@ -445,7 +613,7 @@
   })();
   // Main documents, grouped. [name, submittable]
   const DT_GROUPS = [
-    ["Master Data", [["Customer", 0], ["Supplier", 0], ["Item", 0], ["Item Price", 0], ["Price List", 0], ["BOM", 1], ["Warehouse", 0], ["Contact & Address", 0]]],
+    ["Master Data", [["Customer", 0], ["Supplier", 0], ["Item", 0], ["Item Price", 0], ["BOM", 1], ["Warehouse", 0], ["Contact & Address", 0]]],
     ["CRM & Sales", [["Business Contacts", 0], ["Event Activity", 0], ["Lead", 0], ["Quotation", 1], ["Sales Order", 1]]],
     ["Purchase", [["Material Request", 1], ["Purchase Order", 1], ["Purchase Receipt", 1], ["Purchase Invoice", 1]]],
     ["Job Work & Embroidery", [["Subcontracting BOM", 0], ["Subcontracting Order", 1], ["Subcontracting Receipt", 1], ["Embroidery Work Order", 1], ["Uniform Embroidery Transfer", 0]]],
@@ -506,6 +674,467 @@
     };
     window.addEventListener("afterprint", done);
     window.print();
+  }
+  /* ═══════════ Decided sheets (editable) ═══════════ */
+  const ROLE_NAMES = WS_ROLES.map(r => Array.isArray(r) ? r[0] : r);
+  const DOC_LIST = [];                         // [group, doc, submittable]
+  DT_GROUPS.forEach(([g, docs]) => docs.forEach(([d, sub]) => DOC_LIST.push([g, d, sub])));
+  const SUBMITTABLE = Object.fromEntries(DOC_LIST.map(([, d, sub]) => [d, !!sub]));
+
+  // The client's marked sheet (3 photos, 28 Sep 2026), one entry per role in
+  // WS_ROLES order. Letters = allowed boxes, "-" = no access. Read as:
+  //  · a cell struck through with lines (or one big X over the cell) = no access;
+  //  · a crossed single box = that box not allowed; blank or ✓ = allowed;
+  //  · a pencil tick = give it (pencil marks override the ink strikes);
+  //  · O only when ticked/circled.
+  const DA_CLIENT = {
+    "Customer":                    "VE VE VE VE V V VE V V V V - - V V V V",
+    "Supplier":                    "VE VE - - - - - - - V V VE VE V V - -",
+    "Item":                        "V VE V V V V V V V V VE V V V V V -",
+    "Item Price":                  "VE VE VED V V V V V V V V V V V V V V",
+    "BOM":                         "- - - - - - - - - VE VES V V V V - -",
+    "Warehouse":                   "V V - - - - - - - V V V V V V V V",
+    "Contact & Address":           "VE VE VE VE VE VE VE - - - - V V V V - V",
+    "Business Contacts":           "- - VE VE VE VE - - - - - - - - - - -",
+    "Event Activity":              "- - VE VE - - - - - - - - - - - - -",
+    "Lead":                        "- - VE VED - - - - - - - - - - - - -",
+    "Quotation":                   "- - VESC VESC - - - - - - - - VES - - - VES",
+    "Sales Order":                 "V V VES V V V VES - - VES VES - - V V V -",
+    "Material Request":            "- - - - - - VES - - VES VES VES VES - - - -",
+    "Purchase Order":              "- V - - - - - - - - - VES VES V V - V",
+    "Purchase Receipt":            "V - - - - - - - - V V VES VES VES VES - -",
+    "Purchase Invoice":            "VES VES - - - - - - - - - VES VES - - - -",
+    "Subcontracting BOM":          "- - - - - - V - - VE VE V V - - - -",
+    "Subcontracting Order":        "- - - - - - VES - - VES VES - - VES VES - -",
+    "Subcontracting Receipt":      "- - - - - - - - - VES VES - - VES VES - -",
+    "Embroidery Work Order":       "- - - - - - VES - - VES VES - - VES VES - -",
+    "Uniform Embroidery Transfer": "- - - - - - - - - - VE - - VE VE - -",
+    "Pick List":                   "- - - - - - VESO - - - - - - VES VES VES -",
+    "Stock Entry":                 "- - - - - - - - - - VES - - - - - -",
+    "Stock Reconciliation":        "- - - - - - - - - - VES - - - - - -",
+    "Delivery Note":               "VES VES - - V V VES - - VES VES - - VES VES VES -",
+    "Sales Invoice":               "- - - - - - - - - - - - - - - - -",
+    "Payment Entry":               "- - - - - - - - - - - - - - - - -",
+    "Journal Entry":               "- - - - - - - - - - - - - - - - -",
+    "POS Profile":                 "- - - - - - - - - - - - - - - - -",
+    "POS Invoice":                 "- - - - - - - VES VES - - - - - - - -",
+    "POS Opening Entry":           "- - - - - - - VES VES - - - - - - - -",
+    "POS Closing Entry":           "- - - - - - - VES VES - - - - - - - -",
+  };
+  const LETTERS = "VESCDO";
+  const BOX_NAME = { V: "View", E: "Create & Edit", S: "Submit", C: "Cancel", D: "Delete", O: "Only own records" };
+  const norm = (str, doc) => LETTERS.split("").filter(l => str.includes(l)
+    && (SUBMITTABLE[doc] || (l !== "S" && l !== "C"))).join("");
+  // DA_CLIENT columns are in this order; a role added later has no marked answer.
+  const CLIENT_ROLES = ["Accounts Executive", "Accounts Manager", "DAC CRM", "DAC CRM Head",
+    "Finance Collection Executive", "Finance Executive", "Merchandiser User", "POS Admin", "POS Store Manager",
+    "Production Assistant", "Production Manager", "Purchase Executive", "Purchase Manager", "Warehouse Incharge",
+    "Warhouse Executive", "Packing Team", "Logistics"];
+  const clientCell = (doc, i) => { const j = CLIENT_ROLES.indexOf(ROLE_NAMES[i]); if (j < 0) return "";
+    const v = (DA_CLIENT[doc] || "").split(/\s+/)[j] || "-"; return v === "-" ? "" : norm(v, doc); };
+
+  // Order Flow tabs → documents they show. Used by "Suggest from Document Access".
+  const TAB_DOCS = {
+    "SO Approvals": ["Sales Order"], "Sales Tracker": ["Sales Order"],
+    "Sales Tracker › Sales Orders": ["Sales Order"], "Sales Tracker › Material Requests": ["Material Request"],
+    "Sales Tracker › Embroidery - FP": ["Embroidery Work Order"], "Sales Tracker › Embroidery - Panel": ["Embroidery Work Order"],
+    "Pick Lists": ["Pick List"],
+    "Purchase Flow": ["Purchase Order"], "Purchase Flow › POs": ["Purchase Order"],
+    "Purchase Flow › Receipts": ["Purchase Receipt"], "Purchase Flow › To Bill": ["Purchase Invoice"],
+    "Job Work": ["Subcontracting Order"], "Job Work › Sub POs": ["Subcontracting Order"],
+    "Job Work › Sub Receipts": ["Subcontracting Receipt"],
+    "Job Work › Embroidery - FP": ["Embroidery Work Order"], "Job Work › Embroidery - Panel": ["Embroidery Work Order"],
+    "Stock Tracker": ["Stock Entry"], "Pending DN/SI": ["Delivery Note", "Sales Invoice"],
+    "Finance": ["Payment Entry"], "Finance › Receivables": ["Sales Invoice", "Payment Entry"],
+    "Finance › Supplier Payables": ["Purchase Invoice", "Payment Entry"],
+    "Finance › Jobber Payables": ["Purchase Invoice", "Payment Entry"],
+    "Embroidery Transfers": ["Uniform Embroidery Transfer"], "Logistics": ["Delivery Note", "Sales Invoice"],
+  };
+  const TAB_ROWS = [];                          // [key, tab, sub|null]
+  WS_TABS.forEach(([tab, subs]) => { TAB_ROWS.push([tab, tab, null]); subs.forEach(sb => TAB_ROWS.push([`${tab} › ${sb}`, tab, sb])); });
+  TAB_ROWS.forEach(([key, tab, sub]) => { if (!TAB_DOCS[key]) TAB_DOCS[key] = TAB_DOCS[tab] || []; });
+
+  const esc2 = (t) => String(t).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/"/g, "&quot;");
+  const roleHeadHtml = WS_ROLES.map(r => Array.isArray(r)
+    ? `<th class="role"><span>${esc2(r[0])} <small>(${esc2(r[1])})</small></span></th>`
+    : `<th class="role"><span>${esc2(r)}</span></th>`).join("");
+  const fmtWhen = (t) => { if (!t) return ""; const d = new Date(String(t).replace(" ", "T"));
+    return isNaN(d) ? t : d.toLocaleString([], { day: "numeric", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit" }); };
+  // Saved sheet → {row: [value per WS_ROLES role]}, matched by role name.
+  function fromSaved(saved, rows) {
+    if (!saved || !saved.cells) return null;
+    const idx = ROLE_NAMES.map(n => (saved.roles || []).indexOf(n));
+    const out = {};
+    rows.forEach(r => { const v = saved.cells[r]; out[r] = idx.map(j => (v && j >= 0 ? v[j] || "" : "")); });
+    return out;
+  }
+  const clone = (o) => JSON.parse(JSON.stringify(o));
+  const CAN_EDIT = !!(WS_BOOT && WS_BOOT.can_edit);
+  const WS_ACTIVE = !!(WS_BOOT && WS_BOOT.active);
+
+  async function saveSheet(sheet, cells, version) {
+    const body = new URLSearchParams({ sheet, roles: JSON.stringify(ROLE_NAMES), cells: JSON.stringify(cells), base_version: version || 0 });
+    const r = await fetch("/api/method/erp_dacsinc_custom.access_worksheet.save_sheet", {
+      method: "POST", credentials: "same-origin", body,
+      headers: { "X-Frappe-CSRF-Token": WS_BOOT.csrf_token, "Accept": "application/json" },
+    });
+    const j = await r.json().catch(() => ({}));
+    if (!r.ok) {
+      let msg = "Could not save.";
+      try { msg = JSON.parse(JSON.parse(j._server_messages)[0]).message; } catch (e) { if (j.exception) msg = j.exception; }
+      throw new Error(String(msg).replace(/<[^>]+>/g, ""));
+    }
+    return j.message;
+  }
+
+  // Confirmation dialog. items: list of HTML lines (e.g. the changes being saved).
+  function askConfirm({ title, body, items, ok, danger }) {
+    const dlg = document.getElementById("ws-confirm");
+    if (!dlg || !dlg.showModal) return Promise.resolve(window.confirm(`${title}\n\n${body || ""}`));
+    dlg.querySelector(".wsdlg-title").textContent = title;
+    dlg.querySelector(".wsdlg-body").innerHTML = body || "";
+    dlg.querySelector(".wsdlg-list").innerHTML = (items || []).map(i => `<li>${i}</li>`).join("");
+    const okBtn = dlg.querySelector(".wsdlg-ok");
+    okBtn.textContent = ok || "Confirm"; okBtn.classList.toggle("danger", !!danger);
+    dlg.returnValue = "";
+    dlg.showModal();
+    return new Promise(res => dlg.addEventListener("close", () => res(dlg.returnValue === "ok"), { once: true }));
+  }
+  const plural = (n, one, many) => `${n} ${n === 1 ? one : (many || one + "s")}`;
+
+  // Generic editable sheet: state vs saved (unsaved changes) vs reference (marks).
+  function makeSheet(opt) {
+    const S = { saved: opt.initial(), meta: opt.meta || null };
+    S.cur = opt.initialCur ? opt.initialCur() : clone(S.saved);
+    const bar = document.getElementById(opt.bar);
+    const diffCount = (a, b) => opt.rows().reduce((n, r) => n + a[r].reduce((m, v, i) => m + (v !== b[r][i] ? 1 : 0), 0), 0);
+    S.render = () => {
+      document.getElementById(opt.table).innerHTML = opt.renderTable(S);
+      const unsaved = diffCount(S.cur, S.saved);
+      const src = opt.sourceText(S);
+      document.querySelectorAll(`#${opt.section} .js-src`).forEach(el => el.textContent = src.replace(/<[^>]+>/g, ""));
+      const extra = opt.barExtra ? opt.barExtra(S) : "";
+      bar.innerHTML = `<span class="src">${src}</span>${extra}
+        ${CAN_EDIT ? `<span class="cnt ${unsaved ? "hot" : ""}">${unsaved ? plural(unsaved, "unsaved change") : (S.meta ? "all changes saved" : "not yet saved")}</span>
+          ${opt.buttons || ""}
+          <button type="button" data-act="undo" ${unsaved ? "" : "disabled"}>Discard changes</button>
+          <button type="button" class="pri" data-act="save" ${unsaved ? "" : "disabled"}>Save</button>`
+        : `<span class="cnt">view only</span>`}
+        <button type="button" data-act="print">⎙ Print / Save as PDF</button>
+        <span class="toast" id="${opt.bar}-toast"></span>`;
+    };
+    S.toast = (msg, err) => { const t = document.getElementById(`${opt.bar}-toast`); if (t) { t.textContent = msg; t.className = "toast" + (err ? " err" : ""); } };
+    S.dirty = () => diffCount(S.cur, S.saved) > 0;
+    bar.addEventListener("click", async (e) => {
+      const b = e.target.closest("button[data-act]"); if (!b) return;
+      const act = b.dataset.act;
+      if (act === "print") return printSection(opt.section);
+      if (act === "undo") {
+        const n = diffCount(S.cur, S.saved);
+        if (!await askConfirm({ title: "Discard changes?", body: `${plural(n, "change")} made since the last save will be lost.`, ok: "Discard", danger: true })) return;
+        S.cur = clone(S.saved); S.auto = false; S.render(); return;
+      }
+      if (act === "save") {
+        const items = opt.describe(S);
+        const next = ((S.meta && S.meta.version) || 0) + 1;
+        if (!await askConfirm({ title: opt.saveTitle, ok: "Save",
+          body: WS_ACTIVE
+            ? `${plural(items.length, "change")} will be recorded as the agreed access (version ${next}) and <b>applied at once</b> — ${opt.appliesTo}. Please check them:`
+            : `${plural(items.length, "change")} will be recorded as the agreed access (version ${next}). The sheet is not applied to the ERP yet, so nobody's access changes now. Please check them:`,
+          items })) return;
+        b.disabled = true; b.textContent = "Saving…";
+        try {
+          const data = await saveSheet(opt.sheet, S.cur, S.meta && S.meta.version);
+          S.meta = data; S.saved = clone(S.cur); S.auto = false; S.render(); S.toast(WS_ACTIVE ? "Saved and applied." : "Saved (not applied to the ERP yet).");
+        } catch (err) { S.render(); S.toast(err.message, true); }
+        return;
+      }
+      if (opt.onAct) opt.onAct(act, S, b);
+    });
+    document.getElementById(opt.table).addEventListener("click", async (e) => {
+      const k = e.target.closest("button.k[data-r]"); if (!k || !CAN_EDIT) return;
+      if (await opt.onCell(S, k.dataset.r, +k.dataset.i, k.dataset.l) === false) return;
+      S.render();
+    });
+    S.render();
+    return S;
+  }
+
+  /* ── Document Access, decided ── */
+  const DOC_ROWS = () => DOC_LIST.map(([, d]) => d);
+  const clientDocs = () => Object.fromEntries(DOC_LIST.map(([, d]) => [d, ROLE_NAMES.map((_, i) => clientCell(d, i))]));
+  const savedDocs = WS_BOOT.saved && WS_BOOT.saved.doc_access;
+  const DOCS = makeSheet({
+    sheet: "doc_access", section: "decided-docs", bar: "dd-bar", table: "dd-table", rows: DOC_ROWS,
+    meta: savedDocs,
+    initial: () => { const f = fromSaved(savedDocs, DOC_ROWS()); const c = clientDocs();
+      if (f) DOC_ROWS().forEach(d => f[d] = f[d].map(v => norm(v, d))); return f || c; },
+    sourceText: (S) => S.meta && S.meta.saved_on
+      ? `<b>Agreed version ${S.meta.version}</b> · saved by ${esc2(S.meta.saved_by_name || S.meta.saved_by)} on ${esc2(fmtWhen(S.meta.saved_on))}`
+      : `Based on the worksheet marked by Dacsinc management on 28 Sep 2026 · <b>not yet saved</b>`,
+    barExtra: (S) => {
+      const client = clientDocs(); let changed = 0;
+      DOC_ROWS().forEach(d => S.cur[d].forEach((v, i) => { if (v !== client[d][i]) changed++; }));
+      return changed ? `<span class="cnt">${plural(changed, "cell differs", "cells differ")} from the marked worksheet</span>` : "";
+    },
+    saveTitle: "Save document access?",
+    appliesTo: "each role's permissions in the ERP change immediately",
+    describe: (S) => {
+      const out = [];
+      DOC_ROWS().forEach(d => S.cur[d].forEach((v, i) => {
+        const was = S.saved[d][i]; if (v === was) return;
+        const add = LETTERS.split("").filter(l => v.includes(l) && !was.includes(l)).map(l => BOX_NAME[l]);
+        const del = LETTERS.split("").filter(l => was.includes(l) && !v.includes(l)).map(l => BOX_NAME[l]);
+        out.push(`<b>${esc2(ROLE_NAMES[i])}</b> · ${esc2(d)}: ${add.length ? `<span class="add">+ ${esc2(add.join(", "))}</span> ` : ""}${del.length ? `<span class="del">− ${esc2(del.join(", "))}</span>` : ""}`);
+      }));
+      return out;
+    },
+    buttons: `<button type="button" data-act="reset" title="Put every cell back to the marked worksheet">Restore marked worksheet</button>`,
+    onAct: async (act, S) => {
+      if (act === "reset") {
+        if (!await askConfirm({ title: "Restore the marked worksheet?", ok: "Restore",
+          body: "Every cell goes back to what Dacsinc management marked on paper. Nothing is recorded until you press Save." })) return;
+        S.cur = clientDocs(); S.render();
+      }
+    },
+    renderTable: (S) => {
+      const client = clientDocs();
+      let body = "";
+      DT_GROUPS.forEach(([group, docs]) => {
+        let rows = "";
+        docs.forEach(([doc, sub]) => {
+          const cells = S.cur[doc].map((v, i) => {
+            const box = (l) => {
+              if (!sub && (l === "S" || l === "C")) return `<i class="k off"></i>`;
+              const on = v.includes(l);
+              const cls = l === "O" ? (on ? "own" : "ownno") : (on ? "on" : "no");
+              const tip = `${ROLE_NAMES[i]} · ${doc} · ${BOX_NAME[l]}: ${on ? (l === "O" ? "yes — only their own records" : "allowed") : (l === "O" ? "no — all records" : "not allowed")}`;
+              return `<button type="button" class="k ${cls}" data-r="${esc2(doc)}" data-i="${i}" data-l="${l}" title="${esc2(tip)}" ${CAN_EDIT ? "" : "disabled"}>${l}</button>`;
+            };
+            const cc = v !== client[doc][i] ? "chg" : "";
+            return `<td class="mcell ${cc}"><div class="mini">${LETTERS.split("").map(box).join("")}</div></td>`;
+          }).join("");
+          rows += `<tr class="sub"><td class="label">${esc2(doc)}</td>${cells}</tr>`;
+        });
+        if (rows) body += `<tbody><tr class="tab"><td class="label" colspan="${WS_ROLES.length + 1}">${esc2(group)}</td></tr>${rows}</tbody>`;
+      });
+      return `<thead><tr><th style="text-align:left;">Document</th>${roleHeadHtml}</tr></thead>${body}`;
+    },
+    onCell: async (S, doc, i, l) => {
+      let v = S.cur[doc][i];
+      const has = v.includes(l), role = esc2(ROLE_NAMES[i]), d = esc2(doc);
+      // Important rights need an explicit yes.
+      if (!has && (l === "D" || l === "C") && !await askConfirm({
+        title: l === "D" ? "Allow deleting?" : "Allow cancelling?", ok: "Allow", danger: true,
+        body: l === "D" ? `<b>${role}</b> will be able to <b>delete</b> ${d} records. Deleted records cannot be recovered.`
+                        : `<b>${role}</b> will be able to <b>cancel</b> submitted ${d} records (and amend them).` })) return false;
+      if (has && l === "V" && v.length > 1 && !await askConfirm({
+        title: "Remove all rights?", ok: "Remove", danger: true,
+        body: `Without View, <b>${role}</b> cannot open ${d} at all, so every other right on it is removed too.` })) return false;
+      if (l === "V") v = has ? "" : v + "V";                 // no View = no access at all
+      else v = has ? v.replace(l, "") : v + l + (v.includes("V") ? "" : "V");  // anything else needs View
+      S.cur[doc][i] = norm(v, doc);
+    },
+  });
+
+  // While the tab sheet follows Document Access, every document change refills it.
+  let TABS = null;
+  const docsRender = DOCS.render;
+  DOCS.render = () => { docsRender(); if (TABS && TABS.auto) { TABS.cur = suggestTabs(); TABS.render(); } };
+
+  /* ── Order Flow tabs, decided ── */
+  const TROWS = () => TAB_ROWS.map(([k]) => k);
+  const savedTabs = WS_BOOT.saved && WS_BOOT.saved.tab_access;
+  const emptyTabs = () => Object.fromEntries(TROWS().map(k => [k, ROLE_NAMES.map(() => "")]));
+  function suggestTabs() {
+    const out = emptyTabs();
+    TAB_ROWS.forEach(([key, tab, sub]) => {
+      const act = tab === "SO Approvals" ? /S/ : /[ES]/;     // approving = submitting the Sales Order
+      out[key] = ROLE_NAMES.map((_, i) => {
+        const vals = (TAB_DOCS[key] || []).map(d => (DOCS.cur[d] || [])[i] || "");
+        if (vals.some(v => act.test(v))) return "A";
+        return vals.some(v => v.includes("V")) ? "Y" : "";
+      });
+    });
+    // A main tab is shown when any of its sub-tabs is.
+    WS_TABS.forEach(([tab, subs]) => subs.forEach(sb => out[`${tab} › ${sb}`].forEach((v, i) => {
+      if (v && !out[tab][i]) out[tab][i] = "Y";
+    })));
+    return out;
+  }
+  // Not saved yet → filled from Document Access (as unsaved changes) and kept in
+  // step with it until a cell is changed by hand. Once saved, it stays as saved.
+  const savedTabCells = fromSaved(savedTabs, TROWS());
+  TABS = makeSheet({
+    sheet: "tab_access", section: "decided-tabs", bar: "dt-bar", table: "td-table", rows: TROWS,
+    meta: savedTabs,
+    initial: () => savedTabCells || emptyTabs(),
+    initialCur: () => savedTabCells ? clone(savedTabCells) : suggestTabs(),
+    sourceText: (S) => (S.meta && S.meta.saved_on
+      ? `<b>Agreed version ${S.meta.version}</b> · saved by ${esc2(S.meta.saved_by_name || S.meta.saved_by)} on ${esc2(fmtWhen(S.meta.saved_on))}`
+      : `Worked out from document access · <b>not yet saved</b>`)
+      + (S.auto && CAN_EDIT ? ` · updates with document access until changed by hand` : ""),
+    saveTitle: "Save dashboard tabs?",
+    appliesTo: "the Order Flow dashboard shows each role these tabs and sub-tabs immediately",
+    describe: (S) => {
+      const word = { "": "hidden", "Y": "can view", "A": "can view and act" };
+      const out = [];
+      TAB_ROWS.forEach(([key, tab, sub]) => S.cur[key].forEach((v, i) => {
+        const was = S.saved[key][i]; if (v === was) return;
+        out.push(`<b>${esc2(ROLE_NAMES[i])}</b> · ${esc2(sub ? `${tab} › ${sub}` : tab)}: ${word[was]} → <span class="${v ? "add" : "del"}">${word[v]}</span>`);
+      }));
+      return out;
+    },
+    buttons: `<button type="button" data-act="suggest" title="Work every cell out again from the document access sheet">Refill from document access</button>
+      <button type="button" data-act="clear">Clear all</button>`,
+    onAct: async (act, S) => {
+      if (act === "suggest") {
+        if (!await askConfirm({ title: "Refill from document access?", ok: "Refill",
+          body: "Every cell is worked out again from the document access sheet, replacing any changes made here by hand. Nothing is recorded until you press Save." })) return;
+        S.cur = suggestTabs(); S.auto = true; S.render(); S.toast("Refilled. Please review, then save.");
+      }
+      if (act === "clear") {
+        if (!await askConfirm({ title: "Clear all cells?", ok: "Clear", danger: true,
+          body: "Every tab becomes hidden for every role. Nothing is recorded until you press Save." })) return;
+        S.cur = emptyTabs(); S.auto = false; S.render();
+      }
+    },
+    renderTable: (S) => {
+      let body = "";
+      WS_TABS.forEach(([tab, subs]) => {
+        const row = (key, label, cls) => {
+          const cells = S.cur[key].map((v, i) => {
+            const k = v === "A" ? "ta" : v === "Y" ? "tv" : "tn";
+            const txt = v === "A" ? "A" : v === "Y" ? "✓" : "";
+            const tip = `${ROLE_NAMES[i]} · ${label}: ${v === "A" ? "can view and act" : v === "Y" ? "can view" : "hidden"}`;
+            const chg = S.meta && v !== S.saved[key][i] ? "chg" : "";      // rings only once a version is saved
+            return `<td class="tcell ${chg}"><button type="button" class="k ${k}" data-r="${esc2(key)}" data-i="${i}" title="${esc2(tip)}" ${CAN_EDIT ? "" : "disabled"}>${txt}</button></td>`;
+          }).join("");
+          return `<tr class="${cls}"><td class="label">${esc2(label)}</td>${cells}</tr>`;
+        };
+        body += `<tbody>${row(tab, tab, "tab")}${subs.map(sb => row(`${tab} › ${sb}`, sb, "sub")).join("")}</tbody>`;
+      });
+      return `<thead><tr><th style="text-align:left;">Tab / Sub-tab</th>${roleHeadHtml}</tr></thead>${body}`;
+    },
+    onCell: (S, key, i) => {
+      S.auto = false;                                              // hand edit: stop following
+      const next = { "": "Y", "Y": "A", "A": "" }[S.cur[key][i]];
+      S.cur[key][i] = next;
+      const r = TAB_ROWS.find(([k]) => k === key);
+      if (r[2] && next && !S.cur[r[1]][i]) S.cur[r[1]][i] = "Y";        // sub-tab needs its main tab
+      if (!r[2] && !next) WS_TABS.find(([t]) => t === key)[1].forEach(sb => S.cur[`${key} › ${sb}`][i] = "");
+    },
+  });
+
+  TABS.auto = !savedTabCells;
+  TABS.render();
+  window.addEventListener("beforeunload", (e) => { if (DOCS.dirty() || (TABS.dirty() && !TABS.auto)) { e.preventDefault(); e.returnValue = ""; } });
+
+  // Hover: light up the row and the role column, and show "Role · Document".
+  (function hoverGuide() {
+    const tip = document.createElement("div"); tip.className = "hover-tip"; document.body.appendChild(tip);
+    let last = null;
+    const clear = () => { if (!last) return;
+      last.table.querySelectorAll(".hl, .colhl").forEach(el => el.classList.remove("hl", "colhl")); last = null; tip.style.display = "none"; };
+    ["dd-table", "td-table"].forEach(id => {
+      const t = document.getElementById(id);
+      t.addEventListener("mouseover", (e) => {
+        const td = e.target.closest("td.mcell, td.tcell");
+        if (!td) { clear(); return; }
+        const tr = td.parentElement, col = td.cellIndex;
+        if (last && last.td === td) return;
+        clear();
+        tr.classList.add("hl");
+        const th = t.tHead.rows[0].cells[col]; if (th) th.classList.add("hl");
+        [...t.tBodies].forEach(tb => [...tb.rows].forEach(r => { const c = r.cells[col]; if (c && c !== td && c.colSpan === 1) c.classList.add("colhl"); }));
+        tip.textContent = `${ROLE_NAMES[col - 1]}  ·  ${tr.cells[0].textContent.trim()}`;
+        tip.style.display = "block";
+        last = { table: t, td };
+      });
+      t.addEventListener("mousemove", (e) => { tip.style.left = (e.clientX + 14) + "px"; tip.style.top = (e.clientY + 16) + "px"; });
+      t.addEventListener("mouseleave", clear);
+    });
+  })();
+  // Applied / not applied strip, and "Apply to the ERP" (Admin only, confirmed).
+  (function switchStrip() {
+    const el = document.getElementById("ws-switch");
+    if (!el || !WS_BOOT.signed_in) { if (el) el.remove(); return; }
+    el.classList.toggle("on", WS_ACTIVE);
+    el.innerHTML = WS_ACTIVE
+      ? `<span class="dot"></span><span class="txt"><b>Applied to the ERP.</b> Saving a sheet changes roles, permissions and dashboard tabs straight away.</span>`
+      : `<span class="dot"></span><span class="txt"><b>Not applied to the ERP yet.</b> Saving records the sheets only — nobody's access changes until an Admin applies them.</span>
+         ${CAN_EDIT ? `<button type="button" id="ws-activate">Apply to the ERP…</button>` : ""}`;
+    const btn = document.getElementById("ws-activate");
+    if (!btn) return;
+    btn.addEventListener("click", async () => {
+      if (DOCS.dirty() || (TABS.dirty() && !TABS.auto)) {
+        await askConfirm({ title: "Save first", body: "Save or discard your changes on both sheets before applying them.", ok: "OK" });
+        return;
+      }
+      btn.disabled = true; btn.textContent = "Checking…";
+      let users = {};
+      try {
+        const r = await fetch("/api/method/erp_dacsinc_custom.access_sync.get_activation_preview", { credentials: "same-origin", headers: { "Accept": "application/json" } });
+        users = ((await r.json()).message || {}).users || {};
+      } catch (e) { /* preview is informative only */ }
+      btn.disabled = false; btn.textContent = "Apply to the ERP…";
+      const items = Object.entries(users).map(([u, roles]) => `<b>${esc2(u)}</b> loses: <span class="del">${esc2(roles.join(", "))}</span>`);
+      const yes = await askConfirm({
+        title: "Apply the agreed access to the ERP?", ok: "Apply now", danger: true,
+        body: `This sets every access sheet role's permissions and the Order Flow tabs from the saved sheets, turns on the POS store limits,
+          and resets each role's profile to that role + Employee + Employee Self Service.
+          ${items.length ? `<b>${plural(items.length, "user")} lose roles</b> that came through those profiles:` : "No user loses a role through the profiles."}
+          Assign the right profiles on the Roles &amp; Permissions page afterwards.`,
+        items });
+      if (!yes) return;
+      btn.disabled = true; btn.textContent = "Applying…";
+      try {
+        const r = await fetch("/api/method/erp_dacsinc_custom.access_sync.activate", { method: "POST", credentials: "same-origin",
+          headers: { "X-Frappe-CSRF-Token": WS_BOOT.csrf_token, "Accept": "application/json" } });
+        if (!r.ok) throw new Error((await r.text()).slice(0, 300));
+        location.reload();
+      } catch (e) {
+        btn.disabled = false; btn.textContent = "Apply to the ERP…";
+        await askConfirm({ title: "Could not apply", body: esc2(String(e.message || e)), ok: "OK" });
+      }
+    });
+  })();
+
+  // Page tabs: Agreed access (Document access | Order Flow dashboard) and Blank worksheets.
+  (function pageTabs() {
+    if (CAN_EDIT) document.body.classList.add("can-edit");
+    const legacy = { "decided-docs": "agreed-docs", "decided-tabs": "agreed-tabs", "tab-permissions": "blank", "doctype-permissions": "blank" };
+    function show(key, push) {
+      key = legacy[key] || key;
+      if (!["agreed-docs", "agreed-tabs", "blank"].includes(key)) key = "agreed-docs";
+      const [tab, sub] = key === "blank" ? ["blank", null] : ["agreed", key.split("-")[1]];
+      document.querySelectorAll(".ptabs button").forEach(b => b.setAttribute("aria-selected", b.dataset.tab === tab));
+      document.getElementById("panel-agreed").hidden = tab !== "agreed";
+      document.getElementById("panel-blank").hidden = tab !== "blank";
+      const cur = sub || (document.getElementById("decided-tabs").hidden ? "docs" : "tabs");
+      document.querySelectorAll(".stabs button").forEach(b => b.setAttribute("aria-selected", b.dataset.sub === cur));
+      document.getElementById("decided-docs").hidden = cur !== "docs";
+      document.getElementById("decided-tabs").hidden = cur !== "tabs";
+      if (push) history.replaceState(null, "", "#" + key);
+    }
+    document.querySelector(".ptabs").addEventListener("click", (e) => {
+      const b = e.target.closest("button[data-tab]"); if (!b) return;
+      show(b.dataset.tab === "blank" ? "blank" : "agreed-" + (document.getElementById("decided-tabs").hidden ? "docs" : "tabs"), true);
+    });
+    document.querySelector(".stabs").addEventListener("click", (e) => {
+      const b = e.target.closest("button[data-sub]"); if (b) show("agreed-" + b.dataset.sub, true);
+    });
+    window.addEventListener("hashchange", () => show(location.hash.slice(1)));
+    show(location.hash.slice(1));
+  })();
+
+  // Print one decided sheet only (A4 landscape; "Save as PDF" in the dialog).
+  function printSection(id) {
+    const sec = document.getElementById(id);
+    const d = new Date();
+    sec.querySelectorAll(".js-printed").forEach(el => el.textContent = "Printed: " + d.toLocaleDateString([], { day: "numeric", month: "short", year: "numeric" }));
+    sec.classList.add("print-target");
+    printMode("sec-printing", null, () => sec.classList.remove("print-target"));
   }
 </script>
 

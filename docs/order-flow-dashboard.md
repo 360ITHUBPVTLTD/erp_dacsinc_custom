@@ -76,6 +76,25 @@ Visibility follows the same rule as every other tab —
 `of_tab_picklist_roles` on **Admin Settings > Tab Visibility**, empty meaning
 "everyone who can open the page".
 
+## Sub-tab visibility
+
+- Each sub-tab has its own role list on **Admin Settings > Sub-tab Visibility**
+  (`of_sub_<tab>_<key>_roles`, keys = the page's `data-subtab` values:
+  - approval: merchandiser / unassigned / other / final / rejected
+  - tracker: so / mr / fp / pn
+  - purchase: po / receipt / bill
+  - jobwork: po / receipt / fp / pn
+  - accounts: receivables / supplier / jobber)
+- Empty = everyone who can see the main tab.
+- `order_flow_permissions.get_allowed_subtabs()` → `allowed_subtabs` in
+  `get_order_flow_permissions()`. The page starts each tab on an allowed sub-tab,
+  then `watch_subtab_perms()` (a MutationObserver) hides the other buttons after
+  every redraw and moves off a hidden active one.
+- This is UI-level. The documents themselves stay guarded by their normal
+  permissions.
+- Both the tab and sub-tab lists are written by the agreed access sheet (see
+  `access-worksheets.md`) whenever its Order Flow dashboard sheet is saved.
+
 ## Sales Tracker row layout
 
 All eight columns are always visible — **Sales Order & Customer**, **Dates**,

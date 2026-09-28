@@ -253,8 +253,24 @@ class OrderFlow {
                         return;
                     }
 
+                    // Sub-tabs the user may see ({tab: [keys]}, from Admin Settings ›
+                    // Sub-tab Visibility). Start each tab on an allowed sub-tab so a
+                    // forbidden one is never loaded, then keep hiding forbidden buttons
+                    // whenever a panel redraws.
+                    this.allowed_subtabs = this.perms.allowed_subtabs || {};
+                    const first_ok = (tab, cur) => {
+                        const ok = this.allowed_subtabs[tab];
+                        return (!ok || !ok.length || ok.includes(cur)) ? cur : ok[0];
+                    };
+                    this.tracker_subtab = first_ok('tracker', this.tracker_subtab);
+                    this.pur_subtab = first_ok('purchase', this.pur_subtab);
+                    this.job_subtab = first_ok('jobwork', this.job_subtab);
+                    this.acc_subtab = first_ok('accounts', this.acc_subtab);
+                    this.approval_subtab = first_ok('approval', this.approval_subtab);
+
                     this.render_shell();
                     this.bind();
+                    this.watch_subtab_perms();
 
                     // Remember the last tab across reloads, but only if this
                     // user can still see it — a demoted user must land on a
@@ -310,6 +326,29 @@ class OrderFlow {
     // "you have no tabs", which is a real, valid answer from the server.
     // Conflating the two would tell a user with a flaky connection that they
     // have no permission, when a reload might simply work.
+    // Hide sub-tab buttons the user may not open; if the active one is hidden,
+    // switch to the first allowed one. Runs after every panel redraw.
+    watch_subtab_perms() {
+        const apply = () => {
+            Object.entries(this.allowed_subtabs || {}).forEach(([tab, ok]) => {
+                const $btns = this.$body.find(`#of-panel-${tab}`).find('.of-subtab[data-subtab], .of-acc-subtab[data-subtab]');
+                if (!$btns.length) return;
+                $btns.each((_, b) => { b.style.display = ok.includes(String($(b).data('subtab'))) ? '' : 'none'; });
+                const $active = $btns.filter('.is-active');
+                if ($active.length && $active[0].style.display === 'none') {
+                    const $first = $btns.filter((_, b) => b.style.display !== 'none').first();
+                    if ($first.length) $first.trigger('click');
+                }
+            });
+        };
+        let queued = false;
+        const schedule = () => { if (queued) return; queued = true; requestAnimationFrame(() => { queued = false; apply(); }); };
+        if (this._subtab_observer) this._subtab_observer.disconnect();
+        this._subtab_observer = new MutationObserver(schedule);
+        this._subtab_observer.observe(this.$body[0], { childList: true, subtree: true });
+        apply();
+    }
+
     render_perm_error() {
         this.$body.html(`
             <div class="of-page">
