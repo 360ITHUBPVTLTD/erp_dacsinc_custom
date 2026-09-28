@@ -191,7 +191,7 @@ doc_events = {
         "on_update": "erp_dacsinc_custom.erp_dacsinc_custom.doctype.user_access_profile.user_access_profile.resync_after_user_save",
     },
     "Item": {
-        "before_save": "erp_dacsinc_custom.custom_script.item_before_save",
+        "validate": "erp_dacsinc_custom.custom_script.item_before_save",
         "after_insert": "erp_dacsinc_custom.custom_script.item_after_insert",
         "on_update": "erp_dacsinc_custom.custom_script.item_on_update",
     },

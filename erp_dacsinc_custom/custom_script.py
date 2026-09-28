@@ -381,36 +381,68 @@ def update_tax_child(doc):
         frappe.log_error(title="Error in update_tax_child", message=frappe.get_traceback())
 
 
-
 def update_barcode_child(doc):
     try:
         barcode_value = doc.get("barcode") or doc.get("custom_barcode")
         stock_uom = doc.get("stock_uom")
 
-        if barcode_value:
-            # Check if this barcode already exists
-            exists = False
+        if not barcode_value:
+            return
 
-            for b in doc.get("barcodes") or []:
-                if b.barcode == barcode_value:
-                    exists = True
+        # Check barcode already exists in another Item
+        existing_barcode = frappe.db.sql(
+            """
+            SELECT parent
+            FROM `tabItem Barcode`
+            WHERE barcode = %s
+            AND parent != %s
+            LIMIT 1
+            """,
+            (barcode_value, doc.name),
+            as_dict=True
+        )
 
-                    # Update UOM for existing barcode
-                    b.uom = stock_uom
-                    break
+        if existing_barcode:
+            existing_item = existing_barcode[0].parent
 
-            # Add new barcode if it does not exist
-            if not exists:
-                doc.append("barcodes", {
-                    "barcode": barcode_value,
-                    "barcode_type": "CODE-39",
-                    "uom": stock_uom
-                })
+            frappe.throw(
+                f"Barcode <b>{barcode_value}</b> is already used in "
+                f"Item <b>{existing_item}</b>."
+            )
+
+        # Check if barcode already exists in current Item
+        exists = False
+
+        for row in doc.get("barcodes") or []:
+
+            if row.barcode == barcode_value:
+                exists = True
+
+                # Update UOM
+                row.uom = stock_uom
+
+                # Ensure barcode type
+                row.barcode_type = "CODE-39"
+
+                break
+
+        # Add barcode if it does not exist
+        if not exists:
+            doc.append("barcodes", {
+                "barcode": barcode_value,
+                "barcode_type": "CODE-39",
+                "uom": stock_uom
+            })
+
+    except frappe.exceptions.ValidationError:
+        raise
 
     except Exception as e:
         frappe.log_error(
-            f"Error in updating barcodes for {doc.name}: {str(e)}"
+            message=f"Item: {doc.name}\nError: {str(e)}",
+            title="Barcode Update Error"
         )
+        raise
 import frappe
 
 @frappe.whitelist()
