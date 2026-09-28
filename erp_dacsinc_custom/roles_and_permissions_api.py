@@ -30,6 +30,21 @@ def _sheet_profiles():
     return sheet_profiles() or sorted(frappe.get_all("Role Profile", pluck="name"))
 
 
+def _shown_roles():
+    """Roles this page shows: the access sheet roles (+ Admin). None before the
+    access sheet is set up on the site (then everything is shown)."""
+    from erp_dacsinc_custom.access_sync import ROLE_FLAG, sheet_roles
+    if not frappe.db.has_column("Role", ROLE_FLAG):
+        return None
+    return set(sheet_roles()) | {"Admin"}
+
+
+def _shown_profiles():
+    from erp_dacsinc_custom.access_sync import sheet_profiles
+    flagged = sheet_profiles()
+    return set(flagged) if flagged else None
+
+
 def _sheet_roles_allowed():
     """Roles this page may add to a user: the access sheet roles, the two base
     roles every sheet profile carries, and the admin roles."""
@@ -87,6 +102,10 @@ def _profile_detail(role_profile_name):
         "Has Role", filters={"parent": role_profile_name, "parenttype": "Role Profile"},
         pluck="role",
     ))
+    shown = _shown_roles()
+    if shown is not None:
+        from erp_dacsinc_custom.access_sync import BASE_ROLES
+        roles = [r for r in roles if r in shown or r in BASE_ROLES]
     if "Super Admin" in roles or "Admin" in roles:
         summary = _("Full business access")
     else:
@@ -97,8 +116,10 @@ def _profile_detail(role_profile_name):
 @frappe.whitelist()
 def get_users_overview():
     _guard()
-    allowed = _sheet_roles_allowed()
-    shown_roles = (allowed - set(ADMIN_ROLES)) | {"Admin"} if allowed is not None else None
+    # Only access sheet roles and profiles are shown on this page; other roles and
+    # profiles a user still holds (HR, old profiles…) are managed elsewhere.
+    shown_roles = _shown_roles()
+    shown_profiles = _shown_profiles()
 
     uap_by_user = {
         d.name: d for d in frappe.get_all(
@@ -150,6 +171,8 @@ def get_users_overview():
         extra_profiles = profiles_for_user.get(u.name, [])
         native_profile = u.role_profile_name
         all_profiles = ([native_profile] if native_profile else []) + extra_profiles
+        if shown_profiles is not None:
+            all_profiles = [p for p in all_profiles if p in shown_profiles]
 
         profile_summaries = []
         profile_role_union = set()
@@ -166,7 +189,6 @@ def get_users_overview():
         # explains — assigned directly to the user, not through a profile.
         extra_roles = sorted(current_roles_by_user.get(u.name, set()) - profile_role_union)
         if shown_roles is not None:
-            # Only access sheet roles are shown here; HR and other roles are managed elsewhere.
             extra_roles = [r for r in extra_roles if r in shown_roles]
 
         # Kept as the raw code in profile_fields (the edit dialog's Language
@@ -775,9 +797,11 @@ def get_doctype_access_overview():
         """,
         as_dict=True,
     )
+    shown = _shown_roles()
     roles_by_doctype = {}
     for r in rows:
-        roles_by_doctype.setdefault(r.doctype, set()).add(r.role)
+        if shown is None or r.role in shown:
+            roles_by_doctype.setdefault(r.doctype, set()).add(r.role)
 
     valid_doctypes = set(frappe.get_all(
         "DocType", filters={"istable": 0, "issingle": 0}, pluck="name",
@@ -819,6 +843,9 @@ def get_doctype_access_detail(doctype):
         frappe.throw(_("DocType {0} does not exist.").format(doctype))
 
     by_role = _roles_granting_doctype(doctype)
+    shown = _shown_roles()
+    if shown is not None:
+        by_role = {r: v for r, v in by_role.items() if r in shown}
     roles = [{"role": r, "permissions": by_role[r]} for r in sorted(by_role)]
 
     page_users = _page_user_population()

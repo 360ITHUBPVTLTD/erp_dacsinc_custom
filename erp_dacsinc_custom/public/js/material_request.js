@@ -10,8 +10,11 @@ frappe.ui.form.on('Material Request', {
             // frm.remove_custom_button('Supplier Quotation', 'Create');
         }, 500);
 
-        // Get Item From SO button
-        if (frm.doc.docstatus === 0) {
+        // Get Item From SO button — not for POS staff (POS Admin / POS Store Manager):
+        // stores request stock for the store, not against Sales Orders. Admins keep it.
+        const is_pos_user = frappe.user.has_role(['POS Admin', 'POS Store Manager'])
+            && !frappe.user.has_role(['Administrator', 'System Manager', 'Admin', 'Super Admin']);
+        if (frm.doc.docstatus === 0 && !is_pos_user) {
             frm.add_custom_button(__('Get Item From SO'), function() {
                 load_smart_planner(frm);
             });

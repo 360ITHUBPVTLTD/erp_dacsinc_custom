@@ -77,7 +77,9 @@
   "of_sub_accounts_supplier_roles",
   "of_sub_accounts_jobber_roles",
   "po_price_check_section",
-  "po_price_check_roles"
+  "po_price_check_roles",
+  "pos_stock_section",
+  "pos_stock_source_warehouse"
  ],
  "fields": [
   {
@@ -526,13 +528,26 @@
    "fieldtype": "Table MultiSelect",
    "label": "Price Check \u2014 Allowed Roles",
    "options": "Order Flow Tab Role"
+  },
+  {
+   "fieldname": "pos_stock_section",
+   "fieldtype": "Section Break",
+   "label": "POS Stock Requests",
+   "description": "Material Requests made by POS staff (POS Admin / POS Store Manager) start with their store's warehouse as the target and this warehouse as the source."
+  },
+  {
+   "fieldname": "pos_stock_source_warehouse",
+   "fieldtype": "Link",
+   "options": "Warehouse",
+   "label": "Source Warehouse for POS Material Requests",
+   "description": "Default source (From) warehouse on a POS store's Material Request, e.g. VV Puram - IND."
   }
  ],
  "grid_page_length": 50,
  "index_web_pages_for_search": 1,
  "issingle": 1,
  "links": [],
- "modified": "2026-09-28 12:00:00.000000",
+ "modified": "2026-09-28 16:00:00.000000",
  "modified_by": "Administrator",
  "module": "Erp Dacsinc Custom",
  "name": "Admin Settings",

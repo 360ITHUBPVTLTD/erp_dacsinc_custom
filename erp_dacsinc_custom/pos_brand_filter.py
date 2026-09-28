@@ -61,4 +61,34 @@ if not getattr(core_pos, "_dacsinc_brand_filter", False):
 
 @frappe.whitelist()
 def get_items(start, page_length, price_list, item_group, pos_profile, search_term=""):
-	return core_pos.get_items(start, page_length, price_list, item_group, pos_profile, search_term)
+	result = core_pos.get_items(start, page_length, price_list, item_group, pos_profile, search_term)
+	items = (result or {}).get("items") if isinstance(result, dict) else None
+
+	# Nothing found for the typed text: also look for it inside barcodes (Item ›
+	# Barcodes). Core only matches a barcode exactly, and code / name partially.
+	if search_term and not items:
+		codes = frappe.get_all("Item Barcode", filters={"barcode": ["like", f"%{search_term.strip()}%"],
+														"parenttype": "Item"}, pluck="parent", limit=20)
+		found, seen = [], set()
+		for code in dict.fromkeys(codes):
+			r = core_pos.get_items(0, 5, price_list, item_group, pos_profile, code) or {}
+			for it in r.get("items") or []:
+				if it.get("item_code") == code and code not in seen:
+					seen.add(code)
+					found.append(it)
+		if found:
+			result = {"items": found}
+			items = found
+
+	# Every item carries its barcodes, so the Point of Sale screen's own search (over
+	# the items it has loaded) finds an item by any of its barcodes too.
+	if items:
+		by_item = {}
+		for b in frappe.get_all("Item Barcode", filters={"parent": ["in", [i.get("item_code") for i in items]],
+														 "parenttype": "Item"}, fields=["parent", "barcode"]):
+			by_item.setdefault(b.parent, []).append(b.barcode)
+		for it in items:
+			codes = by_item.get(it.get("item_code"))
+			if codes:
+				it["barcodes"] = codes  # for searching only; "barcode" stays as core set it
+	return result
