@@ -93,10 +93,10 @@ def customer_query(user=None):
 	scope = get_scope(user)
 	if not scope:
 		return ""
+	me = frappe.db.escape(user or frappe.session.user)
 	if scope[0] == "all":
-		return f"ifnull(`tabCustomer`.`{STORE_FIELD}`, '') != ''"
-	return (f"(`tabCustomer`.`{STORE_FIELD}` in {_in(scope[1])} "
-			f"or `tabCustomer`.`owner` = {frappe.db.escape(user or frappe.session.user)})")
+		return f"(ifnull(`tabCustomer`.`{STORE_FIELD}`, '') != '' or `tabCustomer`.`owner` = {me})"
+	return f"(`tabCustomer`.`{STORE_FIELD}` in {_in(scope[1])} or `tabCustomer`.`owner` = {me})"
 
 
 def _store_query(doctype, user):
@@ -131,9 +131,11 @@ def has_customer_permission(doc, ptype=None, user=None, debug=False):
 	if not scope or doc.is_new():
 		return None
 	store = doc.get(STORE_FIELD)
+	if doc.owner == (user or frappe.session.user):
+		return True  # customers they created are always theirs to see
 	if scope[0] == "all":
 		return bool(store)
-	return bool(store in scope[1] or doc.owner == (user or frappe.session.user))
+	return store in scope[1]
 
 
 def has_store_permission(doc, ptype=None, user=None, debug=False):

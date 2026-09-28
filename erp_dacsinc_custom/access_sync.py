@@ -39,9 +39,13 @@ Switch — nothing is taken away from any user until an Admin switches it on:
   - the sheets are stored (from ``access/agreed_access.json`` if the site has none);
   - saving a sheet only records it;
   - no permissions / Admin Settings tabs are changed, and the POS store scope is off.
-- **On** (``activate()``, "Apply to the ERP" on the sheet page, Admin only):
-  profiles are reset to role + Employee + ESS, both sheets are applied, and from
-  then on every save applies at once and the POS store scope works.
+- **On** (``apply_permissions()`` — patch ``apply_access_sheet_permissions`` on
+  migrate, or "Apply to the ERP" on the sheet page): both sheets are applied
+  (document permissions, linked documents, reports, Order Flow tabs and sub-tabs),
+  and from then on every save applies at once and the POS store scope works.
+  **Users' roles and profiles are never touched by this.** Resetting the profiles
+  to role + Employee + ESS is a separate, explicit Admin action
+  (``reset_profiles()``, "Reset profiles…" on the sheet page).
 
 ``initial_setup`` runs once per site from a patch; a later migrate never re-runs
 it, so what was changed on that site is never reset.
@@ -96,6 +100,12 @@ DEP_READ_ONLY = {
 DEP_SELECT_ONLY = {"User"}
 DEP_SKIP_MODULES = {"Core", "Custom", "Desk", "Email", "Integrations", "Automation", "Website", "Social"}
 DEP_SKIP = {"DocType"}
+# Saving these creates those records automatically (e.g. a Customer's primary
+# Contact / Address), so a role that may create the first may create the second —
+# only its own (if_owner), whatever the sheet says about browsing them.
+AUTO_CREATES = {"Customer": ("Contact", "Address"), "Supplier": ("Contact", "Address"), "Lead": ("Contact", "Address")}
+AUTO_MARK = "auto_create"
+
 # Modules whose non-submittable masters are "setup masters" a master's editors may edit too.
 DEP_EDIT_MODULES = {"Setup", "Stock", "Selling", "Buying", "CRM", "Contacts", "Erp Dacsinc Custom", "GST India"}
 
@@ -186,11 +196,11 @@ def ensure_roles_and_profiles(reset=None):
 def ensure_profiles(roles, reset=None):
 	"""Each role's profile = role + Employee + Employee Self Service, flagged.
 
-	With reset off (the default while the sheet is switched off) an existing
-	profile keeps its roles — only missing profiles are created — so no user loses
-	a role. Returns profiles whose roles changed."""
-	if reset is None:
-		reset = is_active()
+	By default an existing profile keeps its roles — only missing profiles are
+	created — so no user ever loses a role. Only reset_profiles() (an Admin's
+	explicit, confirmed choice) rewrites existing profiles. Returns profiles whose
+	roles changed."""
+	reset = bool(reset)
 	changed = []
 	for role in roles:
 		name = _profile_name(role)
@@ -328,6 +338,8 @@ def compute_doc_access(sheet):
 					level = _dep_level(target, info, is_master, own_field)
 				if level:
 					deps.setdefault(target, {}).setdefault(role, set()).update(level)
+			for target in AUTO_CREATES.get(dt, ()) if "create" in flags else ():
+				deps.setdefault(target, {}).setdefault(role, set()).update(DEP_EDIT + (AUTO_MARK,))
 	return direct, deps
 
 
@@ -352,16 +364,24 @@ def apply_doc_access(sheet):
 	for dt, by_role in direct.items():
 		setup_custom_perms(dt)
 		for role, (flags, if_owner) in by_role.items():
-			need = deps.get(dt, {}).get(role, set()) & set(DEP_READ)
+			dep = deps.get(dt, {}).get(role, set())
+			auto = AUTO_MARK in dep
+			need = dep & set(DEP_EDIT if auto else DEP_READ)
 			if "read" in need - flags:
 				summary["read_added_on_sheet_docs"].append(f"{role} · {dt}")
 			elif need - flags:
 				summary["select_added_on_sheet_docs"].append(f"{role} · {dt}")
-			flags = flags | need
 			for r in _rows(dt, role):
 				frappe.delete_doc("Custom DocPerm", r.name, ignore_permissions=True, force=True)
 			if flags:
-				_insert_row(dt, role, flags, if_owner)
+				_insert_row(dt, role, flags | need, if_owner)
+				summary["sheet_rows"] += 1
+			elif need:
+				# No sheet rights: only what linking needs — and, for records the role's
+				# own saves create (a Customer's Contact), only the ones it created.
+				_insert_row(dt, role, need, 1 if auto else 0)
+				if auto and not need <= {"select"}:
+					_insert_row(dt, role, {"select"}, 0)
 				summary["sheet_rows"] += 1
 		touched.add(dt)
 
@@ -451,22 +471,31 @@ def apply_report_access(direct):
 
 # ------------------------------------------------------------------ Order Flow tabs
 def apply_tab_access(sheet):
-	"""Set Admin Settings › Order Flow tab and sub-tab roles from the tab sheet."""
+	"""Set Admin Settings › Order Flow tab and sub-tab roles from the tab sheet
+	(sheet roles only; other roles already on a tab are kept)."""
 	cols = _role_columns(sheet)
 	cells = sheet.get("cells") or {}
-	who = lambda key: [r for r, i in cols.items() if (cells.get(key) or [""] * 99)[i] in ("Y", "A")] or [NOBODY_ROLE]
+	managed = set(cols) | {NOBODY_ROLE}
 	doc = frappe.get_doc("Admin Settings")
 	meta = frappe.get_meta("Admin Settings")
+
+	def roles_for(field, key):
+		# The sheet decides the sheet roles only. Any other role already listed on
+		# the tab (e.g. Sales User, Accounts Team) stays, so no user loses a tab.
+		keep = [d.role for d in (doc.get(field) or []) if d.role and d.role not in managed]
+		chosen = [r for r, i in cols.items() if (cells.get(key) or [""] * 99)[i] in ("Y", "A")]
+		return chosen + keep or [NOBODY_ROLE]
+
 	set_fields = 0
 	for tab, key in TAB_KEYS.items():
 		field = f"of_tab_{key}_roles"
 		if meta.has_field(field):
-			doc.set(field, [{"role": r} for r in who(tab)])
+			doc.set(field, [{"role": r} for r in roles_for(field, tab)])
 			set_fields += 1
 		for label, sub in SUBTAB_KEYS.get(tab, {}).items():
 			field = f"of_sub_{key}_{sub}_roles"
 			if meta.has_field(field):
-				doc.set(field, [{"role": r} for r in who(f"{tab} › {label}")])
+				doc.set(field, [{"role": r} for r in roles_for(field, f"{tab} › {label}")])
 				set_fields += 1
 	doc.flags.ignore_permissions = True
 	doc.save(ignore_permissions=True)
@@ -559,19 +588,91 @@ def _profile_name_readonly(role):
 			or frappe.db.get_value("Role Profile", {"role_profile": wanted}, "name"))
 
 
+# Order Flow tab / sub-tab → sheet documents it shows (same map as the sheet
+# page's "Refill from document access"). A sub-tab not listed uses its tab's.
+TAB_DOCS = {
+	"SO Approvals": ["Sales Order"], "Sales Tracker": ["Sales Order"],
+	"Sales Tracker › Sales Orders": ["Sales Order"], "Sales Tracker › Material Requests": ["Material Request"],
+	"Sales Tracker › Embroidery - FP": ["Embroidery Work Order"], "Sales Tracker › Embroidery - Panel": ["Embroidery Work Order"],
+	"Pick Lists": ["Pick List"],
+	"Purchase Flow": ["Purchase Order"], "Purchase Flow › POs": ["Purchase Order"],
+	"Purchase Flow › Receipts": ["Purchase Receipt"], "Purchase Flow › To Bill": ["Purchase Invoice"],
+	"Job Work": ["Subcontracting Order"], "Job Work › Sub POs": ["Subcontracting Order"],
+	"Job Work › Sub Receipts": ["Subcontracting Receipt"],
+	"Job Work › Embroidery - FP": ["Embroidery Work Order"], "Job Work › Embroidery - Panel": ["Embroidery Work Order"],
+	"Stock Tracker": ["Stock Entry"], "Pending DN/SI": ["Delivery Note", "Sales Invoice"],
+	"Finance": ["Payment Entry"], "Finance › Receivables": ["Sales Invoice", "Payment Entry"],
+	"Finance › Supplier Payables": ["Purchase Invoice", "Payment Entry"],
+	"Finance › Jobber Payables": ["Purchase Invoice", "Payment Entry"],
+	"Embroidery Transfers": ["Uniform Embroidery Transfer"], "Logistics": ["Delivery Note", "Sales Invoice"],
+}
+
+
+def derive_tab_cells(doc_sheet):
+	"""The Order Flow tab sheet worked out from the Document access sheet: a role
+	sees a tab if it may view its documents (Y), and acts (A) if it may create or
+	submit them — SO Approvals only by submitting. A main tab shows when any of its
+	sub-tabs does."""
+	roles = doc_sheet.get("roles") or []
+	cells = doc_sheet.get("cells") or {}
+	out = {}
+	for tab in TAB_KEYS:
+		keys = [(tab, tab, None)] + [(f"{tab} › {sub}", tab, sub) for sub in SUBTAB_KEYS.get(tab, {})]
+		for key, _t, _s in keys:
+			docs = TAB_DOCS.get(key) or TAB_DOCS.get(tab) or []
+			act = ("S",) if tab == "SO Approvals" else ("E", "S")
+			row = []
+			for i in range(len(roles)):
+				vals = [(cells.get(d) or [""] * len(roles))[i] for d in docs]
+				row.append("A" if any(l in v for v in vals for l in act) else "Y" if any("V" in v for v in vals) else "")
+			out[key] = row
+		for sub in SUBTAB_KEYS.get(tab, {}):
+			for i, v in enumerate(out[f"{tab} › {sub}"]):
+				if v and not out[tab][i]:
+					out[tab][i] = "Y"
+	return out
+
+
+def apply_permissions(derive_tabs=False):
+	"""Switch on: apply both sheets. Never touches users' roles or profiles.
+
+	derive_tabs: first work the tab sheet out again from the Document access sheet
+	(stored as a new version) — used when the stored tab sheet was never hand-made."""
+	from erp_dacsinc_custom.access_worksheet import store_sheet
+
+	result = {}
+	doc = load_sheet("doc_access")
+	if doc:
+		result["doc_access"] = apply_doc_access(doc)
+		if derive_tabs:
+			cells = derive_tab_cells(doc)
+			tab = load_sheet("tab_access")
+			if not tab or tab.get("cells") != cells or tab.get("roles") != doc.get("roles"):
+				store_sheet("tab_access", doc["roles"], cells, note="worked out from document access")
+	tab = load_sheet("tab_access")
+	if tab:
+		result["tab_access"] = apply_tab_access(tab)
+	_state_set("active", "1")
+	return result
+
+
 @frappe.whitelist(methods=["POST"])
 def activate():
-	"""Switch the access sheet on: reset the profiles, apply both sheets. Admin only."""
+	""""Apply to the ERP" (Admin only): apply both sheets; users' roles stay as they are."""
 	from erp_dacsinc_custom.access_worksheet import EDIT_ROLE
 
 	frappe.only_for(EDIT_ROLE)
-	result = {"profiles_reset": ensure_roles_and_profiles(reset=True)}
-	for name in ("doc_access", "tab_access"):
-		sheet = load_sheet(name)
-		if sheet:
-			result[name] = apply_sheet(name, sheet)
-	_state_set("active", "1")
-	return result
+	return apply_permissions()
+
+
+@frappe.whitelist(methods=["POST"])
+def reset_profiles():
+	"""Reset each sheet role's profile to role + Employee + ESS (Admin only, explicit).
+	Users on those profiles lose the other roles the profile used to carry."""
+	from erp_dacsinc_custom.access_worksheet import EDIT_ROLE
+
+	frappe.only_for(EDIT_ROLE)
+	return {"profiles_reset": ensure_roles_and_profiles(reset=True)}
 
 
 @frappe.whitelist()
