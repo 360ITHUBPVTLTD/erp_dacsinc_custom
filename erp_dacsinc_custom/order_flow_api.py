@@ -23,6 +23,7 @@ from erp_dacsinc_custom.order_flow_permissions import (
     OF_TABS,
     can_view_tab,
     guard_tab as _guard_tab,
+    guard_act as _guard_act,
     get_order_flow_permissions,
     is_admin,
     is_scoped_to_own_customers,
@@ -221,9 +222,27 @@ _EVENT_SQL = """
 """
 
 
-def _guard():
-    if not frappe.has_permission("Sales Order", "read"):
-        frappe.throw(_("You are not permitted to view Sales Orders."), frappe.PermissionError)
+# Tabs built on Sales Orders; the others (Purchase, Job Work, Stock, Finance, Logistics,
+# Pick Lists, Embroidery Transfers) are guarded by their own tab rule, so a user who may
+# see one of them but can't read Sales Orders (e.g. Logistics, Purchase Executive) isn't
+# refused on the whole page.
+SO_TABS = ("approval", "tracker", "billing")
+
+
+def _reads_so():
+    return frappe.has_permission("Sales Order", "read")
+
+
+def _guard(tab=None):
+    """Sales Order read, or — for a tab that isn't about Sales Orders — seeing that tab
+    ("*" = any such tab: helpers shared by several of them)."""
+    if _reads_so():
+        return
+    if tab == "*" and any(can_view_tab(t) for t in OF_TABS if t not in SO_TABS):
+        return
+    if tab and tab != "*" and tab not in SO_TABS and can_view_tab(tab):
+        return
+    frappe.throw(_("You are not permitted to view Sales Orders."), frappe.PermissionError)
 
 
 # A Sales Order flagged "Old Record Item Is Disabled" is a superseded/legacy
@@ -1215,7 +1234,8 @@ def get_sales_tracker(days=120, search=None, scope="open", stage_filter=None, me
     (the same lists the Job Work tab shows, via _ewo_lists, but scoped by
     this tab's merchandiser rule).
     """
-    _guard()
+    # Without Sales Order read, can_view_tab lets a user in only for Material Requests.
+    reads_so = _reads_so()
     _guard_tab("tracker")
     # Same restriction get_summary applies to its counts: an order sitting in
     # "need_to_bill" / "ready_to_deliver" is exactly what the "billing" tab
@@ -1230,7 +1250,7 @@ def get_sales_tracker(days=120, search=None, scope="open", stage_filter=None, me
     effective_scope = "all" if stage_filter == "completed" else scope
     full = _get_tracker_rows(days=days, search=search, scope=effective_scope,
                               merchandiser=merchandiser, approval_stage=approval_stage,
-                              industry=industry)
+                              industry=industry) if reads_so else {"rows": [], "truncated": False}
     rows = full["rows"]
     if not billing_visible:
         rows = [o for o in rows if o.get("stage", {}).get("stage_key") not in ("need_to_bill", "ready_to_deliver")]
@@ -1276,6 +1296,12 @@ def get_sales_tracker(days=120, search=None, scope="open", stage_filter=None, me
     if is_scoped_to_own_customers("tracker"):
         mr_params["merch_scope"] = frappe.session.user
         mr_conditions.append("(cust.custom_merchandiser_user = %(merch_scope)s OR so.owner = %(merch_scope)s)")
+
+    # POS logins: the same Material Requests as their list (pos_scope.material_request_query).
+    from erp_dacsinc_custom.pos_scope import material_request_query
+    pos_mr = material_request_query()
+    if pos_mr:
+        mr_conditions.append(pos_mr.replace("`tabMaterial Request`", "mr"))
 
     _mr_from_join = """`tabMaterial Request Item` mri
         JOIN `tabMaterial Request` mr ON mr.name = mri.parent
@@ -2675,7 +2701,8 @@ def get_activity(days=21, limit=80, merchandiser=None, scope="open", search=None
     doctype starve a quiet one. The SQL window is wider again so that trimming
     still leaves each doctype its full slice.
     """
-    _guard()
+    if not _reads_so():
+        return []  # built on Sales Orders: nothing to show, not an error
     limit = int(limit)
     fetch_limit = min(max(limit * 20, 400), 3000)
     conditions = ["ev.ts >= %(from_date)s"]
@@ -2803,7 +2830,7 @@ def get_purchase_flow(days=120, search=None, scope="open", merchandiser=None,
     Sales Order can be far along on POs while its MRs/receipts sub-tab has a
     totally different page count.
     """
-    _guard()
+    _guard("purchase")
     _guard_tab("purchase")
     conditions = ["po.docstatus < 2", "po.transaction_date >= %(from_date)s", "IFNULL(po.is_subcontracted, 0) = 0", _NOT_DISABLED_SO]
     params = {"from_date": _from_date(days)}
@@ -3166,7 +3193,7 @@ def get_jobwork_flow(days=180, search=None, scope="open", merchandiser=None,
     Full Piece row on a page with none of the Panel rows a user actually
     wanted, or vice versa.
     """
-    _guard()
+    _guard("jobwork")
     _guard_tab("jobwork")
     conditions = ["po.docstatus < 2", "po.transaction_date >= %(from_date)s", "po.is_subcontracted = 1", _NOT_DISABLED_SO]
     params = {"from_date": _from_date(days)}
@@ -3353,6 +3380,8 @@ def get_summary(days=120, scope="open", search=None, merchandiser=None, approval
     """
     Headline stage counters for Number Cards on the Order Flow page.
     """
+    if not _reads_so():
+        return {}  # Sales Order counts: nothing for a user who can't read them
     _guard()
     _guard_tab("tracker")  # only called from the Sales Tracker tab
     # "need_to_bill" / "ready_to_deliver" are exactly what the "billing" tab
@@ -3453,7 +3482,7 @@ def get_accounts_flow(days=120, search=None, scope="open", merchandiser=None,
     with its own page, and `metrics` comes from separate aggregate queries
     over every matching row, not just the displayed page.
     """
-    _guard()
+    _guard("accounts")
     _guard_tab("accounts")
     from_date = _from_date(days)
     params = {"from_date": from_date}
@@ -3628,7 +3657,7 @@ def get_logistics_flow(days=None, search=None, scope="open", page=1, page_size=1
     relevant for being old, so nothing should silently age out of view
     unless a caller explicitly narrows it with `days`.
     """
-    _guard()
+    _guard("logistics")
     _guard_tab("logistics")
 
     conditions = ["si.docstatus = 1"]
@@ -3689,8 +3718,9 @@ def update_logistics_fields(sales_invoice, transporter=None, lr_no=None, signed_
     actually PASSED is touched (None = leave it), so clearing a field back to
     blank still works. All three are allow_on_submit (property setters).
     """
-    _guard()
+    _guard("logistics")
     _guard_tab("logistics")
+    _guard_act("logistics")  # "Update" is an action: view-only roles see the tab only
 
     doc = frappe.get_doc("Sales Invoice", sales_invoice)
     doc.check_permission("write")
@@ -3980,8 +4010,14 @@ def get_pick_list_flow(search=None, scope="open", page=1, page_size=100, days=No
         r["embroidery_history"] = hist.get(r.name, [])
     from erp_dacsinc_custom.so_embroidery import pick_list_revert_state
     pick_list_revert_state(rows)
+    # Picked stock that is no longer on the shelf (stock_hold.missing_by_pick_list).
+    from erp_dacsinc_custom.stock_hold import missing_by_pick_list
+    missing = missing_by_pick_list([r.name for r in rows if cint(r.docstatus) < 2 and r.status not in ("Completed", "Cancelled")])
+    for r in rows:
+        r["stock_missing_qty"] = flt(missing.get(r.name, 0), 3)
 
     metrics = {
+        "stock_missing": sum(1 for r in rows if r.get("stock_missing_qty")),
         "draft": sum(1 for r in rows if cint(r.docstatus) == 0),
         "open": sum(1 for r in rows if r.status == "Open"),
         "partly": sum(1 for r in rows if r.status == "Partly Delivered"),
@@ -4085,7 +4121,7 @@ def get_document_items(doctype, docname):
     — both are surfaced as separate rows so the panel reads as "sent X, get
     back Y" rather than just the raw material.
     """
-    _guard()
+    _guard("*")
     allowed = {"Purchase Order", "Material Request", "Purchase Receipt",
                "Subcontracting Receipt", "Sales Invoice", "Purchase Invoice"}
     if doctype not in allowed:
@@ -4239,7 +4275,7 @@ def get_stock_tracker(search=None, warehouse=None, page=1, page_size=100):
     quantity — stock that looks free in Bin may already be claimed by
     another order's Pick List.
     """
-    _guard()
+    _guard("stock")
     _guard_tab("stock")
 
     # Every stock item shows by default — search/warehouse only narrow from
@@ -4302,7 +4338,7 @@ def get_stock_tracker(search=None, warehouse=None, page=1, page_size=100):
 
 @frappe.whitelist()
 def get_warehouses():
-    _guard()
+    _guard("*")
     return frappe.get_all("Warehouse", filters={"disabled": 0, "is_group": 0},
                            fields=["name"], order_by="name")
 
@@ -4321,7 +4357,7 @@ def get_stock_reservation_details(item_code, warehouse, kind):
                                   old-flow Purchase Order raw-material
                                   requirements (both subcontracting flows)
     """
-    _guard()
+    _guard("*")
     params = {"item_code": item_code, "warehouse": warehouse}
 
     if kind == "reserved":
@@ -4705,6 +4741,7 @@ def add_custom_workflow_comment(ref_doctype, ref_name, label, detail_comment=Non
 @frappe.whitelist()
 def approve_sales_orders(sales_orders):
     _guard()
+    _guard_act("approval", "final")  # bulk approve lives only on Pending Final SO Approval
     import json
     if isinstance(sales_orders, str):
         sales_orders = json.loads(sales_orders)
@@ -5144,7 +5181,8 @@ def get_so_approvers(sales_order):
 
 @frappe.whitelist()
 def get_merchandisers():
-    _guard()
+    if not _reads_so():
+        return []  # built on Sales Orders: nothing to show, not an error
     return frappe.db.sql("""
         SELECT DISTINCT u.name, u.full_name
         FROM `tabUser` u
@@ -5162,7 +5200,8 @@ def get_customer_industries():
     non-disabled warehouse" precedent doesn't fit here: Industry Type ships
     with ~20 default entries, most never assigned to a customer, which
     would only pad the dropdown with choices that can never match a row)."""
-    _guard()
+    if not _reads_so():
+        return []  # built on Sales Orders: nothing to show, not an error
     return frappe.db.sql("""
         SELECT DISTINCT cust.industry AS name
         FROM `tabCustomer` cust
@@ -5238,7 +5277,8 @@ def mark_notification_as_unseen(event_doctype, event_name, event_docstatus=None,
 
 @frappe.whitelist()
 def repost_bin_qty(item_code, warehouse):
-    _guard()
+    _guard("stock")
+    _guard_act("stock")  # "Recalculate Bin Qty" in the Stock Tracker's reservation popup
     from erpnext.stock.stock_balance import repost_stock
     repost_stock(item_code, warehouse, only_bin=True)
     return True

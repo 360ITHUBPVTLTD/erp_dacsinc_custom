@@ -18,8 +18,10 @@ works either way.
 | POS Invoice / Opening / Closing Entry | all stores | their stores (`pos_profile`) |
 | POS Profile | all | their stores |
 | Customer | POS customers (POS Store set) + ones they created | their stores' customers + ones they created |
-| Stock Entry / Material Request | touching any store's warehouse, or made by POS staff | touching their stores' warehouses, or their own |
+| Stock Entry | touching any store's warehouse, or made by POS staff | touching their stores' warehouses, or their own |
+| Material Request | flagged Created by POS User (`custom_is_pos_request`), or their own | touching their stores' warehouses, or their own |
 | Item | brands the stores list | their stores' brands (none listed = all) |
+| Sales Invoice | POS Sales Invoices only | their own (sheet: O) |
 
 Wiring:
 
@@ -28,6 +30,26 @@ Wiring:
   POS Profile (hooks.py).
 - The hooks return nothing for unscoped users, and Frappe's has_permission hooks
   can only deny, so they never grant anything.
+
+**Sales Invoice.** POS Sales Invoices are:
+- the POS Closing's consolidated invoices (`is_pos`, with the store in `pos_profile`).
+  These are often submitted by an admin, so the owner alone can't identify them.
+- any invoice created by POS staff.
+
+POS Admin (sheet VES, no O) sees and opens only those, never the company's other
+invoices (`sales_invoice_query` / `has_sales_invoice_permission`, listed after the
+merchandiser SO-link hooks). POS Store Manager (sheet VESO) sees only their own. The
+scope would also keep them to their stores' POS invoices if O were ever removed.
+
+The Order Flow › Tracker › Material Requests query applies the same Material Request
+condition (`order_flow_api`, from `material_request_query`). The POS roles have no
+Order Flow tabs anyway; see `docs/access-worksheets.md`.
+
+**Reports.** Query and Script reports read the whole company with their own SQL, so
+they bypass these rules. The POS roles are therefore not given the ones on Material
+Request, Sales Invoice or Customer, or "Requested Items To Be Transferred"
+(`access_sync.POS_BLOCKED_REPORT_DOCTYPES` / `POS_BLOCKED_REPORTS`). Stock reports,
+Stock Balance and POS Register stay.
 
 A store's warehouse is its POS Profile's warehouse. "Touching" means the header or
 any row: Stock Entry from/to and s/t warehouse; Material Request set/from warehouse
@@ -48,9 +70,10 @@ and the rows' warehouses.
   every target warehouse is their store's. The receiving store confirms. POS Admin
   may submit any. Enforced by Stock Entry `before_submit`
   (`guard_pos_transfer_submit`).
-- **"Get Item From SO"** (the MR planner button, `public/js/material_request.js`) is
-  hidden for POS Admin / POS Store Manager: stores request stock for the store, not
-  against Sales Orders. Admins still see it.
+- On Material Request, POS Admin / POS Store Manager don't get **"Get Item From SO"**
+  (the MR planner button) or ERPNext's **Create** menu (Pick List, Material Transfer,
+  Purchase Order, …). Stores request stock for the store; the warehouse does the
+  rest. Admins still see both (`public/js/material_request.js`).
 - **Material Request › "Stock at the selected warehouses"** (HTML field
   `custom_stock_panel`, exported in `custom/material_request.json`): per item row, the
   actual stock at its target and source warehouse, and "Available" or "Short by N"
@@ -117,3 +140,68 @@ screen is built.
   radius, spacing).
 - **Loading indicator:** "Loading items…" with a spinner while the item list loads or
   searches (around `ItemSelector.get_items`). "No items found" when empty.
+- **Layout** (CSS in `dacs_style()`). The aim is **at least 5 cart items** on every
+  screen, with checkout totals and Complete Order reachable.
+  - The screen fits the window: `--dacs-pos-h`, set on load and on resize. Inside the
+    cart column, the item list takes the space left after the customer, walk-in and
+    totals cards, and scrolls.
+  - Laptops (height ≤ 820px): compact rows, no item descriptions, totals in two
+    columns, a smaller number pad.
+  - Tablets and phones (width ≤ 991px): one column; the page scrolls. The cart keeps
+    room for 5+ rows. The doubled `.point-of-sale-app.point-of-sale-app` selector
+    overrides ERPNext's `grid-column: span … !important`.
+  - Item edit mode (a cart item clicked): ERPNext swaps the totals for its number pad
+    through inline `display` styles. Our layout rules match only those states
+    (`:not([style*="none"])` for the totals, `[style*="flex"]` for the pad) so they
+    never override the swap. On laptops the pad is compact, and Grand Total and
+    Checkout share one row under it. Item Details scrolls inside its card.
+  - Phones (≤ 620px): payment modes are stacked one per row, so the amount and cash
+    shortcuts fit.
+  - The order summary's cards never shrink, so they don't overlap Edit / Delete Order.
+    The summary scrolls as a whole.
+  - "Additional Information" at checkout shows only when the POS Profile adds fields
+    to it.
+  - Tested headless at 1300×690, 1366×768, 1920×1080, 1024×768, 768×1024 and 390×844.
+
+## POS paperwork: MR mail, transfer approval, closing report (`pos_notify.py`)
+
+**Created by POS User** (read-only check, exported in `custom/material_request.json` /
+`custom/stock_entry.json`, also a list filter): Material Request
+`custom_is_pos_request`, Stock Entry `custom_is_pos_transfer`.
+- It's set on insert when a POS Admin or POS Store Manager creates the document
+  (admins excluded).
+- Patch `backfill_pos_user_flags` ticks the ones POS users made earlier.
+- Rules build on this flag; every other Material Request / Stock Entry is left
+  exactly as it is.
+
+Recipients are set in **Admin Settings › POS Emails** (comma-separated, invalid
+addresses skipped; empty = no mail). A mail also needs a default outgoing Email
+Account on the site.
+
+- **Material Request:** the store creates and submits it; no approval step. On
+  submit, one that is Created by POS User **and** whose creator is a **POS Store
+  Manager** (checked at send time) is mailed to *POS Material Request — Send To*:
+  store, source, type, required-by, raised-by, and the items with requested qty and
+  the current stock at source and store. A POS Admin's MR is flagged but not mailed.
+- **Stock Entry** (Created by POS User) and **Approved By** (`custom_approved_by`):
+  - A POS transfer whose **rows** move stock to or from the supply warehouse
+    (Admin Settings › Source Warehouse, VV Puram - IND) needs warehouse approval.
+    Only Warehouse Incharge / Warehouse Executive / POS Admin (or an admin) may submit
+    it, and the submitter is recorded in Approved By (`guard_pos_approval`,
+    `before_submit`).
+  - Rows are checked, not the header: ERPNext fills the header target from Stock
+    Settings even for store → store.
+  - The form shows "Waiting for warehouse approval". Approvers get an **Approve**
+    button (= submit); for others Submit is hidden (`public/js/pos_stock.js`).
+  - Store-to-store transfers keep the receiving-store rule.
+  - No Frappe Workflow is used, so subcontracting / embroidery / other Stock Entries
+    are unaffected.
+- **POS Closing Entry** submitted → a report to *POS Closing Report — Send To*:
+  - Summary tiles: sales, returns, net collected, invoices, qty, discounts.
+  - Store, cashier, opening and closing entry, net / taxes / discounts.
+  - Payments per mode: opening, sales, expected, closing, difference.
+  - Taxes, top 15 items, and the invoice list (first 60, with walk-in name / mobile).
+  - Attached Excel: **Summary / Invoices / Items / Payments**. It's built in memory
+    (openpyxl) and attached as content, so **no File record is created**; the only
+    copy is inside the Email Queue message, which Frappe's outbox clean-up removes.
+- Mails are sent from a background job after the submit commits (`queue="short"`).

@@ -93,7 +93,66 @@ Visibility follows the same rule as every other tab —
 - This is UI-level. The documents themselves stay guarded by their normal
   permissions.
 - Both the tab and sub-tab lists are written by the agreed access sheet (see
-  `access-worksheets.md`) whenever its Order Flow dashboard sheet is saved.
+  `access-worksheets.md`) whenever its Order Flow dashboard sheet is saved. Edits
+  made in Admin Settings are read back into that sheet.
+
+## Users who can't read Sales Orders
+
+`order_flow_api._guard(tab)` requires Sales Order read only where the data is Sales
+Orders.
+
+- **SO Approvals, Sales Tracker, Pending DN/SI** (`SO_TABS`): `can_view_tab` hides
+  SO Approvals and Pending DN/SI from such a user.
+- **Sales Tracker:** such a user can open it only for its **Material Requests**
+  sub-tab (`get_allowed_subtabs` gives just `mr`). `get_sales_tracker` then returns
+  no Sales Order rows.
+- **Purchase / Job Work / Stock / Finance / Logistics:** their loaders pass
+  `_guard("<tab>")`, so seeing the tab is enough. The shared helpers
+  (`get_document_items`, `get_warehouses`, reservation details) pass `_guard("*")`.
+- **Activity stream, merchandiser / industry filters, tracker tiles:** these return
+  empty instead of an error. The page reads `reads_sales_orders` from
+  `get_order_flow_permissions` and skips the stream.
+
+## View vs act (✓ / A)
+
+- A tab or sub-tab can be seen (✓) or seen and acted from (A). The act lists are on
+  **Admin Settings > Tab Actions / Sub-tab Actions**: `of_tab_<tab>_act_roles`,
+  `of_sub_<tab>_<key>_act_roles`.
+- `order_flow_permissions.can_act_tab(tab, sub)`:
+  - admins always may;
+  - the user must see the tab;
+  - a sub-tab without its own list follows its tab's;
+  - an empty tab list = everyone who sees it may act.
+
+  A role on an act list also sees the tab / sub-tab.
+- `get_order_flow_permissions()` returns `act`: `{tabs: {tab: bool}, subtabs:
+  {tab: [sub…]}}`. The page's `can_act(tab, sub)` reads it.
+- `strip_view_only_tab_actions()` runs inside `watch_subtab_perms()`'s observer,
+  after every redraw. Where the user may only view, it removes:
+  - row actions (`.of-action-btn` except `open_doc`);
+  - Approve / Reject / New Sales Order / bulk approve, reject and checkboxes;
+  - Create Subcontract PO, Submit / Revert Pick List;
+  - embroidery Send / Receive / Close / Receive Finished Goods;
+  - uniform Create Transfer / Receive, logistics Update;
+  - header "Create …" links (`a.of-btn[href$="/new"]`);
+  - the expanded SO stock widget's buttons. Its quantity inputs are disabled.
+
+  Scope:
+  - Sub-tab sections (`#of-tracker-sec-*`, `#of-pur-sec-*`, `#of-job-sec-*`,
+    `#of-acc-sec-*`) follow their own sub-tab.
+  - SO Approvals follows the open sub-tab.
+  - Other tabs follow the tab.
+  - The Stock Tracker's reservation popup drops "Recalculate Bin Qty".
+- Opening, printing, filters, pagination and marking activity as seen stay.
+- **Server (`guard_act`):** only on endpoints that are used just by this page:
+  - `approve_sales_orders` (approval › final);
+  - `update_logistics_fields` (logistics);
+  - `repost_bin_qty` (stock);
+  - `uniform_transfer_api.receive_embroidery_transfer` (uniform).
+- **Why not the others:** the other action endpoints (approve / reject with
+  comment, pick lists, DN / SI, receipts, create transfer) are also called from the
+  Sales Order / Purchase Order / Item forms, where a tab rule doesn't belong. The
+  documents' own permissions guard them there.
 
 ## Sales Tracker row layout
 
@@ -499,6 +558,32 @@ Matrix" dialog itself uses) instead of its own separate
 `update_user_role_profiles(user, [proposed])`, which was a hard replace that
 could silently drop a second Role Profile someone else had added for another
 responsibility.
+
+## Merchandiser User on Pick List, Purchase Order, Subcontracting Order
+
+The sheet gives them:
+
+- **Pick List:** V E S (view, edit, submit);
+- **Purchase Order and Subcontracting Order:** V only, with no create, edit or
+  submit. For Purchase Order, only **subcontracted** POs (`is_subcontracted = 1`):
+  the ones behind their orders' Subcontracting Orders. Plain purchase POs stay
+  hidden even when linked to their order.
+
+The permission hooks limit these to the documents of the Sales Orders they may see:
+
+- their customers' orders, orders they raised, and orders they are Lead Owner of;
+- plus documents they created themselves.
+
+How each document reaches its order:
+
+- **Pick List** and **Purchase Order:** their rows' `sales_order`
+  (`custom_script._so_linked_query_conditions` / `_so_linked_has_permission`).
+  `_so_linked_has_permission` reads the right child table: `locations` on a Pick
+  List. Reading `items` there found no order, which refused every Pick List a
+  merchandiser hadn't created.
+- **Subcontracting Order:** through its `purchase_order`'s rows
+  (`get_subcontracting_order_permission_query_conditions` /
+  `has_subcontracting_order_permission`).
 
 ## Merchandiser scoping now covers every tab that can show it
 

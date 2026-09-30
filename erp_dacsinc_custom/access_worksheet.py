@@ -24,6 +24,19 @@ SHEETS = {"doc_access": re.compile(r"^[VESCDO]*$"), "tab_access": re.compile(r"^
 MAX_ROWS = 200
 MAX_ROLES = 40
 EDIT_ROLE = "Admin"  # the only role that may change the agreed sheets
+# Resets (restore the marked worksheet, clear / refill the tab sheet, apply to the ERP,
+# reset profiles): System Manager only, after a typed confirmation on the page.
+RESET_ROLE = "System Manager"
+# Who may open /roles-and-permissions at all (and read the saved sheets): Admin, System
+# Manager, Administrator. Everyone else gets "not permitted"; guests go to the login page.
+VIEW_ROLES = ("Admin", "System Manager")
+
+
+def can_view(user=None):
+	user = user or frappe.session.user
+	return user == "Administrator" or bool(set(frappe.get_roles(user)) & set(VIEW_ROLES))
+RESETS = {"restore": "Restored the marked worksheet", "clear": "Cleared every tab",
+		  "refill": "Refilled from document access"}
 
 
 def _row_name(sheet):
@@ -62,10 +75,15 @@ def _clean(sheet, roles, cells):
 
 
 @frappe.whitelist(methods=["POST"])
-def save_sheet(sheet, roles, cells, base_version=0):
+def save_sheet(sheet, roles, cells, base_version=0, reset=None):
 	"""Save a sheet and apply it straight away (roles & permissions / Order Flow tabs).
-	Saving and applying are one transaction: if applying fails, nothing is saved."""
+	Saving and applying are one transaction: if applying fails, nothing is saved.
+	reset: the save follows a reset on the page (RESETS) — System Manager only."""
 	frappe.only_for(EDIT_ROLE)
+	if reset:
+		if reset not in RESETS:
+			frappe.throw("Unknown reset.")
+		frappe.only_for(RESET_ROLE)
 	if sheet not in SHEETS:
 		frappe.throw("Unknown sheet.")
 	roles = frappe.parse_json(roles)
@@ -75,13 +93,19 @@ def save_sheet(sheet, roles, cells, base_version=0):
 	if name:
 		frappe.db.sql("select name from tabDefaultValue where name=%s for update", name)
 	current = load_sheet(sheet) or {}
+	# Added documents stay on the sheet even if the page didn't send their rows
+	# (removing one is access_reverse.remove_sheet_document, System Manager).
+	for doc in (current.get("added") or {}) if sheet == "doc_access" else ():
+		if doc not in cells and doc in (current.get("cells") or {}):
+			old = dict(zip(current.get("roles") or [], current["cells"][doc]))
+			cells[doc] = [old.get(r, "") for r in roles]
 	if int(current.get("version") or 0) != int(base_version or 0):
 		frappe.throw(
 			f"{current.get('saved_by_name') or current.get('saved_by')} saved this sheet at "
 			f"{current.get('saved_on')} after you opened it. Reload the page to see their changes, then edit again.",
 			title="Sheet changed",
 		)
-	data = store_sheet(sheet, roles, cells)
+	data = store_sheet(sheet, roles, cells, note=RESETS.get(reset))
 
 	from erp_dacsinc_custom import access_sync
 	# Applied only once the sheet is switched on; until then saving just records it.
@@ -90,8 +114,11 @@ def save_sheet(sheet, roles, cells, base_version=0):
 	return data
 
 
-def store_sheet(sheet, roles, cells, note=None):
-	"""Write a new version of a sheet (no checks, no apply)."""
+def store_sheet(sheet, roles, cells, note=None, added=None):
+	"""Write a new version of a sheet (no checks, no apply).
+	added (Document access only): documents a System Manager added to the sheet,
+	{doctype: {"group", "submittable"}} (access_reverse.add_sheet_document); kept from
+	the current version when not given."""
 	current = load_sheet(sheet) or {}
 	data = {
 		"version": int(current.get("version") or 0) + 1,
@@ -101,6 +128,10 @@ def store_sheet(sheet, roles, cells, note=None):
 		"saved_by_name": frappe.utils.get_fullname(frappe.session.user),
 		"saved_on": now(),
 	}
+	if sheet == "doc_access":
+		added = current.get("added") if added is None else added
+		if added:
+			data["added"] = {d: v for d, v in added.items() if d in cells}
 	if note:
 		data["note"] = note
 	value = json.dumps(data)
@@ -113,3 +144,12 @@ def store_sheet(sheet, roles, cells, note=None):
 			"parentfield": "system_defaults", "defkey": sheet, "defvalue": value,
 		}).insert(ignore_permissions=True)
 	return data
+
+
+@frappe.whitelist()
+def get_saved():
+	"""Both saved sheets, for the page to pick up changes made elsewhere (another
+	user's save, Role Permission Manager — see access_reverse). Signed-in users."""
+	if not can_view():
+		frappe.throw("Only Admin and System Manager can see the access sheets.", frappe.PermissionError)
+	return load_all()

@@ -14,9 +14,13 @@ previously-buggy edge cases — are documented in `docs/`:
 - `docs/access-worksheets.md` — the agreed access sheet (/roles-and-permissions):
   the source of truth for roles, Role Profiles, document permissions (with
   linked-document dependencies) and Order Flow tab / sub-tab visibility; saving
-  it applies them. Don't hand-edit sheet roles' permissions elsewhere.
+  it applies them. Role Permission Manager edits to sheet roles are read back
+  into it (`access_reverse.py`); resets are System Manager only.
 - `docs/pos-store-scope.md` — store-wise record scoping for POS Admin / POS
   Store Manager (Customer › POS Store).
+- `docs/sales-order-sharing.md` — Sales Orders shared with their Lead Owner.
+- `docs/stock-hold.md` — stock held for Sales Orders (Pick Lists, jobber, earmarks)
+  can't be delivered, moved, reconciled or cancelled away by anything else.
 
 ## Rule: keep the docs current
 

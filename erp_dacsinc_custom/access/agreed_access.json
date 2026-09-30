@@ -23,7 +23,7 @@
    "Business Contacts": [
     "",
     "",
-    "VE",
+    "VEO",
     "VE",
     "VE",
     "VE",
@@ -61,7 +61,7 @@
    "Customer": [
     "VE",
     "VE",
-    "VE",
+    "VEO",
     "VE",
     "V",
     "V",
@@ -118,7 +118,7 @@
    "Event Activity": [
     "",
     "",
-    "VE",
+    "VEO",
     "VE",
     "",
     "",
@@ -194,7 +194,7 @@
    "Lead": [
     "",
     "",
-    "VE",
+    "VEO",
     "VED",
     "",
     "",
@@ -331,7 +331,7 @@
     "",
     "",
     "",
-    "VESO",
+    "VES",
     "",
     "",
     "",
@@ -369,7 +369,7 @@
     "",
     "",
     "",
-    "",
+    "V",
     "",
     "",
     "",
@@ -403,7 +403,7 @@
    "Quotation": [
     "",
     "",
-    "VESC",
+    "VESCO",
     "VESC",
     "",
     "",
@@ -427,8 +427,8 @@
     "",
     "",
     "",
-    "",
-    "",
+    "VES",
+    "VESO",
     "",
     "",
     "",
@@ -441,7 +441,7 @@
    "Sales Order": [
     "V",
     "V",
-    "VES",
+    "VESO",
     "V",
     "V",
     "V",
@@ -521,7 +521,7 @@
     "",
     "",
     "",
-    "VES",
+    "V",
     "",
     "",
     "VES",
@@ -610,6 +610,7 @@
     "V"
    ]
   },
+  "note": "Merchandiser User \u00b7 Purchase Order and Subcontracting Order: view only (their orders' documents, by the Sales Order hook)",
   "roles": [
    "Accounts Executive",
    "Accounts Manager",
@@ -631,10 +632,10 @@
   ],
   "saved_by": "Administrator",
   "saved_by_name": "Administrator",
-  "saved_on": "2026-09-28 15:38:11.097683",
-  "version": 4
+  "saved_on": "2026-09-30 09:52:17.907067",
+  "version": 27
  },
- "fingerprint": "3126f634b169d182c56d95515173905638176f01",
+ "fingerprint": "4e78621c6e084f23dceb71abc31b0bbb2e661900",
  "tab_access": {
   "cells": {
    "Embroidery Transfers": [
@@ -657,8 +658,6 @@
     ""
    ],
    "Finance": [
-    "Y",
-    "Y",
     "",
     "",
     "",
@@ -668,16 +667,16 @@
     "",
     "",
     "",
-    "Y",
-    "Y",
+    "",
+    "",
+    "",
+    "",
     "",
     "",
     "",
     ""
    ],
    "Finance \u203a Jobber Payables": [
-    "A",
-    "A",
     "",
     "",
     "",
@@ -687,8 +686,10 @@
     "",
     "",
     "",
-    "A",
-    "A",
+    "",
+    "",
+    "",
+    "",
     "",
     "",
     "",
@@ -714,8 +715,6 @@
     ""
    ],
    "Finance \u203a Supplier Payables": [
-    "A",
-    "A",
     "",
     "",
     "",
@@ -725,8 +724,10 @@
     "",
     "",
     "",
-    "A",
-    "A",
+    "",
+    "",
+    "",
+    "",
     "",
     "",
     "",
@@ -834,7 +835,7 @@
     "",
     "Y",
     "Y",
-    "A",
+    "",
     "",
     "",
     "A",
@@ -853,7 +854,7 @@
     "",
     "Y",
     "Y",
-    "A",
+    "",
     "",
     "",
     "A",
@@ -1189,7 +1190,6 @@
     ""
    ]
   },
-  "note": "worked out from document access",
   "roles": [
    "Accounts Executive",
    "Accounts Manager",
@@ -1211,7 +1211,7 @@
   ],
   "saved_by": "Administrator",
   "saved_by_name": "Administrator",
-  "saved_on": "2026-09-28 13:21:23.533799",
-  "version": 2
+  "saved_on": "2026-09-30 10:17:57.216153",
+  "version": 15
  }
 }

@@ -11173,12 +11173,13 @@ def get_sales_order_permission_query_conditions(user):
         # for a customer assigned to someone else must still be able to open
         # what they just created — without it, saving a Sales Order and then
         # being denied it is the result.
+        # Also the orders they're the Lead Owner of (shared with them, so_share.py).
         escaped = frappe.db.escape(user)
         return """(exists (
             select name from tabCustomer cust
             where cust.name = `tabSales Order`.customer
             and cust.custom_merchandiser_user = {0}
-        ) or `tabSales Order`.owner = {0})""".format(escaped)
+        ) or `tabSales Order`.owner = {0} or `tabSales Order`.custom_lead_owner = {0})""".format(escaped)
 
     return ""
 
@@ -11197,7 +11198,7 @@ def has_sales_order_permission(doc, ptype=None, user=None):
         # list view, opened fine by URL. Confirmed live: all 16 orders hidden
         # from a merchandiser were reachable that way, every one of them
         # because its customer had no merchandiser set.
-        if getattr(doc, "owner", None) == user:
+        if getattr(doc, "owner", None) == user or doc.get("custom_lead_owner") == user:
             return True
         customer_merchandiser = frappe.db.get_value("Customer", doc.customer, "custom_merchandiser_user")
         return customer_merchandiser == user
@@ -11277,7 +11278,7 @@ def _visible_sales_order_clause(user, so_column):
         select so.name from `tabSales Order` so
         left join `tabCustomer` cust on cust.name = so.customer
         where so.name = {so_col}
-          and (cust.custom_merchandiser_user = {u} or so.owner = {u})
+          and (cust.custom_merchandiser_user = {u} or so.owner = {u} or so.custom_lead_owner = {u})
     )""".format(so_col=so_column, u=esc)
 
 
@@ -11311,9 +11312,14 @@ def _so_linked_has_permission(doctype, doc, user=None):
         return True
 
     child_table, so_field = SO_LINKED_DOCTYPES[doctype]
+    # The child table's own field: `items` on most, `locations` on a Pick List. Reading
+    # `items` for every doctype found no Sales Order on any Pick List, so a merchandiser
+    # was refused every Pick List they hadn't created themselves.
+    table_field = next((df.fieldname for df in frappe.get_meta(doctype).get_table_fields()
+                        if df.options == child_table), "items")
     so_names = {
         (row.get(so_field) if isinstance(row, dict) else getattr(row, so_field, None))
-        for row in (doc.get("items") or [])
+        for row in (doc.get(table_field) or [])
     }
     so_names = {n for n in so_names if n}
     if not so_names:
@@ -11323,10 +11329,45 @@ def _so_linked_has_permission(doctype, doc, user=None):
         select so.name from `tabSales Order` so
         left join `tabCustomer` cust on cust.name = so.customer
         where so.name in %(names)s
-          and (cust.custom_merchandiser_user = %(user)s or so.owner = %(user)s)
+          and (cust.custom_merchandiser_user = %(user)s or so.owner = %(user)s or so.custom_lead_owner = %(user)s)
         limit 1
     """, {"names": tuple(so_names), "user": user})
     return bool(visible)
+
+
+# Subcontracting Order: reaches its Sales Order through its Purchase Order (the SCO is made
+# from a subcontracted PO whose items carry sales_order). A merchandiser sees the SCOs of
+# the orders they may see, plus the ones they made — the same rule as the PO itself.
+def get_subcontracting_order_permission_query_conditions(user=None):
+    from erp_dacsinc_custom.order_flow_api import is_scoped_merchandiser_for_doctype
+
+    user = user or frappe.session.user
+    if not is_scoped_merchandiser_for_doctype("Subcontracting Order", user):
+        return ""
+    return """(exists (
+        select poi.name from `tabPurchase Order Item` poi
+        where poi.parent = `tabSubcontracting Order`.purchase_order
+          and ifnull(poi.sales_order, '') != ''
+          and {visible}
+    ) or `tabSubcontracting Order`.owner = {u})""".format(
+        u=frappe.db.escape(user), visible=_visible_sales_order_clause(user, "poi.sales_order"))
+
+
+def has_subcontracting_order_permission(doc, ptype=None, user=None):
+    from erp_dacsinc_custom.order_flow_api import is_scoped_merchandiser_for_doctype
+
+    user = user or frappe.session.user
+    if not is_scoped_merchandiser_for_doctype("Subcontracting Order", user) or doc.is_new():
+        return True
+    if doc.owner == user:
+        return True
+    if not doc.get("purchase_order"):
+        return False
+    return bool(frappe.db.sql("""
+        select 1 from `tabPurchase Order Item` poi
+        where poi.parent = %(po)s and ifnull(poi.sales_order, '') != '' and {visible}
+        limit 1
+    """.format(visible=_visible_sales_order_clause(user, "poi.sales_order")), {"po": doc.purchase_order}))
 
 
 def get_pick_list_permission_query_conditions(user=None):
@@ -11337,11 +11378,20 @@ def has_pick_list_permission(doc, ptype=None, user=None):
     return _so_linked_has_permission("Pick List", doc, user)
 
 
+# Merchandiser User sees only SUBCONTRACTED Purchase Orders (is_subcontracted = 1) of the
+# orders they may see — the POs behind their orders' Subcontracting Orders — never a plain
+# purchase PO. (View only: the access sheet gives them no create / submit.)
 def get_purchase_order_permission_query_conditions(user=None):
-    return _so_linked_query_conditions("Purchase Order", user)
+    cond = _so_linked_query_conditions("Purchase Order", user)
+    return f"(`tabPurchase Order`.`is_subcontracted` = 1 and {cond})" if cond else ""
 
 
 def has_purchase_order_permission(doc, ptype=None, user=None):
+    from erp_dacsinc_custom.order_flow_api import is_scoped_merchandiser_for_doctype
+
+    if (is_scoped_merchandiser_for_doctype("Purchase Order", user or frappe.session.user)
+            and not doc.is_new() and not doc.get("is_subcontracted")):
+        return False
     return _so_linked_has_permission("Purchase Order", doc, user)
 
 

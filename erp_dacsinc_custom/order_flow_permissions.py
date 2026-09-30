@@ -77,6 +77,10 @@ def _tab_field(tab):
     return f"of_tab_{tab}_roles"
 
 
+def _act_field(tab, sub=None):
+    return f"of_sub_{tab}_{sub}_act_roles" if sub else f"of_tab_{tab}_act_roles"
+
+
 # Sub-tabs per tab, keyed as the page's data-subtab values. Each has an optional
 # role list in Admin Settings (of_sub_<tab>_<key>_roles). Empty = everyone who
 # can see the main tab — same "configuring only narrows" rule as the tabs.
@@ -100,6 +104,8 @@ def get_allowed_subtabs(user=None, allowed_tabs=None):
     out = {t: list(subs) for t, subs in OF_SUBTABS.items() if t in tabs}
     if is_admin(user):
         return out
+    if "tracker" in out and not frappe.has_permission("Sales Order", "read", user=user):
+        out["tracker"] = ["mr"]  # the only Sales Tracker sub-tab not built on Sales Orders
     try:
         settings = frappe.get_cached_doc("Admin Settings")
     except Exception:
@@ -112,6 +118,10 @@ def get_allowed_subtabs(user=None, allowed_tabs=None):
                 allowed = [d.role for d in (settings.get(f"of_sub_{tab}_{sub}_roles") or []) if d.role]
             except Exception:
                 allowed = []
+            try:
+                allowed = allowed and allowed + [d.role for d in (settings.get(f"of_sub_{tab}_{sub}_act_roles") or []) if d.role]
+            except Exception:
+                pass
             if not allowed or roles & set(allowed):
                 keep.append(sub)
         out[tab] = keep
@@ -198,10 +208,16 @@ def can_view_tab(tab, user=None, tab_roles=None):
         return True
 
     user = user or frappe.session.user
+    # SO Approvals and Pending DN/SI are Sales Orders: no tab without reading them. The
+    # Sales Tracker without it can only show its Material Requests sub-tab.
+    if tab in ("approval", "billing", "tracker") and not frappe.has_permission("Sales Order", "read", user=user):
+        if tab != "tracker" or not _sub_visible("tracker", "mr", user):
+            return False
     allowed = (tab_roles or get_tab_roles()).get(tab) or []
 
     if allowed:
-        return bool(set(frappe.get_roles(user)) & set(allowed))
+        # A role that may act from the tab also sees it (Admin Settings › Tab Actions).
+        return bool(set(frappe.get_roles(user)) & (set(allowed) | set(_role_list(_act_field(tab)))))
 
     # Unconfigured: everyone who has doctype read access, not truly everyone.
     if tab in TAB_DOCTYPES:
@@ -234,6 +250,61 @@ def is_scoped_to_own_customers(tab, user=None, tab_roles=None):
     if is_admin(user):
         return False
     return "Merchandiser User" in set(frappe.get_roles(user))
+
+
+def _sub_visible(tab, sub, user):
+    view = _role_list(f"of_sub_{tab}_{sub}_roles")
+    if not view:
+        return True
+    return bool(set(frappe.get_roles(user)) & (set(view) | set(_role_list(f"of_sub_{tab}_{sub}_act_roles"))))
+
+
+def _role_list(field):
+    try:
+        return [d.role for d in (frappe.get_cached_doc("Admin Settings").get(field) or []) if d.role]
+    except Exception:
+        return []
+
+
+def can_act_tab(tab, sub=None, user=None):
+    """
+    Whether `user` may ACT from `tab` (and `sub`-tab): use its create / submit /
+    approve buttons — the sheet's "A" (can view and act), as opposed to "✓" (view).
+
+    Admin Settings › Tab Actions / Sub-tab Actions (of_tab_<tab>_act_roles,
+    of_sub_<tab>_<sub>_act_roles). A sub-tab with no list follows its tab's; a tab
+    with no list lets everyone who sees it act (so a site that never configured
+    actions works as before). Admins always may. Seeing the tab is required, and
+    the document permissions still apply on top — this only narrows.
+    """
+    user = user or frappe.session.user
+    if is_admin(user):
+        return True
+    if not can_view_tab(tab, user):
+        return False
+    allowed = (_role_list(_act_field(tab, sub)) if sub else []) or _role_list(_act_field(tab))
+    if not allowed:
+        return True
+    return bool(set(frappe.get_roles(user)) & set(allowed))
+
+
+def guard_act(tab, sub=None):
+    """Raise PermissionError unless the session user may act from `tab` / `sub`."""
+    if not can_act_tab(tab, sub):
+        label = _(OF_TAB_LABELS.get(tab, tab))
+        frappe.throw(_("You can view the {0} tab of Order Flow, but not act from it.").format(label),
+                     frappe.PermissionError)
+
+
+def get_allowed_act(user=None, allowed_tabs=None, allowed_subtabs=None):
+    """{"tabs": {tab: bool}, "subtabs": {tab: [sub, ...]}} — where the user may act."""
+    user = user or frappe.session.user
+    tabs = allowed_tabs if allowed_tabs is not None else get_allowed_tabs(user)
+    subs = allowed_subtabs if allowed_subtabs is not None else get_allowed_subtabs(user, tabs)
+    return {
+        "tabs": {t: can_act_tab(t, user=user) for t in tabs},
+        "subtabs": {t: [s for s in keys if can_act_tab(t, s, user)] for t, keys in subs.items()},
+    }
 
 
 def get_allowed_tabs(user=None):
@@ -279,6 +350,7 @@ def get_order_flow_permissions():
     tab_roles = get_tab_roles()
     tabs = {t: can_view_tab(t, tab_roles=tab_roles) for t in OF_TABS}
     allowed_tabs = [t for t in OF_TABS if tabs[t]]
+    allowed_subtabs = get_allowed_subtabs(allowed_tabs=allowed_tabs)
 
     final_users = []
     try:
@@ -292,13 +364,19 @@ def get_order_flow_permissions():
         "user": frappe.session.user,
         "is_admin": admin,
         "is_merchandiser": "Merchandiser User" in roles,
+        # False: the page skips what is built on Sales Orders (activity, filters, tracker tiles)
+        "reads_sales_orders": admin or bool(frappe.has_permission("Sales Order", "read")),
         # Admins keep access so the approval workflow is never unadministrable.
         "is_final_approver": bool(admin or frappe.session.user in final_users),
         "final_approvers": final_users,
         "tabs": tabs,
         "allowed_tabs": allowed_tabs,
         # {tab: [sub-tab keys]} — the page hides every other sub-tab button.
-        "allowed_subtabs": get_allowed_subtabs(allowed_tabs=allowed_tabs),
+        "allowed_subtabs": allowed_subtabs,
+        # Where the user may act (create / submit / approve), not only view — the
+        # sheet's "A". The page hides action buttons elsewhere; guard_act() checks
+        # the same on the server.
+        "act": get_allowed_act(allowed_tabs=allowed_tabs, allowed_subtabs=allowed_subtabs),
         # Single source of truth for "does this user see only their own
         # customers' orders on the Tracker tab, with no action buttons" —
         # get_sales_tracker() filters by this same function, so the client's
@@ -357,6 +435,8 @@ def sync_order_flow_page_roles(doc=None, method=None):
         page_roles.update(LEGACY_PAGE_ROLES)
     for roles in tab_roles.values():
         page_roles.update(roles)
+    for tab in OF_TABS:  # roles that may act from a tab also see it
+        page_roles.update(_role_list(_act_field(tab)))
 
     # Union with all roles that have read access to any tab's primary doctypes
     all_doctypes = []

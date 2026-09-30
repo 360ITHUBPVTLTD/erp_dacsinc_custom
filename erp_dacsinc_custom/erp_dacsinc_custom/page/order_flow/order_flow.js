@@ -322,6 +322,52 @@ class OrderFlow {
         return !!(this.perms && this.perms.tabs && this.perms.tabs[tab]);
     }
 
+    // May the user ACT from this tab / sub-tab (create, submit, approve…), not just
+    // view it? The access sheet's "A" vs "✓" — Admin Settings › Tab / Sub-tab Actions
+    // (order_flow_permissions.can_act_tab; guard_act checks the same on the server).
+    can_act(tab, sub) {
+        const a = this.perms && this.perms.act;
+        if (!a) return true;                      // older server: no action rule
+        if (sub && a.subtabs && Array.isArray(a.subtabs[tab])) return a.subtabs[tab].includes(sub);
+        return !!(a.tabs && a.tabs[tab]);
+    }
+
+    // Remove every action control where the user may only view: row actions,
+    // approve / reject, "Create …" buttons, receive / send / close, the SO stock
+    // widget's buttons. Opening, printing and filters stay. Runs after every redraw.
+    strip_view_only_tab_actions() {
+        const SEL = [
+            '.of-action-btn:not([data-action="open_doc"])', '.of-approve-btn', '.of-reject-btn', '#of-new-so-btn',
+            '#of-bulk-approve-btn', '#of-bulk-reject-btn', '.of-approval-select', '.of-sco-btn', '.of-pl-submit',
+            '.of-pl-revert', '.of-ewo-send-btn', '.of-ewo-receive-panel-btn', '.of-ewo-close-btn', '.of-ewo-receive-fp-btn',
+            '.of-ewo-receive-btn', '.of-receive-btn', '#of-create-transfer-btn', '.of-logi-update-btn',
+            'a.of-btn[href$="/new"]', 'a.of-btn[href*="/new?"]',
+            '.so-btn:not(.so-btn--view):not(#btn-refresh-stock-table)',
+        ].join(', ');
+        const SECTIONS = { tracker: 'of-tracker-sec', purchase: 'of-pur-sec', jobwork: 'of-job-sec', accounts: 'of-acc-sec' };
+        const strip = ($c) => {
+            $c.find(SEL).remove();
+            $c.find('.so-qty-in').prop('disabled', true);
+        };
+        (this.perms && this.perms.allowed_tabs || []).forEach((tab) => {
+            const $panel = this.$body.find(`#of-panel-${tab}`);
+            if (!$panel.length || !$panel.children().length) return;
+            if (tab === 'approval') {
+                if (!this.can_act('approval', this.approval_subtab || 'merchandiser')) strip($panel);
+                return;
+            }
+            const prefix = SECTIONS[tab];
+            const $secs = prefix ? $panel.find(`[id^="${prefix}-"]`) : $();
+            if ($secs.length) {
+                $secs.each((_, el) => { if (!this.can_act(tab, el.id.slice(prefix.length + 1))) strip($(el)); });
+                // anything outside the sub-tab sections follows the tab itself
+                if (!this.can_act(tab)) strip($panel.children().not($secs).not($secs.parents()));
+            } else if (!this.can_act(tab)) {
+                strip($panel);
+            }
+        });
+    }
+
     // The permission call itself failed (network error, 500) — distinct from
     // "you have no tabs", which is a real, valid answer from the server.
     // Conflating the two would tell a user with a flaky connection that they
@@ -330,6 +376,7 @@ class OrderFlow {
     // switch to the first allowed one. Runs after every panel redraw.
     watch_subtab_perms() {
         const apply = () => {
+            this.strip_view_only_tab_actions();
             Object.entries(this.allowed_subtabs || {}).forEach(([tab, ok]) => {
                 const $btns = this.$body.find(`#of-panel-${tab}`).find('.of-subtab[data-subtab], .of-acc-subtab[data-subtab]');
                 if (!$btns.length) return;
@@ -2112,6 +2159,11 @@ class OrderFlow {
     }
 
     load_activity() {
+        // The stream is Sales Order milestones: nothing to load for a user who can't read them.
+        if (this.perms && this.perms.reads_sales_orders === false) {
+            this.render_activity([]);
+            return;
+        }
         if (this.activity_cache) {
             this.render_activity(this.activity_cache);
         }
@@ -4178,6 +4230,7 @@ class OrderFlow {
                 fields: [{ fieldtype: 'HTML', fieldname: 'content' }]
             });
             dialog.fields_dict.content.$wrapper.html(`<div class="of-scroll">${body}</div>`);
+            if (!this.can_act('stock')) dialog.$wrapper.find('.of-repost-btn').remove();
             dialog.$wrapper.on('click', '.of-repost-btn', (e) => {
                 const btn = $(e.currentTarget);
                 const item = btn.data('item');
@@ -4220,7 +4273,14 @@ class OrderFlow {
             return `<span class="of-pill ${cls}">${of_esc(r.status || '')}</span>${of_embroidery_history_html(r.embroidery_history)}`;
         };
 
-        const action_cell = (r) => {
+        // Picked stock that is no longer on the shelf in VV Puram (stock_hold.missing_by_pick_list):
+        // its Delivery Note would be refused, so say so before anyone tries.
+        const missing_html = (r) => flt(r.stock_missing_qty) > 0.001
+            ? `<div class="of-micro" style="color:var(--of-red);font-weight:700;margin-top:4px;"
+                   title="${__('This much of what the Pick List holds is not in VV Puram - IND any more (e.g. a receipt was cancelled after picking). Revert it to draft and pick again when stock arrives, or release it.')}">
+                   <i class="fa fa-exclamation-triangle"></i> ${__('Stock missing')}: ${of_round2(r.stock_missing_qty)}</div>` : '';
+        const action_cell = (r) => missing_html(r) + action_cell_main(r);
+        const action_cell_main = (r) => {
             if (r.next_action === 'held') {
                 return of_embroidery_hold_html(r);
             }
