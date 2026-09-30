@@ -55,6 +55,7 @@ import json
 import os
 
 import frappe
+from collections import defaultdict
 from frappe.permissions import setup_custom_perms
 
 from erp_dacsinc_custom.access_worksheet import STATE_PARENT, load_sheet
@@ -420,13 +421,33 @@ def _insert_row(doctype, role, flags, if_owner=0):
 
 
 def apply_doc_access(sheet):
-	"""Make the sheet roles' permissions match the sheet. Returns a summary dict."""
+	"""Make the sheet roles' permissions match the sheet. Returns a summary dict.
+	Its own permission writes are not read back into the sheet (access_reverse)."""
+	frappe.flags.dacs_access_applying = True
+	try:
+		return _apply_doc_access(sheet)
+	finally:
+		frappe.flags.dacs_access_applying = False
+
+
+def _apply_doc_access(sheet):
 	direct, deps = compute_doc_access(sheet)
-	touched, summary = set(), {"sheet_rows": 0, "dependency_grants": 0, "dependency_removed": 0, "select_added_on_sheet_docs": [], "read_added_on_sheet_docs": []}
+	touched, summary = set(), {"sheet_rows": 0, "rows_rewritten": 0, "dependency_grants": 0, "dependency_removed": 0,
+							   "select_added_on_sheet_docs": [], "read_added_on_sheet_docs": []}
+	roles = sorted({r for by_role in direct.values() for r in by_role} | {r for by_role in deps.values() for r in by_role})
+	# Every sheet role's Custom DocPerm rows in one read (was one query per doctype × role).
+	existing = defaultdict(list)
+	for r in frappe.get_all("Custom DocPerm", filters={"role": ["in", roles or [""]]},
+							fields=["name", "parent", "role", "permlevel", "if_owner", *PERM_FIELDS]):
+		existing[(r.parent, r.role)].append(r)
+
+	def shape(rows):
+		return sorted((int(r.permlevel or 0), int(r.if_owner or 0), tuple(f for f in PERM_FIELDS if r.get(f))) for r in rows)
 
 	# 1. Sheet documents: exactly what the sheet says, plus Read/Select a dependency needs.
+	#    Only (document, role) pairs whose rows differ are rewritten.
 	for dt, by_role in direct.items():
-		setup_custom_perms(dt)
+		custom_ready = bool(frappe.db.exists("Custom DocPerm", {"parent": dt}))
 		for role, (flags, if_owner) in by_role.items():
 			dep = deps.get(dt, {}).get(role, set())
 			auto = AUTO_MARK in dep
@@ -436,20 +457,31 @@ def apply_doc_access(sheet):
 				summary["read_added_on_sheet_docs"].append(f"{role} · {dt}")
 			elif need - flags:
 				summary["select_added_on_sheet_docs"].append(f"{role} · {dt}")
-			for r in _rows(dt, role):
-				frappe.delete_doc("Custom DocPerm", r.name, ignore_permissions=True, force=True)
+			want = []
 			if flags:
-				_insert_row(dt, role, flags | need, if_owner)
-				summary["sheet_rows"] += 1
+				want.append((flags | need, if_owner))
 			elif need:
 				# No sheet rights: only what linking needs — and, for records the role's
 				# own saves create (a Customer's Contact), only the ones it created.
-				_insert_row(dt, role, need, 1 if auto else 0)
+				want.append((need, 1 if auto else 0))
 				if auto and not need <= {"select"}:
 					# own-only row above for creating; this one for picking / displaying any
-					_insert_row(dt, role, {"select", "read"} if general_read else {"select"}, 0)
+					want.append(({"select", "read"} if general_read else {"select"}, 0))
+			if want:
 				summary["sheet_rows"] += 1
-		touched.add(dt)
+			have = existing.get((dt, role), [])
+			if custom_ready and shape(have) == sorted((0, int(o), tuple(f for f in PERM_FIELDS if f in fl)) for fl, o in want):
+				continue
+			if not custom_ready:
+				setup_custom_perms(dt)
+				custom_ready = True
+				have = _rows(dt, role)  # the copied standard rows
+			for r in have:
+				frappe.delete_doc("Custom DocPerm", r.name, ignore_permissions=True, force=True)
+			for fl, o in want:
+				_insert_row(dt, role, fl, o)
+			summary["rows_rewritten"] += 1
+			touched.add(dt)
 
 	# 2. Linked documents: only ever add; take back only what we added before.
 	prev = _map_get("derived_applied")
@@ -461,7 +493,7 @@ def apply_doc_access(sheet):
 		for role in sorted(set(want_by_role) | set(prev.get(dt, {}))):
 			want = want_by_role.get(role, set())
 			added_before = set(prev.get(dt, {}).get(role, []))
-			rows = [r for r in _rows(dt, role) if r.permlevel == 0 and not r.if_owner]
+			rows = [r for r in existing.get((dt, role), []) if r.permlevel == 0 and not r.if_owner]
 			row = rows[0] if rows else None
 			have = {f for f in PERM_FIELDS if row and row.get(f)}
 			to_add = want - have
@@ -496,7 +528,8 @@ def apply_doc_access(sheet):
 
 	for dt in touched:
 		frappe.clear_cache(doctype=dt)
-	frappe.clear_cache()  # page / report access is cached per user
+	if touched or summary["report_roles_added"] or summary["report_roles_removed"] or summary["pages_changed"]:
+		frappe.clear_cache()  # page / report access is cached per user
 	return summary
 
 
@@ -559,18 +592,28 @@ def apply_report_access(direct):
 	for role, stds in _companions(direct).items():
 		for rep_name in _reports_for_roles(stds):
 			want.setdefault(rep_name, set()).add(role)
+	# POS roles see only POS records (pos_scope.py); these reports read the whole
+	# company with their own SQL, so they're not given to them.
+	# This wins over roles someone put on the report itself.
+	blocked = _pos_blocked_reports()
+	for rep_name in blocked & set(want):
+		want[rep_name] -= set(POS_ROLES)
 	prev = _map_get("report_custom_roles")
 	added = removed = 0
 	state = {}
-	for rep_name in sorted(set(want) | set(prev)):
+	for rep_name in sorted(set(want) | set(prev) | blocked):
 		own = set(frappe.get_all("Has Role", filters={"parent": rep_name, "parenttype": "Report"}, pluck="role"))
 		cr, custom = _custom_role_roles("report", rep_name)
 		mine = set(prev.get(rep_name, []))
 		wanted = want.get(rep_name, set())
 		if not own and not cr:
 			continue  # no role list at all = open to everyone who may report on the document
+		if rep_name not in want and rep_name not in prev and not (own | custom) & set(POS_ROLES):
+			continue  # blocked report the POS roles never had: nothing to do
 		base = (custom - mine) if cr else own
 		final = base | wanted
+		if rep_name in blocked:
+			final -= set(POS_ROLES)
 		ours = wanted - base
 		if final != custom:
 			_set_custom_role("report", rep_name, final)
@@ -580,6 +623,16 @@ def apply_report_access(direct):
 			state[rep_name] = sorted(ours)
 	_map_set("report_custom_roles", state)
 	return added, removed
+
+
+POS_ROLES = ("POS Admin", "POS Store Manager")
+POS_BLOCKED_REPORT_DOCTYPES = ("Material Request", "Material Request Item", "Sales Invoice", "Customer")
+POS_BLOCKED_REPORTS = ("Requested Items To Be Transferred",)
+
+
+def _pos_blocked_reports():
+	return set(frappe.get_all("Report", filters={"ref_doctype": ["in", POS_BLOCKED_REPORT_DOCTYPES],
+		"report_type": ["!=", "Report Builder"], "disabled": 0}, pluck="name")) | set(POS_BLOCKED_REPORTS)
 
 
 def _reports_for_roles(roles):
@@ -642,6 +695,8 @@ def _copy_own_roles(kind, name, state_key, parenttype):
 	if not cr or name not in tracked:
 		return
 	own = set(frappe.get_all("Has Role", filters={"parent": name, "parenttype": parenttype}, pluck="role"))
+	if kind == "report" and name in _pos_blocked_reports():
+		own -= set(POS_ROLES)
 	if own - custom:
 		_set_custom_role(kind, name, custom | own)
 		frappe.clear_cache()
@@ -649,35 +704,63 @@ def _copy_own_roles(kind, name, state_key, parenttype):
 
 # ------------------------------------------------------------------ Order Flow tabs
 def apply_tab_access(sheet):
-	"""Set Admin Settings › Order Flow tab and sub-tab roles from the tab sheet
-	(sheet roles only; other roles already on a tab are kept)."""
+	"""Set Admin Settings › Order Flow tab and sub-tab roles from the tab sheet (sheet
+	roles only; other roles already on a tab are kept): ✓ or A → sees it
+	(of_tab_<tab>_roles / of_sub_<tab>_<sub>_roles), A → may also act from it
+	(…_act_roles, see order_flow_permissions.can_act_tab). Its own save is not read
+	back into the sheet (access_reverse)."""
+	frappe.flags.dacs_access_applying = True
+	try:
+		return _apply_tab_access(sheet)
+	finally:
+		frappe.flags.dacs_access_applying = False
+
+
+def tab_fields():
+	"""[(sheet row, view field, act field)] for every tab and sub-tab."""
+	out = []
+	for tab, key in TAB_KEYS.items():
+		out.append((tab, f"of_tab_{key}_roles", f"of_tab_{key}_act_roles"))
+		for label, sub in SUBTAB_KEYS.get(tab, {}).items():
+			out.append((f"{tab} › {label}", f"of_sub_{key}_{sub}_roles", f"of_sub_{key}_{sub}_act_roles"))
+	return out
+
+
+def _apply_tab_access(sheet):
 	cols = _role_columns(sheet)
 	cells = sheet.get("cells") or {}
 	managed = set(cols) | {NOBODY_ROLE}
 	doc = frappe.get_doc("Admin Settings")
 	meta = frappe.get_meta("Admin Settings")
 
-	def roles_for(field, key):
-		# The sheet decides the sheet roles only. Any other role already listed on
-		# the tab (e.g. Sales User, Accounts Team) stays, so no user loses a tab.
-		keep = [d.role for d in (doc.get(field) or []) if d.role and d.role not in managed]
-		chosen = [r for r, i in cols.items() if (cells.get(key) or [""] * 99)[i] in ("Y", "A")]
-		return chosen + keep or [NOBODY_ROLE]
+	def listed(field):
+		return [d.role for d in (doc.get(field) or []) if d.role]
 
 	set_fields = 0
-	for tab, key in TAB_KEYS.items():
-		field = f"of_tab_{key}_roles"
-		if meta.has_field(field):
-			doc.set(field, [{"role": r} for r in roles_for(field, tab)])
+	for row, view_f, act_f in tab_fields():
+		vals = cells.get(row) or [""] * 99
+		if meta.has_field(view_f):
+			# The sheet decides the sheet roles only. Any other role already listed on
+			# the tab (e.g. Sales User, Accounts Team) stays, so no user loses a tab.
+			keep = [r for r in listed(view_f) if r not in managed]
+			chosen = [r for r, i in cols.items() if vals[i] in ("Y", "A")]
+			doc.set(view_f, [{"role": r} for r in (chosen + keep or [NOBODY_ROLE])])
 			set_fields += 1
-		for label, sub in SUBTAB_KEYS.get(tab, {}).items():
-			field = f"of_sub_{key}_{sub}_roles"
-			if meta.has_field(field):
-				doc.set(field, [{"role": r} for r in roles_for(field, f"{tab} › {label}")])
-				set_fields += 1
+		if meta.has_field(act_f):
+			# Other roles: kept where listed. When actions were never configured, the
+			# other roles that see the tab keep acting as they always could.
+			before = listed(act_f)
+			keep = [r for r in before if r not in managed] if before else keep_view_others(doc, view_f, managed)
+			chosen = [r for r, i in cols.items() if vals[i] == "A"]
+			doc.set(act_f, [{"role": r} for r in (chosen + keep or [NOBODY_ROLE])])
+			set_fields += 1
 	doc.flags.ignore_permissions = True
 	doc.save(ignore_permissions=True)
 	return {"fields": set_fields}
+
+
+def keep_view_others(doc, view_f, managed):
+	return [d.role for d in (doc.get(view_f) or []) if d.role and d.role not in managed]
 
 
 # ------------------------------------------------------------------ state / bundle
@@ -715,7 +798,7 @@ def _map_set(key, data):
 
 # Bump when the rules in this file change (dependencies, companions, pages…), so each
 # site re-applies its sheets once on the next migrate (sync_from_bundle).
-RULES_VERSION = "2026-09-28.3"
+RULES_VERSION = "2026-09-29.2"
 
 
 def bundle_fingerprint(data):
@@ -724,6 +807,9 @@ def bundle_fingerprint(data):
 
 	core = {s: {"roles": (v or {}).get("roles"), "cells": (v or {}).get("cells")} for s, v in data.items()
 			if s in ("doc_access", "tab_access")}
+	for s, v in data.items():
+		if s in core and (v or {}).get("added"):
+			core[s]["added"] = v["added"]  # only when present: older fingerprints stay the same
 	return hashlib.sha1(json.dumps(core, sort_keys=True).encode()).hexdigest()
 
 
@@ -765,8 +851,10 @@ def sync_from_bundle():
 		if not b:
 			continue
 		cur = load_sheet(name) or {}
-		if cur.get("roles") != b.get("roles") or cur.get("cells") != b.get("cells"):
-			store_sheet(name, b["roles"], b["cells"], note="from the app code")
+		if (cur.get("roles") != b.get("roles") or cur.get("cells") != b.get("cells")
+				or (cur.get("added") or {}) != (b.get("added") or {})):
+			store_sheet(name, b["roles"], b["cells"], note="from the app code",
+						added=(b.get("added") or {}) if name == "doc_access" else None)
 			changed.append(name)
 	if is_active():
 		# A new sheet, or new rules in the code: (re-)apply both sheets once.
@@ -859,6 +947,11 @@ TAB_DOCS = {
 }
 
 
+# POS roles work from the POS screen and the MR / Stock Entry lists; the Order Flow
+# dashboard is built on Sales Orders, which they can't read (every endpoint checks it).
+NO_ORDER_FLOW_ROLES = ("POS Admin", "POS Store Manager")
+
+
 def derive_tab_cells(doc_sheet):
 	"""The Order Flow tab sheet worked out from the Document access sheet: a role
 	sees a tab if it may view its documents (Y), and acts (A) if it may create or
@@ -874,6 +967,9 @@ def derive_tab_cells(doc_sheet):
 			act = ("S",) if tab == "SO Approvals" else ("E", "S")
 			row = []
 			for i in range(len(roles)):
+				if roles[i] in NO_ORDER_FLOW_ROLES:
+					row.append("")
+					continue
 				vals = [(cells.get(d) or [""] * len(roles))[i] for d in docs]
 				row.append("A" if any(l in v for v in vals for l in act) else "Y" if any("V" in v for v in vals) else "")
 			out[key] = row
@@ -909,26 +1005,26 @@ def apply_permissions(derive_tabs=False):
 
 @frappe.whitelist(methods=["POST"])
 def activate():
-	""""Apply to the ERP" (Admin only): apply both sheets; users' roles stay as they are."""
-	from erp_dacsinc_custom.access_worksheet import EDIT_ROLE
+	""""Apply to the ERP" (System Manager only): apply both sheets; users' roles stay as they are."""
+	from erp_dacsinc_custom.access_worksheet import RESET_ROLE
 
-	frappe.only_for(EDIT_ROLE)
+	frappe.only_for(RESET_ROLE)
 	return apply_permissions()
 
 
 @frappe.whitelist(methods=["POST"])
 def reset_profiles():
-	"""Reset each sheet role's profile to role + Employee + ESS (Admin only, explicit).
-	Users on those profiles lose the other roles the profile used to carry."""
-	from erp_dacsinc_custom.access_worksheet import EDIT_ROLE
+	"""Reset each sheet role's profile to role + Employee + ESS (System Manager only,
+	explicit). Users on those profiles lose the other roles the profile used to carry."""
+	from erp_dacsinc_custom.access_worksheet import RESET_ROLE
 
-	frappe.only_for(EDIT_ROLE)
+	frappe.only_for(RESET_ROLE)
 	return {"profiles_reset": ensure_roles_and_profiles(reset=True)}
 
 
 @frappe.whitelist()
 def get_activation_preview():
-	from erp_dacsinc_custom.access_worksheet import EDIT_ROLE
+	from erp_dacsinc_custom.access_worksheet import RESET_ROLE
 
-	frappe.only_for(EDIT_ROLE)
+	frappe.only_for(RESET_ROLE)
 	return {"active": is_active(), "users": activation_preview()}

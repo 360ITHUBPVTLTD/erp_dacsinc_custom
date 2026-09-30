@@ -66,8 +66,8 @@
   }
   .topbar nav a:hover { border-color: var(--line); background: var(--surface); color: var(--ink); }
 
-  .page { max-width: 1480px; margin: 0 auto; padding: 0 24px 100px; }
-  .prose { max-width: 700px; }
+  .page { max-width: none; margin: 0; padding: 0 clamp(16px, 2.5vw, 40px) 100px; }
+  .prose { max-width: 1100px; }
   .prose p { color: var(--ink-soft); }
   .prose p.lede { color: var(--ink); font-size: 1.12em; }
 
@@ -78,7 +78,7 @@
   }
   h1.title {
     font-size: clamp(2rem, 4vw, 2.7rem); font-weight: 600; line-height: 1.12;
-    margin: 0 0 16px; text-wrap: balance; max-width: 700px;
+    margin: 0 0 16px; text-wrap: balance; max-width: 1100px;
   }
   h1.title em { font-style: italic; color: var(--indigo); }
 
@@ -87,7 +87,7 @@
     font-family: "Newsreader", serif; font-size: 1.5rem; font-weight: 600;
     margin: 0 0 6px; color: var(--ink);
   }
-  section.block .block-intro { color: var(--ink-soft); font-size: 15px; margin: 0 0 20px; max-width: 660px; }
+  section.block .block-intro { color: var(--ink-soft); font-size: 15px; margin: 0 0 20px; max-width: 1100px; }
 
   .table-wrap { overflow-x: auto; border: 1px solid var(--line-soft); border-radius: 8px; background: var(--surface); }
   table.ref-table { width: 100%; border-collapse: collapse; font-size: 13.5px; }
@@ -296,6 +296,15 @@
     border: 1px solid var(--line); background: var(--surface); color: var(--ink); }
   .wsdlg-actions .wsdlg-ok { background: var(--pine); border-color: var(--pine); color: #fff; }
   .wsdlg-actions .wsdlg-ok.danger { background: #b3261e; border-color: #b3261e; }
+  .wsdlg-actions .wsdlg-ok:disabled { opacity: .45; cursor: not-allowed; }
+  .wsdlg-typed { margin-top: 14px; font-size: 13px; color: var(--ink-soft); }
+  .wsdlg-typed[hidden] { display: none; }
+  .wsdlg-typed b { color: #b3261e; letter-spacing: .04em; }
+  .wsdlg-typed input { display: block; width: 100%; box-sizing: border-box; margin-top: 6px; padding: 9px 10px; font: 600 15px/1.2 inherit;
+    font-family: inherit; letter-spacing: .04em; border: 1px solid var(--line); border-radius: 7px; background: var(--paper); color: var(--ink); }
+  .ws-live { margin: 0 0 10px; padding: 9px 12px; border-radius: 8px; font-size: 13px; background: #fff4d6; border: 1px solid #e8c46a; color: #5c4400; }
+  .ws-live[hidden] { display: none; }
+  .ws-live button { margin-left: 8px; }
 
   @media print {
     .ptabs, .stabs, dialog.wsdlg { display: none !important; }
@@ -318,6 +327,14 @@
     box-shadow: 0 2px 8px var(--shadow); font-size: 13px; }
   .dbar .src { color: var(--ink-soft); margin-right: auto; }
   .dbar .src b { color: var(--ink); }
+  table.ws-busy { opacity: .6; pointer-events: none; }
+  .dbar .src .vnote { color: var(--ink-soft); font-style: italic; }
+  td.label .rm { margin-left: 6px; padding: 0 5px; font: 700 12px/16px inherit; font-family: inherit; border-radius: 4px; cursor: pointer;
+    border: 1px solid var(--line); background: transparent; color: #b3261e; }
+  td.label .added { margin-left: 6px; font: 600 10px "IBM Plex Mono", monospace; color: var(--indigo); }
+  .ws-form label { display: block; margin: 10px 0 0; font-size: 13px; color: var(--ink-soft); }
+  .ws-form input, .ws-form select { display: block; width: 100%; box-sizing: border-box; margin-top: 4px; padding: 8px 10px; font: 14px inherit;
+    font-family: inherit; border: 1px solid var(--line); border-radius: 7px; background: var(--paper); color: var(--ink); }
   .dbar .cnt { font: 600 12px "IBM Plex Mono", monospace; padding: 2px 8px; border-radius: 999px; background: var(--line-soft); color: var(--ink-soft); }
   .dbar .cnt.hot { background: var(--clay-soft); color: var(--clay); }
   .dbar button { font: 600 13px/1 inherit; font-family: inherit; padding: 7px 12px; border-radius: 6px; cursor: pointer;
@@ -345,6 +362,9 @@
   button.k:disabled { cursor: default; transform: none; }
   table.dsheet-t .mini { display: grid; grid-template-columns: repeat(3, 16px); gap: 3px; justify-content: center; }
   table.dsheet-t td.mcell { padding: 3px; position: relative; }
+  /* On screen the decided sheets use the full width: the role columns share it, the document column stays compact. */
+  table.dsheet-t thead th:first-child { width: 230px; }
+  table.dsheet-t th.role { width: auto; height: 185px; }
   table.dsheet-t td.mcell.chg { box-shadow: inset 0 0 0 2px #2f6fd6; }
   table.dsheet-t td.tcell { text-align: center; padding: 4px 2px; }
   table.dsheet-t td.tcell.chg { box-shadow: inset 0 0 0 2px #2f6fd6; }
@@ -448,7 +468,10 @@
     <h2>Document access by role</h2>
     <p class="block-intro">What each role may do with each document in the ERP. Roles are listed across the top and documents down the side.
       <span class="edit-only">Click a box to grant or remove a right. Granting Delete or Cancel, or removing all of a role's rights on a document,
-      asks you to confirm. Nothing changes until you press <b>Save</b>.</span></p>
+      asks you to confirm. Nothing changes until you press <b>Save</b>.</span>
+      Changes made in Role Permission Manager show up here by themselves; <b>Sync from ERP</b> reads every cell back from the ERP at once.
+      Record-level rules kept in the app's code are not part of this sheet: a Merchandiser sees only their customers' orders
+      and customers, and POS logins only their stores' records.</p>
     <div class="dlegend">
       <span><i class="k on">V</i> allowed</span>
       <span><i class="k no">V</i> not allowed</span>
@@ -479,7 +502,10 @@
     <p class="block-intro">Which tabs and sub-tabs of the Order Flow dashboard each role sees. A role is shown a tab only when it may open
       the documents on that tab, so this sheet follows the document access.
       <span class="edit-only">Click a cell to change it: hidden → ✓ → A → hidden. Showing a sub-tab also shows its main tab, and hiding a main tab
-      hides its sub-tabs.</span></p>
+      hides its sub-tabs.</span>
+      ✓ shows the tab with no action buttons; A also allows its create, submit and approve buttons. The sheet is kept in step with
+      Admin Settings › Order Flow (Tab / Sub-tab Visibility and Actions): a change made there shows up here by itself, and
+      <b>Sync from Admin Settings</b> reads every cell back at once.</p>
     <div class="dlegend">
       <span><i class="k tv">✓</i> can view</span>
       <span><i class="k ta">A</i> can view and act (create, submit or approve from the tab)</span>
@@ -559,6 +585,8 @@
       <h3 class="wsdlg-title"></h3>
       <div class="wsdlg-body"></div>
       <ul class="wsdlg-list"></ul>
+      <label class="wsdlg-typed" hidden>Type <b class="wsdlg-word"></b> to confirm.
+        <input type="text" autocomplete="off" spellcheck="false" class="wsdlg-input"></label>
       <div class="wsdlg-actions">
         <button value="cancel" type="submit" class="wsdlg-cancel">Cancel</button>
         <button value="ok" type="submit" class="wsdlg-ok">Confirm</button>
@@ -677,8 +705,16 @@
   }
   /* ═══════════ Decided sheets (editable) ═══════════ */
   const ROLE_NAMES = WS_ROLES.map(r => Array.isArray(r) ? r[0] : r);
+  // Documents a System Manager added on this page (saved in the sheet, access_reverse.add_sheet_document).
+  const ADDED = (WS_BOOT.saved && WS_BOOT.saved.doc_access && WS_BOOT.saved.doc_access.added) || {};
+  const DT_LIVE = DT_GROUPS.map(([g, docs]) => [g, docs.slice()]);
+  Object.entries(ADDED).forEach(([d, m]) => {
+    let grp = DT_LIVE.find(([g]) => g === m.group);
+    if (!grp) { grp = [m.group, []]; DT_LIVE.push(grp); }
+    grp[1].push([d, m.submittable ? 1 : 0]);
+  });
   const DOC_LIST = [];                         // [group, doc, submittable]
-  DT_GROUPS.forEach(([g, docs]) => docs.forEach(([d, sub]) => DOC_LIST.push([g, d, sub])));
+  DT_LIVE.forEach(([g, docs]) => docs.forEach(([d, sub]) => DOC_LIST.push([g, d, sub])));
   const SUBMITTABLE = Object.fromEntries(DOC_LIST.map(([, d, sub]) => [d, !!sub]));
 
   // The client's marked sheet (3 photos, 28 Sep 2026), one entry per role in
@@ -770,10 +806,16 @@
   }
   const clone = (o) => JSON.parse(JSON.stringify(o));
   const CAN_EDIT = !!(WS_BOOT && WS_BOOT.can_edit);
+  // Resets (restore / clear / refill, apply to the ERP, reset profiles): System Manager only.
+  const CAN_RESET = !!(WS_BOOT && WS_BOOT.can_reset);
+  const resetBtn = (act, label, tip) => CAN_RESET
+    ? `<button type="button" data-act="${act}" title="${tip}">${label}</button>`
+    : `<button type="button" disabled title="System Manager only">${label}</button>`;
   const WS_ACTIVE = !!(WS_BOOT && WS_BOOT.active);
 
-  async function saveSheet(sheet, cells, version) {
+  async function saveSheet(sheet, cells, version, reset) {
     const body = new URLSearchParams({ sheet, roles: JSON.stringify(ROLE_NAMES), cells: JSON.stringify(cells), base_version: version || 0 });
+    if (reset) body.set("reset", reset);
     const r = await fetch("/api/method/erp_dacsinc_custom.access_worksheet.save_sheet", {
       method: "POST", credentials: "same-origin", body,
       headers: { "X-Frappe-CSRF-Token": WS_BOOT.csrf_token, "Accept": "application/json" },
@@ -787,18 +829,40 @@
     return j.message;
   }
 
+  // POST (or GET) to erp_dacsinc_custom.<method>; returns .message, throws the server's message.
+  async function wsCall(method, params, verb) {
+    const opt = { method: verb || "POST", credentials: "same-origin", headers: { "X-Frappe-CSRF-Token": WS_BOOT.csrf_token, "Accept": "application/json" } };
+    if (params) opt.body = new URLSearchParams(params);
+    const r = await fetch(`/api/method/erp_dacsinc_custom.${method}`, opt);
+    const j = await r.json().catch(() => ({}));
+    if (!r.ok) { let m = "Could not complete."; try { m = JSON.parse(JSON.parse(j._server_messages)[0]).message; } catch (e) { if (j.exception) m = j.exception; } throw new Error(String(m).replace(/<[^>]+>/g, "")); }
+    return j.message;
+  }
+
   // Confirmation dialog. items: list of HTML lines (e.g. the changes being saved).
-  function askConfirm({ title, body, items, ok, danger }) {
+  // typed: a word the user must type exactly before OK is enabled (resets).
+  function askConfirm({ title, body, items, ok, danger, typed }) {
     const dlg = document.getElementById("ws-confirm");
-    if (!dlg || !dlg.showModal) return Promise.resolve(window.confirm(`${title}\n\n${body || ""}`));
+    if (!dlg || !dlg.showModal) {
+      if (typed) return Promise.resolve(window.prompt(`${title}\n\nType ${typed} to confirm.`) === typed);
+      return Promise.resolve(window.confirm(`${title}\n\n${body || ""}`));
+    }
     dlg.querySelector(".wsdlg-title").textContent = title;
     dlg.querySelector(".wsdlg-body").innerHTML = body || "";
     dlg.querySelector(".wsdlg-list").innerHTML = (items || []).map(i => `<li>${i}</li>`).join("");
     const okBtn = dlg.querySelector(".wsdlg-ok");
     okBtn.textContent = ok || "Confirm"; okBtn.classList.toggle("danger", !!danger);
+    const box = dlg.querySelector(".wsdlg-typed"), input = dlg.querySelector(".wsdlg-input");
+    box.hidden = !typed; input.value = ""; dlg.querySelector(".wsdlg-word").textContent = typed || "";
+    okBtn.disabled = !!typed;
+    input.oninput = () => { okBtn.disabled = !!typed && input.value.trim() !== typed; };
     dlg.returnValue = "";
     dlg.showModal();
-    return new Promise(res => dlg.addEventListener("close", () => res(dlg.returnValue === "ok"), { once: true }));
+    if (typed) input.focus();
+    return new Promise(res => dlg.addEventListener("close", () => {
+      res(dlg.returnValue === "ok" && (!typed || input.value.trim() === typed));
+      okBtn.disabled = false; box.hidden = true;
+    }, { once: true }));
   }
   const plural = (n, one, many) => `${n} ${n === 1 ? one : (many || one + "s")}`;
 
@@ -810,21 +874,28 @@
     const diffCount = (a, b) => opt.rows().reduce((n, r) => n + a[r].reduce((m, v, i) => m + (v !== b[r][i] ? 1 : 0), 0), 0);
     S.render = () => {
       document.getElementById(opt.table).innerHTML = opt.renderTable(S);
+      S.renderBar();
+    };
+    // The bar alone (counts, buttons): a cell click redraws only its cell and this.
+    S.renderBar = () => {
       const unsaved = diffCount(S.cur, S.saved);
-      const src = opt.sourceText(S);
+      const note = S.meta && S.meta.note ? ` · <span class="vnote">${esc2(S.meta.note.length > 180 ? S.meta.note.slice(0, 180) + "…" : S.meta.note)}</span>` : "";
+      const src = opt.sourceText(S) + note;
       document.querySelectorAll(`#${opt.section} .js-src`).forEach(el => el.textContent = src.replace(/<[^>]+>/g, ""));
       const extra = opt.barExtra ? opt.barExtra(S) : "";
       bar.innerHTML = `<span class="src">${src}</span>${extra}
         ${CAN_EDIT ? `<span class="cnt ${unsaved ? "hot" : ""}">${unsaved ? plural(unsaved, "unsaved change") : (S.meta ? "all changes saved" : "not yet saved")}</span>
           ${opt.buttons || ""}
           <button type="button" data-act="undo" ${unsaved ? "" : "disabled"}>Discard changes</button>
-          <button type="button" class="pri" data-act="save" ${unsaved ? "" : "disabled"}>Save</button>`
+          <button type="button" class="pri" data-act="save" ${unsaved && !S.saving ? "" : "disabled"}>${S.saving ? "Saving…" : "Save"}</button>`
         : `<span class="cnt">view only</span>`}
         <button type="button" data-act="print">⎙ Print / Save as PDF</button>
         <span class="toast" id="${opt.bar}-toast"></span>`;
     };
     S.toast = (msg, err) => { const t = document.getElementById(`${opt.bar}-toast`); if (t) { t.textContent = msg; t.className = "toast" + (err ? " err" : ""); } };
     S.dirty = () => diffCount(S.cur, S.saved) > 0;
+    // A newer saved version (another user, Role Permission Manager): load it as saved.
+    S.take = (data) => { S.meta = data; S.saved = opt.fromData(data); S.latest = null; };
     bar.addEventListener("click", async (e) => {
       const b = e.target.closest("button[data-act]"); if (!b) return;
       const act = b.dataset.act;
@@ -832,7 +903,8 @@
       if (act === "undo") {
         const n = diffCount(S.cur, S.saved);
         if (!await askConfirm({ title: "Discard changes?", body: `${plural(n, "change")} made since the last save will be lost.`, ok: "Discard", danger: true })) return;
-        S.cur = clone(S.saved); S.auto = false; S.render(); return;
+        if (S.latest) S.take(S.latest);        // a newer version arrived meanwhile: load it now
+        S.cur = clone(S.saved); S.auto = false; S.pendingReset = null; S.render(); return;
       }
       if (act === "save") {
         const items = opt.describe(S);
@@ -842,27 +914,63 @@
             ? `${plural(items.length, "change")} will be recorded as the agreed access (version ${next}) and <b>applied at once</b> — ${opt.appliesTo}. Please check them:`
             : `${plural(items.length, "change")} will be recorded as the agreed access (version ${next}). The sheet is not applied to the ERP yet, so nobody's access changes now. Please check them:`,
           items })) return;
-        b.disabled = true; b.textContent = "Saving…";
+        if (S.saving) return;
+        // No edits and no live refresh while the save runs, so what is saved is what is shown.
+        S.saving = true; S.renderBar();
+        document.getElementById(opt.table).classList.add("ws-busy");
+        const sent = clone(S.cur);
         try {
-          const data = await saveSheet(opt.sheet, S.cur, S.meta && S.meta.version);
-          S.meta = data; S.saved = clone(S.cur); S.auto = false; S.render(); S.toast(WS_ACTIVE ? "Saved and applied." : "Saved (not applied to the ERP yet).");
-        } catch (err) { S.render(); S.toast(err.message, true); }
+          const data = await saveSheet(opt.sheet, sent, S.meta && S.meta.version, S.pendingReset);
+          S.meta = data; S.saved = sent; S.auto = false; S.pendingReset = null; S.latest = null;
+          S.saving = false; S.render(); S.toast(WS_ACTIVE ? "Saved and applied." : "Saved (not applied to the ERP yet).");
+        } catch (err) {
+          S.saving = false; S.renderBar();
+          S.toast(/timed? ?out|504|502|Failed to fetch|NetworkError/i.test(err.message)
+            ? "The server didn't answer in time. Reload the page to see whether it was saved before trying again."
+            : err.message, true);
+        } finally {
+          S.saving = false;
+          document.getElementById(opt.table).classList.remove("ws-busy");
+        }
         return;
       }
       if (opt.onAct) opt.onAct(act, S, b);
     });
     document.getElementById(opt.table).addEventListener("click", async (e) => {
-      const k = e.target.closest("button.k[data-r]"); if (!k || !CAN_EDIT) return;
-      if (await opt.onCell(S, k.dataset.r, +k.dataset.i, k.dataset.l) === false) return;
-      S.render();
+      const k = e.target.closest("button.k[data-r]"); if (!k || !CAN_EDIT || S.saving) return;
+      const row = k.dataset.r, i = +k.dataset.i;
+      if (await opt.onCell(S, row, i, k.dataset.l) === false) return;
+      if (opt.renderCell) {
+        // only this cell changed: redraw it and the bar, not the whole table
+        const td = k.closest("td"), cell = opt.renderCell(S, row, i);
+        td.className = cell.cls; td.innerHTML = cell.html;
+        S.renderBar();
+        if (opt.afterCell) opt.afterCell(S);
+      } else {
+        S.render();
+      }
     });
     S.render();
     return S;
   }
 
   /* ── Document Access, decided ── */
+  // One cell's boxes (V E S C D O) — the table and a single-cell redraw share it.
+  function docCell(S, doc, i, client) {
+    const v = S.cur[doc][i], sub = SUBMITTABLE[doc] !== undefined ? SUBMITTABLE[doc] : true;
+    const box = (l) => {
+      if (!sub && (l === "S" || l === "C")) return `<i class="k off"></i>`;
+      const on = v.includes(l);
+      const cls = l === "O" ? (on ? "own" : "ownno") : (on ? "on" : "no");
+      const tip = `${ROLE_NAMES[i]} · ${doc} · ${BOX_NAME[l]}: ${on ? (l === "O" ? "yes — only their own records" : "allowed") : (l === "O" ? "no — all records" : "not allowed")}`;
+      return `<button type="button" class="k ${cls}" data-r="${esc2(doc)}" data-i="${i}" data-l="${l}" title="${esc2(tip)}" ${CAN_EDIT ? "" : "disabled"}>${l}</button>`;
+    };
+    return { cls: `mcell ${v !== client[doc][i] ? "chg" : ""}`, html: `<div class="mini">${LETTERS.split("").map(box).join("")}</div>` };
+  }
   const DOC_ROWS = () => DOC_LIST.map(([, d]) => d);
-  const clientDocs = () => Object.fromEntries(DOC_LIST.map(([, d]) => [d, ROLE_NAMES.map((_, i) => clientCell(d, i))]));
+  // The marked worksheet; documents added later weren't on it, so they keep `cur`'s value.
+  const clientDocs = (cur) => Object.fromEntries(DOC_LIST.map(([, d]) => [d,
+    ADDED[d] && cur ? cur[d].slice() : ROLE_NAMES.map((_, i) => clientCell(d, i))]));
   const savedDocs = WS_BOOT.saved && WS_BOOT.saved.doc_access;
   const DOCS = makeSheet({
     sheet: "doc_access", section: "decided-docs", bar: "dd-bar", table: "dd-table", rows: DOC_ROWS,
@@ -873,10 +981,11 @@
       ? `<b>Agreed version ${S.meta.version}</b> · saved by ${esc2(S.meta.saved_by_name || S.meta.saved_by)} on ${esc2(fmtWhen(S.meta.saved_on))}`
       : `Based on the worksheet marked by Dacsinc management on 28 Sep 2026 · <b>not yet saved</b>`,
     barExtra: (S) => {
-      const client = clientDocs(); let changed = 0;
+      const client = clientDocs(S.cur); let changed = 0;
       DOC_ROWS().forEach(d => S.cur[d].forEach((v, i) => { if (v !== client[d][i]) changed++; }));
       return changed ? `<span class="cnt">${plural(changed, "cell differs", "cells differ")} from the marked worksheet</span>` : "";
     },
+    fromData: (data) => { const f = fromSaved(data, DOC_ROWS()); DOC_ROWS().forEach(d => f[d] = f[d].map(v => norm(v, d))); return f; },
     saveTitle: "Save document access?",
     appliesTo: "each role's permissions in the ERP change immediately",
     describe: (S) => {
@@ -889,37 +998,101 @@
       }));
       return out;
     },
-    buttons: `<button type="button" data-act="reset" title="Put every cell back to the marked worksheet">Restore marked worksheet</button>`,
-    onAct: async (act, S) => {
-      if (act === "reset") {
-        if (!await askConfirm({ title: "Restore the marked worksheet?", ok: "Restore",
-          body: "Every cell goes back to what Dacsinc management marked on paper. Nothing is recorded until you press Save." })) return;
-        S.cur = clientDocs(); S.render();
+    buttons: resetBtn("add", "Add document…", "Put another document type on the sheet (System Manager)")
+      + resetBtn("sync", "Sync from ERP", "Read every cell back from the roles' actual rights in the ERP (System Manager)")
+      + resetBtn("reset", "Restore marked worksheet", "Put every cell back to the marked worksheet (System Manager)"),
+    onAct: async (act, S, btn) => {
+      if (act === "add" && CAN_RESET) {
+        if (S.dirty()) { await askConfirm({ title: "Save first", body: "Save or discard your changes before adding a document.", ok: "OK" }); return; }
+        let names = [];
+        try { names = (await wsCall("access_reverse.addable_doctypes", null, "GET")) || []; } catch (e) { S.toast(e.message, true); return; }
+        const groups = DT_LIVE.map(([g]) => g);
+        const ok = await askConfirm({ title: "Add a document to the sheet", ok: "Next",
+          body: `<div class="ws-form">Its row starts from what each role can do on it in the ERP today, so nobody loses a right.
+            After that, the sheet decides it like any other row.
+            <label>Document type<input id="ws-add-dt" list="ws-add-list" autocomplete="off" placeholder="e.g. Quality Inspection"></label>
+            <datalist id="ws-add-list">${names.map(n => `<option value="${esc2(n)}">`).join("")}</datalist>
+            <label>Group<select id="ws-add-grp">${groups.map(g => `<option>${esc2(g)}</option>`).join("")}<option>Other documents</option></select></label></div>` });
+        const dt = (document.getElementById("ws-add-dt") || {}).value, grp = (document.getElementById("ws-add-grp") || {}).value;
+        if (!ok || !dt) return;
+        if (!names.includes(dt.trim())) { await askConfirm({ title: "Not found", body: `${esc2(dt)} isn't a document type that can be added (or it's on the sheet already).`, ok: "OK" }); return; }
+        let pre;
+        try { pre = await wsCall("access_reverse.add_sheet_document", { doctype: dt.trim(), group: grp, confirm: 0 }); } catch (e) { S.toast(e.message, true); return; }
+        const name = { V: "view", E: "edit", S: "submit", C: "cancel", D: "delete", O: "own only" };
+        const items = Object.entries(pre.row).map(([r, v]) => `<b>${esc2(r)}</b>: ${v ? `<span class="add">${esc2(v.split("").map(l => name[l]).join(", "))}</span>` : "no access"}`);
+        if (!await askConfirm({ title: `Add ${esc2(pre.doctype)}?`, ok: "Add", items,
+          body: `Goes under <b>${esc2(pre.group)}</b>${pre.submittable ? "" : " (never submitted, so no Submit / Cancel)"}, starting as each role has it now:` })) return;
+        try {
+          await wsCall("access_reverse.add_sheet_document", { doctype: pre.doctype, group: pre.group, confirm: 1, base_version: (S.meta && S.meta.version) || 0 });
+          location.reload();
+        } catch (e) { S.toast(e.message, true); }
+        return;
+      }
+      if (act === "sync" && CAN_RESET) {
+        if (S.dirty()) {
+          await askConfirm({ title: "Save first", body: "Save or discard your changes before syncing from the ERP.", ok: "OK" });
+          return;
+        }
+        const call = async (confirm) => {
+          const body = new URLSearchParams({ confirm: confirm ? 1 : 0, base_version: (S.meta && S.meta.version) || 0 });
+          const r = await fetch("/api/method/erp_dacsinc_custom.access_reverse.sync_from_erp", { method: "POST", credentials: "same-origin", body,
+            headers: { "X-Frappe-CSRF-Token": WS_BOOT.csrf_token, "Accept": "application/json" } });
+          const j = await r.json().catch(() => ({}));
+          if (!r.ok) { let m = "Could not sync."; try { m = JSON.parse(JSON.parse(j._server_messages)[0]).message; } catch (e) {} throw new Error(String(m).replace(/<[^>]+>/g, "")); }
+          return j.message;
+        };
+        const name = { V: "view", E: "edit", S: "submit", C: "cancel", D: "delete", O: "own only" };
+        const words = (v) => v ? v.split("").map(l => name[l]).join(", ") : "no access";
+        btn.disabled = true; btn.textContent = "Reading the ERP…";
+        let pre;
+        try { pre = await call(false); } catch (e) { S.render(); S.toast(e.message, true); return; }
+        S.render();
+        if (!pre.changes.length) {
+          await askConfirm({ title: "Already in step", body: "Every cell matches the roles' actual rights in the ERP.", ok: "OK" });
+          return;
+        }
+        const items = pre.changes.map(c => `<b>${esc2(c.role)}</b> · ${esc2(c.row)}: ${esc2(words(c.old))} → <span class="${c.new.length >= c.old.length ? "add" : "del"}">${esc2(words(c.new))}</span>`);
+        if (!await askConfirm({ title: "Sync the sheet from the ERP?", ok: "Sync", danger: true, typed: "SYNC", items,
+          body: `${plural(items.length, "cell")} will be set to what the roles can actually do in the ERP now, recorded as version ${((S.meta && S.meta.version) || 0) + 1}.
+            The ERP's rights stay as they are; they're only tidied to the sheet's boxes (e.g. Edit = write and create).` })) return;
+        try {
+          const done = await call(true);
+          S.take(done.saved); S.cur = clone(S.saved); S.pendingReset = null; S.render();
+          S.toast(`Synced from the ERP: ${plural(items.length, "cell")} updated (version ${done.version}).`);
+        } catch (e) { S.toast(e.message, true); }
+        return;
+      }
+      if (act === "reset" && CAN_RESET) {
+        const client = clientDocs(S.cur); let n = 0;
+        DOC_ROWS().forEach(d => S.cur[d].forEach((v, i) => { if (v !== client[d][i]) n++; }));
+        if (!await askConfirm({ title: "Restore the marked worksheet?", ok: "Restore", danger: true, typed: "RESTORE",
+          body: `Every cell goes back to what Dacsinc management marked on paper: <b>${plural(n, "cell changes", "cells change")}</b>,
+            including every right given since then (here or in Role Permission Manager). Once saved, it is <b>applied at once</b>.` })) return;
+        S.cur = client; S.pendingReset = "restore"; S.render();
+        S.toast("Restored. Review, then Save to record it.");
       }
     },
     renderTable: (S) => {
-      const client = clientDocs();
+      const client = clientDocs(S.cur);
       let body = "";
-      DT_GROUPS.forEach(([group, docs]) => {
+      DT_LIVE.forEach(([group, docs]) => {
         let rows = "";
         docs.forEach(([doc, sub]) => {
           const cells = S.cur[doc].map((v, i) => {
-            const box = (l) => {
-              if (!sub && (l === "S" || l === "C")) return `<i class="k off"></i>`;
-              const on = v.includes(l);
-              const cls = l === "O" ? (on ? "own" : "ownno") : (on ? "on" : "no");
-              const tip = `${ROLE_NAMES[i]} · ${doc} · ${BOX_NAME[l]}: ${on ? (l === "O" ? "yes — only their own records" : "allowed") : (l === "O" ? "no — all records" : "not allowed")}`;
-              return `<button type="button" class="k ${cls}" data-r="${esc2(doc)}" data-i="${i}" data-l="${l}" title="${esc2(tip)}" ${CAN_EDIT ? "" : "disabled"}>${l}</button>`;
-            };
-            const cc = v !== client[doc][i] ? "chg" : "";
-            return `<td class="mcell ${cc}"><div class="mini">${LETTERS.split("").map(box).join("")}</div></td>`;
+            const c = docCell(S, doc, i, client);
+            return `<td class="${c.cls}">${c.html}</td>`;
           }).join("");
-          rows += `<tr class="sub"><td class="label">${esc2(doc)}</td>${cells}</tr>`;
+          const tag = ADDED[doc] ? `<span class="added" title="Added on this page">added</span>${CAN_RESET
+            ? `<button type="button" class="rm" data-rm="${esc2(doc)}" title="Take ${esc2(doc)} off the sheet (System Manager)">×</button>` : ""}` : "";
+          rows += `<tr class="sub"><td class="label">${esc2(doc)}${tag}</td>${cells}</tr>`;
         });
         if (rows) body += `<tbody><tr class="tab"><td class="label" colspan="${WS_ROLES.length + 1}">${esc2(group)}</td></tr>${rows}</tbody>`;
       });
       return `<thead><tr><th style="text-align:left;">Document</th>${roleHeadHtml}</tr></thead>${body}`;
     },
+    renderCell: (S, doc, i) => docCell(S, doc, i, clientDocs(S.cur)),
+    // while the tab sheet still follows Document Access, a document change refills it
+    afterCell: () => { if (TABS && TABS.auto) { TABS.cur = suggestTabs(); TABS.render(); } },
     onCell: async (S, doc, i, l) => {
       let v = S.cur[doc][i];
       const has = v.includes(l), role = esc2(ROLE_NAMES[i]), d = esc2(doc);
@@ -937,6 +1110,17 @@
     },
   });
 
+  // × on an added document: take it off the sheet (System Manager, typed REMOVE).
+  document.getElementById("dd-table").addEventListener("click", async (e) => {
+    const b = e.target.closest("button.rm[data-rm]"); if (!b || !CAN_RESET) return;
+    const doc = b.dataset.rm;
+    if (DOCS.dirty()) { await askConfirm({ title: "Save first", body: "Save or discard your changes first.", ok: "OK" }); return; }
+    if (!await askConfirm({ title: `Take ${esc2(doc)} off the sheet?`, ok: "Remove", danger: true, typed: "REMOVE",
+      body: `The sheet stops deciding ${esc2(doc)}. Every role <b>keeps the rights it has on it now</b>; change them in Role Permission Manager, or add it again later.` })) return;
+    try { await wsCall("access_reverse.remove_sheet_document", { doctype: doc, base_version: (DOCS.meta && DOCS.meta.version) || 0 }); location.reload(); }
+    catch (err) { DOCS.toast(err.message, true); }
+  });
+
   // While the tab sheet follows Document Access, every document change refills it.
   let TABS = null;
   const docsRender = DOCS.render;
@@ -946,11 +1130,15 @@
   const TROWS = () => TAB_ROWS.map(([k]) => k);
   const savedTabs = WS_BOOT.saved && WS_BOOT.saved.tab_access;
   const emptyTabs = () => Object.fromEntries(TROWS().map(k => [k, ROLE_NAMES.map(() => "")]));
+  // POS roles work from the POS screen and the MR / Stock Entry lists. The Order Flow
+  // dashboard is built on Sales Orders, which they can't read (access_sync.NO_ORDER_FLOW_ROLES).
+  const NO_ORDER_FLOW = ["POS Admin", "POS Store Manager"];
   function suggestTabs() {
     const out = emptyTabs();
     TAB_ROWS.forEach(([key, tab, sub]) => {
       const act = tab === "SO Approvals" ? /S/ : /[ES]/;     // approving = submitting the Sales Order
-      out[key] = ROLE_NAMES.map((_, i) => {
+      out[key] = ROLE_NAMES.map((r, i) => {
+        if (NO_ORDER_FLOW.includes(r)) return "";
         const vals = (TAB_DOCS[key] || []).map(d => (DOCS.cur[d] || [])[i] || "");
         if (vals.some(v => act.test(v))) return "A";
         return vals.some(v => v.includes("V")) ? "Y" : "";
@@ -974,6 +1162,7 @@
       ? `<b>Agreed version ${S.meta.version}</b> · saved by ${esc2(S.meta.saved_by_name || S.meta.saved_by)} on ${esc2(fmtWhen(S.meta.saved_on))}`
       : `Worked out from document access · <b>not yet saved</b>`)
       + (S.auto && CAN_EDIT ? ` · updates with document access until changed by hand` : ""),
+    fromData: (data) => fromSaved(data, TROWS()),
     saveTitle: "Save dashboard tabs?",
     appliesTo: "the Order Flow dashboard shows each role these tabs and sub-tabs immediately",
     describe: (S) => {
@@ -985,18 +1174,39 @@
       }));
       return out;
     },
-    buttons: `<button type="button" data-act="suggest" title="Work every cell out again from the document access sheet">Refill from document access</button>
-      <button type="button" data-act="clear">Clear all</button>`,
-    onAct: async (act, S) => {
+    buttons: resetBtn("syncs", "Sync from Admin Settings", "Read every cell back from Admin Settings › Order Flow (System Manager)")
+      + resetBtn("suggest", "Refill from document access", "Work every cell out again from the document access sheet (System Manager)")
+      + resetBtn("clear", "Clear all", "Hide every tab for every role (System Manager)"),
+    onAct: async (act, S, btn) => {
+      if (!CAN_RESET) return;
+      if (act === "syncs") {
+        if (S.dirty() && !S.auto) { await askConfirm({ title: "Save first", body: "Save or discard your changes before syncing.", ok: "OK" }); return; }
+        const word = { "": "hidden", "Y": "can view", "A": "can view and act" };
+        btn.disabled = true; btn.textContent = "Reading Admin Settings…";
+        let pre;
+        try { pre = await wsCall("access_reverse.sync_tabs_from_settings", { confirm: 0 }); } catch (e) { S.render(); S.toast(e.message, true); return; }
+        S.render();
+        if (!pre.changes.length) { await askConfirm({ title: "Already in step", body: "Every cell matches Admin Settings › Order Flow.", ok: "OK" }); return; }
+        const items = pre.changes.map(c => `<b>${esc2(c.role)}</b> · ${esc2(c.row)}: ${word[c.old]} → <span class="${c.new ? "add" : "del"}">${word[c.new]}</span>`);
+        if (!await askConfirm({ title: "Sync the tabs from Admin Settings?", ok: "Sync", danger: true, typed: "SYNC", items,
+          body: `${plural(items.length, "cell")} will be set to what Admin Settings › Order Flow says now, recorded as version ${((S.meta && S.meta.version) || 0) + 1}.
+            Admin Settings stays as it is.` })) return;
+        try {
+          const done = await wsCall("access_reverse.sync_tabs_from_settings", { confirm: 1, base_version: (S.meta && S.meta.version) || 0 });
+          S.take(done.saved); S.cur = clone(S.saved); S.auto = false; S.pendingReset = null; S.render();
+          S.toast(`Synced from Admin Settings: ${plural(items.length, "cell")} updated (version ${done.version}).`);
+        } catch (e) { S.toast(e.message, true); }
+        return;
+      }
       if (act === "suggest") {
-        if (!await askConfirm({ title: "Refill from document access?", ok: "Refill",
-          body: "Every cell is worked out again from the document access sheet, replacing any changes made here by hand. Nothing is recorded until you press Save." })) return;
-        S.cur = suggestTabs(); S.auto = true; S.render(); S.toast("Refilled. Please review, then save.");
+        if (!await askConfirm({ title: "Refill from document access?", ok: "Refill", danger: true, typed: "REFILL",
+          body: "Every cell is worked out again from the document access sheet, <b>replacing every change made here by hand</b>. Nothing is recorded until you press Save." })) return;
+        S.cur = suggestTabs(); S.auto = true; S.pendingReset = "refill"; S.render(); S.toast("Refilled. Please review, then save.");
       }
       if (act === "clear") {
-        if (!await askConfirm({ title: "Clear all cells?", ok: "Clear", danger: true,
-          body: "Every tab becomes hidden for every role. Nothing is recorded until you press Save." })) return;
-        S.cur = emptyTabs(); S.auto = false; S.render();
+        if (!await askConfirm({ title: "Clear all cells?", ok: "Clear", danger: true, typed: "CLEAR",
+          body: "Every tab becomes hidden for <b>every role</b>: nobody sees the Order Flow dashboard once saved. Nothing is recorded until you press Save." })) return;
+        S.cur = emptyTabs(); S.auto = false; S.pendingReset = "clear"; S.render();
       }
     },
     renderTable: (S) => {
@@ -1028,6 +1238,43 @@
 
   TABS.auto = !savedTabCells;
   TABS.render();
+
+  // Live: versions saved elsewhere (another user, or Role Permission Manager — see
+  // access_reverse.py) show up here within 15 s. Unsaved changes on the page are kept;
+  // their Save is then refused, and Discard loads the newer version.
+  (function liveSheets() {
+    if (!WS_BOOT.signed_in) return;
+    let busy = false;
+    async function check() {
+      if (document.hidden || busy || DOCS.saving || TABS.saving) return;
+      busy = true;
+      try {
+        const r = await fetch("/api/method/erp_dacsinc_custom.access_worksheet.get_saved", { credentials: "same-origin", headers: { "Accept": "application/json" } });
+        if (!r.ok) return;
+        const saved = (await r.json()).message || {};
+        [["doc_access", DOCS], ["tab_access", TABS]].forEach(([key, S]) => {
+          const data = saved[key];
+          if (!data || !data.version || data.version <= ((S.meta && S.meta.version) || 0)) return;
+          const why = data.note || `saved by ${data.saved_by_name || data.saved_by}`;
+          if (S.dirty() && !(S === TABS && S.auto)) {
+            S.latest = data;
+            S.toast(`Version ${data.version} was saved meanwhile (${why}). Your changes are kept, but Save will be refused. Discard them to load it.`, true);
+            return;
+          }
+          if (S === DOCS && JSON.stringify(Object.keys(data.added || {}).sort()) !== JSON.stringify(Object.keys(ADDED).sort())) {
+            location.reload(); return;                     // documents added / removed: rebuild the table
+          }
+          S.take(data); S.cur = clone(S.saved); S.pendingReset = null;
+          if (S === TABS) S.auto = false;
+          S.render();
+          S.toast(`Updated to version ${data.version}: ${why}`);
+        });
+      } catch (e) { /* offline — try again later */ }
+      finally { busy = false; }
+    }
+    setInterval(check, 15000);
+    document.addEventListener("visibilitychange", () => { if (!document.hidden) check(); });
+  })();
   window.addEventListener("beforeunload", (e) => { if (DOCS.dirty() || (TABS.dirty() && !TABS.auto)) { e.preventDefault(); e.returnValue = ""; } });
 
   // Hover: light up the row and the role column, and show "Role · Document".
@@ -1063,9 +1310,9 @@
     el.classList.toggle("on", WS_ACTIVE);
     el.innerHTML = WS_ACTIVE
       ? `<span class="dot"></span><span class="txt"><b>Applied to the ERP.</b> Saving a sheet changes permissions and dashboard tabs straight away. Users' roles are only changed on the Roles &amp; Permissions page.</span>
-         ${CAN_EDIT ? `<button type="button" id="ws-reset" style="background:var(--surface);color:#b3261e;">Reset profiles…</button>` : ""}`
+         ${CAN_RESET ? `<button type="button" id="ws-reset" style="background:var(--surface);color:#b3261e;">Reset profiles…</button>` : ""}`
       : `<span class="dot"></span><span class="txt"><b>Not applied to the ERP yet.</b> Saving records the sheets only.</span>
-         ${CAN_EDIT ? `<button type="button" id="ws-activate">Apply to the ERP…</button>` : ""}`;
+         ${CAN_RESET ? `<button type="button" id="ws-activate">Apply to the ERP…</button>` : ""}`;
     const post = async (method) => {
       const r = await fetch(`/api/method/erp_dacsinc_custom.access_sync.${method}`, { method: "POST", credentials: "same-origin",
         headers: { "X-Frappe-CSRF-Token": WS_BOOT.csrf_token, "Accept": "application/json" } });
@@ -1084,7 +1331,7 @@
         await askConfirm({ title: "Save first", body: "Save or discard your changes on both sheets before applying them.", ok: "OK" });
         return;
       }
-      if (!await askConfirm({ title: "Apply the agreed access to the ERP?", ok: "Apply now",
+      if (!await askConfirm({ title: "Apply the agreed access to the ERP?", ok: "Apply now", danger: true, typed: "APPLY",
         body: `Every access sheet role gets exactly the rights on the saved Document access sheet (plus what linked documents and reports need),
           the Order Flow tabs and sub-tabs follow the dashboard sheet, and the POS store limits switch on.
           <b>No user's roles or profiles are changed.</b>` })) return;
@@ -1104,7 +1351,7 @@
         await askConfirm({ title: "Profiles are already clean", body: "Every sheet role's profile holds only that role + Employee + Employee Self Service.", ok: "OK" });
         return;
       }
-      if (!await askConfirm({ title: "Reset the profiles?", ok: "Reset", danger: true,
+      if (!await askConfirm({ title: "Reset the profiles?", ok: "Reset", danger: true, typed: "RESET",
         body: `Each sheet role's profile becomes exactly that role + Employee + Employee Self Service.
           <b>${plural(items.length, "user")} lose roles</b> that came through those profiles:`, items })) return;
       run(rst, "Reset profiles…", "reset_profiles");

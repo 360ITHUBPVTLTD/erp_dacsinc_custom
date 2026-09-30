@@ -157,6 +157,8 @@ permission_query_conditions = {
     "Sales Order": "erp_dacsinc_custom.custom_script.get_sales_order_permission_query_conditions",
     "Pick List": "erp_dacsinc_custom.custom_script.get_pick_list_permission_query_conditions",
     "Purchase Order": "erp_dacsinc_custom.custom_script.get_purchase_order_permission_query_conditions",
+    # Merchandiser User: the SCOs of the orders they may see (via the SCO's Purchase Order).
+    "Subcontracting Order": "erp_dacsinc_custom.custom_script.get_subcontracting_order_permission_query_conditions",
     "Material Request": [
         "erp_dacsinc_custom.custom_script.get_material_request_permission_query_conditions",
         "erp_dacsinc_custom.pos_scope.material_request_query",
@@ -165,7 +167,11 @@ permission_query_conditions = {
     # POS logins see the Items of their stores' brands (POS Profile › Brands).
     "Item": "erp_dacsinc_custom.pos_scope.item_query",
     "Delivery Note": "erp_dacsinc_custom.custom_script.get_delivery_note_permission_query_conditions",
-    "Sales Invoice": "erp_dacsinc_custom.custom_script.get_sales_invoice_permission_query_conditions",
+    "Sales Invoice": [
+        "erp_dacsinc_custom.custom_script.get_sales_invoice_permission_query_conditions",
+        # POS Admin: only POS Sales Invoices (pos_scope.py).
+        "erp_dacsinc_custom.pos_scope.sales_invoice_query",
+    ],
     "Purchase Receipt": "erp_dacsinc_custom.custom_script.get_purchase_receipt_permission_query_conditions",
     # "Customer": "erp_dacsinc_custom.custom_script.get_customer_permission_query_conditions",
     # POS roles: store-wise (pos_scope.py). Returns "" for everyone else.
@@ -180,6 +186,7 @@ has_permission = {
     "Sales Order": "erp_dacsinc_custom.custom_script.has_sales_order_permission",
     "Pick List": "erp_dacsinc_custom.custom_script.has_pick_list_permission",
     "Purchase Order": "erp_dacsinc_custom.custom_script.has_purchase_order_permission",
+    "Subcontracting Order": "erp_dacsinc_custom.custom_script.has_subcontracting_order_permission",
     "Material Request": [
         "erp_dacsinc_custom.custom_script.has_material_request_permission",
         "erp_dacsinc_custom.pos_scope.has_material_request_permission",
@@ -187,7 +194,10 @@ has_permission = {
     "Stock Entry": "erp_dacsinc_custom.pos_scope.has_stock_entry_permission",
     "Item": "erp_dacsinc_custom.pos_scope.has_item_permission",
     "Delivery Note": "erp_dacsinc_custom.custom_script.has_delivery_note_permission",
-    "Sales Invoice": "erp_dacsinc_custom.custom_script.has_sales_invoice_permission",
+    "Sales Invoice": [
+        "erp_dacsinc_custom.custom_script.has_sales_invoice_permission",
+        "erp_dacsinc_custom.pos_scope.has_sales_invoice_permission",
+    ],
     "Purchase Receipt": "erp_dacsinc_custom.custom_script.has_purchase_receipt_permission",
     # "Customer": "erp_dacsinc_custom.custom_script.has_customer_permission",
     "Customer": "erp_dacsinc_custom.pos_scope.has_customer_permission",
@@ -211,6 +221,16 @@ has_permission = {
 # Hook on document methods and events
 
 doc_events = {
+    # Role Permission Manager edits reach the access sheet (access_reverse.py).
+    "Custom DocPerm": {
+        "after_insert": "erp_dacsinc_custom.access_reverse.on_custom_docperm_change",
+        "on_update": "erp_dacsinc_custom.access_reverse.on_custom_docperm_change",
+        "on_trash": "erp_dacsinc_custom.access_reverse.on_custom_docperm_change",
+    },
+    # Submitted closing → sales report email with Excel (pos_notify.py).
+    "POS Closing Entry": {
+        "on_submit": "erp_dacsinc_custom.pos_notify.send_closing_report",
+    },
     # A customer's first POS Invoice gives them that store (pos_scope.py).
     "POS Invoice": {
         "on_update": "erp_dacsinc_custom.pos_scope.set_store_from_pos_invoice",
@@ -262,7 +282,12 @@ doc_events = {
             "erp_dacsinc_custom.custom_script.validate_non_zero_rate",
             "erp_dacsinc_custom.custom_script.sales_invoice_validate"
         ],
-        "before_submit": "erp_dacsinc_custom.custom_script.guard_so_fulfillment_route_lock",
+        "before_submit": [
+            "erp_dacsinc_custom.custom_script.guard_so_fulfillment_route_lock",
+            # stock held for another Sales Order can't go out (stock_hold.py)
+            "erp_dacsinc_custom.stock_hold.guard_sales_invoice",
+        ],
+        "before_cancel": "erp_dacsinc_custom.stock_hold.guard_cancel",
         "on_submit": "erp_dacsinc_custom.custom_script.update_pick_lists_on_stock_si_submit",
         "on_update": "erp_dacsinc_custom.order_flow_api.broadcast_order_flow_change",
         "on_cancel": [
@@ -280,7 +305,10 @@ doc_events = {
        "on_update": [
             "erp_dacsinc_custom.custom_script.sales_order_on_update",
             "erp_dacsinc_custom.order_flow_api.broadcast_order_flow_change",
+            # after sales_order_on_update, which may set custom_lead_owner (so_share.py)
+            "erp_dacsinc_custom.so_share.share_with_lead_owner",
        ],
+        "on_update_after_submit": "erp_dacsinc_custom.so_share.share_with_lead_owner",
         "on_trash": "erp_dacsinc_custom.custom_script.sales_order_on_trash",
         "before_insert": "erp_dacsinc_custom.custom_script.sales_order_before_insert",
        "before_validate": "erp_dacsinc_custom.custom_script.sales_order_before_insert",
@@ -292,7 +320,12 @@ doc_events = {
             "erp_dacsinc_custom.custom_script.lock_item_rate_to_sales_order",
             "erp_dacsinc_custom.custom_script.guard_dn_items_locked_to_pick_list",
         ],
-        "before_submit": "erp_dacsinc_custom.custom_script.guard_so_fulfillment_route_lock",
+        "before_submit": [
+            "erp_dacsinc_custom.custom_script.guard_so_fulfillment_route_lock",
+            # only its own orders' held stock may be delivered (stock_hold.py)
+            "erp_dacsinc_custom.stock_hold.guard_delivery_note",
+        ],
+        "before_cancel": "erp_dacsinc_custom.stock_hold.guard_cancel",
         "on_submit": "erp_dacsinc_custom.custom_script.update_pick_lists_on_dn_submit",
         "on_update": "erp_dacsinc_custom.order_flow_api.broadcast_order_flow_change",
         "on_cancel": [
@@ -307,6 +340,9 @@ doc_events = {
     },
     "Purchase Receipt": {
         "validate": "erp_dacsinc_custom.procurement_purpose.set_procurement_purpose",
+        # a return sends stock back out; cancelling takes the received stock away (stock_hold.py)
+        "before_submit": "erp_dacsinc_custom.stock_hold.guard_return",
+        "before_cancel": "erp_dacsinc_custom.stock_hold.guard_cancel",
         "on_submit": "erp_dacsinc_custom.purchase_order.create_putaway_picklist",
         "on_update": "erp_dacsinc_custom.order_flow_api.broadcast_order_flow_change",
         "on_cancel": [
@@ -351,9 +387,16 @@ doc_events = {
         # another's. Both checks run before_submit (while the pools still
         # reflect the pre-transfer position) and BLOCK — picked stock, and
         # stock reserved for another Sales Order, never go to a jobber.
+        # POS: "POS Transfer" tick on Stock Entries made from a POS login (pos_notify.py).
+        "before_insert": "erp_dacsinc_custom.pos_notify.mark_pos_transfer",
         "before_submit": [
+            # POS transfers to / from the supply warehouse need warehouse approval (pos_notify).
+            "erp_dacsinc_custom.pos_notify.guard_pos_approval",
             # POS: a transfer into a store is submitted by that store (pos_scope).
             "erp_dacsinc_custom.pos_scope.guard_pos_transfer_submit",
+            # Every purpose: stock held for a Sales Order (Pick Lists, embroidery, earmarks)
+            # doesn't leave VV Puram (stock_hold.py).
+            "erp_dacsinc_custom.stock_hold.guard_stock_entry",
             # Hard block first: stock a Pick List (draft or submitted) holds
             # for a delivery never goes to a jobber, whichever screen sends it.
             "erp_dacsinc_custom.custom_script.block_subcontract_transfer_of_picked_stock",
@@ -365,10 +408,17 @@ doc_events = {
             # Sales Orders / the Order Flow page refresh without a reload.
             "erp_dacsinc_custom.order_flow_api.broadcast_order_flow_change",
         ],
+        "before_cancel": "erp_dacsinc_custom.stock_hold.guard_cancel",
         "on_cancel": "erp_dacsinc_custom.order_flow_api.broadcast_order_flow_change",
+    },
+    "Stock Reconciliation": {
+        "before_submit": "erp_dacsinc_custom.stock_hold.guard_stock_reconciliation",
+        "before_cancel": "erp_dacsinc_custom.stock_hold.guard_cancel",
     },
     "Purchase Invoice": {
         "validate": "erp_dacsinc_custom.custom_script.validate_non_zero_rate",
+        "before_submit": "erp_dacsinc_custom.stock_hold.guard_return",
+        "before_cancel": "erp_dacsinc_custom.stock_hold.guard_cancel",
         "on_update": "erp_dacsinc_custom.order_flow_api.broadcast_order_flow_change",
         "on_cancel": "erp_dacsinc_custom.order_flow_api.broadcast_order_flow_change",
     },
@@ -382,7 +432,15 @@ doc_events = {
         # Material Request extends BuyingController too, so the controller's
         # own validate_from_warehouse would throw on the equal-warehouse case
         # before a plain "validate" hook ever ran.
-        "before_validate": "erp_dacsinc_custom.custom_script.clear_mr_from_warehouse_unless_transfer",
+        # POS: "POS Request" tick on MRs made from a POS login (pos_notify.py).
+        "before_insert": "erp_dacsinc_custom.pos_notify.mark_pos_request",
+        # POS Requests only: email the request on submit (Admin Settings › POS Emails).
+        "on_submit": "erp_dacsinc_custom.pos_notify.send_pos_mr_email",
+        "before_validate": [
+            # POS users' MRs are always Material Transfer (pos_notify) — before the next line.
+            "erp_dacsinc_custom.pos_notify.force_pos_transfer_type",
+            "erp_dacsinc_custom.custom_script.clear_mr_from_warehouse_unless_transfer",
+        ],
         "validate": [
             "erp_dacsinc_custom.custom_script.validate_material_request_no_bom_items",
             # Mirrors guard_po_item_not_over_so_need — without it the
@@ -403,9 +461,15 @@ doc_events = {
     "Pick List": {
         # A Pick List can't be finalised while some of its qty is still out
         # at a Full Piece embroidery jobber — see so_embroidery.py.
-        "before_submit": "erp_dacsinc_custom.so_embroidery.guard_pick_list_submit",
+        "before_submit": [
+            "erp_dacsinc_custom.so_embroidery.guard_pick_list_submit",
+            # can't pick more than is free of other orders' holds (stock_hold.py)
+            "erp_dacsinc_custom.stock_hold.guard_pick_list_submit",
+        ],
         # ...nor deleted / cut below the qty that is out at the jobber.
         "validate": "erp_dacsinc_custom.so_embroidery.guard_pick_list_hold_edit",
+        # after ERPNext's own allocation: a draft only claims stock that is free for it (stock_hold.py)
+        "before_save": "erp_dacsinc_custom.stock_hold.fit_pick_list_to_free",
         "on_trash": "erp_dacsinc_custom.so_embroidery.guard_pick_list_hold_edit",
         "on_update": "erp_dacsinc_custom.order_flow_api.broadcast_order_flow_change",
         "on_cancel": "erp_dacsinc_custom.order_flow_api.broadcast_order_flow_change",
@@ -418,6 +482,8 @@ doc_events = {
         "on_trash": "erp_dacsinc_custom.so_embroidery.guard_linked_embroidery",
     },
     "Subcontracting Receipt": {
+        "before_submit": "erp_dacsinc_custom.stock_hold.guard_return",
+        "before_cancel": "erp_dacsinc_custom.stock_hold.guard_cancel",
         "on_update": "erp_dacsinc_custom.order_flow_api.broadcast_order_flow_change",
         "on_cancel": "erp_dacsinc_custom.order_flow_api.broadcast_order_flow_change",
     },
@@ -442,6 +508,8 @@ doc_events = {
         "on_update": [
             "erp_dacsinc_custom.order_flow_permissions.sync_order_flow_page_roles",
             "erp_dacsinc_custom.order_flow_permissions.sync_sales_order_final_approver_role",
+            # Tab / sub-tab roles changed here reach the /roles-and-permissions tab sheet.
+            "erp_dacsinc_custom.access_reverse.on_admin_settings_update",
         ]
     }
 }
@@ -557,6 +625,11 @@ override_whitelisted_methods = {
     "erpnext.selling.page.point_of_sale.point_of_sale.get_items": "erp_dacsinc_custom.pos_brand_filter.get_items",
     # Recent Orders also searches the walk-in name / mobile — see pos_walkin.py
     "erpnext.selling.page.point_of_sale.point_of_sale.get_past_order_list": "erp_dacsinc_custom.pos_walkin.get_past_order_list",
+    # Role Permission Manager: the core action, then the access sheet follows (access_reverse.py)
+    "frappe.core.page.permission_manager.permission_manager.add": "erp_dacsinc_custom.access_reverse.rpm_add",
+    "frappe.core.page.permission_manager.permission_manager.update": "erp_dacsinc_custom.access_reverse.rpm_update",
+    "frappe.core.page.permission_manager.permission_manager.remove": "erp_dacsinc_custom.access_reverse.rpm_remove",
+    "frappe.core.page.permission_manager.permission_manager.reset": "erp_dacsinc_custom.access_reverse.rpm_reset",
 }
 
 

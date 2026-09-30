@@ -1,19 +1,27 @@
 frappe.ui.form.on('Material Request', {
     refresh: function(frm) {
+        // POS staff (POS Admin / POS Store Manager, admins excluded) only raise and
+        // submit requests for their store; the warehouse does the rest.
+        const is_pos_user = frappe.user.has_role(['POS Admin', 'POS Store Manager'])
+            && !frappe.user.has_role(['Administrator', 'System Manager', 'Admin', 'Super Admin']);
+
         // Clean up standard buttons
         setTimeout(() => {
             frm.remove_custom_button('Bill of Materials', 'Get Items From');
             frm.remove_custom_button('Sales Order', 'Get Items From');
             frm.remove_custom_button('Product Bundle', 'Get Items From');
+            // No "Create" menu (Pick List, Material Transfer, Purchase Order, …) for POS staff.
+            if (is_pos_user) {
+                const $create = frm.page.inner_toolbar.find(`.inner-group-button[data-label="${encodeURIComponent(__('Create'))}"]`);
+                $create.length ? $create.remove() : frm.page.get_inner_group_button(__('Create')).remove();
+            }
             // frm.remove_custom_button('Purchase Order', 'Create');
             // frm.remove_custom_button('Request for Quote', 'Create');
             // frm.remove_custom_button('Supplier Quotation', 'Create');
         }, 500);
 
-        // Get Item From SO button — not for POS staff (POS Admin / POS Store Manager):
-        // stores request stock for the store, not against Sales Orders. Admins keep it.
-        const is_pos_user = frappe.user.has_role(['POS Admin', 'POS Store Manager'])
-            && !frappe.user.has_role(['Administrator', 'System Manager', 'Admin', 'Super Admin']);
+        // Get Item From SO button — not for POS staff: stores request stock for the
+        // store, not against Sales Orders. Admins keep it.
         if (frm.doc.docstatus === 0 && !is_pos_user) {
             frm.add_custom_button(__('Get Item From SO'), function() {
                 load_smart_planner(frm);

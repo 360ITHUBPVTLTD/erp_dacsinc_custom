@@ -15,7 +15,7 @@ function pos_apply_store_defaults(frm) {
 		const wh = d.warehouse;
 		if (!wh && !d.source_warehouse) return;
 		if (frm.doctype === "Material Request") {
-			if (!frm.doc.material_request_type) frm.set_value("material_request_type", "Material Transfer");
+			if (frm.doc.material_request_type !== "Material Transfer") frm.set_value("material_request_type", "Material Transfer");
 			if (wh && !frm.doc.set_warehouse) frm.set_value("set_warehouse", wh);
 			if (d.source_warehouse && !frm.doc.set_from_warehouse && d.source_warehouse !== wh)
 				frm.set_value("set_from_warehouse", d.source_warehouse);
@@ -69,9 +69,20 @@ function mr_stock_panel(frm) {
 	}, 300);
 }
 
+// POS users (POS Admin / POS Store Manager, admins excluded): the MR type is always
+// Material Transfer and can't be changed (also forced on the server, pos_notify).
+function pos_lock_mr_type(frm) {
+	const pos_user = frappe.user.has_role(["POS Admin", "POS Store Manager"])
+		&& !frappe.user.has_role(["Administrator", "System Manager", "Admin", "Super Admin"]);
+	if (!pos_user && !frm.doc.custom_is_pos_request) return;
+	if (frm.doc.docstatus === 0 && frm.doc.material_request_type !== "Material Transfer")
+		frm.set_value("material_request_type", "Material Transfer");
+	frm.set_df_property("material_request_type", "read_only", 1);
+}
+
 frappe.ui.form.on("Material Request", {
 	onload: pos_apply_store_defaults,
-	refresh: mr_stock_panel,
+	refresh(frm) { pos_lock_mr_type(frm); mr_stock_panel(frm); },
 	set_warehouse: mr_stock_panel,
 	set_from_warehouse: mr_stock_panel,
 	items_add: mr_stock_panel,
@@ -85,6 +96,30 @@ frappe.ui.form.on("Material Request Item", {
 	from_warehouse: mr_stock_panel,
 });
 
+// POS transfers to / from the supply warehouse (VV Puram - IND) wait for warehouse
+// approval: Warehouse Incharge / Warehouse Executive / POS Admin approve (= submit);
+// for anyone else Submit is hidden (pos_notify.guard_pos_approval enforces it).
+function pos_transfer_approval_state(frm) {
+	if (!frm.doc.custom_is_pos_transfer || frm.is_new() || frm.doc.docstatus !== 0) return;
+	frappe.call({ method: "erp_dacsinc_custom.pos_notify.get_pos_transfer_state", args: { name: frm.doc.name } }).then((r) => {
+		const st = r.message || {};
+		if (!st.needs_approval) return;
+		if (st.can_approve) {
+			frm.dashboard.set_headline(__("POS transfer to / from the supply warehouse — waiting for your approval."), "orange");
+			frm.page.set_primary_action(__("Approve"), () => frm.savesubmit());
+		} else {
+			frm.dashboard.set_headline(__("Waiting for warehouse approval — Warehouse Incharge, Warehouse Executive or POS Admin submits this transfer."), "orange");
+			frm.page.clear_primary_action();
+		}
+	});
+}
+
 frappe.ui.form.on("Stock Entry", {
 	onload: pos_apply_store_defaults,
+	refresh(frm) {
+		if (frm.doc.custom_is_pos_transfer && frm.doc.docstatus === 1 && frm.doc.custom_approved_by) {
+			frm.dashboard.set_headline(__("Warehouse approval: approved by {0}", [frappe.user.full_name(frm.doc.custom_approved_by)]), "green");
+		}
+		pos_transfer_approval_state(frm);
+	},
 });

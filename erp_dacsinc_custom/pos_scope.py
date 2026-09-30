@@ -259,10 +259,15 @@ def stock_entry_query(user=None):
 
 
 def material_request_query(user=None):
+	"""POS Admin: Material Requests flagged Created by POS User (custom_is_pos_request)
+	and their own. POS Store Manager: their stores' warehouses and their own."""
 	user = user or frappe.session.user
 	sc = _stock_scope(user, "Material Request")
 	if not sc:
 		return ""
+	if get_scope(user, "Material Request")[0] == "all":
+		return (f"(`tabMaterial Request`.`custom_is_pos_request` = 1"
+				f" or `tabMaterial Request`.`owner` = {frappe.db.escape(user)})")
 	wh, owners = sc
 	w = _in(wh)
 	return (f"(`tabMaterial Request`.`owner` in {_in([user] + owners)}"
@@ -294,6 +299,8 @@ def has_material_request_permission(doc, ptype=None, user=None, debug=False):
 	sc = _stock_scope(user, "Material Request")
 	if not sc or doc.is_new():
 		return None
+	if get_scope(user, "Material Request")[0] == "all":
+		return bool(doc.get("custom_is_pos_request")) or doc.owner == user
 	wh, owners = sc
 	if doc.owner in [user] + owners:
 		return True
@@ -401,3 +408,36 @@ def has_item_permission(doc, ptype=None, user=None, debug=False):
 	if brands is None:
 		return None
 	return doc.get("brand") in brands
+
+
+# ------------------------------------------------------------------ Sales Invoice
+# POS Sales Invoices are the POS Closing's consolidated invoices (is_pos, with the
+# store in pos_profile — often submitted by an admin) and any invoice POS staff made.
+# POS Admin sees only those, never the company's other invoices. A POS Store Manager
+# is kept to their own by the sheet ("O"); this also keeps them to their stores.
+def _sales_invoice_scope(user):
+	scope = get_scope(user, "Sales Invoice")
+	if not scope:
+		return None
+	if scope[0] == "all":
+		return [p.name for p in frappe.get_all("POS Profile", fields=["name"])], _pos_staff_users()
+	return scope[1], []
+
+
+def sales_invoice_query(user=None):
+	user = user or frappe.session.user
+	sc = _sales_invoice_scope(user)
+	if sc is None:
+		return ""
+	stores, owners = sc
+	return (f"(`tabSales Invoice`.`owner` in {_in([user] + owners)}"
+			f" or (`tabSales Invoice`.`is_pos` = 1 and `tabSales Invoice`.`pos_profile` in {_in(stores)}))")
+
+
+def has_sales_invoice_permission(doc, ptype=None, user=None, debug=False):
+	user = user or frappe.session.user
+	sc = _sales_invoice_scope(user)
+	if sc is None or doc.is_new():
+		return None
+	stores, owners = sc
+	return doc.owner in [user] + owners or bool(doc.get("is_pos") and doc.get("pos_profile") in stores)

@@ -76,10 +76,53 @@
   "of_sub_accounts_receivables_roles",
   "of_sub_accounts_supplier_roles",
   "of_sub_accounts_jobber_roles",
+  "of_act_section",
+  "of_tab_approval_act_roles",
+  "of_tab_tracker_act_roles",
+  "of_tab_purchase_act_roles",
+  "of_tab_jobwork_act_roles",
+  "of_tab_stock_act_roles",
+  "of_act_column_break_tabs",
+  "of_tab_picklist_act_roles",
+  "of_tab_billing_act_roles",
+  "of_tab_accounts_act_roles",
+  "of_tab_uniform_act_roles",
+  "of_tab_logistics_act_roles",
+  "of_sub_act_section",
+  "of_sub_approval_merchandiser_act_roles",
+  "of_sub_approval_unassigned_act_roles",
+  "of_sub_approval_other_act_roles",
+  "of_sub_approval_final_act_roles",
+  "of_sub_approval_rejected_act_roles",
+  "of_sub_act_colbreak_tracker",
+  "of_sub_tracker_so_act_roles",
+  "of_sub_tracker_mr_act_roles",
+  "of_sub_tracker_fp_act_roles",
+  "of_sub_tracker_pn_act_roles",
+  "of_sub_act_colbreak_purchase",
+  "of_sub_purchase_po_act_roles",
+  "of_sub_purchase_receipt_act_roles",
+  "of_sub_purchase_bill_act_roles",
+  "of_sub_act_colbreak_jobwork",
+  "of_sub_jobwork_po_act_roles",
+  "of_sub_jobwork_receipt_act_roles",
+  "of_sub_jobwork_fp_act_roles",
+  "of_sub_jobwork_pn_act_roles",
+  "of_sub_act_colbreak_accounts",
+  "of_sub_accounts_receivables_act_roles",
+  "of_sub_accounts_supplier_act_roles",
+  "of_sub_accounts_jobber_act_roles",
   "po_price_check_section",
   "po_price_check_roles",
   "pos_stock_section",
-  "pos_stock_source_warehouse"
+  "pos_stock_source_warehouse",
+  "pos_email_section",
+  "pos_closing_email_recipients",
+  "pos_email_colbreak",
+  "pos_mr_email_recipients",
+  "stock_hold_tab",
+  "stock_hold_section",
+  "stock_hold_override_users"
  ],
  "fields": [
   {
@@ -541,13 +584,288 @@
    "options": "Warehouse",
    "label": "Source Warehouse for POS Material Requests",
    "description": "Default source (From) warehouse on a POS store's Material Request, e.g. VV Puram - IND."
+  },
+  {
+   "fieldname": "pos_email_section",
+   "fieldtype": "Section Break",
+   "label": "POS Emails",
+   "description": "Comma-separated email addresses. Leave empty to send nothing."
+  },
+  {
+   "fieldname": "pos_closing_email_recipients",
+   "fieldtype": "Small Text",
+   "label": "POS Closing Report \u2014 Send To",
+   "description": "When a POS Closing Entry is submitted, the store's sales report (with an Excel of the invoices and items) is emailed here."
+  },
+  {
+   "fieldname": "pos_email_colbreak",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "pos_mr_email_recipients",
+   "fieldtype": "Small Text",
+   "label": "POS Material Request \u2014 Send To",
+   "description": "When a POS store submits a Material Request (POS Request ticked), its details are emailed here. Other Material Requests send nothing."
+  },
+  {
+   "fieldname": "of_act_section",
+   "fieldtype": "Section Break",
+   "label": "Tab Actions (can act)",
+   "description": "Which roles may act from each tab: create, submit or approve with its buttons. A role here also sees the tab. Everyone else who sees the tab can only view it. Leave a tab empty to let everyone who sees it act. System Manager, Admin and Administrator can always act. Kept in step with the /roles-and-permissions sheet (A = can view and act)."
+  },
+  {
+   "fieldname": "of_tab_approval_act_roles",
+   "fieldtype": "Table MultiSelect",
+   "options": "Order Flow Tab Role",
+   "label": "SO Approvals \u2014 Can Act",
+   "description": "SO Approvals tab. Empty = everyone who can see it may act."
+  },
+  {
+   "fieldname": "of_tab_tracker_act_roles",
+   "fieldtype": "Table MultiSelect",
+   "options": "Order Flow Tab Role",
+   "label": "Sales Tracker \u2014 Can Act",
+   "description": "Sales Tracker tab. Empty = everyone who can see it may act."
+  },
+  {
+   "fieldname": "of_tab_purchase_act_roles",
+   "fieldtype": "Table MultiSelect",
+   "options": "Order Flow Tab Role",
+   "label": "Purchase Flow \u2014 Can Act",
+   "description": "Purchase Flow tab. Empty = everyone who can see it may act."
+  },
+  {
+   "fieldname": "of_tab_jobwork_act_roles",
+   "fieldtype": "Table MultiSelect",
+   "options": "Order Flow Tab Role",
+   "label": "Job Work \u2014 Can Act",
+   "description": "Job Work tab. Empty = everyone who can see it may act."
+  },
+  {
+   "fieldname": "of_tab_stock_act_roles",
+   "fieldtype": "Table MultiSelect",
+   "options": "Order Flow Tab Role",
+   "label": "Stock Tracker \u2014 Can Act",
+   "description": "Stock Tracker tab. Empty = everyone who can see it may act."
+  },
+  {
+   "fieldname": "of_act_column_break_tabs",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "of_tab_picklist_act_roles",
+   "fieldtype": "Table MultiSelect",
+   "options": "Order Flow Tab Role",
+   "label": "Pick Lists \u2014 Can Act",
+   "description": "Pick Lists tab. Empty = everyone who can see it may act."
+  },
+  {
+   "fieldname": "of_tab_billing_act_roles",
+   "fieldtype": "Table MultiSelect",
+   "options": "Order Flow Tab Role",
+   "label": "Pending DN/SI \u2014 Can Act",
+   "description": "Pending DN/SI tab. Empty = everyone who can see it may act."
+  },
+  {
+   "fieldname": "of_tab_accounts_act_roles",
+   "fieldtype": "Table MultiSelect",
+   "options": "Order Flow Tab Role",
+   "label": "Finance \u2014 Can Act",
+   "description": "Finance tab. Empty = everyone who can see it may act."
+  },
+  {
+   "fieldname": "of_tab_uniform_act_roles",
+   "fieldtype": "Table MultiSelect",
+   "options": "Order Flow Tab Role",
+   "label": "Embroidery Transfers \u2014 Can Act",
+   "description": "Embroidery Transfers tab. Empty = everyone who can see it may act."
+  },
+  {
+   "fieldname": "of_tab_logistics_act_roles",
+   "fieldtype": "Table MultiSelect",
+   "options": "Order Flow Tab Role",
+   "label": "Logistics \u2014 Can Act",
+   "description": "Logistics tab. Empty = everyone who can see it may act."
+  },
+  {
+   "fieldname": "of_sub_act_section",
+   "fieldtype": "Section Break",
+   "label": "Sub-tab Actions (can act)",
+   "description": "Which roles may act from each sub-tab. A role here also sees the sub-tab. Empty = everyone who can see the sub-tab may act."
+  },
+  {
+   "fieldname": "of_sub_approval_merchandiser_act_roles",
+   "fieldtype": "Table MultiSelect",
+   "options": "Order Flow Tab Role",
+   "label": "SO Approvals \u203a 1. Pending Approval (my orders) \u2014 Can Act",
+   "description": "SO Approvals \u203a 1. Pending Approval (my orders) sub-tab. Empty = everyone who can see it may act."
+  },
+  {
+   "fieldname": "of_sub_approval_unassigned_act_roles",
+   "fieldtype": "Table MultiSelect",
+   "options": "Order Flow Tab Role",
+   "label": "SO Approvals \u203a 2. Merchandiser Unassigned Orders \u2014 Can Act",
+   "description": "SO Approvals \u203a 2. Merchandiser Unassigned Orders sub-tab. Empty = everyone who can see it may act."
+  },
+  {
+   "fieldname": "of_sub_approval_other_act_roles",
+   "fieldtype": "Table MultiSelect",
+   "options": "Order Flow Tab Role",
+   "label": "SO Approvals \u203a 3. Other Merchandisers' Orders \u2014 Can Act",
+   "description": "SO Approvals \u203a 3. Other Merchandisers' Orders sub-tab. Empty = everyone who can see it may act."
+  },
+  {
+   "fieldname": "of_sub_approval_final_act_roles",
+   "fieldtype": "Table MultiSelect",
+   "options": "Order Flow Tab Role",
+   "label": "SO Approvals \u203a 4. Pending Final SO Approval \u2014 Can Act",
+   "description": "SO Approvals \u203a 4. Pending Final SO Approval sub-tab. Empty = everyone who can see it may act."
+  },
+  {
+   "fieldname": "of_sub_approval_rejected_act_roles",
+   "fieldtype": "Table MultiSelect",
+   "options": "Order Flow Tab Role",
+   "label": "SO Approvals \u203a 5. Rejected Orders \u2014 Can Act",
+   "description": "SO Approvals \u203a 5. Rejected Orders sub-tab. Empty = everyone who can see it may act."
+  },
+  {
+   "fieldname": "of_sub_act_colbreak_tracker",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "of_sub_tracker_so_act_roles",
+   "fieldtype": "Table MultiSelect",
+   "options": "Order Flow Tab Role",
+   "label": "Sales Tracker \u203a Sales Orders \u2014 Can Act",
+   "description": "Sales Tracker \u203a Sales Orders sub-tab. Empty = everyone who can see it may act."
+  },
+  {
+   "fieldname": "of_sub_tracker_mr_act_roles",
+   "fieldtype": "Table MultiSelect",
+   "options": "Order Flow Tab Role",
+   "label": "Sales Tracker \u203a Material Requests \u2014 Can Act",
+   "description": "Sales Tracker \u203a Material Requests sub-tab. Empty = everyone who can see it may act."
+  },
+  {
+   "fieldname": "of_sub_tracker_fp_act_roles",
+   "fieldtype": "Table MultiSelect",
+   "options": "Order Flow Tab Role",
+   "label": "Sales Tracker \u203a Embroidery - FP \u2014 Can Act",
+   "description": "Sales Tracker \u203a Embroidery - FP sub-tab. Empty = everyone who can see it may act."
+  },
+  {
+   "fieldname": "of_sub_tracker_pn_act_roles",
+   "fieldtype": "Table MultiSelect",
+   "options": "Order Flow Tab Role",
+   "label": "Sales Tracker \u203a Embroidery - Panel \u2014 Can Act",
+   "description": "Sales Tracker \u203a Embroidery - Panel sub-tab. Empty = everyone who can see it may act."
+  },
+  {
+   "fieldname": "of_sub_act_colbreak_purchase",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "of_sub_purchase_po_act_roles",
+   "fieldtype": "Table MultiSelect",
+   "options": "Order Flow Tab Role",
+   "label": "Purchase Flow \u203a POs \u2014 Can Act",
+   "description": "Purchase Flow \u203a POs sub-tab. Empty = everyone who can see it may act."
+  },
+  {
+   "fieldname": "of_sub_purchase_receipt_act_roles",
+   "fieldtype": "Table MultiSelect",
+   "options": "Order Flow Tab Role",
+   "label": "Purchase Flow \u203a Receipts \u2014 Can Act",
+   "description": "Purchase Flow \u203a Receipts sub-tab. Empty = everyone who can see it may act."
+  },
+  {
+   "fieldname": "of_sub_purchase_bill_act_roles",
+   "fieldtype": "Table MultiSelect",
+   "options": "Order Flow Tab Role",
+   "label": "Purchase Flow \u203a To Bill \u2014 Can Act",
+   "description": "Purchase Flow \u203a To Bill sub-tab. Empty = everyone who can see it may act."
+  },
+  {
+   "fieldname": "of_sub_act_colbreak_jobwork",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "of_sub_jobwork_po_act_roles",
+   "fieldtype": "Table MultiSelect",
+   "options": "Order Flow Tab Role",
+   "label": "Job Work \u203a Sub POs \u2014 Can Act",
+   "description": "Job Work \u203a Sub POs sub-tab. Empty = everyone who can see it may act."
+  },
+  {
+   "fieldname": "of_sub_jobwork_receipt_act_roles",
+   "fieldtype": "Table MultiSelect",
+   "options": "Order Flow Tab Role",
+   "label": "Job Work \u203a Sub Receipts \u2014 Can Act",
+   "description": "Job Work \u203a Sub Receipts sub-tab. Empty = everyone who can see it may act."
+  },
+  {
+   "fieldname": "of_sub_jobwork_fp_act_roles",
+   "fieldtype": "Table MultiSelect",
+   "options": "Order Flow Tab Role",
+   "label": "Job Work \u203a Embroidery - FP \u2014 Can Act",
+   "description": "Job Work \u203a Embroidery - FP sub-tab. Empty = everyone who can see it may act."
+  },
+  {
+   "fieldname": "of_sub_jobwork_pn_act_roles",
+   "fieldtype": "Table MultiSelect",
+   "options": "Order Flow Tab Role",
+   "label": "Job Work \u203a Embroidery - Panel \u2014 Can Act",
+   "description": "Job Work \u203a Embroidery - Panel sub-tab. Empty = everyone who can see it may act."
+  },
+  {
+   "fieldname": "of_sub_act_colbreak_accounts",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "of_sub_accounts_receivables_act_roles",
+   "fieldtype": "Table MultiSelect",
+   "options": "Order Flow Tab Role",
+   "label": "Finance \u203a Receivables \u2014 Can Act",
+   "description": "Finance \u203a Receivables sub-tab. Empty = everyone who can see it may act."
+  },
+  {
+   "fieldname": "of_sub_accounts_supplier_act_roles",
+   "fieldtype": "Table MultiSelect",
+   "options": "Order Flow Tab Role",
+   "label": "Finance \u203a Supplier Payables \u2014 Can Act",
+   "description": "Finance \u203a Supplier Payables sub-tab. Empty = everyone who can see it may act."
+  },
+  {
+   "fieldname": "of_sub_accounts_jobber_act_roles",
+   "fieldtype": "Table MultiSelect",
+   "options": "Order Flow Tab Role",
+   "label": "Finance \u203a Jobber Payables \u2014 Can Act",
+   "description": "Finance \u203a Jobber Payables sub-tab. Empty = everyone who can see it may act."
+  },
+  {
+   "fieldname": "stock_hold_tab",
+   "fieldtype": "Tab Break",
+   "label": "Stock Hold"
+  },
+  {
+   "fieldname": "stock_hold_section",
+   "fieldtype": "Section Break",
+   "label": "Stock held for Sales Orders",
+   "description": "Stock in VV Puram - IND that is held for a Sales Order (a draft or submitted Pick List, goods at an embroidery jobber, raw material bought for the order) can't be delivered, invoiced, transferred, issued, reconciled away or returned for anything else, and a receipt that brought it in can't be cancelled. The users below, Administrator and System Manager may go past this: they get a warning, and the document records it in a comment."
+  },
+  {
+   "fieldname": "stock_hold_override_users",
+   "fieldtype": "Table MultiSelect",
+   "options": "Multiselect User",
+   "label": "May use held stock",
+   "description": "Only for corrections. Everyone else is stopped with a message naming the order and Pick List that hold the stock."
   }
  ],
  "grid_page_length": 50,
  "index_web_pages_for_search": 1,
  "issingle": 1,
  "links": [],
- "modified": "2026-09-28 16:00:00.000000",
+ "modified": "2026-09-29 15:29:01.560675",
  "modified_by": "Administrator",
  "module": "Erp Dacsinc Custom",
  "name": "Admin Settings",

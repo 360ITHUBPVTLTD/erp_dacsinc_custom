@@ -44,9 +44,23 @@ client-facing. The roles are `WS_ROLES` (Admin excluded) and the documents are
 - Confirmations use a dialog (`askConfirm`):
   - Granting **Delete** or **Cancel**.
   - Removing View (which removes every right on that document).
-  - Discard, Restore marked worksheet, Refill, Clear all.
+  - Discard.
   - **Save**: lists every change (role · document: + / − rights) and the version
     number it will become.
+- **Resets are System Manager only** and need the word typed into the dialog:
+  - Add document… and removing an added one (REMOVE), Sync from ERP (SYNC), Restore
+    marked worksheet (RESTORE), Refill from document access (REFILL), Clear all
+    (CLEAR);
+  - Apply to the ERP (APPLY) and Reset profiles (RESET).
+
+  For everyone else the reset buttons are greyed out ("System Manager only"), and
+  Apply / Reset profiles aren't shown. The server enforces the same rule
+  (`access_worksheet.RESET_ROLE`):
+  - A save that follows a restore, refill or clear carries `reset=<kind>`, and only
+    System Manager may make it. The version's note records the reset.
+  - `activate`, `reset_profiles` and `get_activation_preview` require System Manager.
+
+  Editing cells and saving stays with the Admin role.
 - Print / PDF prints only that sheet (A4 landscape), with its legend and signature
   lines.
 
@@ -55,9 +69,13 @@ client-facing. The roles are `WS_ROLES` (Admin excluded) and the documents are
 `access_worksheet.py` keeps one JSON blob per sheet (`doc_access`, `tab_access`) in
 a `DefaultValue` row under parent `__dacsinc_access_ws`, so no migration is needed.
 
-- Anyone signed in sees the saved sheets. A guest sees the client's sheet, with the
-  tab sheet empty.
-- Only the **Admin** role can edit and save (`save_sheet`, POST with a CSRF token).
+- **Only Admin, System Manager and Administrator can open the page** or read the
+  saved sheets (`access_worksheet.VIEW_ROLES`, `can_view`; the page's
+  `get_context` and `get_saved`).
+  - A guest is sent to the login page.
+  - Anyone else gets "not permitted".
+- Only the **Admin** role can edit and save (`save_sheet`, POST with a CSRF token). Resets
+  need System Manager (above).
 - Values are validated against the allowed letters.
 - Each save carries the version it was edited from, and it's refused if someone else
   saved in between ("reload, then edit again").
@@ -112,21 +130,129 @@ Once the site is switched on (below), saving a sheet applies it in the same tran
     Page / Report `on_update` hooks re-copy them when someone edits a page's or
     report's roles by hand. Roles a page lists that don't exist on the site are
     skipped.
+  - POS Admin / POS Store Manager are not given Query / Script reports on Material
+    Request, Sales Invoice or Customer. Their SQL would show every record, past the
+    POS record scope (`docs/pos-store-scope.md`). This also removes the POS roles
+    from such reports when someone put them on the report itself.
   - Point of Sale, Stock Balance and the other PAGE_DOCS pages follow only their own
     documents (Point of Sale → POS Invoice), not the companion roles.
   - Tracked in DefaultValue `report_custom_roles:*` / `page_custom_roles`. Tracking
     maps are stored one row per entry, since a row holds at most 64 KB.
 - **Order Flow tabs** → Admin Settings › Order Flow.
   - Each main tab gets `of_tab_<tab>_roles`, and each sub-tab gets
-    `of_sub_<tab>_<key>_roles` (section "Sub-tab Visibility").
+    `of_sub_<tab>_<key>_roles` (section "Sub-tab Visibility"). ✓ and A both list
+    the role there.
+  - A also lists it in `of_tab_<tab>_act_roles` / `of_sub_<tab>_<key>_act_roles`
+    (sections "Tab Actions" / "Sub-tab Actions").
+    `order_flow_permissions.can_act_tab` decides who may use a tab's create /
+    submit / approve buttons. The page hides them for ✓-only roles, and
+    `guard_act` refuses the server calls.
+  - Rules for the act lists:
+    - A role on an act list also sees the tab.
+    - A sub-tab without its own act list follows its tab's.
+    - An empty act list lets everyone who sees the tab act (as before the lists
+      existed).
+    - Admins always may act.
+  - When act lists are first filled, other (non-sheet) roles that already saw a tab
+    are put on its act list too, so they keep acting as before.
   - Only the sheet roles are managed there. Any other role already on a tab (Sales
     User, Accounts Team, Inward Team…) is kept, so users not yet moved to a sheet
     role don't lose the dashboard.
   - A tab nobody may see gets `Admin`, so it counts as configured.
+  - POS Admin / POS Store Manager get no Order Flow tabs (`NO_ORDER_FLOW_ROLES`, also
+    in the page's refill). The dashboard is built on Sales Orders, which they can't
+    read, so every tab would fail for them. They work from the POS screen and the MR /
+    Stock Entry lists.
   - `order_flow_permissions.get_allowed_subtabs()` feeds the page's `allowed_subtabs`,
     and the page hides the other sub-tab buttons.
 - In developer mode a save also rewrites `access/agreed_access.json` (the bundle
   shipped to other sites).
+
+## Role Permission Manager → sheet (`access_reverse.py`)
+
+The sheet also follows changes made in Frappe's Role Permission Manager, so the two
+never disagree.
+
+- **What's caught:** Role Permission Manager's `add` / `update` / `remove` / `reset`
+  are wrapped (`override_whitelisted_methods`). `update` writes with `db.set_value`,
+  which fires no document events. Custom DocPerm insert / update / delete events catch
+  other editors. Only sheet roles on sheet documents are followed, and only while
+  the sheet is switched on.
+- **Reading back:** each role's permission-level-0 rows on that document are turned
+  back into letters, combining a role's rows as Frappe does:
+  - V = read, E = write or create, S = submit, C = cancel, D = delete;
+  - O when only the "Only if creator" row has rights.
+
+  Read / Select that the sheet itself adds for linked documents (Address, Contact,
+  fetched masters) is not read back as V unless Print / Email / Report / Export are
+  on too. A no-op read-back over every sheet document changes nothing (tested).
+- **When a cell changes:**
+  - A new sheet version is stored, with the note "Role Permission Manager · <user>:
+    <role> · <document>: <old> → <new>".
+  - In developer mode the bundle is rewritten, so the next push carries the change to
+    live.
+  - The Document access sheet is re-applied in a background job (`queue="short"`,
+    deduplicated) so linked-document rights and reports follow. This also normalises
+    the rows: E = write + create, V = its whole set.
+- **Not a sheet change:** a tweak that doesn't change a letter (e.g. unticking only
+  Export) is left alone until the sheet is next applied, which restores the letter's
+  full set.
+- The sheet's own apply sets `frappe.flags.dacs_access_applying`, so its writes are
+  never read back.
+- **Sync from ERP** (Document access bar, System Manager, typed SYNC; `sync_from_erp`):
+  - Reads every cell back at once and lists each change (role · document: old →
+    new) before anything is saved.
+  - Confirming records them as one version ("Sync from ERP · <user>: …"). It's
+    refused if the sheet was saved after the preview.
+  - Needs the page's own changes saved or discarded first.
+  - For rights changed where nothing notices (SQL, Data Import, before this
+    existed).
+- **Adding a document** (Document access bar, "Add document…", System Manager;
+  `add_sheet_document`):
+  - Choose any main document type (not child tables, singles, or framework
+    modules) and a group.
+  - Its row starts from what each role can do on it in the ERP today, every right
+    counted, so nobody loses one. The dialog shows that row before it's recorded.
+  - From then on the sheet decides it like any other row (applied, followed from
+    Role Permission Manager, included in Sync from ERP).
+  - Added documents are kept in the sheet (`added`: document → group, submittable),
+    so the bundle carries them to live. The bundle fingerprint includes them.
+  - A save from a page that doesn't show the row keeps it.
+  - "Restore marked worksheet" leaves added rows as they are, since they weren't on
+    the paper sheet.
+  - An added row has "added" and × next to its name. × takes it off the sheet
+    (typed REMOVE; `remove_sheet_document`). Roles keep their rights on it, and the
+    sheet just stops deciding them. Built-in rows can't be removed.
+  - The blank PDF worksheets list only the built-in documents.
+- Record-level rules in code (a Merchandiser's own customers, POS store scope,
+  `permission_query_conditions` / `has_permission`) are not sheet cells. The page
+  says so under the sheet.
+- **Page:** every 15 s (and when the tab becomes visible) it fetches
+  `access_worksheet.get_saved`. A newer version replaces the table, with a toast and
+  the version's note in the bar. If the page has unsaved changes they're kept; the
+  toast says Save will be refused (version check), and Discard loads the newer
+  version.
+
+## Admin Settings → tab sheet (`access_reverse.read_back_tabs`)
+
+- Saving Admin Settings (on_update) reads the tab / sub-tab lists back into the
+  tab sheet for the sheet roles:
+  - on the act list → A;
+  - on the view list → ✓ (or A when the act list is empty, since then every viewer
+    may act);
+  - on neither → hidden.
+
+  A sub-tab without its own act list follows its tab's. A tab whose lists are both
+  empty (never configured) is left as it is.
+- A change is stored as a new tab sheet version ("Admin Settings · <user>: <role> ·
+  <tab>: view → view + act"). The bundle is rewritten, and the page picks it up
+  live.
+- The sheet's own apply is not read back (`frappe.flags.dacs_access_applying`).
+- **Sync from Admin Settings** (tab sheet bar, System Manager, typed SYNC;
+  `sync_tabs_from_settings`): preview every difference, then record them as one
+  version.
+- Refill from document access and Clear all are System Manager only, typed REFILL /
+  CLEAR (see Resets above).
 
 ## Roles and profiles (dynamic)
 
@@ -168,6 +294,25 @@ Once the site is switched on (below), saving a sheet applies it in the same tran
   sheet role's profile becomes role + Employee + ESS. The dialog first lists every
   user who would lose roles. Until then profiles keep their old extra roles; assign
   users on the Roles & Permissions page.
+
+## Speed
+
+**Applying Document access writes only what changed** (`_apply_doc_access`).
+
+- Each role's rows on each sheet document are compared with what the sheet wants,
+  and only differing pairs are rewritten.
+- All rows are read in one query.
+- Caches are cleared only for doctypes that changed.
+- A save takes about 4 s (about 16 s when every row was deleted and re-created
+  each time). The result is identical to a full rebuild (tested).
+
+**On the page:**
+
+- A box click redraws only its own cell and the bar (`renderCell`, `renderBar`),
+  not the whole table.
+- While a save runs, cells, Save and the live refresh are held, so what is saved
+  is what is shown.
+- A save that times out says to reload and check, rather than guessing.
 
 ## Sheet changes made locally reach live — once per change
 

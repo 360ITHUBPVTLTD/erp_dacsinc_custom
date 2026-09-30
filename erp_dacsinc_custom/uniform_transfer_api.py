@@ -5,7 +5,7 @@
 import frappe
 from frappe.utils import nowdate, flt
 
-from erp_dacsinc_custom.order_flow_permissions import guard_tab
+from erp_dacsinc_custom.order_flow_permissions import guard_act, guard_tab
 from erp_dacsinc_custom.order_flow_api import _paged_query, _attach_creator_names
 
 @frappe.whitelist()
@@ -73,6 +73,7 @@ def receive_embroidery_transfer(transfer_id, to_warehouse, qty=None):
     the original qty, then "Received".
     """
     guard_tab("uniform")  # exclusively invoked from that tab's "Receive" button
+    guard_act("uniform")
     uet = frappe.get_doc("Uniform Embroidery Transfer", transfer_id)
     if uet.status not in ("Sent", "Partially Received"):
         frappe.throw(f"Transfer {transfer_id} has already been fully received or cancelled.")
