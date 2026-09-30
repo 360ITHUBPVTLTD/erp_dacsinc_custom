@@ -4345,8 +4345,12 @@ def bulk_assign_merchandiser(customers, merchandiser_user):
     Super Admin only — matches the "Assign Merchandiser" button itself,
     which the Customer list view only shows to that role.
     """
-    if "Super Admin" not in frappe.get_roles():
-        frappe.throw("Only a Super Admin can assign a Merchandiser this way.", frappe.PermissionError)
+    from erp_dacsinc_custom.custom_customer import can_edit_protected_customer_fields
+
+    # Merchandiser User is a protected customer field (custom_customer.py): Super Admin, or
+    # the roles in Admin Settings › Customer.
+    if "Super Admin" not in frappe.get_roles() and not can_edit_protected_customer_fields():
+        frappe.throw("You can't assign a Merchandiser (Admin Settings › Customer).", frappe.PermissionError)
 
     if isinstance(customers, str):
         customers = frappe.parse_json(customers)
@@ -11175,10 +11179,11 @@ def get_sales_order_permission_query_conditions(user):
         # being denied it is the result.
         # Also the orders they're the Lead Owner of (shared with them, so_share.py).
         escaped = frappe.db.escape(user)
+        # And orders whose customer has no merchandiser assigned yet.
         return """(exists (
             select name from tabCustomer cust
             where cust.name = `tabSales Order`.customer
-            and cust.custom_merchandiser_user = {0}
+            and (cust.custom_merchandiser_user = {0} or ifnull(cust.custom_merchandiser_user, '') = '')
         ) or `tabSales Order`.owner = {0} or `tabSales Order`.custom_lead_owner = {0})""".format(escaped)
 
     return ""
@@ -11191,17 +11196,14 @@ def has_sales_order_permission(doc, ptype=None, user=None):
         user = frappe.session.user
 
     if is_scoped_merchandiser_for_doctype("Sales Order", user):
-        # Exactly the two halves the query condition above uses, and nothing
-        # else. The old version only rejected when the customer had a
-        # DIFFERENT merchandiser, so a customer with none assigned fell
-        # through to True — and every such order, correctly hidden from the
-        # list view, opened fine by URL. Confirmed live: all 16 orders hidden
-        # from a merchandiser were reachable that way, every one of them
-        # because its customer had no merchandiser set.
+        # Exactly what the query condition above lists: their own customers'
+        # orders, orders whose customer has no merchandiser assigned yet, and
+        # orders they raised or are Lead Owner of. An order whose customer
+        # belongs to ANOTHER merchandiser is refused.
         if getattr(doc, "owner", None) == user or doc.get("custom_lead_owner") == user:
             return True
         customer_merchandiser = frappe.db.get_value("Customer", doc.customer, "custom_merchandiser_user")
-        return customer_merchandiser == user
+        return not customer_merchandiser or customer_merchandiser == user
 
     return True
 
@@ -11278,7 +11280,8 @@ def _visible_sales_order_clause(user, so_column):
         select so.name from `tabSales Order` so
         left join `tabCustomer` cust on cust.name = so.customer
         where so.name = {so_col}
-          and (cust.custom_merchandiser_user = {u} or so.owner = {u} or so.custom_lead_owner = {u})
+          and (cust.custom_merchandiser_user = {u} or ifnull(cust.custom_merchandiser_user, '') = ''
+               or so.owner = {u} or so.custom_lead_owner = {u})
     )""".format(so_col=so_column, u=esc)
 
 
@@ -11329,7 +11332,8 @@ def _so_linked_has_permission(doctype, doc, user=None):
         select so.name from `tabSales Order` so
         left join `tabCustomer` cust on cust.name = so.customer
         where so.name in %(names)s
-          and (cust.custom_merchandiser_user = %(user)s or so.owner = %(user)s or so.custom_lead_owner = %(user)s)
+          and (cust.custom_merchandiser_user = %(user)s or ifnull(cust.custom_merchandiser_user, '') = ''
+               or so.owner = %(user)s or so.custom_lead_owner = %(user)s)
         limit 1
     """, {"names": tuple(so_names), "user": user})
     return bool(visible)

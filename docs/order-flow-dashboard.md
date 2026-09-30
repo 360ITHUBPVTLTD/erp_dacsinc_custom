@@ -427,6 +427,25 @@ purpose Raw Material). Nothing to request → a plain "Nothing to request".
 must stay stable; `stage_label` is free text rendered as-is and safe to
 reword without touching any client-side logic.
 
+## Final approval: BOM rows vs normal rows
+
+Before a Sales Order's **final** approval, `dacs_confirm_bom_split` (public/js/workflow.js,
+loaded on every desk page) shows every row split into two groups:
+
+- **Has a BOM** (`bom_no`): goes to a Subcontract PO;
+- **No BOM:** a normal item.
+
+"Final Approve" stays disabled until the approver ticks "I have checked which rows
+have a BOM…". After final approval a row can't change group, so a wrong row is
+corrected on the order first.
+
+- It runs on the Sales Order form's Approve at Pending Final Approval
+  (`wf_action`), on the Order Flow page's Final Approve (`handle_final_approval`, before
+  Verify Customer Details), and on Bulk Final Approve (all selected orders in one
+  dialog).
+- Data comes from `order_flow_api.get_bom_split`, which returns only orders the user
+  may read.
+
 ## Verify Customer Details (the approval dialog)
 
 `show_verification_dialog` in `order_flow.js`, and a **near-identical
@@ -571,7 +590,12 @@ The sheet gives them:
 
 The permission hooks limit these to the documents of the Sales Orders they may see:
 
-- their customers' orders, orders they raised, and orders they are Lead Owner of;
+- their customers' orders, **orders whose customer has no merchandiser assigned**
+  (`custom_merchandiser_user` empty), orders they raised, and orders they are Lead
+  Owner of. Only another merchandiser's customers' orders are hidden. The same rule
+  is used by the Sales Order list and open check, the Sales Order-linked documents
+  (`_visible_sales_order_clause`), and every Order Flow query (`_MERCH_SCOPE_SO`).
+  Rows with no Sales Order at all don't count as unassigned;
 - plus documents they created themselves.
 
 How each document reaches its order:

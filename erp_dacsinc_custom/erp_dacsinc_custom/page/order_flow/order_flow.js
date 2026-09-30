@@ -1380,7 +1380,9 @@ class OrderFlow {
             }
             const sub = this.approval_subtab || 'merchandiser';
             if (sub === 'final') {
-                frappe.confirm(__('Are you sure you want to bulk final approve the selected {0} Sales Orders?', [selected.length]), () => {
+                // every selected order's BOM / normal rows, confirmed once for all (workflow.js)
+                dacs_confirm_bom_split(selected).then((ok) => {
+                    if (!ok) return;
                     frappe.call({
                         method: 'erp_dacsinc_custom.order_flow_api.approve_sales_orders',
                         args: { sales_orders: selected }
@@ -4926,7 +4928,10 @@ class OrderFlow {
     }
 
     handle_final_approval(so) {
-        this.handle_approval_with_checks(so, __('Are you sure you want to final approve Sales Order {0}?', [so]));
+        // First: which rows have a BOM (→ Subcontract PO) and which are normal items (workflow.js).
+        dacs_confirm_bom_split([so]).then((ok) => {
+            if (ok) this.handle_approval_with_checks(so, __('Are you sure you want to final approve Sales Order {0}?', [so]));
+        });
     }
 
     handle_approval_with_checks(so, confirm_msg) {

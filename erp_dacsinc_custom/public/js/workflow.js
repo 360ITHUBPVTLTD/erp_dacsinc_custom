@@ -18,7 +18,7 @@ class WorkflowOverride extends frappe.ui.form.States {
                 if (frappe.user_roles.includes(d.allowed)) {
                     // console.log("User has access to transition:", d.action);
                     added = true;
-                    me.frm.page.add_action_item(__(d.action), function () {
+                    me.frm.page.add_action_item(__(d.action), function wf_action() {
                         // console.log("Workflow action triggered:", d.action);
                         if (me.frm.doc.doctype === "Lead") {
                             frappe.confirm(
@@ -156,6 +156,16 @@ class WorkflowOverride extends frappe.ui.form.States {
                         
                         
                         else if (me.frm.doc.doctype === "Sales Order") {
+                            // Final approval: confirm which rows have a BOM (→ Subcontract PO) first.
+                            if (d.action === "Approve" && me.frm.doc.workflow_state === "Pending Final Approval" && !d.__bom_checked) {
+                                dacs_confirm_bom_split([me.frm.doc.name]).then((ok) => {
+                                    if (!ok) return;
+                                    d.__bom_checked = true;
+                                    wf_action();
+                                });
+                                return;
+                            }
+                            d.__bom_checked = false;  // one confirmation per click
                             if (d.action === "Reject" || d.action.toLowerCase().includes("reject")) {
                                 frappe.prompt([
                                     {
@@ -545,3 +555,61 @@ function wf_enable_new_address_customer_prefill(dialog, customer_name) {
         existing_onhide && existing_onhide();
     };
 }
+
+// Before a Sales Order's FINAL approval (Sales Order form and the Order Flow page): show
+// which rows carry a BOM — they go to a Subcontract PO — and which are normal items, and
+// let the approver go on only after ticking that they checked it. After final approval a
+// normal row can't become a BOM row (or the other way round). Resolves true to approve.
+window.dacs_confirm_bom_split = function (sales_orders) {
+    const esc = (t) => frappe.utils.escape_html(String(t == null ? "" : t));
+    return new Promise((resolve) => {
+        frappe.call({
+            method: "erp_dacsinc_custom.order_flow_api.get_bom_split",
+            args: { sales_orders: sales_orders },
+        }).then((r) => {
+            const data = r.message || {};
+            let bom_total = 0, plain_total = 0;
+            const table = (rows, with_bom) => rows.length
+                ? `<table class="table table-bordered table-condensed" style="margin:4px 0 10px;font-size:12px;">
+                    <thead><tr><th style="width:40px;">#</th><th>${__("Item")}</th><th style="width:110px;text-align:right;">${__("Qty")}</th>
+                    ${with_bom ? `<th>${__("BOM")}</th>` : ""}</tr></thead>
+                    <tbody>${rows.map((x) => `<tr><td>${x.idx}</td><td><b>${esc(x.item_code)}</b>${x.item_name && x.item_name !== x.item_code ? `<br><span class="text-muted">${esc(x.item_name)}</span>` : ""}</td>
+                    <td style="text-align:right;">${esc(x.qty)} ${esc(x.uom)}</td>${with_bom ? `<td>${esc(x.bom_no)}</td>` : ""}</tr>`).join("")}</tbody></table>`
+                : `<div class="text-muted" style="margin:2px 0 10px;font-size:12px;">${__("None")}</div>`;
+            const body = Object.entries(data).map(([so, v]) => {
+                const bom = v.rows.filter((x) => x.bom_no), plain = v.rows.filter((x) => !x.bom_no);
+                bom_total += bom.length; plain_total += plain.length;
+                return `<div style="border:1px solid var(--border-color);border-radius:8px;padding:10px 12px;margin-bottom:12px;">
+                    <div style="font-weight:700;margin-bottom:6px;">${esc(so)} <span class="text-muted" style="font-weight:400;">· ${esc(v.customer)}</span></div>
+                    <div style="color:var(--orange-600);font-weight:700;"><i class="fa fa-industry"></i> ${__("Has a BOM — goes to a Subcontract PO")} (${bom.length})</div>
+                    ${table(bom, true)}
+                    <div style="color:var(--green-600);font-weight:700;"><i class="fa fa-cube"></i> ${__("No BOM — normal item")} (${plain.length})</div>
+                    ${table(plain, false)}</div>`;
+            }).join("");
+            if (!body) { resolve(false); return; }
+            let done = false;
+            const d = new frappe.ui.Dialog({
+                title: __("Check BOM and normal items before final approval"),
+                size: "large",
+                fields: [
+                    { fieldtype: "HTML", fieldname: "intro", options: `<div class="alert alert-warning" style="margin-bottom:12px;">
+                        ${__("Rows with a BOM go to a Subcontract PO; rows without one are normal items. <b>After final approval this can't be changed.</b> If a row is wrong, cancel and correct the Sales Order first.")}
+                        <div style="margin-top:6px;font-weight:700;">${__("{0} row(s) with a BOM · {1} normal row(s)", [bom_total, plain_total])}</div></div>` },
+                    { fieldtype: "HTML", fieldname: "body", options: body },
+                    { fieldtype: "Check", fieldname: "checked",
+                      label: __("I have checked which rows have a BOM (Subcontract PO) and which are normal items") },
+                ],
+                primary_action_label: __("Final Approve"),
+                primary_action: (v) => {
+                    if (!v.checked) return;
+                    done = true; d.hide(); resolve(true);
+                },
+            });
+            d.onhide = () => { if (!done) resolve(false); };
+            const btn = d.get_primary_btn();
+            btn.prop("disabled", true);
+            d.fields_dict.checked.$input.on("change", function () { btn.prop("disabled", !this.checked); });
+            d.show();
+        });
+    });
+};

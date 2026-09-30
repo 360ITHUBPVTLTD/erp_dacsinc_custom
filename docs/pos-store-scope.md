@@ -109,7 +109,14 @@ Exported in `custom/customer.json`. It is filled automatically:
   some stores but are not POS staff. Without that rule, a first back-fill once gave
   2,538 imported customers to one store.
 
-A customer's store can be changed by hand on the Customer form.
+A customer's store can be changed by hand on the Customer form, but only by the roles
+in Admin Settings › Customer (Admin to begin with), System Manager and Administrator.
+
+- The same applies to Industry and Merchandiser User (`custom_customer.
+  guard_protected_customer_fields`), and to the list's bulk Assign Merchandiser.
+- For everyone else the three fields are read-only on an existing customer, and the
+  server refuses a change.
+- The automatic fills above write directly to the database and aren't affected.
 
 ## Point of Sale screen (`public/js/pos_page_extend.js`, `pos_walkin.py`)
 
