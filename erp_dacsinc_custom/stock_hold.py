@@ -426,34 +426,51 @@ def correct_pick_lists(dry_run=0):
 				frappe.get_doc("Sales Order", so).add_comment("Comment", _("Stock hold correction: {0} — {1}").format(pl.name, text))
 
 	for name in order:
-		pl = docs[name]
-		short = flt(missing[name], 3)
+		# one Pick List at a time: one that can't be corrected is reported and skipped,
+		# never stopping the rest (or a migrate running this as a patch)
+		frappe.db.savepoint("dacs_pl_fix")
+		mark = len(report)
+		try:
+			_correct_one(docs[name], flt(missing[name], 3), dry_run, report, note, PL_HOLD_QTY_FIELD, revert_pick_list_to_draft)
+		except Exception as e:
+			frappe.db.rollback(save_point="dacs_pl_fix")
+			del report[mark:]  # nothing of it was kept
+			report.append(f"{name}: could not be corrected ({frappe.utils.strip_html(str(e))[:160]}) — fix by hand")
+			frappe.log_error(title=f"Stock hold correction failed for {name}", message=frappe.get_traceback())
+	for line in report:
+		print(line)
+	return report
+
+
+def _correct_one(pl, short, dry_run, report, note, PL_HOLD_QTY_FIELD, revert_pick_list_to_draft):
+	name = pl.name
+	if True:
 		held = sum(flt(l.stock_qty) if pl.docstatus == 0 else max(0.0, flt(l.picked_qty) - flt(l.delivered_qty)) for l in pl.locations)
 		if flt(pl.get(PL_HOLD_QTY_FIELD)) > EPS:
 			report.append(f"{name}: left alone (goods at the embroidery jobber); {short} missing")
-			continue
+			return
 		if pl.docstatus == 0:
 			keep = flt(held - short, 3)
 			if dry_run:
 				note(pl, f"draft cut {held} → {keep}" if keep > EPS else f"draft deleted (nothing of {held} is free)")
-				continue
+				return
 			if keep > EPS:
 				pl.save()  # fit_pick_list_to_free cuts it
 				note(pl, f"draft cut {held} → {sum(flt(l.stock_qty) for l in pl.locations)}: {short} was not on the shelf")
 			else:
 				note(pl, f"draft deleted: none of its {held} is on the shelf")
 				frappe.delete_doc("Pick List", name, ignore_permissions=True)
-			continue
+			return
 		if any(flt(l.delivered_qty) > EPS for l in pl.locations) or frappe.db.sql(
 				"SELECT 1 FROM `tabDelivery Note Item` WHERE against_pick_list=%s AND docstatus=1 LIMIT 1", name):
 			report.append(f"{name}: left alone (already partly delivered); {short} missing — fix by hand")
-			continue
+			return
 		draft_dns = frappe.db.sql_list("SELECT DISTINCT parent FROM `tabDelivery Note Item` WHERE against_pick_list=%s AND docstatus=0", name)
 		keep = flt(held - short, 3)
 		if dry_run:
 			what = f"back to draft for {keep}" if keep > EPS else "cancelled (nothing on the shelf)"
 			note(pl, f"submitted, {held} picked, {short} not on the shelf → {what}" + (f"; draft DN {', '.join(draft_dns)} deleted" if draft_dns else ""))
-			continue
+			return
 		for dn in draft_dns:
 			frappe.delete_doc("Delivery Note", dn, ignore_permissions=True)
 		if keep > EPS:
@@ -466,6 +483,3 @@ def correct_pick_lists(dry_run=0):
 			pl.cancel()
 			note(pl, f"cancelled: none of the {held} picked is on the shelf — pick again when stock arrives"
 					 + (f" (draft DN {', '.join(draft_dns)} deleted)" if draft_dns else ""))
-	for line in report:
-		print(line)
-	return report
