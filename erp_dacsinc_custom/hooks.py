@@ -26,8 +26,11 @@ app_license = "mit"
 
 # include js, css files in header of desk.html
 # app_include_css = "/assets/erp_dacsinc_custom/css/erp_dacsinc_custom.css"
+# Customer form / list: may this user change POS Store / Industry / Merchandiser User (custom_customer.py)
+extend_bootinfo = "erp_dacsinc_custom.custom_customer.extend_bootinfo"
+
 app_include_js = [
-    "/assets/erp_dacsinc_custom/js/workflow.js?v=1.0.6",
+    "/assets/erp_dacsinc_custom/js/workflow.js?v=1.0.7",
     "/assets/erp_dacsinc_custom/js/toogle.js?v=1.0.5"
 ]
 
@@ -201,6 +204,8 @@ has_permission = {
     "Purchase Receipt": "erp_dacsinc_custom.custom_script.has_purchase_receipt_permission",
     # "Customer": "erp_dacsinc_custom.custom_script.has_customer_permission",
     "Customer": "erp_dacsinc_custom.pos_scope.has_customer_permission",
+    # contents only for those who may edit it (read stays for everyone else's server-side use)
+    "Admin Settings": "erp_dacsinc_custom.erp_dacsinc_custom.doctype.admin_settings.admin_settings.has_permission",
     "POS Invoice": "erp_dacsinc_custom.pos_scope.has_store_permission",
     "POS Opening Entry": "erp_dacsinc_custom.pos_scope.has_store_permission",
     "POS Closing Entry": "erp_dacsinc_custom.pos_scope.has_store_permission",
@@ -361,7 +366,8 @@ doc_events = {
             "erp_dacsinc_custom.pos_scope.set_store_on_new_customer",
         ],
         "after_insert": "erp_dacsinc_custom.custom_customer.customer_after_insert",
-        "validate": "erp_dacsinc_custom.custom_customer.guard_merchandiser_user_change",
+        # POS Store / Industry / Merchandiser User: only the roles in Admin Settings › Customer
+        "validate": "erp_dacsinc_custom.custom_customer.guard_protected_customer_fields",
         "on_update": "erp_dacsinc_custom.custom_customer.update_customer_sharing"
     },
     "Purchase Order": {

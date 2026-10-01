@@ -153,3 +153,21 @@ def get_saved():
 	if not can_view():
 		frappe.throw("Only Admin and System Manager can see the access sheets.", frappe.PermissionError)
 	return load_all()
+
+
+def cli_session(close=None):
+	"""For scripts/make_worksheet_pdfs.sh only (bench execute, never over HTTP): a temporary
+	Administrator session to fetch the page, which needs a login; close=<sid> ends it."""
+	from frappe.sessions import Session, delete_session
+	from werkzeug.test import EnvironBuilder
+	from werkzeug.wrappers import Request
+
+	if close:
+		delete_session(close, reason="worksheet PDFs done")
+		frappe.db.commit()
+		return
+	frappe.local.request = Request(EnvironBuilder(path="/").get_environ())
+	frappe.local.request_ip = "127.0.0.1"
+	s = Session(user="Administrator", resume=False, full_name="Administrator", user_type="System User")
+	frappe.db.commit()
+	print("SID", s.sid)

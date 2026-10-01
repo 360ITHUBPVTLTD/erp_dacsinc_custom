@@ -1380,7 +1380,9 @@ class OrderFlow {
             }
             const sub = this.approval_subtab || 'merchandiser';
             if (sub === 'final') {
-                frappe.confirm(__('Are you sure you want to bulk final approve the selected {0} Sales Orders?', [selected.length]), () => {
+                // every selected order's BOM / normal rows, confirmed once for all (workflow.js)
+                dacs_confirm_bom_split(selected).then((ok) => {
+                    if (!ok) return;
                     frappe.call({
                         method: 'erp_dacsinc_custom.order_flow_api.approve_sales_orders',
                         args: { sales_orders: selected }
@@ -2697,8 +2699,15 @@ class OrderFlow {
     // User (see tracker_html's `view_only` for the matching top-level-row
     // treatment). so-btn--view and the refresh button stay — those just look,
     // they don't act.
+    // A Merchandiser User only ever sees their own orders here; whether they may ACT on
+    // them follows the access sheet's tab cells (A = can act, ✓ = view) like everyone
+    // else's — not a blanket "merchandisers only look".
+    merch_view_only(tab, sub) {
+        return !!(this.perms && this.perms.tracker_scoped_to_own_customers) && !this.can_act(tab, sub);
+    }
+
     strip_actions_if_view_only($container) {
-        if (!(this.perms && this.perms.tracker_scoped_to_own_customers)) return;
+        if (!this.merch_view_only(this.active, this.active === 'tracker' ? (this.tracker_subtab || 'so') : null)) return;
         $container.find('.so-btn, .so-qty-in')
             .not('.so-btn--view')
             .not('#btn-refresh-stock-table')
@@ -2781,7 +2790,7 @@ class OrderFlow {
                 ${__('Too many matching orders to compute stages for all of them — showing the most recent 5,000. Narrow the search or date range to see the rest.')}
             </div>` : '';
 
-        const view_only = !!(this.perms && this.perms.tracker_scoped_to_own_customers);
+        const view_only = this.merch_view_only('tracker', 'so');
 
         const mr_rows = mrs.map(m => {
             const pending = flt_of(m.qty) - flt_of(m.ordered_qty);
@@ -4055,7 +4064,7 @@ class OrderFlow {
     ewo_card_html(tab, key, env) {
         env = env || {};
         const is_fp = key === 'ewo_fp';
-        const view_only = tab === 'tracker' && !!(this.perms && this.perms.tracker_scoped_to_own_customers);
+        const view_only = tab === 'tracker' && this.merch_view_only('tracker', key === 'ewo_fp' ? 'fp' : 'pn');
         return of_card(
             is_fp ? 'Embroidery Work Orders (Full Piece Work)' : 'Embroidery Work Orders (Panel Work)',
             is_fp ? 'magic' : 'scissors', `
@@ -4926,7 +4935,10 @@ class OrderFlow {
     }
 
     handle_final_approval(so) {
-        this.handle_approval_with_checks(so, __('Are you sure you want to final approve Sales Order {0}?', [so]));
+        // First: which rows have a BOM (→ Subcontract PO) and which are normal items (workflow.js).
+        dacs_confirm_bom_split([so]).then((ok) => {
+            if (ok) this.handle_approval_with_checks(so, __('Are you sure you want to final approve Sales Order {0}?', [so]));
+        });
     }
 
     handle_approval_with_checks(so, confirm_msg) {

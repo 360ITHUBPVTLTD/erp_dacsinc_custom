@@ -21,3 +21,6 @@ erp_dacsinc_custom.patches.set_pos_stock_source_warehouse
 erp_dacsinc_custom.patches.backfill_pos_user_flags
 erp_dacsinc_custom.patches.share_so_with_lead_owner
 erp_dacsinc_custom.patches.correct_pick_lists_missing_stock
+erp_dacsinc_custom.patches.reset_item_grid_columns
+erp_dacsinc_custom.patches.set_customer_protected_field_roles
+erp_dacsinc_custom.patches.reset_item_grid_columns #2026-10-01 all 9 item tables, Price List Rate

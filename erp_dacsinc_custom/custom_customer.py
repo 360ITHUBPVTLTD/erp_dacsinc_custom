@@ -324,3 +324,59 @@ def guard_merchandiser_user_change(doc, method=None):
             "You don't have permission to change the assigned Merchandiser on a Customer.",
             frappe.PermissionError,
         )
+
+
+# ------------------------------------------------------------------ protected customer fields
+# POS Store, Industry and Merchandiser User decide who sees a customer and its orders (POS
+# store scope, Merchandiser scoping). Only the roles in Admin Settings › Customer
+# (customer_protected_field_roles; Admin to begin with), System Manager and Administrator
+# may change them on an existing customer. The app's own automatic updates (a customer's
+# first POS Invoice, a merchandiser claiming a customer on approval) write with
+# db.set_value and aren't affected.
+PROTECTED_CUSTOMER_FIELDS = {"custom_pos_store": "POS Store", "industry": "Industry",
+							 "custom_merchandiser_user": "Merchandiser User"}
+PROTECTED_ROLES_FIELD = "customer_protected_field_roles"
+
+
+def protected_field_roles():
+	try:
+		return [d.role for d in (frappe.get_cached_doc("Admin Settings").get(PROTECTED_ROLES_FIELD) or []) if d.role]
+	except Exception:
+		return []
+
+
+def can_edit_protected_customer_fields(user=None):
+	user = user or frappe.session.user
+	roles = set(frappe.get_roles(user))
+	return user == "Administrator" or "System Manager" in roles or bool(roles & set(protected_field_roles()))
+
+
+@frappe.whitelist()
+def get_protected_customer_fields():
+	"""For the Customer form: which fields are protected and whether this user may change them."""
+	return {"fields": PROTECTED_CUSTOMER_FIELDS, "can_edit": can_edit_protected_customer_fields(),
+			"roles": protected_field_roles() + ["System Manager"]}
+
+
+def guard_protected_customer_fields(doc, method=None):
+	"""Customer validate. On an existing customer, POS Store / Industry / Merchandiser User
+	change only for the roles above. A new customer keeps its old rule (a Merchandiser User
+	can't set the merchandiser; the POS Store is filled automatically)."""
+	if doc.is_new():
+		return guard_merchandiser_user_change(doc, method)
+	if can_edit_protected_customer_fields():
+		return
+	before = doc.get_doc_before_save()
+	if not before:
+		return
+	changed = [label for f, label in PROTECTED_CUSTOMER_FIELDS.items() if (doc.get(f) or "") != (before.get(f) or "")]
+	if changed:
+		frappe.throw(
+			"You can't change {0} on a Customer. Only {1} can (Admin Settings › Customer).".format(
+				", ".join(changed), ", ".join(protected_field_roles() + ["System Manager"])),
+			frappe.PermissionError, title="Protected customer fields")
+
+
+def extend_bootinfo(bootinfo):
+	"""The Customer form / list know whether this user may change the protected fields."""
+	bootinfo.dacs_can_edit_customer_protected = can_edit_protected_customer_fields()

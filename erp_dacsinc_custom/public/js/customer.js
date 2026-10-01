@@ -187,3 +187,18 @@ function open_edit_prompt(contact_name, frm) {
 		},
 	});
 }
+
+
+// POS Store, Industry and Merchandiser User: read-only on an existing customer unless the
+// user is in Admin Settings › Customer (custom_customer.guard_protected_customer_fields
+// refuses the change on the server anyway).
+frappe.ui.form.on('Customer', {
+	refresh(frm) {
+		if (frm.is_new() || frappe.boot.dacs_can_edit_customer_protected) return;
+		['custom_pos_store', 'industry', 'custom_merchandiser_user'].forEach((f) => {
+			if (!frm.fields_dict[f]) return;
+			frm.set_df_property(f, 'read_only', 1);
+			frm.set_df_property(f, 'description', __('Only the roles set in Admin Settings › Customer can change this.'));
+		});
+	},
+});

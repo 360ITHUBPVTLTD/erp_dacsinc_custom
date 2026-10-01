@@ -5,6 +5,7 @@
  "doctype": "DocType",
  "engine": "InnoDB",
  "field_order": [
+  "general_tab",
   "sending_mails_for_sales_order_creation_section",
   "email_account",
   "send_email",
@@ -14,8 +15,6 @@
   "crm_daily_report_section",
   "send_mail_for_daily",
   "to_mail_id",
-  "buying_settings_section",
-  "allow_over_collecting_of_fg",
   "section_break_hbuh",
   "bulk_attendance_mobile_app_visibility",
   "mobile_app_crm_card",
@@ -112,8 +111,12 @@
   "of_sub_accounts_receivables_act_roles",
   "of_sub_accounts_supplier_act_roles",
   "of_sub_accounts_jobber_act_roles",
+  "purchase_tab",
+  "buying_settings_section",
+  "allow_over_collecting_of_fg",
   "po_price_check_section",
   "po_price_check_roles",
+  "pos_tab",
   "pos_stock_section",
   "pos_stock_source_warehouse",
   "pos_email_section",
@@ -122,7 +125,10 @@
   "pos_mr_email_recipients",
   "stock_hold_tab",
   "stock_hold_section",
-  "stock_hold_override_users"
+  "stock_hold_override_users",
+  "customer_tab",
+  "customer_protected_section",
+  "customer_protected_field_roles"
  ],
  "fields": [
   {
@@ -206,7 +212,8 @@
   },
   {
    "fieldname": "section_break_hbuh",
-   "fieldtype": "Section Break"
+   "fieldtype": "Section Break",
+   "label": "Mobile App"
   },
   {
    "fieldname": "mobile_app_crm_card",
@@ -859,13 +866,46 @@
    "options": "Multiselect User",
    "label": "May use held stock",
    "description": "Only for corrections. Everyone else is stopped with a message naming the order and Pick List that hold the stock."
+  },
+  {
+   "fieldname": "general_tab",
+   "fieldtype": "Tab Break",
+   "label": "General"
+  },
+  {
+   "fieldname": "purchase_tab",
+   "fieldtype": "Tab Break",
+   "label": "Purchase"
+  },
+  {
+   "fieldname": "pos_tab",
+   "fieldtype": "Tab Break",
+   "label": "POS"
+  },
+  {
+   "fieldname": "customer_tab",
+   "fieldtype": "Tab Break",
+   "label": "Customer"
+  },
+  {
+   "fieldname": "customer_protected_section",
+   "fieldtype": "Section Break",
+   "label": "Who may change a customer's POS Store, Industry and Merchandiser",
+   "description": "These fields decide who sees a customer and its orders (POS store scope, Merchandiser scoping). On an existing customer only the roles below can change them; System Manager and Administrator always can. The app's automatic updates (a customer's first POS Invoice, a merchandiser taking a customer on approval) are not affected."
+  },
+  {
+   "fieldname": "customer_protected_field_roles",
+   "fieldtype": "Table MultiSelect",
+   "options": "Order Flow Tab Role",
+   "label": "Roles that may change them",
+   "description": "Only Access Sheet roles (and Admin) can be picked."
   }
  ],
  "grid_page_length": 50,
  "index_web_pages_for_search": 1,
  "issingle": 1,
  "links": [],
- "modified": "2026-09-29 15:29:01.560675",
+ "modified": "2026-09-30 18:25:55.734005",
  "modified_by": "Administrator",
  "module": "Erp Dacsinc Custom",
  "name": "Admin Settings",

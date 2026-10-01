@@ -14,8 +14,8 @@ frappe.listview_settings['Customer'] = frappe.listview_settings['Customer'] || {
             try { existing_onload(listview); } catch (e) { /* keep ours working */ }
         }
 
-        // Super Admin only.
-        if (!frappe.user_roles.includes('Super Admin')) return;
+        // Super Admin, or the roles in Admin Settings › Customer (the server checks the same).
+        if (!frappe.user_roles.includes('Super Admin') && !frappe.boot.dacs_can_edit_customer_protected) return;
 
         listview.page.add_action_item(__("Assign Merchandiser"), function () {
             const checked_items = listview.get_checked_items();
