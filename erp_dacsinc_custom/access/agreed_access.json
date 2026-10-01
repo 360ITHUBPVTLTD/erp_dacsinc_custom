@@ -65,7 +65,7 @@
     "VE",
     "V",
     "V",
-    "VE",
+    "V",
     "VE",
     "VE",
     "V",
@@ -610,6 +610,7 @@
     "V"
    ]
   },
+  "note": "Role Permission Manager \u00b7 Administrator: Merchandiser User \u00b7 Customer: VE \u2192 V",
   "roles": [
    "Accounts Executive",
    "Accounts Manager",
@@ -631,10 +632,10 @@
   ],
   "saved_by": "Administrator",
   "saved_by_name": "Administrator",
-  "saved_on": "2026-10-01 18:00:57.109987",
-  "version": 36
+  "saved_on": "2026-10-01 18:45:25.260672",
+  "version": 37
  },
- "fingerprint": "cf88175c1734c14d5ad718855882dc9373a16e00",
+ "fingerprint": "6aa574ce03bb8c30a31352837f131f32dc3e75d1",
  "tab_access": {
   "cells": {
    "Embroidery Transfers": [

@@ -57,6 +57,8 @@ page_js = {"point-of-sale": "public/js/pos_page_extend.js"}
 
 # include js in doctype views  
 doctype_js = {
+    # Close the POS: tables exist and the entry loads its opening amounts / invoices
+    "POS Closing Entry": "public/js/pos_closing_entry.js",
 	"Lead": "public/js/lead.js",
 	"Sales Order": "public/js/sales_order.js",
 	"Item": "public/js/item.js",

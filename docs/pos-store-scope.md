@@ -184,6 +184,32 @@ screen is built.
     to it.
   - Tested headless at 1300×650, 1300×690, 1366×768, 1920×1080, 1024×768, 768×1024 and 390×844.
 
+## Close the POS (`pos_closing.py`, `public/js/pos_closing_entry.js`)
+
+"Close the POS" (`Controller.close_pos`, patched in `pos_page_extend.js`) calls
+`pos_closing.make_closing_entry(pos_opening_entry)`.
+- It builds the whole entry on the server in one call: the opening entry's period,
+  profile, user and company; the session's POS Invoices (ERPNext's `get_pos_invoices`);
+  grand / net total and qty; taxes per account and rate; and payments.
+- Payments: opening amount, plus each bill's payments, minus change given back on the
+  change account. The closing amount starts at the expected amount, and the cashier
+  enters what was counted.
+- The form opens already filled (about 0.5 s). Save takes about 1 s; ERPNext's
+  before_save reads the bills once more.
+
+Before: ERPNext opened an empty entry and loaded it in the browser. Two loads could run
+at once (ERPNext's own opening-entry trigger, plus a fill-in), and each cleared the
+tables first, so the entry came out empty or half-filled after a long wait. Without
+any load, Save failed with "payment_reconciliation is not iterable".
+
+`pos_closing_entry.js` makes sure the tables exist. A new entry that still opens empty
+with its opening entry set (made some other way) is filled once from the same server
+call after 1.5 s, and only when nothing else has filled it. It never fires the
+opening-entry trigger again.
+
+Submitting it as the store user also needs India Compliance's GST Return Log create
+right; see `docs/access-worksheets.md` (SUBMIT_WRITES).
+
 ## Email Receipt (`pos_receipt_email.py`)
 
 POS Profile › **Receipt Email** (exported in `custom/pos_profile.json`):

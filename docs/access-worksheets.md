@@ -103,6 +103,29 @@ Once the site is switched on (below), saving a sheet applies it in the same tran
   - Dependency grants only add. What they added is tracked in DefaultValue
     `derived_applied`, and only that is taken back later, so hand-made rules (e.g.
     Merchandiser User's own-customer scoping and HR rows) stay.
+- **Records other apps write on submit** (`SUBMIT_WRITES`). India Compliance, on
+  submit / cancel of a Sales Invoice, POS Invoice, POS Closing Entry or Payment Entry,
+  comments on that month's GST Return Log as the user, and creates the log when the
+  month has none. A role that may submit one of them gets **create only** on GST Return
+  Log: no read / write / report, so the GST logs stay closed. It is tracked like the
+  other dependency grants. Without it, POS Store Manager / POS Admin closing the POS
+  on the first day of a month got "No permission for GST Return Log".
+  - GST Return Log is also kept out of the companion read-only rule
+    (`COMPANION_SKIP_DOCTYPES`).
+  - Checked by `.scratch/order-flow-strict-rules/permission_probe.py`. For every sheet
+    role and every document it may submit, it builds or copies a real document and
+    submits it as a throwaway user holding only that role, with that month's log
+    missing. Each refusal is recorded and granted, then it tries again; everything
+    is rolled back.
+  - Result 2026-10-01: nothing else is needed for any role. Exceptions:
+    - Sales Order submit goes through the approval workflow (user-wise approvers);
+      with the workflow off it needs nothing more.
+    - DAC CRM needs Read on the order's Customer: its Customer right is own-records
+      only (O).
+    - Merchandiser and POS refusals were their record-scope rules, as intended.
+- **Picked by name only** (`DEP_SELECT_ONLY`): User and Email Account. An editor of
+  a document linking them (e.g. POS Profile › Receipt Email Account) gets Select,
+  never Read, so mail credentials can't be opened.
 - **Companion standard roles** (`COMPANIONS`). ERPNext screens rely on what its
   standard roles can read. A sheet role that may view a group's documents gets the
   **read-only** part of the matching standard role:
