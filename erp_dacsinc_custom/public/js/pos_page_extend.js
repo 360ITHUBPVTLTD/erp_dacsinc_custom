@@ -8,6 +8,7 @@
 //    "Change Amount" showing the amount still owed.
 // 5. Email Receipt from the store's own email account, with its default message
 //    (POS Profile › Receipt Email), see pos_receipt_email.py.
+// 6. Close the POS: the closing entry is built on the server and opens filled (pos_closing.py).
 (function () {
 	const page = frappe.pages["point-of-sale"];
 	if (!page || page.__dacs_extended) return;
@@ -166,6 +167,23 @@
 				frappe.show_alert({ message: __("Receipt is on its way to {0}.", [frappe.utils.escape_html(r.message.sent_to.join(", "))]), indicator: "green" });
 				try { frappe.utils.play_sound("email"); } catch (e) { /* sound is optional */ }
 			}, done);
+		};
+
+		// ---------------- Close the POS (Controller): the closing entry is built on the
+		// server in one call (pos_closing.make_closing_entry: bills, payments, taxes,
+		// totals) and opens already filled. ERPNext opened it empty and loaded it in the
+		// browser, where two loads could run at once and wipe each other (slow, wrong).
+		PS.Controller.prototype.close_pos = function () {
+			if (!this.$components_wrapper.is(":visible")) return;
+			frappe.call({
+				method: "erp_dacsinc_custom.pos_closing.make_closing_entry",
+				args: { pos_opening_entry: this.pos_opening },
+				freeze: true, freeze_message: __("Preparing the closing entry…"),
+			}).then((r) => {
+				if (!r || !r.message) return;
+				const doc = frappe.model.sync(r.message)[0];
+				frappe.set_route("Form", "POS Closing Entry", doc.name);
+			});
 		};
 
 		// ---------------- loading indicator (ItemSelector)

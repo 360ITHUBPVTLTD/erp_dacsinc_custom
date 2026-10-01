@@ -124,7 +124,9 @@ DEP_READ_ONLY = {
 	"Print Heading", "Print Format", "Terms and Conditions", "Workflow State", "Project",
 	"Opportunity", "Prospect", "Sales Partner", "Campaign", "Batch", "Language",
 }
-DEP_SELECT_ONLY = {"User"}
+# Picked by name only, never opened (Email Account holds mail credentials; it is picked
+# on POS Profile › Receipt Email Account).
+DEP_SELECT_ONLY = {"User", "Email Account"}
 DEP_SKIP_MODULES = {"Core", "Custom", "Desk", "Email", "Integrations", "Automation", "Website", "Social"}
 DEP_SKIP = {"DocType"}
 # Saving these creates those records automatically (e.g. a Customer's primary
@@ -161,6 +163,20 @@ COMPANION_SKIP_MODULES = {"HR", "Payroll", "Core", "Custom", "Desk", "Website", 
 						  "Email", "Printing", "Social", "Workflow"}
 # Read by every sheet role: desk scripts look pages up (frappe.client.get_value("Page", …))
 # and forms read the module settings.
+# Never handed out by the companion read-only rule (compliance records; who needs them
+# gets them from the sheet or SUBMIT_WRITES).
+COMPANION_SKIP_DOCTYPES = {"GST Return Log"}
+# Records other apps write as the user who submits a document. India Compliance, on
+# submit / cancel of these, comments on that month's GST Return Log and creates the log
+# when the month has none (gst_return_log.add_comment_to_gst_return_log), so a role
+# that may submit them needs to create / write that log — else "No permission for GST
+# Return Log" (e.g. POS Store Manager closing the POS). Only for doctypes that exist.
+SUBMIT_WRITES = {
+	"GST Return Log": ("Sales Invoice", "POS Invoice", "POS Closing Entry", "Payment Entry"),
+}
+# Only what the submit needs: the log is inserted (create); the comment is added without
+# a permission check. No read / write: the GST logs stay closed to these roles.
+SUBMIT_WRITES_FIELDS = ("create",)
 EVERY_SHEET_ROLE_READS = ("Page", "Selling Settings", "Stock Settings", "Buying Settings", "Accounts Settings",
 						  "POS Settings", "Global Defaults")
 
@@ -459,10 +475,17 @@ def compute_doc_access(sheet):
 				std_cache[std] = _std_role_doctypes(std)
 			for target in std_cache[std]:
 				d = info.get(target)
-				if (not d or target in direct or d.istable or d.is_virtual
+				if (not d or target in direct or target in COMPANION_SKIP_DOCTYPES or d.istable or d.is_virtual
 						or d.module in COMPANION_SKIP_MODULES):
 					continue
 				deps.setdefault(target, {}).setdefault(role, set()).update(COMPANION_FIELDS)
+	for target, parents in SUBMIT_WRITES.items():
+		if target not in info or target in direct:
+			continue
+		for parent in parents:
+			for role, (flags, _o) in direct.get(parent, {}).items():
+				if "submit" in flags:
+					deps.setdefault(target, {}).setdefault(role, set()).update(SUBMIT_WRITES_FIELDS)
 	for role in _role_columns(sheet):
 		for target in EVERY_SHEET_ROLE_READS:
 			deps.setdefault(target, {}).setdefault(role, set()).update(("read",))
@@ -865,7 +888,7 @@ def _map_set(key, data):
 
 # Bump when the rules in this file change (dependencies, companions, pages…), so each
 # site re-applies its sheets once on the next migrate (sync_from_bundle).
-RULES_VERSION = "2026-10-01.1"
+RULES_VERSION = "2026-10-01.4"
 
 
 def bundle_fingerprint(data):
