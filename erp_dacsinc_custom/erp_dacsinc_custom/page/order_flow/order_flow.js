@@ -1067,7 +1067,8 @@ class OrderFlow {
                             if (typeof window.so_show_mapped_doc_preview === 'function') {
                                 window.so_show_mapped_doc_preview(doc, {
                                     preview_title: opts.preview_title,
-                                    confirm_label: opts.confirm_label
+                                    confirm_label: opts.confirm_label,
+                                    focus_so: opts.focus_so
                                 });
                                 return;
                             }
@@ -1305,7 +1306,8 @@ class OrderFlow {
                     source_name: target,
                     freeze_message: __('Creating Purchase Order from Material Request…'),
                     preview_title: __('Review Purchase Order — from Material Request'),
-                    confirm_label: __('Create Purchase Order')
+                    confirm_label: __('Create Purchase Order'),
+                    focus_so: so
                 });
             } else if ((action === 'request' || action === 'make_mr') && so) {
                 // One prompt: choose Raw Material (for BOM items) or Trade
@@ -2911,11 +2913,19 @@ class OrderFlow {
                     </div>`;
             }
 
+            // No main action: "Completed" only when the order really is; an order whose raw
+            // material is ready shows nothing here (its Create Subcontract PO button sits below);
+            // anything else names its stage, so a waiting order never reads as done.
+            const no_action_html = st.stage_key === 'completed'
+                ? `<span class="of-micro" style="color:var(--of-green);font-weight:600;"><i class="fa fa-check-circle"></i> Completed</span>`
+                : (st.rm_ready_stage || o.rm_ready_for_sco)
+                    ? ''
+                    : `<span class="of-micro text-muted">${of_esc(st.stage_label || '')}</span>`;
             let action_btn_html = '';
             if (view_only) {
                 action_btn_html = st.action_type && st.action_type !== 'none'
                     ? `<span class="of-micro" title="${of_esc(st.action_label || '')}">${of_esc(st.stage_label || 'In progress')}</span>`
-                    : `<span class="of-micro" style="color:var(--of-green);font-weight:600;"><i class="fa fa-check-circle"></i> Completed</span>`;
+                    : no_action_html;
             } else if (st.action_type && st.action_type !== 'none') {
                 action_btn_html = `
                     <button class="of-btn ${st.action_btn_class || 'of-btn--primary'} of-action-btn"
@@ -2930,7 +2940,7 @@ class OrderFlow {
                         <i class="fa fa-${st.icon || 'arrow-right'}"></i> ${of_esc(st.action_label || 'Act')}
                     </button>`;
             } else {
-                action_btn_html = `<span class="of-micro" style="color:var(--of-green);font-weight:600;"><i class="fa fa-check-circle"></i> Completed</span>`;
+                action_btn_html = no_action_html;
             }
 
             if (st.secondary_action && st.secondary_action.action_type && !view_only) {
@@ -2978,6 +2988,8 @@ class OrderFlow {
                         <i class="fa fa-hourglass-half"></i> ${of_round2(o.shortfall_qty)} ${__('Pending — Not Picked Yet')}
                     </div>`;
             }
+
+            action_btn_html += of_insights_html(o);
 
             return `
             <tr data-so="${o.name}" class="${o.is_overdue ? 'of-row--overdue' : ''} of-row-main">
@@ -6097,6 +6109,49 @@ function of_stat_strip(stats) {
             <span class="of-stat__label">${of_esc(s.label)}</span>
         </div>`).join('');
     return `<div class="of-stat-strip">${cells}</div>`;
+}
+
+// Under Action Required on a Sales Tracker row (order_flow_api._attach_tracker_insights):
+// what the order is still waiting for and from whom, whether that lands after its due
+// date, what is out at embroidery, the last mile (ready to ship, drafts left open,
+// delivered not invoiced) and how long nothing has happened. Lists only documents the
+// user may open.
+function of_insights_html(o) {
+    const i = o.insights;
+    if (!i) return '';
+    const sd = (v) => v ? moment(v).format('DD-MMM') : '';
+    const link = (dt, name) => `<a href="/app/${frappe.router.slug(dt)}/${encodeURIComponent(name)}" target="_blank" style="font-weight:600;">${of_esc(name)}</a>`;
+    const line = (icon, color, html, title) => `<div class="of-micro" style="margin-top:2px;text-align:left;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;${color ? 'color:' + color + ';' : ''}"
+        ${title ? `title="${of_esc(title)}"` : ''}><i class="fa fa-${icon}" style="width:13px;"></i> ${html}</div>`;
+    let out = '';
+    const w = i.waiting || [];
+    w.slice(0, 3).forEach((x) => {
+        const tip = `${x.kind === 'jobber' ? __('At the jobber') : __('From the supplier')}: ${x.received} of ${x.qty} ${x.uom} back`
+            + (x.due ? `, due ${sd(x.due)}` : '') + (x.note ? ` — ${__(x.note)}` : '');
+        out += line(x.kind === 'jobber' ? 'cogs' : 'shopping-cart', x.overdue_days > 0 ? 'var(--of-red)' : '',
+            `${link(x.doctype, x.name)} · ${of_round2(x.received)}/${of_round2(x.qty)}${x.due ? ' · ' + sd(x.due) : ''}`
+            + (x.overdue_days > 0 ? ` <b>+${x.overdue_days}d</b>` : '') + (x.note ? ` <span style="color:var(--of-orange);">· ${__('no SCO')}</span>` : ''), tip);
+    });
+    if (w.length > 3) out += line('ellipsis-h', 'var(--text-light)', `+${w.length - 3} ${__('more')}`);
+    if (i.late) {
+        out += line('exclamation-triangle', 'var(--of-red)', `<b>${__('Late')}</b>: ${__('due')} ${sd(i.late.order_due)}, ${__('expected')} ${sd(i.late.expected)}`,
+            __('The latest purchase / jobber due date for this order is after its delivery date.'));
+    }
+    (i.embroidery || []).slice(0, 2).forEach((e) => {
+        const long = e.since_days != null && e.since_days > 7;
+        out += line('scissors', long ? 'var(--of-red)' : 'var(--of-purple)',
+            `${link('Embroidery Work Order', e.name)} · ${of_round2(e.out - e.back)} ${__('out')}` + (e.since_days != null ? ` · ${e.since_days}d` : ''),
+            `${__('Embroidery')} (${__(e.work)}): ${e.out - e.back} out, ${e.back} back`);
+    });
+    const lm = i.last_mile || {};
+    const lm_bits = [];
+    if (flt_of(lm.ready_to_ship) > 0) lm_bits.push(`<span style="color:var(--of-green);font-weight:600;">${__('Ready')} ${of_round2(lm.ready_to_ship)}</span>`);
+    (lm.draft_dns || []).forEach((d) => lm_bits.push(`${__('Draft')} ${link('Delivery Note', d)}`));
+    (lm.draft_invoices || []).forEach((d) => lm_bits.push(`${__('Draft')} ${link('Sales Invoice', d)}`));
+    if (flt_of(lm.needs_invoice) > 0) lm_bits.push(`<span style="color:var(--of-orange);font-weight:600;">${__('To invoice')} ${of_round2(lm.needs_invoice)}</span>`);
+    if (lm_bits.length) out += line('truck', '', lm_bits.join(' · '));
+    if (i.stale_days) out += line('hourglass-o', 'var(--text-light)', __('Idle {0}d', [i.stale_days]), __('No activity on this order for {0} days', [i.stale_days]));
+    return out ? `<div class="of-insights" style="margin-top:6px;padding-top:4px;border-top:1px dashed var(--border-color);">${out}</div>` : '';
 }
 
 function of_card(title, icon, inner, actions_html, footer_html, title_suffix_html) {

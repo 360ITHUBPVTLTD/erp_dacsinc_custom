@@ -464,7 +464,7 @@
     "",
     "",
     "",
-    "",
+    "VES",
     "VES",
     "VES",
     "",
@@ -521,7 +521,7 @@
     "",
     "",
     "",
-    "V",
+    "VE",
     "",
     "",
     "VES",
@@ -610,6 +610,7 @@
     "V"
    ]
   },
+  "note": "Put back as before (master data cells restored): Production Assistant \u00b7 Customer: \u2014 \u2192 V; Production Manager \u00b7 Customer: \u2014 \u2192 V; Warehouse Incharge \u00b7 Customer: \u2014 \u2192 V; Warhouse Executive \u00b7 Customer: \u2014 \u2192 V; Packing Team \u00b7 Customer: \u2014 \u2192 V; Logistics \u00b7 Customer: \u2014 \u2192 V; Production Assistant \u00b7 Supplier: \u2014 \u2192 V; Production Manager \u00b7 Supplier: \u2014 \u2192 V; Warehouse Incharge \u00b7 Supplier: \u2014 \u2192 V; Warhouse Executive \u00b7 Supplier: \u2014 \u2192 V; Finance Collection Executive \u00b7 Item Price: \u2014 \u2192 V; Finance Executive \u00b7 Item Price: \u2014 \u2192 V; Merchandiser User \u00b7 Item Price: \u2014 \u2192 V; POS Admin \u00b7 Item Price: \u2014 \u2192 V; POS Store Manager \u00b7 Item Price: \u2014 \u2192 V; Production Assistant \u00b7 Item Price: \u2014 \u2192 V; Production Manager \u00b7 Item Price: \u2014 \u2192 V; Purchase Executive \u00b7 Item Price: \u2014 \u2192 V; Purchase Manager \u00b7 Item Price: \u2014 \u2192 V; Warehouse Incharge \u00b7 Item Price: \u2014 \u2192 V; Warhouse Executive \u00b7 Item Price: \u2014 \u2192 V; Packing Team \u00b7 Item Price: \u2014 \u2192 V; Logistics \u00b7 Item Price: \u2014 \u2192 V",
   "roles": [
    "Accounts Executive",
    "Accounts Manager",
@@ -631,10 +632,10 @@
   ],
   "saved_by": "Administrator",
   "saved_by_name": "Administrator",
-  "saved_on": "2026-10-01 11:25:41.729213",
-  "version": 30
+  "saved_on": "2026-10-01 16:27:34.784097",
+  "version": 35
  },
- "fingerprint": "f5b896a10e729e733bc8bdce04d58a64a23c8131",
+ "fingerprint": "1301f6e1db18e3b47dafd71e9c0e454a97860481",
  "tab_access": {
   "cells": {
    "Embroidery Transfers": [
@@ -914,7 +915,7 @@
     "",
     "",
     "",
-    "",
+    "Y",
     "A",
     "A",
     "Y",
@@ -1210,7 +1211,7 @@
   ],
   "saved_by": "Administrator",
   "saved_by_name": "Administrator",
-  "saved_on": "2026-10-01 11:27:48.179258",
-  "version": 19
+  "saved_on": "2026-10-01 15:42:55.294818",
+  "version": 23
  }
 }

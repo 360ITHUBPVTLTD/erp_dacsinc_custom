@@ -28,6 +28,10 @@ def get_context(context):
 		"saved": saved,
 		# Sheet columns: the roles flagged for the access sheet (dynamic).
 		"roles": sheet_roles(),
+		# Active users per role: the Save confirmation says how many people a change reaches.
+		"role_users": dict(frappe.db.sql("""select hr.role, count(distinct u.name) from `tabHas Role` hr
+			join tabUser u on u.name = hr.parent and u.enabled = 1 and u.user_type = 'System User'
+			where hr.parenttype = 'User' and hr.role in %(r)s group by hr.role""", {"r": tuple(sheet_roles()) or ("",)})),
 		# Switched on = saving applies the sheet to the ERP (see access_sync).
 		"active": is_active(),
 	}).replace("<", "\\u003c")

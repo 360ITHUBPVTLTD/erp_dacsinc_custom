@@ -166,7 +166,11 @@ permission_query_conditions = {
         "erp_dacsinc_custom.custom_script.get_material_request_permission_query_conditions",
         "erp_dacsinc_custom.pos_scope.material_request_query",
     ],
-    "Stock Entry": "erp_dacsinc_custom.pos_scope.stock_entry_query",
+    "Stock Entry": [
+        "erp_dacsinc_custom.pos_scope.stock_entry_query",
+        # Merchandiser User: the jobber transfers of their own orders (custom_script)
+        "erp_dacsinc_custom.custom_script.get_stock_entry_merchandiser_conditions",
+    ],
     # POS logins see the Items of their stores' brands (POS Profile › Brands).
     "Item": "erp_dacsinc_custom.pos_scope.item_query",
     "Delivery Note": "erp_dacsinc_custom.custom_script.get_delivery_note_permission_query_conditions",
@@ -176,9 +180,15 @@ permission_query_conditions = {
         "erp_dacsinc_custom.pos_scope.sales_invoice_query",
     ],
     "Purchase Receipt": "erp_dacsinc_custom.custom_script.get_purchase_receipt_permission_query_conditions",
-    # "Customer": "erp_dacsinc_custom.custom_script.get_customer_permission_query_conditions",
-    # POS roles: store-wise (pos_scope.py). Returns "" for everyone else.
-    "Customer": "erp_dacsinc_custom.pos_scope.customer_query",
+    # Merchandiser User: their customers; POS roles: store-wise (pos_scope.py);
+    # pick-only users: no list (master_guard.py). Each returns "" for everyone else.
+    "Customer": [
+        "erp_dacsinc_custom.custom_script.get_customer_permission_query_conditions",
+        "erp_dacsinc_custom.pos_scope.customer_query",
+        "erp_dacsinc_custom.master_guard.customer_query",
+    ],
+    "Supplier": "erp_dacsinc_custom.master_guard.supplier_query",
+    "Item Price": "erp_dacsinc_custom.master_guard.item_price_query",
     "POS Invoice": "erp_dacsinc_custom.pos_scope.pos_invoice_query",
     "POS Opening Entry": "erp_dacsinc_custom.pos_scope.pos_opening_query",
     "POS Closing Entry": "erp_dacsinc_custom.pos_scope.pos_closing_query",
@@ -194,7 +204,10 @@ has_permission = {
         "erp_dacsinc_custom.custom_script.has_material_request_permission",
         "erp_dacsinc_custom.pos_scope.has_material_request_permission",
     ],
-    "Stock Entry": "erp_dacsinc_custom.pos_scope.has_stock_entry_permission",
+    "Stock Entry": [
+        "erp_dacsinc_custom.pos_scope.has_stock_entry_permission",
+        "erp_dacsinc_custom.custom_script.has_stock_entry_merchandiser_permission",
+    ],
     "Item": "erp_dacsinc_custom.pos_scope.has_item_permission",
     "Delivery Note": "erp_dacsinc_custom.custom_script.has_delivery_note_permission",
     "Sales Invoice": [
@@ -202,8 +215,14 @@ has_permission = {
         "erp_dacsinc_custom.pos_scope.has_sales_invoice_permission",
     ],
     "Purchase Receipt": "erp_dacsinc_custom.custom_script.has_purchase_receipt_permission",
-    # "Customer": "erp_dacsinc_custom.custom_script.has_customer_permission",
-    "Customer": "erp_dacsinc_custom.pos_scope.has_customer_permission",
+    # Evaluated last-first; the first non-None answer wins.
+    "Customer": [
+        "erp_dacsinc_custom.custom_script.has_customer_permission",
+        "erp_dacsinc_custom.pos_scope.has_customer_permission",
+        "erp_dacsinc_custom.master_guard.has_permission",
+    ],
+    "Supplier": "erp_dacsinc_custom.master_guard.has_permission",
+    "Item Price": "erp_dacsinc_custom.master_guard.has_permission",
     # contents only for those who may edit it (read stays for everyone else's server-side use)
     "Admin Settings": "erp_dacsinc_custom.erp_dacsinc_custom.doctype.admin_settings.admin_settings.has_permission",
     "POS Invoice": "erp_dacsinc_custom.pos_scope.has_store_permission",
@@ -280,6 +299,8 @@ doc_events = {
         # "on_cancel": "erp_dacsinc_custom.custom_script.quotation_on_cancel"
     },
     "Sales Invoice": {
+        # no second draft for the same source line (draft_guard.py)
+        "before_insert": "erp_dacsinc_custom.draft_guard.guard_duplicate_draft",
         "before_validate": "erp_dacsinc_custom.custom_script.lock_item_rate_to_sales_order_early",
         "validate": [
             "erp_dacsinc_custom.custom_script.lock_item_rate_to_sales_order",
@@ -320,6 +341,8 @@ doc_events = {
        "validate": "erp_dacsinc_custom.custom_script.validate_non_zero_rate"
     },
     "Delivery Note": {
+        # no second draft for the same source line (draft_guard.py)
+        "before_insert": "erp_dacsinc_custom.draft_guard.guard_duplicate_draft",
         "before_validate": "erp_dacsinc_custom.custom_script.lock_item_rate_to_sales_order_early",
         "validate": [
             "erp_dacsinc_custom.custom_script.lock_item_rate_to_sales_order",
@@ -344,6 +367,8 @@ doc_events = {
         "on_cancel": "erp_dacsinc_custom.bom_events.on_cancel"
     },
     "Purchase Receipt": {
+        # no second draft for the same source line (draft_guard.py)
+        "before_insert": "erp_dacsinc_custom.draft_guard.guard_duplicate_draft",
         "validate": "erp_dacsinc_custom.procurement_purpose.set_procurement_purpose",
         # a return sends stock back out; cancelling takes the received stock away (stock_hold.py)
         "before_submit": "erp_dacsinc_custom.stock_hold.guard_return",
@@ -359,6 +384,10 @@ doc_events = {
     #     "after_insert": "erp_dacsinc_custom.custom_customer.customer_after_insert",
     #     "on_update": "erp_dacsinc_custom.custom_customer.update_customer_sharing"
     # }
+    "POS Profile": {
+        # Store Name set / changed: bills of this store without one get it.
+        "on_update": "erp_dacsinc_custom.pos_receipt_email.fill_store_names",
+    },
     "Customer": {
         "before_insert": [
             "erp_dacsinc_custom.custom_customer.customer_before_insert",
@@ -371,6 +400,8 @@ doc_events = {
         "on_update": "erp_dacsinc_custom.custom_customer.update_customer_sharing"
     },
     "Purchase Order": {
+        # no second draft for the same source line (draft_guard.py)
+        "before_insert": "erp_dacsinc_custom.draft_guard.guard_duplicate_draft",
         # before_validate, so it lands before buying_controller's own
         # validate_from_warehouse — it clears a source warehouse that merely
         # equals the target, which is the form a stale Material Request value
@@ -378,6 +409,8 @@ doc_events = {
         "before_validate": "erp_dacsinc_custom.custom_script.clear_po_from_warehouse_when_same_as_target",
         "validate": [
             "erp_dacsinc_custom.custom_script.validate_non_zero_rate",
+            # Merchandiser User: Subcontract POs only (custom_script)
+            "erp_dacsinc_custom.custom_script.guard_merchandiser_plain_po",
             "erp_dacsinc_custom.custom_script.guard_po_item_not_over_so_need",
             "erp_dacsinc_custom.procurement_purpose.set_procurement_purpose",
         ],
@@ -422,6 +455,8 @@ doc_events = {
         "before_cancel": "erp_dacsinc_custom.stock_hold.guard_cancel",
     },
     "Purchase Invoice": {
+        # no second draft for the same source line (draft_guard.py)
+        "before_insert": "erp_dacsinc_custom.draft_guard.guard_duplicate_draft",
         "validate": "erp_dacsinc_custom.custom_script.validate_non_zero_rate",
         "before_submit": "erp_dacsinc_custom.stock_hold.guard_return",
         "before_cancel": "erp_dacsinc_custom.stock_hold.guard_cancel",
@@ -439,7 +474,11 @@ doc_events = {
         # own validate_from_warehouse would throw on the equal-warehouse case
         # before a plain "validate" hook ever ran.
         # POS: "POS Request" tick on MRs made from a POS login (pos_notify.py).
-        "before_insert": "erp_dacsinc_custom.pos_notify.mark_pos_request",
+        "before_insert": [
+            "erp_dacsinc_custom.pos_notify.mark_pos_request",
+            # no second draft for the same source line (draft_guard.py)
+            "erp_dacsinc_custom.draft_guard.guard_duplicate_draft",
+        ],
         # POS Requests only: email the request on submit (Admin Settings › POS Emails).
         "on_submit": "erp_dacsinc_custom.pos_notify.send_pos_mr_email",
         "before_validate": [
@@ -481,6 +520,8 @@ doc_events = {
         "on_cancel": "erp_dacsinc_custom.order_flow_api.broadcast_order_flow_change",
     },
     "Subcontracting Order": {
+        # no second draft for the same source line (draft_guard.py)
+        "before_insert": "erp_dacsinc_custom.draft_guard.guard_duplicate_draft",
         "on_update": "erp_dacsinc_custom.order_flow_api.broadcast_order_flow_change",
         "on_cancel": "erp_dacsinc_custom.order_flow_api.broadcast_order_flow_change",
         # Never leave an Embroidery Work Order pointing at a PO/SCO that is gone.
@@ -488,6 +529,8 @@ doc_events = {
         "on_trash": "erp_dacsinc_custom.so_embroidery.guard_linked_embroidery",
     },
     "Subcontracting Receipt": {
+        # no second draft for the same source line (draft_guard.py)
+        "before_insert": "erp_dacsinc_custom.draft_guard.guard_duplicate_draft",
         "before_submit": "erp_dacsinc_custom.stock_hold.guard_return",
         "before_cancel": "erp_dacsinc_custom.stock_hold.guard_cancel",
         "on_update": "erp_dacsinc_custom.order_flow_api.broadcast_order_flow_change",
@@ -539,6 +582,8 @@ after_migrate = [
     # Embroidery Work Order Item, for Full Piece embroidery sent from a
     # Sales Order's own stock. Idempotent.
     "erp_dacsinc_custom.so_embroidery.create_embroidery_pick_list_fields",
+    # POS Invoice › Store Name on bills without one, from their POS Profile.
+    "erp_dacsinc_custom.pos_receipt_email.fill_store_names",
 ]
 
 # Ships these Custom Fields with the app rather than leaving them to be
@@ -626,6 +671,8 @@ scheduler_events = {
 
 # Map Purchase Receipt to Purchase Invoice
 override_whitelisted_methods = {
+    # Global search without master records the user may not open (master_guard.py)
+    "frappe.utils.global_search.search": "erp_dacsinc_custom.master_guard.global_search",
     "erpnext.stock.doctype.purchase_receipt.purchase_receipt.make_purchase_invoice": "erp_dacsinc_custom.purchase_order.make_purchase_invoice_custom",
     # POS Profile "Brands" table — see pos_brand_filter.py
     "erpnext.selling.page.point_of_sale.point_of_sale.get_items": "erp_dacsinc_custom.pos_brand_filter.get_items",
@@ -659,6 +706,8 @@ override_whitelisted_methods = {
 # Request Events
 # ----------------
 # before_request = ["erp_dacsinc_custom.utils.before_request"]
+# Link search on Customer / Supplier / Item Price for pick-only users: capped rows.
+before_request = ["erp_dacsinc_custom.master_guard.before_request"]
 # after_request = ["erp_dacsinc_custom.utils.after_request"]
 
 # Job Events

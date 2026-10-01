@@ -179,6 +179,9 @@ def check(doc, wanted, action, own_sos=None, own_docs=None, skip_kinds=()):
 		free = flt(phys - held, 3)
 		if qty <= free + EPS:
 			continue
+		if held <= EPS and not [h for h in counted if is_mine(h) and h["qty"] > phys + EPS]:
+			# nothing is held by anyone: it's a plain shortage, ERPNext's own stock check says so
+			continue
 		lines = []
 		for h in sorted(others, key=lambda h: -h["qty"])[:6]:
 			what = {"picked": _("Pick List {0}"), "draft": _("draft Pick List {0}"),

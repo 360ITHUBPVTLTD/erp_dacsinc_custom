@@ -17,7 +17,7 @@ from collections import defaultdict
 
 import frappe
 from frappe import _
-from frappe.utils import cint, cstr, flt, add_days, nowdate
+from frappe.utils import cint, cstr, flt, add_days, getdate, nowdate
 
 from erp_dacsinc_custom.order_flow_permissions import (
     OF_TABS,
@@ -1290,6 +1290,7 @@ def get_sales_tracker(days=120, search=None, scope="open", stage_filter=None, me
     contact_map = _get_primary_contact_names_map([o.get("customer") for o in page_rows])
     for o in page_rows:
         o["contact_person_name"] = contact_map.get(o.get("customer"), "")
+    _attach_tracker_insights(page_rows)
 
     mr_conditions = ["mr.docstatus < 2", "mr.transaction_date >= %(from_date)s", _NOT_DISABLED_SO]
     mr_params = {"from_date": _from_date(days)}
@@ -2644,6 +2645,129 @@ def _compute_primary_stage_info(order):
     }
 
 
+STALE_AFTER_DAYS = 7
+
+
+def _attach_tracker_insights(rows):
+    """
+    `insights` on each Sales Tracker row, shown under Action Required:
+
+      waiting     what this order still waits to receive, always as the Purchase
+                  Order: a Subcontract PO with goods still at the jobber (from its
+                  Subcontracting Orders, or its own qty until the SCO exists) and
+                  plain POs not yet received, each with
+                  its pending / total qty, due date and days overdue — the document
+                  number only, never the supplier / jobber (not exposed to users)
+      late        the latest of those due dates falls after the order's delivery date
+      embroidery  goods out at an embroidery jobber, how many back, out since how long
+      last_mile   picked and ready to ship, draft Delivery Notes / Sales Invoices left
+                  open, delivered but not invoiced
+      stale_days  no activity on the order for STALE_AFTER_DAYS or more
+
+    Only documents the user may open are listed (a Merchandiser never sees a plain
+    purchase PO here, same as in the list). One query per kind for the whole page.
+    """
+    names = [o["name"] for o in rows]
+    if not names:
+        return
+    today = getdate(nowdate())
+    can_open = {}
+
+    def openable(doctype, name):
+        key = (doctype, name)
+        if key not in can_open:
+            can_open[key] = bool(frappe.has_permission(doctype, "read", doc=name))
+        return can_open[key]
+
+    waiting = defaultdict(list)
+    po_rows = frappe.db.sql("""
+        SELECT po.name, po.supplier_name, po.is_subcontracted, poi.sales_order,
+               SUM(CASE WHEN po.is_subcontracted THEN IFNULL(poi.fg_item_qty, poi.qty) ELSE poi.qty END) AS qty,
+               SUM(IFNULL(poi.received_qty, 0)) AS received, MAX(poi.uom) AS uom, MIN(poi.schedule_date) AS due
+        FROM `tabPurchase Order Item` poi JOIN `tabPurchase Order` po ON po.name = poi.parent
+        WHERE poi.sales_order IN %(sos)s AND po.docstatus = 1
+          AND po.status NOT IN ('Closed', 'Completed', 'Cancelled', 'Delivered')
+        GROUP BY po.name, po.supplier_name, po.is_subcontracted, poi.sales_order
+    """, {"sos": tuple(names)}, as_dict=True)
+    po_so = defaultdict(set)
+    for r in po_rows:
+        po_so[r.name].add(r.sales_order)
+    scos = {}
+    if po_so:
+        for r in frappe.db.sql("""
+            SELECT sco.name, sco.supplier_name, sco.purchase_order, SUM(sci.qty) AS qty,
+                   SUM(IFNULL(sci.received_qty, 0)) AS received, MAX(sci.stock_uom) AS uom, MIN(sci.schedule_date) AS due
+            FROM `tabSubcontracting Order` sco JOIN `tabSubcontracting Order Item` sci ON sci.parent = sco.name
+            WHERE sco.purchase_order IN %(pos)s AND sco.docstatus = 1 AND sco.status NOT IN ('Completed', 'Closed', 'Cancelled')
+            GROUP BY sco.name, sco.supplier_name, sco.purchase_order
+        """, {"pos": tuple(po_so)}, as_dict=True):
+            scos.setdefault(r.purchase_order, []).append(r)
+
+    def add(so, kind, doctype, name, party, qty, received, uom, due, note=""):
+        pending = flt(qty) - flt(received)
+        if pending <= 0.001 or not openable(doctype, name):
+            return
+        due = getdate(due) if due else None
+        waiting[so].append({"kind": kind, "doctype": doctype, "name": name,
+                            "pending": flt(pending, 3), "qty": flt(qty, 3), "received": flt(received, 3), "uom": uom or "",
+                            "due": str(due) if due else "", "overdue_days": (today - due).days if due and due < today else 0,
+                            "note": note})
+
+    for r in po_rows:
+        if r.is_subcontracted and scos.get(r.name):
+            # Shown as its Subcontract PO (users know the PO, not the SCO), with what
+            # the jobber still owes on the PO's Subcontracting Orders.
+            sc = scos[r.name]
+            dues = [x.due for x in sc if x.due]
+            add(r.sales_order, "jobber", "Purchase Order", r.name, r.supplier_name,
+                sum(flt(x.qty) for x in sc), sum(flt(x.received) for x in sc), sc[0].uom, min(dues) if dues else None)
+        else:
+            add(r.sales_order, "jobber" if r.is_subcontracted else "supplier", "Purchase Order", r.name,
+                r.supplier_name, r.qty, r.received, r.uom, r.due,
+                note="Subcontracting Order not created yet" if r.is_subcontracted else "")
+
+    embroidery = defaultdict(list)
+    ewo_rows = frappe.db.sql("""
+        SELECT ewo.name, ewo.work_type, COALESCE(NULLIF(ewo.full_piece_jobber, ''), ewo.panel_jobber) AS jobber, ewo.date,
+               ewo.saels_order_id, ewo.purchase_order,
+               SUM(i.ordered_qty) AS out_qty, SUM(IFNULL(i.received_qty, 0)) AS back_qty
+        FROM `tabEmbroidery Work Order` ewo JOIN `tabEmbroidery Work Order Item` i ON i.parent = ewo.name
+        WHERE ewo.docstatus = 1 AND (ewo.saels_order_id IN %(sos)s OR ewo.purchase_order IN %(pos)s)
+        GROUP BY ewo.name, ewo.work_type, jobber, ewo.date, ewo.saels_order_id, ewo.purchase_order
+    """, {"sos": tuple(names), "pos": tuple(po_so) or ("",)}, as_dict=True)
+    for r in ewo_rows:
+        if flt(r.out_qty) - flt(r.back_qty) <= 0.001 or not openable("Embroidery Work Order", r.name):
+            continue
+        sos = {r.saels_order_id} if r.saels_order_id else po_so.get(r.purchase_order, set())
+        for so in sos:
+            embroidery[so].append({"name": r.name, "work": "Panel" if "Panel" in (r.work_type or "") else "Full Piece",
+                                   "out": flt(r.out_qty, 3), "back": flt(r.back_qty, 3),
+                                   "since_days": (today - getdate(r.date)).days if r.date else None})
+
+    for o in rows:
+        so = o["name"]
+        w = sorted(waiting.get(so, []), key=lambda x: (-x["overdue_days"], x["due"] or "9999"))
+        late = None
+        dues = [getdate(x["due"]) for x in w if x["due"]]
+        if dues and o.get("delivery_date") and flt(o.get("per_delivered")) < 100 and max(dues) > getdate(o["delivery_date"]):
+            late = {"expected": str(max(dues)), "order_due": str(getdate(o["delivery_date"]))}
+        last_event = o.get("last_event_on")
+        stale = (today - getdate(last_event)).days if last_event else None
+        o["insights"] = {
+            "waiting": w,
+            "late": late,
+            "embroidery": embroidery.get(so, []),
+            "last_mile": {
+                "ready_to_ship": flt(o.get("ready_to_ship_qty")),
+                "draft_dns": [d for d in (o.get("draft_delivery_notes") or []) if openable("Delivery Note", d)],
+                "draft_invoices": [d for d in (o.get("draft_invoices") or []) if openable("Sales Invoice", d)],
+                "needs_invoice": flt(o.get("needs_invoice_qty")),
+            },
+            "stale_days": stale if (stale is not None and stale >= STALE_AFTER_DAYS
+                                    and o.get("status") not in ("Completed", "Closed")) else None,
+        }
+
+
 def _has_bom_rm_shortage(sales_order_name):
     """
     True when at least one BOM item still pending on this Sales Order (qty >
@@ -2878,6 +3002,8 @@ def get_purchase_flow(days=120, search=None, scope="open", merchandiser=None,
     if is_scoped_to_own_customers("purchase"):
         params["merch_scope"] = frappe.session.user
         conditions.append(_MERCH_SCOPE_SO)
+        # a Merchandiser sees only Subcontract POs (same as the Purchase Order list hook)
+        conditions.append("po.is_subcontracted = 1")
 
     _po_from_join = """`tabPurchase Order Item` poi
         JOIN `tabPurchase Order` po ON po.name = poi.parent

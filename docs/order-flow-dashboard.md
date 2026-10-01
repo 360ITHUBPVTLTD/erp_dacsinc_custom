@@ -369,6 +369,44 @@ order already shipped.
   ambiguous about whether they're covering a fresh order or the remaining
   balance of one already in progress.
 
+### Under Action Required: what the order is waiting for
+
+`_attach_tracker_insights` (server, one query per kind for the whole page) and
+`of_insights_html` (page) add a compact block under each Sales Tracker row's action:
+
+- **Waiting to receive**, one line per document (top 3, then "+n more"), each with
+  the document link, qty back of total, due date, and "+Nd" in red when overdue. No
+  supplier or jobber name is sent or shown:
+  - Subcontract POs with finished goods still at the jobber. The line is the
+    **PO**, never the Subcontracting Order: qty back / due come from the PO's
+    SCOs, or from the PO itself while no SCO exists (flagged "no SCO");
+  - plain Purchase Orders not yet received.
+- **Will miss due date** (red): the latest of those due dates is after the order's
+  delivery date, while the order isn't fully delivered.
+- **Embroidery:** Embroidery Work Orders with goods still out (raised from the order
+  or from its PO): "out · Nd" (red after 7 days), no jobber name.
+- **Last mile:** ready to ship (picked), draft Delivery Notes / Sales Invoices left
+  open, delivered but not invoiced.
+- **No activity for N days** (grey) after `STALE_AFTER_DAYS` (7) days without an
+  event, unless the order is Completed or Closed.
+
+Each line is one row (no wrapping, cut with "…"). Only documents the user may open
+are listed. A Merchandiser, for example, sees no
+plain purchase PO here, the same as in the list. Dates are short (DD-MMM) to keep the
+block compact.
+
+### "Completed" only for completed orders
+
+A row whose stage has no main action (`action_type` none) shows:
+
+- "✓ Completed" only when `stage_key` is `completed`;
+- nothing when its raw material is ready (`rm_ready_stage` / `rm_ready_for_sco`): the
+  Create Subcontract PO button below is the action;
+- otherwise its stage name in grey.
+
+An all-BOM order at "RM Ready — Make Subcontract PO" has no main action on purpose,
+and used to read "Completed" above its Create Subcontract PO button.
+
 ### Labels say what to do next, in short words
 
 When nothing is raised yet for what is left, the stage names the blocker
@@ -614,6 +652,13 @@ How each document reaches its order:
 - **Subcontracting Order:** through its `purchase_order`'s rows
   (`get_subcontracting_order_permission_query_conditions` /
   `has_subcontracting_order_permission`).
+- **Stock Entry** (sheet: VES, so they send raw material to the jobber from their SCOs):
+  only the jobber transfers of their orders, i.e. entries
+  whose `subcontracting_order` (via its Purchase Order) or `purchase_order` belongs
+  to a Sales Order they may see, plus entries they made themselves
+  (`get_stock_entry_merchandiser_conditions` /
+  `has_stock_entry_merchandiser_permission`, alongside the POS store scope hooks).
+  Every other Stock Entry stays hidden.
 
 ## Merchandiser scoping now covers every tab that can show it
 
@@ -1237,6 +1282,22 @@ thinner implementation. The dashboard's own preview listed item/qty/warehouse
 only; the shared one names the SOURCE document each line came from with its
 date and status, the customer, and what the document is doing relative to
 what was already raised.
+
+**Before the preview:** `draft_guard.find_existing_drafts` runs the same check as
+saving (`docs/draft-guard.md`). If a draft for the same source lines exists, the
+"Draft already exists" dialog opens instead, with **Open Draft** when there is one.
+
+**Choosing lines:** with more than one mapped line, the preview has a tick box per
+line. Lines are grouped by Sales Order, with one box per order (customer, due date,
+"overdue" in red, line count and qty), and a select-all box in the header.
+- A bar shows what's selected (lines, orders, qty per UOM). The note and the
+  button follow it: "Create Purchase Order (3 lines)", disabled when nothing is
+  ticked.
+- Unticked lines are dropped from the mapped draft before it opens.
+- `focus_so` (Order Flow "Order from MR" passes the row's order; the Sales Order
+  form passes itself): that order's lines start ticked and its group is listed
+  first, tagged "this order". The others start unticked. Without `focus_so`,
+  everything starts ticked.
 
 `make_invoice_from_dn` carries a comma-joined list of Delivery Notes, so it
 opens the picker (all ticked) when there is more than one — anything unticked

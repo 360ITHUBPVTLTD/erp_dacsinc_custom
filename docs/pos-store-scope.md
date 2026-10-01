@@ -131,6 +131,7 @@ screen is built.
   - Stores bill on their fixed customer, and these say who bought, so a bill can be
     found for a return without creating a customer.
   - Read-only once the bill is submitted.
+- **Order summary:** full item names, wrapping instead of being cut with "…".
 - **Search:** Recent Orders (`get_past_order_list` override) matches invoice ID,
   customer, walk-in name and walk-in mobile, and shows "name · mobile" for walk-in bills.
   The POS Invoice list has both fields as standard filters, in the search fields and in
@@ -162,13 +163,81 @@ screen is built.
     (`:not([style*="none"])` for the totals, `[style*="flex"]` for the pad) so they
     never override the swap. On laptops the pad is compact, and Grand Total and
     Checkout share one row under it. Item Details scrolls inside its card.
-  - Phones (≤ 620px): payment modes are stacked one per row, so the amount and cash
-    shortcuts fit.
+  - Payment modes are a wrapping grid at every size, never a sideways-scrolling row.
+    - Every mode is visible, and its amount stays inside its card.
+    - The selected mode takes a full row for its amount box and cash shortcuts.
+    - On phones it becomes one mode per row.
+  - The checkout number pad is a fixed keypad at the right (up to 340px wide, 44px
+    keys, 36px on laptops).
+  - Tablets (≤ 991px): item cards are smaller, 3–4 per row. Phones: "All Items" on
+    its own row, search and item group below it; the page title is never cut.
+- **Checkout totals:** ERPNext showed the amount still owed under "Change Amount"
+  (paid ₹1 of ₹199 read "Change Amount ₹198"). The third box now reads:
+  - **Balance to Pay** (orange) while underpaid;
+  - **Change to Return** (green) when paid more;
+  - **Change Amount ₹0** when exact.
+
+  This is `Payment.update_totals_section`, patched in `pos_page_extend.js`.
   - The order summary's cards never shrink, so they don't overlap Edit / Delete Order.
     The summary scrolls as a whole.
   - "Additional Information" at checkout shows only when the POS Profile adds fields
     to it.
-  - Tested headless at 1300×690, 1366×768, 1920×1080, 1024×768, 768×1024 and 390×844.
+  - Tested headless at 1300×650, 1300×690, 1366×768, 1920×1080, 1024×768, 768×1024 and 390×844.
+
+## Email Receipt (`pos_receipt_email.py`)
+
+POS Profile › **Receipt Email** (exported in `custom/pos_profile.json`):
+- **Store Name** (`custom_store_name`): how the store is named to customers (e.g.
+  "Dac's Inc – JP Nagar Showroom"). Used for `{store}`, under the company name at
+  the top of the email, in the footer and in the subject ("Your receipt … from
+  …"). Empty = the POS Profile name.
+- **POS Invoice › Store Name** (`custom_store_name`, read-only, a list filter,
+  exported in `custom/pos_invoice.json`): fetched from POS Profile › Store Name when
+  the bill is saved.
+  - Bills without one are filled from their profile on every migrate
+    (`fill_store_names`, after_migrate) and when the POS Profile is saved
+    (on_update, that store only).
+  - A bill that already has a name keeps it, so it says where it was sold even if
+    the profile is renamed later.
+  - The receipt email uses the bill's Store Name first.
+- **Receipt Email Account** (`custom_receipt_email_account`): receipts from this
+  store are sent from this account only.
+- **Receipt Email Message** (`custom_receipt_email_message`): the default text in
+  the Email Receipt box. `{customer}` (the bill's walk-in name, else "Customer"),
+  `{invoice}`, `{amount}` and `{store}` are filled in.
+
+On the order summary's **Email Receipt** (`PastOrderSummary` patched in
+`pos_page_extend.js`):
+- The message starts with the profile's text; staff may change it. The email
+  address starts with the customer's, else the last one this receipt went to.
+- With no account set, the box shows a warning, and **Send is refused** with "No
+  email account is set for store …". A disabled account, or one with outgoing mail
+  off, is refused too. The site's default account is never used.
+- The customer gets the receipt email (`receipt_html`, inline styles, light design,
+  600px wide at most):
+  - a white card with a teal top line, the company logo (Company › Company Logo)
+    or name, and the store under it (without repeating the company when Store Name
+    starts with it);
+  - "Thank you for your purchase!";
+  - "Dear {walk-in name}," (or "Dear Customer," when the bill has none; the
+    store's fixed billing customer is never used);
+  - the message;
+  - Bill No / Date / Amount;
+  - the items with qty and amount, net total, taxes, discount and total;
+  - a note that the PDF is attached, and a sign-off ("Team …");
+  - the store (and its address) in the footer.
+- The invoice PDF in the profile's print format (default POS Invoice Version 2) is
+  attached. It is made with `get_print(as_pdf=True)`, as Print Settings may send
+  prints as HTML.
+- The click only queues the mail. A background job (`send_queued`, queue "short")
+  sends it straight away from the account's address; Email Queue keeps the status
+  and any error. The box closes as soon as the receipt is accepted, and Send is
+  disabled while it waits, so one click sends once. Sending inside the click took
+  seconds over SMTP, and a hang left the box open.
+- **POS Invoice › Receipt Emailed To** (`custom_receipt_emailed_to`, allowed on
+  submit, read-only, exported in `custom/pos_invoice.json`) gets
+  "address — dd-mm-yyyy hh:mm", one line per send, latest first. A comment on the
+  invoice says who it went to and from which account.
 
 ## POS paperwork: MR mail, transfer approval, closing report (`pos_notify.py`)
 
