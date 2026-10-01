@@ -75,6 +75,32 @@ SHEET_ROLES = INITIAL_ROLES  # kept for callers; use sheet_roles() for the live 
 ROLE_FLAG = "custom_dacsinc_access_role"
 PROFILE_FLAG = "custom_dacsinc_access_profile"
 
+# Master data that must not leak (docs/master-data-protection.md). On these, the
+# sheet's V gives only Read + Select; Print / Email / Report / Export (lists out of
+# the system) stay with EXPORT_ROLES. Roles with no V here only pick them in forms
+# (master_guard.py), and the reports listing them follow MASTER_REPORTS.
+SENSITIVE_MASTERS = ("Customer", "Supplier", "Item Price")
+EXPORT_ROLES = ("Accounts Executive", "Accounts Manager")
+# Standard ERPNext roles some users still hold directly; they don't run the master
+# reports either (their reports are otherwise left alone).
+MASTER_REPORT_DROP_STD = ("Sales User", "Stock User", "Purchase User", "Maintenance User",
+						  "Manufacturing User", "POS User", "Item Manager")
+V_LIST_OUT = {"print", "email", "report", "export"}
+# Non-sheet roles that keep Print / Email / Report / Export on SENSITIVE_MASTERS; every
+# other non-sheet role (old Sales User, Executive, Marketing Team…) loses them there.
+MASTER_LIST_OUT_KEEP = ("Administrator", "System Manager", "Admin", "Super Admin",
+						"Sales Master Manager", "Purchase Master Manager", "Accounts User")
+# Reports that list a master's records (or prices) → the master whose Report right
+# they need. Plus every non-Report-Builder report whose ref_doctype is a master.
+MASTER_REPORTS = {
+	"Address And Contacts": "Customer", "Addresses And Contacts": "Customer",
+	"Customers Without Any Sales Transactions": "Customer", "Inactive Customers": "Customer",
+	"Customer Acquisition and Loyalty": "Customer", "Customer Credit Balance": "Customer",
+	"Customer-wise Item Price": "Item Price", "Item Price Stock": "Item Price", "Item Prices": "Item Price",
+	"Item-wise Price List Rate": "Item Price",
+	"Supplier Quotation Comparison": "Supplier", "Supplier-Wise Sales Analytics": "Supplier", "IRS 1099": "Supplier",
+}
+
 # Sheet row → real doctype(s).
 DOC_TARGETS = {"Contact & Address": ["Contact", "Address"]}
 
@@ -314,6 +340,41 @@ def _flags(letters, submittable):
 	return out
 
 
+def _master_flags(doctype, role, flags):
+	"""SENSITIVE_MASTERS: no print / email / report / export outside EXPORT_ROLES."""
+	if doctype in SENSITIVE_MASTERS and role not in EXPORT_ROLES:
+		return flags - V_LIST_OUT
+	return flags
+
+
+def strip_master_list_out(touched):
+	"""SENSITIVE_MASTERS: non-sheet roles outside MASTER_LIST_OUT_KEEP lose Print / Email /
+	Report / Export (Read stays). One-way: nothing is given back. Returns rows changed."""
+	keep = set(sheet_roles()) | set(MASTER_LIST_OUT_KEEP)
+	changed = 0
+	for dt in SENSITIVE_MASTERS:
+		for r in frappe.get_all("Custom DocPerm", filters={"parent": dt, "role": ["not in", list(keep)]},
+								fields=["name", *V_LIST_OUT]):
+			if not any(r.get(f) for f in V_LIST_OUT):
+				continue
+			frappe.db.set_value("Custom DocPerm", r.name, {f: 0 for f in V_LIST_OUT}, update_modified=False)
+			changed += 1
+			touched.add(dt)
+	return changed
+
+
+def master_report_roles(direct):
+	"""{report: roles allowed to run it} for the reports listing master data: the roles
+	with Report on that master (after _master_flags)."""
+	reports = dict(MASTER_REPORTS)
+	for r in frappe.get_all("Report", filters={"ref_doctype": ["in", list(SENSITIVE_MASTERS)],
+			"report_type": ["!=", "Report Builder"], "disabled": 0}, fields=["name", "ref_doctype"]):
+		reports.setdefault(r.name, r.ref_doctype)
+	existing = set(frappe.get_all("Report", filters={"name": ["in", list(reports)]}, pluck="name"))
+	return {rep: {r for r, (fl, _o) in direct.get(master, {}).items() if "report" in fl}
+			for rep, master in reports.items() if rep in existing}
+
+
 def _meta_links(doctype):
 	"""(links on the doctype's own fields, links inside its child tables,
 	targets the form fetches values from — fetch_from "<link field>.<field>")."""
@@ -365,7 +426,7 @@ def compute_doc_access(sheet):
 			if dt not in info:
 				continue
 			sub = bool(info[dt].is_submittable)
-			direct[dt] = {r: (_flags(values[i], sub), int("O" in values[i])) for r, i in cols.items()}
+			direct[dt] = {r: (_master_flags(dt, r, _flags(values[i], sub)), int("O" in values[i])) for r, i in cols.items()}
 
 	deps = {}
 	for dt, by_role in direct.items():
@@ -523,6 +584,7 @@ def _apply_doc_access(sheet):
 	_map_set("derived_applied", new_state)
 	summary["linked_doctypes"] = len(new_state)
 
+	summary["master_list_out_removed"] = strip_master_list_out(touched)
 	summary["report_roles_added"], summary["report_roles_removed"] = apply_report_access(direct)
 	summary["pages_changed"] = apply_page_access(direct)
 
@@ -595,25 +657,30 @@ def apply_report_access(direct):
 	# POS roles see only POS records (pos_scope.py); these reports read the whole
 	# company with their own SQL, so they're not given to them.
 	# This wins over roles someone put on the report itself.
-	blocked = _pos_blocked_reports()
-	for rep_name in blocked & set(want):
-		want[rep_name] -= set(POS_ROLES)
+	# Reports listing master data: only roles with Report on that master
+	# (SENSITIVE_MASTERS); also wins over roles put on the report itself.
+	all_sheet = set(sheet_roles())
+	remove = {rep: set(POS_ROLES) for rep in _pos_blocked_reports()}
+	for rep_name, allowed in master_report_roles(direct).items():
+		remove[rep_name] = remove.get(rep_name, set()) | (all_sheet - allowed) | set(MASTER_REPORT_DROP_STD)
+	for rep_name, roles in remove.items():
+		if rep_name in want:
+			want[rep_name] -= roles
 	prev = _map_get("report_custom_roles")
 	added = removed = 0
 	state = {}
-	for rep_name in sorted(set(want) | set(prev) | blocked):
+	for rep_name in sorted(set(want) | set(prev) | set(remove)):
 		own = set(frappe.get_all("Has Role", filters={"parent": rep_name, "parenttype": "Report"}, pluck="role"))
 		cr, custom = _custom_role_roles("report", rep_name)
 		mine = set(prev.get(rep_name, []))
 		wanted = want.get(rep_name, set())
 		if not own and not cr:
 			continue  # no role list at all = open to everyone who may report on the document
-		if rep_name not in want and rep_name not in prev and not (own | custom) & set(POS_ROLES):
-			continue  # blocked report the POS roles never had: nothing to do
+		if rep_name not in want and rep_name not in prev and not (own | custom) & remove.get(rep_name, set()):
+			continue  # blocked report the blocked roles never had: nothing to do
 		base = (custom - mine) if cr else own
 		final = base | wanted
-		if rep_name in blocked:
-			final -= set(POS_ROLES)
+		final -= remove.get(rep_name, set())
 		ours = wanted - base
 		if final != custom:
 			_set_custom_role("report", rep_name, final)
@@ -798,7 +865,7 @@ def _map_set(key, data):
 
 # Bump when the rules in this file change (dependencies, companions, pages…), so each
 # site re-applies its sheets once on the next migrate (sync_from_bundle).
-RULES_VERSION = "2026-09-29.2"
+RULES_VERSION = "2026-10-01.1"
 
 
 def bundle_fingerprint(data):
@@ -1029,3 +1096,90 @@ def get_activation_preview():
 	frappe.only_for(RESET_ROLE)
 	return {"active": is_active(), "users": activation_preview()}
 
+
+
+
+def _rights(dt, role, direct, deps):
+	table = "Custom DocPerm" if frappe.db.exists("Custom DocPerm", {"parent": dt}) else "DocPerm"
+	rows = frappe.get_all(table, filters={"parent": dt, "role": role, "permlevel": 0},
+						  fields=["if_owner", *PERM_FIELDS])
+	linked = sorted(f for f in deps.get(dt, {}).get(role, set()) if f in PERM_FIELDS)
+	why = []
+	if linked:
+		for parent, by_role in direct.items():
+			flags = by_role.get(role, (set(), 0))[0]
+			if parent == dt or not flags & {"write", "create"}:
+				continue
+			own_links, child_links, _f = _meta_links(parent)
+			if dt in own_links or dt in child_links or dt in AUTO_CREATES.get(parent, ()):
+				why.append(parent)
+	return {
+		"erp": {"general": sorted({f for r in rows if not r.if_owner for f in PERM_FIELDS if r.get(f)}),
+				"own": sorted({f for r in rows if r.if_owner for f in PERM_FIELDS if r.get(f)})},
+		"linked": linked,
+		"linked_from": sorted(why),
+		"master": dt in SENSITIVE_MASTERS and role not in EXPORT_ROLES,
+	}
+
+
+def _check_view():
+	from erp_dacsinc_custom.access_worksheet import can_view
+
+	if not can_view():
+		frappe.throw("Not permitted.", frappe.PermissionError)
+
+
+def _row_doctype(row):
+	targets = [d for d in DOC_TARGETS.get(row, [row]) if frappe.db.exists("DocType", d)]
+	if not targets:
+		frappe.throw("Unknown document.")
+	return targets[0]
+
+
+@frappe.whitelist()
+def cell_rights(row, role):
+	"""The /roles-and-permissions "every right" panel for one Document access cell:
+	what the role has in the ERP now (general / only-own rows at level 0), what the
+	sheet's linked-document rule adds there (and from which documents), and whether
+	the master-data rule takes print / email / report / export away."""
+	from erp_dacsinc_custom.access_worksheet import load_sheet
+
+	_check_view()
+	dt = _row_doctype(row)
+	direct, deps = compute_doc_access(load_sheet("doc_access") or {})
+	return {"doctype": dt, "submittable": bool(frappe.get_meta(dt).is_submittable),
+			"export_roles": list(EXPORT_ROLES), **_rights(dt, role, direct, deps)}
+
+
+@frappe.whitelist()
+def sheet_rights(row=None, role=None, rows=None):
+	"""Tick boxes on /roles-and-permissions (as Role Permission Manager): every sheet
+	role's rights on one document (row) or several (rows, a JSON list →
+	{"docs": {row: {"submittable", "items": {role: rights}}}}), or one role's rights on
+	every sheet document (role)."""
+	from erp_dacsinc_custom.access_worksheet import load_sheet
+
+	_check_view()
+	sheet = load_sheet("doc_access") or {}
+	direct, deps = compute_doc_access(sheet)
+	out = {"export_roles": list(EXPORT_ROLES), "items": {}, "version": sheet.get("version")}
+	if rows:
+		out["docs"] = {}
+		for r_ in frappe.parse_json(rows) if isinstance(rows, str) else rows:
+			dt = _row_doctype(r_)
+			out["docs"][r_] = {"submittable": bool(frappe.get_meta(dt).is_submittable),
+							   "items": {r: _rights(dt, r, direct, deps) for r in _role_columns(sheet)}}
+		return out
+	if row:
+		dt = _row_doctype(row)
+		out["submittable"] = {row: bool(frappe.get_meta(dt).is_submittable)}
+		for r in _role_columns(sheet):
+			out["items"][r] = _rights(dt, r, direct, deps)
+	elif role:
+		out["submittable"] = {}
+		for r in sheet.get("cells") or {}:
+			targets = [d for d in DOC_TARGETS.get(r, [r]) if frappe.db.exists("DocType", d)]
+			if targets:
+				out["submittable"][r] = bool(frappe.get_meta(targets[0]).is_submittable)
+				out["items"][r] = _rights(targets[0], role, direct, deps)
+	return out

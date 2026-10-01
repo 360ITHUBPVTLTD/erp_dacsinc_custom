@@ -11209,37 +11209,33 @@ def has_sales_order_permission(doc, ptype=None, user=None):
 
 
 def get_customer_permission_query_conditions(user=None):
+    """Merchandiser User: the customers whose orders they may see — assigned to
+    them or to nobody yet, plus customers they created and customers of orders
+    they raised or are Lead Owner of (same rule as their Sales Orders), so every
+    order they can open still has a customer they can open."""
     from erp_dacsinc_custom.order_flow_api import is_scoped_merchandiser_for_doctype
 
-    if not user:
-        user = frappe.session.user
-
-    if is_scoped_merchandiser_for_doctype("Customer", user):
-        # Customers assigned to them, plus any customer they have raised a
-        # Sales Order for. Without the second half a merchandiser can open
-        # their own order (see above) but not the customer on it, which
-        # breaks the form the moment it tries to read that link.
-        escaped = frappe.db.escape(user)
-        return """(`tabCustomer`.custom_merchandiser_user = {0} or exists (
-            select so.name from `tabSales Order` so
-            where so.customer = `tabCustomer`.name and so.owner = {0}
-        ))""".format(escaped)
-    return ""
+    user = user or frappe.session.user
+    if not is_scoped_merchandiser_for_doctype("Customer", user):
+        return ""
+    esc = frappe.db.escape(user)
+    return """(`tabCustomer`.custom_merchandiser_user = {0}
+        or ifnull(`tabCustomer`.custom_merchandiser_user, '') = ''
+        or `tabCustomer`.owner = {0}
+        or exists (select so.name from `tabSales Order` so
+            where so.customer = `tabCustomer`.name and (so.owner = {0} or so.custom_lead_owner = {0})))""".format(esc)
 
 
-def has_customer_permission(doc, ptype=None, user=None):
+def has_customer_permission(doc, ptype=None, user=None, debug=False):
     from erp_dacsinc_custom.order_flow_api import is_scoped_merchandiser_for_doctype
 
-    if not user:
-        user = frappe.session.user
-
-    if is_scoped_merchandiser_for_doctype("Customer", user):
-        if doc.custom_merchandiser_user and doc.custom_merchandiser_user != user:
-            # Still theirs to see if they have raised an order for them.
-            return bool(frappe.db.exists(
-                "Sales Order", {"customer": doc.name, "owner": user}))
-
-    return True
+    user = user or frappe.session.user
+    if doc.is_new() or not is_scoped_merchandiser_for_doctype("Customer", user):
+        return None
+    if not doc.get("custom_merchandiser_user") or doc.custom_merchandiser_user == user or doc.owner == user:
+        return True
+    return bool(frappe.db.sql("""select 1 from `tabSales Order` where customer = %(c)s
+        and (owner = %(u)s or custom_lead_owner = %(u)s) limit 1""", {"c": doc.name, "u": user}))
 
 
 # --------------------------------------------------------------------------
@@ -11372,6 +11368,51 @@ def has_subcontracting_order_permission(doc, ptype=None, user=None):
         where poi.parent = %(po)s and ifnull(poi.sales_order, '') != '' and {visible}
         limit 1
     """.format(visible=_visible_sales_order_clause(user, "poi.sales_order")), {"po": doc.purchase_order}))
+
+
+# Stock Entry: a Merchandiser User sees the jobber transfers of the orders they may see —
+# entries whose Subcontracting Order (or subcontracted Purchase Order) belongs to one of
+# their Sales Orders — plus ones they made. Every other Stock Entry stays hidden.
+def _merch_stock_entry_clause(user, se="`tabStock Entry`"):
+    visible = _visible_sales_order_clause(user, "poi.sales_order")
+    return """({se}.owner = {u} or exists (
+        select poi.name from `tabPurchase Order Item` poi
+        where ifnull(poi.sales_order, '') != '' and {visible}
+          and (poi.parent = {se}.purchase_order
+               or poi.parent = (select sco.purchase_order from `tabSubcontracting Order` sco
+                                where sco.name = {se}.subcontracting_order))
+    ))""".format(se=se, u=frappe.db.escape(user), visible=visible)
+
+
+def get_stock_entry_merchandiser_conditions(user=None):
+    from erp_dacsinc_custom.order_flow_api import is_scoped_merchandiser_for_doctype
+
+    user = user or frappe.session.user
+    if not is_scoped_merchandiser_for_doctype("Stock Entry", user):
+        return ""
+    return _merch_stock_entry_clause(user)
+
+
+def has_stock_entry_merchandiser_permission(doc, ptype=None, user=None):
+    from erp_dacsinc_custom.order_flow_api import is_scoped_merchandiser_for_doctype
+
+    user = user or frappe.session.user
+    if not is_scoped_merchandiser_for_doctype("Stock Entry", user) or doc.is_new():
+        return None
+    return bool(frappe.db.sql("select 1 from `tabStock Entry` where name = %s and " + _merch_stock_entry_clause(user), doc.name))
+
+
+def guard_merchandiser_plain_po(doc, method=None):
+    """Purchase Order validate: a Merchandiser User raises only Subcontract POs
+    (is_subcontracted = 1) — the POs behind their orders' Subcontracting Orders. A plain
+    purchase PO is the purchase team's. Admins are never limited (is_scoped_...)."""
+    from erp_dacsinc_custom.order_flow_api import is_scoped_merchandiser_for_doctype
+
+    if doc.get("is_subcontracted") or not is_scoped_merchandiser_for_doctype("Purchase Order", frappe.session.user):
+        return
+    frappe.throw(_("As a Merchandiser you can create only Subcontract POs (Is Subcontracted ticked). "
+                   "A normal purchase PO is raised by the purchase team."), frappe.PermissionError,
+                 title=_("Subcontract PO only"))
 
 
 def get_pick_list_permission_query_conditions(user=None):

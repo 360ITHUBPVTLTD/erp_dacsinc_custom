@@ -2671,7 +2671,34 @@ function so_open_mapped_doc(opts) {
     });
 }
 
+// A draft made from the same source lines already exists (draft_guard.py):
+// say so and offer it, instead of opening a new draft that can't be saved.
 function so_show_mapped_doc_preview(doc, opts) {
+    frappe.call({
+        method: 'erp_dacsinc_custom.draft_guard.find_existing_drafts',
+        args: { doc: doc },
+        callback: (r) => {
+            const found = r && r.message;
+            if (!found) {
+                so_show_mapped_doc_preview_now(doc, opts);
+                return;
+            }
+            const d = new frappe.ui.Dialog({
+                title: __('Draft already exists'),
+                fields: [{ fieldtype: 'HTML', fieldname: 'msg' }],
+                primary_action_label: found.drafts.length === 1 ? __('Open Draft') : __('Close'),
+                primary_action: () => {
+                    d.hide();
+                    if (found.drafts.length === 1) frappe.set_route('Form', doc.doctype, found.drafts[0]);
+                }
+            });
+            d.fields_dict.msg.$wrapper.html(`<div style="padding:4px 2px">${found.message}</div>`);
+            d.show();
+        }
+    });
+}
+
+function so_show_mapped_doc_preview_now(doc, opts) {
     inject_so_styles();
     opts = opts || {};
     const items = doc.items || [];
@@ -2715,13 +2742,50 @@ function so_show_mapped_doc_preview(doc, opts) {
         ? [...new Set(items.map(it => it.sales_order).filter(Boolean))]
         : [];
 
-    const rows = items.map(it => {
+    // Choosing lines. With more than one line every row gets a tick box, grouped
+    // by Sales Order (one box per order ticks its lines) under a "select all" box —
+    // an MR often serves several orders and the user may order for some only.
+    // opts.focus_so (the order the action was started from): only its lines start
+    // ticked, the rest are shown for a deliberate choice.
+    const selectable = items.length > 1;
+    const so_of = it => it.sales_order || '';
+    const grouped = selectable && items.some(it => it.sales_order) && new Set(items.map(so_of)).size > 1;
+    const focus = opts.focus_so && items.some(it => it.sales_order === opts.focus_so) ? opts.focus_so : null;
+    const checked = items.map(it => !focus || it.sales_order === focus);
+    const order = items.map((it, i) => i);
+    // The order the action started from first, then the others by order number.
+    const rank = i => (focus && so_of(items[i]) === focus ? '0' : '1') + so_of(items[i]);
+    if (grouped) order.sort((a, b) => rank(a).localeCompare(rank(b)) || a - b);
+    const ncols = 2 + (source_field ? 1 : 0) + (show_customer ? 1 : 0) + (selectable ? 1 : 0);
+    const uom_of = it => it.uom || it.stock_uom || '';
+    const qty_text = (list) => {
+        const by = {};
+        list.forEach(it => { by[uom_of(it)] = (by[uom_of(it)] || 0) + flt(it.qty); });
+        return Object.keys(by).map(u => `${flt(by[u], 2)} ${esc(u)}`).join(' + ');
+    };
+
+    let last_so = null;
+    const rows = order.map(i => {
+        const it = items[i];
         const src = source_field ? (it[source_field] || '') : '';
-        return `
-        <tr>
+        let head = '';
+        if (grouped && so_of(it) !== last_so) {
+            last_so = so_of(it);
+            const lines = items.filter(x => so_of(x) === last_so);
+            head = `<tr class="dp-grp-row"><td colspan="${ncols}">
+                <label class="dp-grp-label"><input type="checkbox" class="dp-grp" data-grp="${esc(last_so)}">
+                <b>${last_so ? esc(last_so) : __('No Sales Order')}</b>
+                ${last_so ? `<span class="dp-grp-cust" data-so="${esc(last_so)}"></span>` : ''}
+                <span class="text-muted">· ${lines.length} ${lines.length === 1 ? __('line') : __('lines')} · ${qty_text(lines)}</span>
+                ${last_so && last_so === focus ? `<span class="dp-grp-tag">${__('this order')}</span>` : ''}
+                </label></td></tr>`;
+        }
+        return head + `
+        <tr class="dp-line-row" data-i="${i}">
+            ${selectable ? `<td class="dp-chk"><input type="checkbox" class="dp-line" data-i="${i}"></td>` : ''}
             <td>${esc(it.item_code || '')}${it.item_name && it.item_name !== it.item_code
                 ? `<div class="doc-preview-item-name">${esc(it.item_name)}</div>` : ''}</td>
-            <td class="text-right">${flt(it.qty, 2)} ${esc(it.uom || it.stock_uom || '')}</td>
+            <td class="text-right">${flt(it.qty, 2)} ${esc(uom_of(it))}</td>
             ${source_field ? `<td class="doc-preview-src" data-src="${esc(src)}">${src
                 ? `<a class="so-link" href="/app/${doctype_route(source_doctype)}/${encodeURIComponent(src)}"
                        target="_blank">${esc(src)}</a>
@@ -2730,16 +2794,28 @@ function so_show_mapped_doc_preview(doc, opts) {
             ${show_customer ? `<td class="doc-preview-cust" data-so="${esc(it.sales_order || '')}">${it.sales_order
                 ? `<div class="doc-preview-cust__name"><i class="fa fa-spinner fa-spin"></i></div>
                    <a class="so-link" href="/app/sales-order/${encodeURIComponent(it.sales_order)}"
-                      target="_blank" style="font-size:11px;">${esc(it.sales_order)}</a>`
+                      target="_blank" style="font-size:11px;">${esc(it.sales_order)}</a>
+                   <div class="doc-preview-cust__due"></div>`
                 : em_dash()}</td>` : ''}
         </tr>`;
     }).join('');
 
+    const confirm_label = opts.confirm_label || __('Create');
     const dialog = new frappe.ui.Dialog({
         title: opts.preview_title || __('Review before creating'),
+        size: (show_customer || source_field) ? 'large' : undefined,
         fields: [{ fieldtype: 'HTML', fieldname: 'preview' }],
-        primary_action_label: opts.confirm_label || __('Create'),
+        primary_action_label: confirm_label,
         primary_action: () => {
+            const keep = items.filter((it, i) => checked[i]);
+            if (!keep.length) {
+                frappe.show_alert({ message: __('Tick at least one line.'), indicator: 'orange' });
+                return;
+            }
+            if (keep.length < items.length) {
+                keep.forEach((r, ix) => { r.idx = ix + 1; });
+                doc.items = keep;
+            }
             dialog.hide();
             // The mapped doc is unsaved — it exists only in THIS tab's
             // client-side cache, which a new browser tab has no access to
@@ -2754,8 +2830,24 @@ function so_show_mapped_doc_preview(doc, opts) {
         secondary_action: () => dialog.hide()
     });
     dialog.fields_dict.preview.$wrapper.html(`
+        <style>
+            .dp-sel-bar { display:flex; flex-wrap:wrap; gap:6px 14px; align-items:center; margin-bottom:8px; font-size:12.5px; }
+            .dp-sel-bar b { font-weight:600; }
+            .dp-sel-hint { color: var(--text-muted); font-size:12px; }
+            .doc-preview-table td.dp-chk, .doc-preview-table th.dp-chk { width:30px; padding-right:0; }
+            .dp-grp-row td { background: var(--subtle-fg); font-size:12.5px; padding-top:6px !important; padding-bottom:6px !important; }
+            .dp-grp-label { margin:0; cursor:pointer; font-weight:normal; display:flex; flex-wrap:wrap; gap:6px; align-items:center; }
+            .dp-grp-tag { background: var(--blue-100, #dbeafe); color: var(--blue-700, #1d4ed8); border-radius:8px; padding:0 7px; font-size:11px; }
+            .dp-line-row.dp-off td { opacity:.45; }
+            .doc-preview-cust__due { font-size:11px; }
+        </style>
+        ${selectable ? `<div class="dp-sel-bar"><span class="dp-sel-count"></span>
+            <span class="dp-sel-hint">${focus
+                ? __('Only the lines for {0} are ticked. Tick other orders to add them to the same {1}.', [esc(focus), __(doc.doctype)])
+                : __('Untick the lines you don\'t want on this {0}.', [__(doc.doctype)])}</span></div>` : ''}
         <div class="doc-preview-wrap"><table class="doc-preview-table">
             <thead><tr>
+                ${selectable ? `<th class="dp-chk"><input type="checkbox" class="dp-all" title="${__('Select all')}"></th>` : ''}
                 <th>${__('Item')}</th><th class="text-right">${__('Qty')}</th>${
                     source_field ? `<th>${__(source_doctype)}</th>` : ''}${
                     show_customer ? `<th>${__('Customer')}</th>` : ''}
@@ -2768,21 +2860,56 @@ function so_show_mapped_doc_preview(doc, opts) {
         }</p>`);
     dialog.show();
 
-    // Spell out what this document is actually doing relative to what was
-    // already raised — "a Material Request already exists, this covers the
-    // balance of it" — rather than leaving the reader to infer it from an
-    // item table and a doc id.
-    if (source_names.length) {
-        const total_qty = items.reduce((sum, it) => sum + flt(it.qty), 0);
-        const uom = (items.find(it => it.uom || it.stock_uom) || {});
-        const uom_label = uom.uom || uom.stock_uom || '';
-        const note = (source_doctype === 'Material Request')
-            ? __('{0} was already raised for this — this {1} covers the balance of {2} {3} still to order against it.',
-                [source_names.join(', '), __(doc.doctype), flt(total_qty, 2), uom_label])
-            : __('Creating this {0} from {1}.', [__(doc.doctype), source_names.join(', ')]);
-        dialog.fields_dict.preview.$wrapper.find('#so-preview-source-note').html(
-            `<i class="fa fa-info-circle"></i> ${note}`);
-    }
+    const $w = dialog.fields_dict.preview.$wrapper;
+    const refresh_selection = () => {
+        const sel = items.filter((it, i) => checked[i]);
+        $w.find('.dp-line').each((ix, el) => {
+            const i = +$(el).data('i');
+            el.checked = checked[i];
+            $(el).closest('tr').toggleClass('dp-off', !checked[i]);
+        });
+        $w.find('.dp-grp').each((ix, el) => {
+            const g = String($(el).data('grp') || '');
+            const idx = items.map((it, i) => i).filter(i => so_of(items[i]) === g);
+            const n = idx.filter(i => checked[i]).length;
+            el.checked = n === idx.length;
+            el.indeterminate = n > 0 && n < idx.length;
+        });
+        const all = $w.find('.dp-all')[0];
+        if (all) {
+            all.checked = sel.length === items.length;
+            all.indeterminate = sel.length > 0 && sel.length < items.length;
+        }
+        const sos = new Set(sel.map(so_of).filter(Boolean));
+        $w.find('.dp-sel-count').html(sel.length
+            ? __('Selected: <b>{0}</b> of {1} lines', [sel.length, items.length])
+                + (sos.size ? ` · <b>${sos.size}</b> ${sos.size === 1 ? __('Sales Order') : __('Sales Orders')}` : '')
+                + ` · <b>${qty_text(sel)}</b>`
+            : `<span style="color:var(--red-600,#dc2626)">${__('Nothing selected')}</span>`);
+        dialog.set_primary_action(selectable && sel.length < items.length
+            ? `${confirm_label} (${sel.length} ${sel.length === 1 ? __('line') : __('lines')})` : confirm_label);
+        dialog.get_primary_btn().prop('disabled', !sel.length);
+        // Spell out what this document is actually doing relative to what was
+        // already raised — "a Material Request already exists, this orders part
+        // of it" — for the lines actually ticked.
+        if (source_names.length) {
+            const srcs = [...new Set(sel.map(it => it[source_field]).filter(Boolean))];
+            const note = !sel.length ? __('Nothing selected.')
+                : (source_doctype === 'Material Request')
+                    ? __('{0} was already raised for this — this {1} orders {2} of what is still to order against it.',
+                        [srcs.join(', '), __(doc.doctype), qty_text(sel)])
+                    : __('Creating this {0} from {1}.', [__(doc.doctype), srcs.join(', ')]);
+            $w.find('#so-preview-source-note').html(`<i class="fa fa-info-circle"></i> ${note}`);
+        }
+    };
+    $w.on('change', '.dp-line', (e) => { checked[+$(e.currentTarget).data('i')] = e.currentTarget.checked; refresh_selection(); });
+    $w.on('change', '.dp-grp', (e) => {
+        const g = String($(e.currentTarget).data('grp') || '');
+        items.forEach((it, i) => { if (so_of(it) === g) checked[i] = e.currentTarget.checked; });
+        refresh_selection();
+    });
+    $w.on('change', '.dp-all', (e) => { items.forEach((it, i) => { checked[i] = e.currentTarget.checked; }); refresh_selection(); });
+    refresh_selection();
 
     // The source documents' own dates/status aren't on the mapped doc — it
     // only carries their names — so they're fetched after the dialog is
@@ -2872,7 +2999,7 @@ function so_render_preview_customers(dialog, so_names) {
 
     frappe.db.get_list('Sales Order', {
         filters: { name: ['in', so_names] },
-        fields: ['name', 'customer', 'customer_name'],
+        fields: ['name', 'customer', 'customer_name', 'delivery_date', 'per_delivered', 'status'],
         limit: so_names.length,
     }).then(docs => {
         const by_name = {};
@@ -2882,6 +3009,13 @@ function so_render_preview_customers(dialog, so_names) {
             if (!x) return fill(nm, em_dash());
             fill(nm, `<a class="so-link" href="/app/customer/${encodeURIComponent(x.customer)}"
                          target="_blank">${esc(x.customer_name || x.customer)}</a>`);
+            // When the order is due helps decide which lines to order first.
+            const late = x.delivery_date && x.delivery_date < frappe.datetime.get_today() && flt(x.per_delivered) < 100;
+            const due = x.delivery_date ? `<span style="color:${late ? 'var(--red-600,#dc2626)' : 'var(--text-muted)'}">${
+                __('Due {0}', [moment(x.delivery_date).format('DD-MMM')])}${late ? ' · ' + __('overdue') : ''}</span>` : '';
+            $wrap.find('.doc-preview-cust').filter((idx, el) => $(el).data('so') === nm).find('.doc-preview-cust__due').html(due);
+            $wrap.find('.dp-grp-cust').filter((idx, el) => $(el).data('so') === nm)
+                .html(`· ${esc(x.customer_name || x.customer)}${due ? ' · ' + due : ''}`);
         });
     }).catch(() => {
         so_names.forEach(nm => fill(nm, em_dash()));
@@ -3287,7 +3421,9 @@ function so_make_po_from_mr(mr_name) {
         source_name: mr_name,
         freeze_message: __('Creating Purchase Order from Material Request…'),
         preview_title: __('Review Purchase Order — from Material Request'),
-        confirm_label: __('Create Purchase Order')
+        confirm_label: __('Create Purchase Order'),
+        // From a Sales Order form: start with only this order's lines ticked.
+        focus_so: (window.cur_frm && cur_frm.doctype === 'Sales Order') ? cur_frm.doc.name : null
     });
 }
 
@@ -5520,6 +5656,11 @@ function so_rm_physically_in_stock(d, qty) {
 function so_buy_btn(d, so_name_arg, item_arg, qty, primary, pair_key) {
     const subcontract = (d.is_sub_contracted_item || d.is_bom_item) && d.bom_no;
     if (!subcontract) {
+        // A Merchandiser User raises only Subcontract POs (custom_script.guard_merchandiser_plain_po).
+        if (so_is_scoped_merchandiser()) {
+            return `<div class="so-action__note" style="color:var(--text-muted);" title="${esc('A normal purchase PO is raised by the purchase team.')}">
+                <i class="fa fa-shopping-cart"></i> ${__('Purchase team to order')}</div>`;
+        }
         return so_cmd_btn(`so_make_purchase_order('${so_name_arg}','${item_arg}',${flt(qty)})`,
             'shopping-cart', 'Purchase Order', primary);
     }
@@ -6331,3 +6472,11 @@ window.so_show_so_embroidery = function (sales_order) {
         d.show();
     });
 };
+
+
+// Merchandiser User who is not an admin (same rule as order_flow_api.is_scoped_merchandiser_for_doctype).
+function so_is_scoped_merchandiser() {
+    const r = frappe.user_roles || [];
+    return r.includes('Merchandiser User') && frappe.session.user !== 'Administrator'
+        && !['System Manager', 'Super Admin', 'Admin'].some((x) => r.includes(x));
+}

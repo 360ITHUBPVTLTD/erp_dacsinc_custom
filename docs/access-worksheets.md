@@ -224,9 +224,52 @@ never disagree.
     (typed REMOVE; `remove_sheet_document`). Roles keep their rights on it, and the
     sheet just stops deciding them. Built-in rows can't be removed.
   - The blank PDF worksheets list only the built-in documents.
+- Customer, Supplier and Item Price are protected masters: there, V gives Read +
+  Select only (Print / Email / Report / Export stay with Accounts), and roles
+  without V are pick-only. See `docs/master-data-protection.md`.
 - Record-level rules in code (a Merchandiser's own customers, POS store scope,
   `permission_query_conditions` / `has_permission`) are not sheet cells. The page
   says so under the sheet.
+- **▸ on a document** (Document access) opens its permissions as tick boxes inside
+  the sheet, as in Role Permission Manager. There are 15 rows (Select, Read, Write,
+  Create, Delete, Submit, Cancel, Amend, Print, Email, Report, Export, Import, Share,
+  Only If Creator) with a box under each role column, read from the ERP
+  (`access_sync.sheet_rights`, `rows=`). "Show all tick boxes" opens every document.
+  - A box shows the ERP's right today. On a cell with an unsaved change it shows
+    what Save will give, outlined blue.
+  - Yellow = the ERP differs from the sheet. A grey tick = needed to pick it in
+    linked documents. Greyed boxes can't be ticked (hover says why: never
+    submitted, master data, Import / Share only in Role Permission Manager).
+  - Ticking switches the letter that gives it, so its set follows (V = Select,
+    Read, Print, Email, Report, Export · E = Create, Write · C = Cancel, Amend).
+  - Rows follow the document: one that is never submitted has no Submit / Cancel /
+    Amend rows. The ⋯ panel drops its Approve group the same way.
+  - Live: opened documents re-read the ERP with the page's 15 s check, and after
+    each save. A change made in Role Permission Manager, or by another user, shows
+    up by itself ("Tick boxes updated from the ERP").
+- **Printing** (the Print / Save as PDF button or the browser's own Ctrl+P) prints
+  only the sheet on screen: its print header (version, printed date), the legend and
+  the table. The status strip, Reset profiles, the tabs, the heading, the intro text,
+  the bar and the ▸ / ⋯ buttons are left out.
+- **Confirmations.** Save lists the rights **taken away** first (red) and those
+  **given**, with each role's active user count (`role_users` in the page boot) and
+  the total reached. When anything is taken away and the sheet is applied, SAVE must
+  be typed. Discard lists what will be lost. Resets / syncs / clear / apply / remove
+  ask for a typed word; granting Delete or Cancel and removing View ask on the cell.
+- **⋯ on a Document access cell** opens "every permission" for that role and document
+  (`access_sync.cell_rights`). It lists Frappe's own permissions, as in Role
+  Permission Manager, grouped in plain words: See it (Select, Read), Work on it
+  (Create, Write), Approve (Submit, Cancel, Amend), Remove (Delete), Take it out of
+  the ERP (Print, Email, Report, Export), Never given by this sheet (Import, Share),
+  and Which records (Only If Creator).
+  - Each line says what gives it: the letter, "needed to pick it in <documents>"
+    (linked-document rights), "Accounts only (master data)", or "never submitted".
+  - Each line also shows the role's right in the ERP now; differences are
+    highlighted.
+  - A one-line summary sits on top, e.g. "can only pick Customer in forms… the
+    list and records stay closed".
+  - Ticking a line switches its letter. Rights come in sets (V, E, C), so the
+    sheet stays the only place rights are decided. Nothing applies until Save.
 - **Page:** every 15 s (and when the tab becomes visible) it fetches
   `access_worksheet.get_saved`. A newer version replaces the table, with a toast and
   the version's note in the bar. If the page has unsaved changes they're kept; the

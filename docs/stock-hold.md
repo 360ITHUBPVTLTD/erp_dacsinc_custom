@@ -45,6 +45,10 @@ Details:
 - **Deleting** a submitted document requires cancelling it first, so the cancel check
   covers it.
 
+The check speaks only when holds are the reason. When nothing is held and the shelf
+is simply short, it stays out of the way, and ERPNext's own "insufficient stock"
+message (or the subcontract raw-material rule) explains it.
+
 The message names the item, how much would leave, how much is free, and which orders
 and Pick Lists hold the rest. When the document's own order holds more than is on the
 shelf, it also says "the picked stock has gone": the stock was removed after picking,

@@ -19,6 +19,12 @@ previously-buggy edge cases — are documented in `docs/`:
 - `docs/pos-store-scope.md` — store-wise record scoping for POS Admin / POS
   Store Manager (Customer › POS Store).
 - `docs/sales-order-sharing.md` — Sales Orders shared with their Lead Owner.
+- `docs/master-data-protection.md` — Customer / Supplier / Item Price: who views,
+  pick-only users (no list, no form), no export / print / report, master reports.
+- `docs/draft-guard.md` — a new PO / SCO / PR / PI / SCR / MR / DN / SI is refused
+  while a draft for the same source line exists.
+- `docs/merchandiser-purchase.md` — Merchandiser User sees and creates only
+  subcontracted POs; Stock Entries only for their orders' jobber transfers.
 - `docs/stock-hold.md` — stock held for Sales Orders (Pick Lists, jobber, earmarks)
   can't be delivered, moved, reconciled or cancelled away by anything else.
 
