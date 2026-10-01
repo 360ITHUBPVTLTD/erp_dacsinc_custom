@@ -369,11 +369,11 @@
     "",
     "",
     "",
-    "V",
+    "VES",
     "",
     "",
     "",
-    "",
+    "VES",
     "VES",
     "VES",
     "V",
@@ -392,7 +392,7 @@
     "",
     "",
     "V",
-    "V",
+    "VE",
     "VES",
     "VES",
     "VES",
@@ -610,7 +610,6 @@
     "V"
    ]
   },
-  "note": "Merchandiser User \u00b7 Purchase Order and Subcontracting Order: view only (their orders' documents, by the Sales Order hook)",
   "roles": [
    "Accounts Executive",
    "Accounts Manager",
@@ -632,10 +631,10 @@
   ],
   "saved_by": "Administrator",
   "saved_by_name": "Administrator",
-  "saved_on": "2026-09-30 09:52:17.907067",
-  "version": 27
+  "saved_on": "2026-10-01 11:25:41.729213",
+  "version": 30
  },
- "fingerprint": "4e78621c6e084f23dceb71abc31b0bbb2e661900",
+ "fingerprint": "f5b896a10e729e733bc8bdce04d58a64a23c8131",
  "tab_access": {
   "cells": {
    "Embroidery Transfers": [
@@ -857,7 +856,7 @@
     "",
     "",
     "",
-    "A",
+    "",
     "A",
     "",
     "",
@@ -1211,7 +1210,7 @@
   ],
   "saved_by": "Administrator",
   "saved_by_name": "Administrator",
-  "saved_on": "2026-09-30 10:17:57.216153",
-  "version": 15
+  "saved_on": "2026-10-01 11:27:48.179258",
+  "version": 19
  }
 }

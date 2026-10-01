@@ -4,6 +4,7 @@
 # after changing the role or document lists in www/roles-and-permissions.html,
 # then bump the ?v= number on the Download links there so browsers fetch the new file.
 #   usage (from the bench root):  apps/erp_dacsinc_custom/scripts/make_worksheet_pdfs.sh [site-host] [port]
+# It signs in with a temporary Administrator session (access_worksheet.cli_session), ended at exit.
 set -euo pipefail
 HOST="${1:-dacsinc.local}"; PORT="${2:-8000}"
 APP="$(cd "$(dirname "$0")/.." && pwd)"
@@ -11,7 +12,10 @@ OUT="$APP/erp_dacsinc_custom/public/docs"
 TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT
 CHROME="$(command -v google-chrome || command -v chromium || command -v chromium-browser)"
 mkdir -p "$OUT"
-curl -sf -H "Host: $HOST" "http://127.0.0.1:$PORT/roles-and-permissions" -o "$TMP/page.html"
+# The page needs a login (Admin / System Manager): a temporary Administrator session, ended below.
+SID="$(bench --site "$HOST" execute erp_dacsinc_custom.access_worksheet.cli_session 2>/dev/null | grep -o 'SID .*' | cut -c5-)"
+trap 'bench --site "$HOST" execute erp_dacsinc_custom.access_worksheet.cli_session --kwargs "{\"close\": \"$SID\"}" >/dev/null 2>&1; rm -rf "$TMP"' EXIT
+curl -sf -H "Host: $HOST" -H "Cookie: sid=$SID" "http://127.0.0.1:$PORT/roles-and-permissions" -o "$TMP/page.html"
 for mode in ws dt; do
   python3 - "$TMP/page.html" "$TMP/$mode.html" "$mode" <<'PY'
 import sys

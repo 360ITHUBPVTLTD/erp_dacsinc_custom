@@ -1252,7 +1252,10 @@ def get_sales_tracker(days=120, search=None, scope="open", stage_filter=None, me
     # (Pending DN/SI) shows, so a user without of_tab_billing_roles access
     # must not see those orders here either — otherwise Tracker would leak
     # everything the billing tab exists to restrict.
-    billing_visible = can_view_tab("billing")
+    billing_visible = can_view_tab("billing") or is_scoped_to_own_customers("tracker")
+    # ...except a Merchandiser User, whose tracker holds only their own orders anyway: they
+    # follow those orders through every stage (Ready for Delivery, Need to Bill) without
+    # being given the Pending DN/SI tab, which lists everyone's.
     # Completed orders are excluded at the SQL level under scope="open" (see
     # _get_tracker_rows) — force scope to "all" so clicking the "Completed"
     # stage tile can actually find them, same override get_summary already
@@ -3398,7 +3401,10 @@ def get_summary(days=120, scope="open", search=None, merchandiser=None, approval
     # (labelled "Pending DN/SI") shows — a user without of_tab_billing_roles
     # access must not see those counts here either, or the billing tab's own
     # restriction would be pointless (see docs/order-flow-dashboard.md).
-    billing_visible = can_view_tab("billing")
+    billing_visible = can_view_tab("billing") or is_scoped_to_own_customers("tracker")
+    # ...except a Merchandiser User, whose tracker holds only their own orders anyway: they
+    # follow those orders through every stage (Ready for Delivery, Need to Bill) without
+    # being given the Pending DN/SI tab, which lists everyone's.
     # To compute accurate summary counts for all stages (including completed ones),
     # we override "open" scope to "all". "mine" scope is preserved to only count the user's orders.
     summary_scope = "all" if scope == "open" else scope

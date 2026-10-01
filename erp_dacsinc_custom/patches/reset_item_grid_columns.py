@@ -6,8 +6,8 @@ import frappe
 # (custom/*_item.json property setters). A user's own column choice (the grid's ⚙) would
 # hide the new columns, so those choices are cleared once; the rest of each user's
 # settings (list filters, sort, other tables) stay.
-ITEM_TABLES = ("Sales Order Item", "Quotation Item", "Sales Invoice Item", "Delivery Note Item",
-			   "Purchase Order Item", "Purchase Receipt Item", "Purchase Invoice Item")
+ITEM_TABLES = ("Sales Order Item", "Quotation Item", "Sales Invoice Item", "Delivery Note Item", "POS Invoice Item",
+			   "Supplier Quotation Item", "Purchase Order Item", "Purchase Receipt Item", "Purchase Invoice Item")
 
 
 def execute():

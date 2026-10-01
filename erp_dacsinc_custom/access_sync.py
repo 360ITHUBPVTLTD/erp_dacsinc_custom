@@ -1028,3 +1028,4 @@ def get_activation_preview():
 
 	frappe.only_for(RESET_ROLE)
 	return {"active": is_active(), "users": activation_preview()}
+

@@ -144,6 +144,12 @@ Orders.
   - Other tabs follow the tab.
   - The Stock Tracker's reservation popup drops "Recalculate Bin Qty".
 - Opening, printing, filters, pagination and marking activity as seen stay.
+- **A Merchandiser User follows the same ✓ / A rule.** They see only their own orders
+  (Merchandiser scoping), but whether they get the action buttons on those rows is
+  decided by `merch_view_only(tab, sub)` = scoped merchandiser **and** the sheet gives
+  ✓ there. This covers row actions such as Create Subcontract PO, the EWO cards, and
+  the expanded Item Stock & Action Plan (`strip_actions_if_view_only`). It is no
+  longer a blanket "merchandisers only look".
 - **Server (`guard_act`):** only on endpoints that are used just by this page:
   - `approve_sales_orders` (approval › final);
   - `update_logistics_fields` (logistics);
@@ -1038,6 +1044,11 @@ pointless. Both endpoints now call `can_view_tab("billing")` and, when
 and renders a lock icon on those two tiles instead of a count) and
 `get_sales_tracker` drops those orders' rows entirely, from every scope and
 `stage_filter`. Every other stage tile/row is unaffected.
+
+**Exception: a Merchandiser User** (`is_scoped_to_own_customers("tracker")`). Their
+tracker holds only their own orders (see Merchandiser scoping), so they see those
+orders at every stage, Ready for Delivery and Need to Bill included, counters too.
+They still don't get the Pending DN/SI tab, which lists everyone's orders.
 
 ## Pending DN/SI includes orders whose billing is a *secondary* action
 
