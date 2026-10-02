@@ -622,6 +622,59 @@ Matrix" dialog itself uses) instead of its own separate
 could silently drop a second Role Profile someone else had added for another
 responsibility.
 
+## POS documents: hidden unless "Show POS documents" is ticked
+
+POS sales and store stock requests belong to the POS screens, not to the order dashboard.
+So, for everyone, by default:
+- Finance › Receivables leaves out POS Sales Invoices (`si.is_pos = 1`);
+- Logistics leaves out POS Sales Invoices;
+- Sales Tracker › Material Requests leaves out stores' stock requests
+  (`mr.custom_is_pos_request = 1`).
+
+The toolbar switch **"Show POS documents"** brings them back. Any dashboard user sees it,
+but only on those three views (Finance › Receivables, Logistics, Sales Tracker › Material
+Requests), where it changes something (`update_show_pos_visibility`). The choice is kept per user (user default `of_show_pos`,
+`order_flow_permissions.set_show_pos_docs`, returned as `show_pos_docs` by
+`get_order_flow_permissions`). `order_flow_api._hide_pos(clause)` adds a condition only
+while the switch is off. Other tabs are built from Sales Orders, Purchase Orders or Bins,
+so POS documents never appear there.
+
+## Merchandiser: own orders, or with their customers' orders
+
+On the Order Flow dashboard, a scoped Merchandiser User sees, on every tab:
+- **by default** only the Sales Orders **they created** (`so.owner`), and the
+  documents of those orders;
+- **with "Show my customers' orders" ticked** (toolbar, next to the search box;
+  shown only to them), also the orders of customers assigned to them (Customer ›
+  Merchandiser User), whoever created them.
+
+Details:
+- One condition, `order_flow_api._merch_scope_so()`, is used by Approvals, Tracker,
+  Pick Lists, Purchase Flow, Job Work, Finance, Billing, Material Requests and
+  Embroidery. Logistics uses the same rule on the invoice (its own or its order's
+  creator).
+- The choice is kept per user (user default `of_show_my_customers`,
+  `order_flow_permissions.set_show_my_customers`), so every tab and every reload
+  follows it.
+- **Exception, Approvals › Merchandiser Unassigned Orders:** every order of a customer
+  with no merchandiser yet, while it can still be approved and claimed (Draft /
+  Pending Merchandiser Approval). It shows whoever created it and whatever the switch
+  says, so any merchandiser can approve it and claim the customer.
+  `get_pending_approvals` adds it to `_merch_scope_so`. Others' unassigned orders at
+  Rejected or Pending Final Approval don't come along.
+- Elsewhere, orders of unassigned customers (not created by them), or where they are
+  only the Lead Owner, don't appear on the dashboard.
+- **Other Merchandisers' Orders** (Approvals): orders they created for a customer that
+  belongs to another merchandiser, waiting on that merchandiser. View only.
+- **4. Waiting for Final Approval** (Approvals, for a viewer who can't final-approve):
+  their orders the merchandiser has approved, now at Pending Final Approval, to follow
+  until the final approver acts. View only.
+  - Final approvers keep "4. Pending Final SO Approval" with Approve / Reject / Bulk
+    instead. Rejected is "5." for everyone.
+  - The sub-tab goes with "Pending Approval" in the tab sheet (`of_subtab_ok`); it has
+    no column of its own. Their right to open orders elsewhere (Sales Order list,
+  links) is unchanged; the permission rule above still applies there.
+
 ## Merchandiser User on Pick List, Purchase Order, Subcontracting Order
 
 The sheet gives them:
@@ -637,9 +690,9 @@ The permission hooks limit these to the documents of the Sales Orders they may s
 - their customers' orders, **orders whose customer has no merchandiser assigned**
   (`custom_merchandiser_user` empty), orders they raised, and orders they are Lead
   Owner of. Only another merchandiser's customers' orders are hidden. The same rule
-  is used by the Sales Order list and open check, the Sales Order-linked documents
-  (`_visible_sales_order_clause`), and every Order Flow query (`_MERCH_SCOPE_SO`).
-  Rows with no Sales Order at all don't count as unassigned;
+  is used by the Sales Order list and open check, and the Sales Order-linked
+  documents (`_visible_sales_order_clause`). The Order Flow dashboard is narrower
+  (see "Merchandiser: own orders, or with their customers' orders" below);
 - plus documents they created themselves.
 
 How each document reaches its order:
@@ -763,8 +816,9 @@ approvals` into a sub-tab purely client-side — the server has already
 decided *which rows* a viewer may see; this bucketing only decides *which
 sub-tab* each visible row lands in. Three kinds of viewer exist:
 
-- A plain Merchandiser User — scoped server-side to their own customers
-  (`get_pending_approvals` adds the SQL condition below), and client-side to
+- A plain Merchandiser User — scoped server-side to their own orders, plus their
+  customers' with "Show my customers' orders" on (`get_pending_approvals` uses
+  `_merch_scope_so`), and client-side to
   `o.custom_merchandiser_user === current_user` in the **Pending Approval**
   bucket.
 - A final approver/admin (`this.perms.is_final_approver`) — sees every

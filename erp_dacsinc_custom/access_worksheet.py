@@ -1,8 +1,10 @@
 """Saved decisions for the two access worksheets on /roles-and-permissions.
 
 - ``doc_access``: document × role → allowed boxes, a string of letters from
-  ``VESCDO`` (V view, E create/edit, S submit, C cancel, D delete, O only own
-  records). "" = no access.
+  ``VNESCDO`` (V view, N new = create, E edit = write, S submit, C cancel,
+  D delete, O only own records). "" = no access. Sheets saved before N existed
+  (``letters`` missing) used E for create AND edit; they are read as "NE"
+  (``upgrade_doc_sheet``), so nobody loses a right.
 - ``tab_access``: Order Flow tab / sub-tab × role → "" (hidden), "Y" (can
   see) or "A" (can see and act).
 
@@ -20,7 +22,25 @@ import frappe
 from frappe.utils import now
 
 STATE_PARENT = "__dacsinc_access_ws"
-SHEETS = {"doc_access": re.compile(r"^[VESCDO]*$"), "tab_access": re.compile(r"^(|Y|A)$")}
+SHEETS = {"doc_access": re.compile(r"^[VNESCDO]*$"), "tab_access": re.compile(r"^(|Y|A)$")}
+# The Document access letters, in order. Stored with each saved sheet ("letters"), so an
+# older sheet (E = create and edit) is recognised and upgraded.
+LETTERS = "VNESCDO"
+
+
+def upgrade_cell(v):
+	"""An old-format cell: E meant create and edit → N + E."""
+	if "E" in v and "N" not in v:
+		v += "N"
+	return "".join(l for l in LETTERS if l in v)
+
+
+def upgrade_doc_sheet(data):
+	"""A Document access sheet saved before N existed → the same rights in today's letters."""
+	if data and data.get("letters") != LETTERS and isinstance(data.get("cells"), dict):
+		data["cells"] = {r: [upgrade_cell(v or "") for v in vals] for r, vals in data["cells"].items()}
+		data["letters"] = LETTERS
+	return data
 MAX_ROWS = 200
 MAX_ROLES = 40
 EDIT_ROLE = "Admin"  # the only role that may change the agreed sheets
@@ -48,9 +68,10 @@ def load_sheet(sheet):
 	if not name:
 		return None
 	try:
-		return json.loads(frappe.db.get_value("DefaultValue", name, "defvalue") or "null")
+		data = json.loads(frappe.db.get_value("DefaultValue", name, "defvalue") or "null")
 	except ValueError:
 		return None
+	return upgrade_doc_sheet(data) if sheet == "doc_access" else data
 
 
 def load_all():
@@ -75,10 +96,12 @@ def _clean(sheet, roles, cells):
 
 
 @frappe.whitelist(methods=["POST"])
-def save_sheet(sheet, roles, cells, base_version=0, reset=None):
+def save_sheet(sheet, roles, cells, base_version=0, reset=None, letters=None):
 	"""Save a sheet and apply it straight away (roles & permissions / Order Flow tabs).
 	Saving and applying are one transaction: if applying fails, nothing is saved.
-	reset: the save follows a reset on the page (RESETS) — System Manager only."""
+	reset: the save follows a reset on the page (RESETS) — System Manager only.
+	letters: the page's letter set; a page opened before N existed sends none, and its
+	E is then read as create and edit."""
 	frappe.only_for(EDIT_ROLE)
 	if reset:
 		if reset not in RESETS:
@@ -88,6 +111,8 @@ def save_sheet(sheet, roles, cells, base_version=0, reset=None):
 		frappe.throw("Unknown sheet.")
 	roles = frappe.parse_json(roles)
 	cells = _clean(sheet, roles, frappe.parse_json(cells))
+	if sheet == "doc_access" and letters != LETTERS:
+		cells = {r: [upgrade_cell(v) for v in vals] for r, vals in cells.items()}
 
 	name = _row_name(sheet)
 	if name:
@@ -129,6 +154,7 @@ def store_sheet(sheet, roles, cells, note=None, added=None):
 		"saved_on": now(),
 	}
 	if sheet == "doc_access":
+		data["letters"] = LETTERS
 		added = current.get("added") if added is None else added
 		if added:
 			data["added"] = {d: v for d, v in added.items() if d in cells}

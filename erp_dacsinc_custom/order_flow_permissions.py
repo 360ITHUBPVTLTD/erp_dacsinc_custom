@@ -333,6 +333,39 @@ def guard_tab(tab):
         )
 
 
+# Order Flow for a scoped Merchandiser User: by default only the Sales Orders they created;
+# with "Show my customers' orders" on, also the orders of customers assigned to them
+# (Customer › Merchandiser User), whoever created them. Kept per user (a user default),
+# so every tab and every reload follows it. Their right to open other orders (Sales Order
+# list, links) is not changed by this.
+MY_CUSTOMERS_KEY = "of_show_my_customers"
+
+
+def show_my_customers(user=None):
+    return frappe.defaults.get_user_default(MY_CUSTOMERS_KEY, user or frappe.session.user) == "1"
+
+
+@frappe.whitelist(methods=["POST"])
+def set_show_my_customers(value):
+    frappe.defaults.set_user_default(MY_CUSTOMERS_KEY, "1" if frappe.utils.cint(value) else "0")
+    return {"show_my_customers": show_my_customers()}
+
+
+# POS documents (POS Sales Invoices, stores' stock requests) are left out of the dashboard
+# by default; "Show POS documents" brings them in. Kept per user, like the switch above.
+SHOW_POS_KEY = "of_show_pos"
+
+
+def show_pos_docs(user=None):
+    return frappe.defaults.get_user_default(SHOW_POS_KEY, user or frappe.session.user) == "1"
+
+
+@frappe.whitelist(methods=["POST"])
+def set_show_pos_docs(value):
+    frappe.defaults.set_user_default(SHOW_POS_KEY, "1" if frappe.utils.cint(value) else "0")
+    return {"show_pos_docs": show_pos_docs()}
+
+
 @frappe.whitelist()
 def get_order_flow_permissions():
     """
@@ -364,6 +397,10 @@ def get_order_flow_permissions():
         "user": frappe.session.user,
         "is_admin": admin,
         "is_merchandiser": "Merchandiser User" in roles,
+        # scoped merchandiser: own SOs by default, "Show my customers' orders" adds their customers'
+        "scoped_merchandiser": is_scoped_to_own_customers("tracker"),
+        "show_my_customers": show_my_customers(),
+        "show_pos_docs": show_pos_docs(),
         # False: the page skips what is built on Sales Orders (activity, filters, tracker tiles)
         "reads_sales_orders": admin or bool(frappe.has_permission("Sales Order", "read")),
         # Admins keep access so the approval workflow is never unadministrable.

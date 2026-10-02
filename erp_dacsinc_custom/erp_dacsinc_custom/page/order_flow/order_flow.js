@@ -248,6 +248,7 @@ class OrderFlow {
                     }
 
                     this.allowed_tabs = this.perms.allowed_tabs || [];
+                    setTimeout(() => this.update_my_customers_toggle(), 0);
                     if (!this.allowed_tabs.length) {
                         this.render_no_access();
                         return;
@@ -260,7 +261,7 @@ class OrderFlow {
                     this.allowed_subtabs = this.perms.allowed_subtabs || {};
                     const first_ok = (tab, cur) => {
                         const ok = this.allowed_subtabs[tab];
-                        return (!ok || !ok.length || ok.includes(cur)) ? cur : ok[0];
+                        return (!ok || !ok.length || of_subtab_ok(tab, cur, ok)) ? cur : ok[0];
                     };
                     this.tracker_subtab = first_ok('tracker', this.tracker_subtab);
                     this.pur_subtab = first_ok('purchase', this.pur_subtab);
@@ -380,7 +381,7 @@ class OrderFlow {
             Object.entries(this.allowed_subtabs || {}).forEach(([tab, ok]) => {
                 const $btns = this.$body.find(`#of-panel-${tab}`).find('.of-subtab[data-subtab], .of-acc-subtab[data-subtab]');
                 if (!$btns.length) return;
-                $btns.each((_, b) => { b.style.display = ok.includes(String($(b).data('subtab'))) ? '' : 'none'; });
+                $btns.each((_, b) => { b.style.display = of_subtab_ok(tab, String($(b).data('subtab')), ok) ? '' : 'none'; });
                 const $active = $btns.filter('.is-active');
                 if ($active.length && $active[0].style.display === 'none') {
                     const $first = $btns.filter((_, b) => b.style.display !== 'none').first();
@@ -450,6 +451,16 @@ class OrderFlow {
                     <select class="of-select" id="of-merchandiser" style="display: none;">
                         <option value="">All Merchandisers</option>
                     </select>
+                    <!-- Merchandiser: own orders by default; this adds their customers' orders (every tab) -->
+                    <label class="of-my-customers" id="of-my-customers" style="display: none;"
+                           title="${__('Off: only the orders you created. On: also the orders of customers assigned to you.')}">
+                        <input type="checkbox"> <span>${__("Show my customers' orders")}</span>
+                    </label>
+                    <!-- POS Sales Invoices / stores' stock requests: hidden unless switched on -->
+                    <label class="of-my-customers" id="of-show-pos" style="display: none;"
+                           title="${__('Off: POS Sales Invoices and stores\' stock requests are hidden. On: they are shown too.')}">
+                        <input type="checkbox"> <span>${__('Show POS documents')}</span>
+                    </label>
                     <select class="of-select" id="of-approval-stage" style="display: none;">
                         <option value="">All Approval Stages</option>
                         <option value="Draft">Draft</option>
@@ -587,6 +598,7 @@ class OrderFlow {
                     .filter(`[data-subtab="${sub}"]`).addClass('is-active');
                 this.$body.find('#of-stage-bar').toggleClass('of-hidden', sub !== 'so');
                 this.$body.find('#of-tracker-industry').toggle(sub === 'so');
+                this.update_show_pos_visibility();
                 ['so', 'mr', 'fp', 'pn'].forEach(s => {
                     this.$body.find(`#of-tracker-sec-${s}`).toggleClass('of-hidden', s !== sub);
                 });
@@ -627,6 +639,7 @@ class OrderFlow {
                 this.$body.find(`#of-acc-sec-${s}`).toggleClass('of-hidden', s !== sub);
                 this.$body.find(`#of-acc-kpi-${s}`).toggleClass('of-hidden', s !== sub);
             });
+            this.update_show_pos_visibility();
         });
 
         // Click handler for Number Cards to filter stage
@@ -652,6 +665,21 @@ class OrderFlow {
         });
 
         this.$body.on('change', '#of-merchandiser', (e) => { this.merchandiser_filter = e.target.value; this.reset_all_pagination(); this.refresh(true); });
+        this.$body.on('change', '#of-show-pos input', (e) => {
+            frappe.call({ method: 'erp_dacsinc_custom.order_flow_permissions.set_show_pos_docs', args: { value: e.target.checked ? 1 : 0 } })
+                .then((r) => {
+                    if (this.perms) this.perms.show_pos_docs = !!(r.message && r.message.show_pos_docs);
+                    this.reset_all_pagination(); this.refresh(true);
+                });
+        });
+        this.$body.on('change', '#of-my-customers input', (e) => {
+            const on = e.target.checked ? 1 : 0;
+            frappe.call({ method: 'erp_dacsinc_custom.order_flow_permissions.set_show_my_customers', args: { value: on } })
+                .then((r) => {
+                    if (this.perms) this.perms.show_my_customers = !!(r.message && r.message.show_my_customers);
+                    this.reset_all_pagination(); this.refresh(true);
+                });
+        });
         this.$body.on('change', '#of-approval-stage', (e) => { this.approval_stage_filter = e.target.value; this.reset_all_pagination(); this.refresh(true); });
         this.$body.on('change', '#of-uniform-status', (e) => { this.uniform_status_filter = e.target.value; this.reset_all_pagination(); this.refresh(true); });
         this.$body.on('change', '#of-stock-warehouse', (e) => { this.stock_warehouse_filter = e.target.value; this.reset_all_pagination(); this.refresh(true); });
@@ -1778,6 +1806,26 @@ class OrderFlow {
     // scoped to their own customers automatically (is_scoped_to_own_customers
     // on the server), so a "pick a merchandiser" dropdown would be redundant
     // for them and could only ever show their own name anyway.
+    // Scoped merchandiser only: "Show my customers' orders" (kept per user on the server,
+    // order_flow_permissions.set_show_my_customers) — every tab follows it.
+    update_my_customers_toggle() {
+        const $t = this.$body && this.$body.find('#of-my-customers');
+        if (!$t || !$t.length) return;
+        const show = !!(this.perms && this.perms.scoped_merchandiser);
+        $t.toggle(show);
+        $t.find('input').prop('checked', !!(this.perms && this.perms.show_my_customers));
+        this.$body.find('#of-show-pos input').prop('checked', !!(this.perms && this.perms.show_pos_docs));
+        this.update_show_pos_visibility();
+    }
+
+    // "Show POS documents" only where it filters something: Finance › Receivables,
+    // Logistics and Sales Tracker › Material Requests (stores' stock requests).
+    update_show_pos_visibility() {
+        const t = this.active;
+        const show = !!this.perms && ((t === 'accounts' && (this.acc_subtab || 'receivables') === 'receivables') || t === 'logistics' || (t === 'tracker' && this.tracker_subtab === 'mr'));
+        this.$body.find('#of-show-pos').toggle(show);
+    }
+
     update_merchandiser_visibility() {
         const can_final = !!(this.perms && this.perms.is_final_approver);
         const is_admin = frappe.user_roles.includes("System Manager") || frappe.session.user === "Administrator";
@@ -1811,6 +1859,7 @@ class OrderFlow {
         this.$body.find('#of-days').toggle(tab !== 'stock');
         this.$body.find('#of-scope').toggle(tab !== 'stock' && tab !== 'approval');
         this.update_merchandiser_visibility();
+        this.update_show_pos_visibility();
 
         // Dynamic context-aware search placeholder
         const placeholders = {
@@ -4743,7 +4792,9 @@ class OrderFlow {
         // Numbered to fill the gap left when final approval isn't shown —
         // a plain viewer sees 1/2/3/4(Rejected); a final approver sees an
         // unbroken 1/2/3/4/5(Rejected) instead of jumping straight to 5.
-        const rejected_tab_number = can_final ? 5 : 4;
+        // A viewer who can't final-approve gets "4. Waiting for Final Approval" (view only)
+        // instead of "4. Pending Final SO Approval", so Rejected is 5 for everyone.
+        const rejected_tab_number = 5;
 
         let active_orders = [];
         if (sub === 'merchandiser') {
@@ -4752,6 +4803,9 @@ class OrderFlow {
             active_orders = unassigned_approvals;
         } else if (sub === 'other') {
             active_orders = other_merchandiser_approvals;
+        } else if (sub === 'waiting') {
+            // approved by the merchandiser, now with the final approver: followed here, view only
+            active_orders = final_approvals;
         } else if (sub === 'rejected') {
             const stage_filter = this.approval_rejected_stage_filter;
             active_orders = stage_filter === 'merchandiser' ? rejected_by_merchandiser :
@@ -4831,7 +4885,11 @@ class OrderFlow {
                     <span class="of-val" style="font-weight: 700;">${of_money(o.grand_total, o.currency)}</span>
                 </td>
                 <td style="text-align: center;">
-                    ${sub === 'other' && !(is_owner && o.workflow_state !== 'Pending Final Approval') ? `
+                    ${sub === 'waiting' ? `
+                    <span class="text-muted" style="font-size:12px; font-weight:500;">
+                        <i class="fa fa-clock-o"></i> ${__('Waiting for Final Approval')}
+                    </span>
+                    ` : sub === 'other' && !(is_owner && o.workflow_state !== 'Pending Final Approval') ? `
                     <span class="text-muted" style="font-size:12px; font-weight:500;">
                         <i class="fa fa-eye"></i> ${__('View only — not your queue')}
                     </span>
@@ -4874,7 +4932,11 @@ class OrderFlow {
                 ${can_final ? `
                 <button class="of-subtab ${sub === 'final' ? 'is-active' : ''}" data-subtab="final">
                     <i class="fa fa-check-circle" style="color:var(--of-green);"></i> 4. Pending Final SO Approval (${final_approvals.length})
-                </button>` : ''}
+                </button>` : `
+                <button class="of-subtab ${sub === 'waiting' ? 'is-active' : ''}" data-subtab="waiting"
+                        title="${__('Orders already approved by the merchandiser, now waiting for the final approver (view only)')}">
+                    <i class="fa fa-clock-o" style="color:var(--of-purple);"></i> 4. Waiting for Final Approval (${final_approvals.length})
+                </button>`}
                 ${show_rejected_tab ? `
                 <button class="of-subtab ${sub === 'rejected' ? 'is-active' : ''}" data-subtab="rejected">
                     <i class="fa fa-ban" style="color:var(--of-red);"></i> ${rejected_tab_number}. Rejected Orders (${rejected_approvals.length})
@@ -4890,6 +4952,7 @@ class OrderFlow {
                             sub === 'unassigned' ? __('Merchandiser Unassigned Orders (Approve & Claim)') :
                             sub === 'other' ? __("Other Merchandisers' Orders") :
                             sub === 'rejected' ? __('Rejected Orders — Needs Correction & Resubmission') :
+                            sub === 'waiting' ? __('Waiting for Final Approval (view only)') :
                             __('Pending Final SO Approval')
                         }</span>
                         ${sub === 'rejected' ? of_rejection_stage_pills(
@@ -5799,6 +5862,13 @@ function of_docstatus_pills(tab, sublist, counts, current) {
 // Rejected Orders sub-tab — same compact inline-in-header style as
 // of_docstatus_pills, but keyed on rejected_stage rather than docstatus, so
 // it's kept separate rather than shoehorned into that one.
+// A sub-tab the tab sheet allows. Approvals › "Waiting for Final Approval" (the view-only
+// follow-up for a viewer who can't final-approve) goes with "Pending Approval".
+function of_subtab_ok(tab, sub, ok) {
+    if (ok.includes(sub)) return true;
+    return tab === 'approval' && sub === 'waiting' && ok.includes('merchandiser');
+}
+
 function of_rejection_stage_pills(merchandiser_count, final_count, current) {
     current = current || '';
     const pill = (value, label, count) => `

@@ -169,7 +169,7 @@
   .dt-legend { display: flex; flex-wrap: wrap; gap: 6px 18px; font-size: 13px; color: var(--ink-soft); margin: 0 0 12px; }
   .dt-legend b { display: inline-block; min-width: 16px; text-align: center; color: #fff; background: var(--clay); border-radius: 3px; margin-right: 3px; }
   table.dtm td.mcell { padding: 2px 3px; }
-  table.dtm .mini { display: grid; grid-template-columns: repeat(3, 14px); gap: 3px; justify-content: center; }
+  table.dtm .mini { display: grid; grid-template-columns: repeat(4, 14px); gap: 3px; justify-content: center; }
   table.dtm .mini b {
     display: flex; align-items: center; justify-content: center;
     width: 14px; height: 14px; border: 1.8px solid #000; border-radius: 2px;
@@ -320,6 +320,7 @@
     body.sec-printing .tabpanel:not(:has(.print-target)) { display: none !important; }
     body.sec-printing .print-target { display: block !important; }
     .edit-only { display: none !important; }
+    #decided-docs .table-wrap[hidden] { display: block !important; }   /* printing always shows the sheet */
   }
   /* ── Decided sheets (editable) ── */
   .sheet-tag { display: inline-block; vertical-align: middle; margin-left: 8px; padding: 2px 9px; border-radius: 999px;
@@ -404,10 +405,34 @@
   table.dsheet-t td.xp-c.lnk input { accent-color: #8a8378; }
   table.dsheet-t td.xp-c.diff { background: color-mix(in srgb, #f6c66a 32%, transparent) !important; }
   table.dsheet-t td.xp-c.uns { box-shadow: inset 0 0 0 1px #2f6fd6; }
+  /* By document / by role: one table of tick boxes (as Role Permission Manager) */
+  .xp-bar .seg { display: inline-flex; border: 1px solid var(--line); border-radius: 8px; overflow: hidden; }
+  .xp-bar .seg button { border: 0; background: transparent; padding: 6px 12px; font: inherit; font-size: 13px; color: var(--ink-soft); cursor: pointer; }
+  .xp-bar .seg button + button { border-left: 1px solid var(--line); }
+  .xp-bar .seg button.on { background: var(--pine); color: #fff; }
+  .xp-bar select { font: inherit; font-size: 13px; padding: 5px 8px; border: 1px solid var(--line); border-radius: 8px; background: var(--paper); color: var(--ink); max-width: 260px; }
+  .xp-bar [hidden] { display: none !important; }
+  .rpm-wrap { overflow: auto; max-height: calc(100vh - 300px); min-height: 260px; border: 1px solid var(--line); border-radius: 10px; background: var(--surface); }
+  table.rpm { border-collapse: separate; border-spacing: 0; width: 100%; font-size: 13px; }
+  table.rpm th { position: sticky; top: 0; background: var(--paper); z-index: 1; font-size: 11.5px; font-weight: 600; color: var(--ink-soft);
+    padding: 8px 4px; border-bottom: 1px solid var(--line); text-align: center; white-space: nowrap; }
+  table.rpm th.who, table.rpm td.who { text-align: left; padding-left: 10px; position: sticky; left: 0; background: var(--surface); z-index: 2; min-width: 170px; }
+  table.rpm th.who { background: var(--paper); z-index: 3; }
+  table.rpm td { border-bottom: 1px solid var(--line-soft); padding: 6px 4px; text-align: center; }
+  table.rpm td.ltr { white-space: nowrap; } table.rpm td.ltr .k { display: inline-flex; margin: 0 1px; }
+  table.rpm td.ltr .n { font-size: 11.5px; color: var(--ink-soft); }
+  table.rpm td.cb input { width: 16px; height: 16px; accent-color: var(--pine); cursor: pointer; }
+  table.rpm td.cb input:disabled { cursor: default; }
+  table.rpm td.cb.lnk input { accent-color: #8a8378; }
+  table.rpm td.cb.diff { background: color-mix(in srgb, #f6c66a 30%, transparent); }
+  table.rpm td.cb.uns { box-shadow: inset 0 0 0 1px #2f6fd6; }
+  table.rpm td.cb.na { background: repeating-linear-gradient(45deg, var(--line-soft), var(--line-soft) 2px, transparent 2px, transparent 5px); }
+  table.rpm tr.grp td { text-align: left; font-weight: 700; font-size: 12px; background: var(--indigo-soft); padding: 6px 10px; color: var(--ink); }
+  table.rpm tbody tr:not(.grp):hover td { background: var(--pine-soft); }
   button.k { cursor: pointer; }
   button.k:hover { transform: scale(1.15); }
   button.k:disabled { cursor: default; transform: none; }
-  table.dsheet-t .mini { display: grid; grid-template-columns: repeat(3, 16px); gap: 3px; justify-content: center; }
+  table.dsheet-t .mini { display: grid; grid-template-columns: repeat(4, 16px); gap: 3px; justify-content: center; }
   table.dsheet-t td.mcell { padding: 3px; position: relative; }
   /* On screen the decided sheets use the full width: the role columns share it, the document column stays compact. */
   table.dsheet-t thead th:first-child { width: 230px; }
@@ -525,12 +550,13 @@
       <span class="no-print"><i class="k on chg">V</i> differs from the marked worksheet</span>
     </div>
     <div class="dlegend dletters">
-      <span><b>V</b> View — open, print, email, reports, export</span><span><b>E</b> Create &amp; edit</span>
+      <span><b>V</b> View — open, print, email, reports, export</span><span><b>N</b> New — create</span><span><b>E</b> Edit — change saved records</span>
       <span><b>S</b> Submit / approve</span><span><b>C</b> Cancel / amend</span><span><b>D</b> Delete</span><span><b>O</b> Only own records</span>
     </div>
     <div class="dbar no-print" id="dd-bar"></div>
     <div class="xp-bar no-print" id="dd-view"></div>
     <div class="table-wrap"><table class="ws dtm dsheet-t" id="dd-table"></table></div>
+    <div id="dd-rpm" class="no-print" hidden><div class="rpm-body"></div></div>
     <div class="ws-sign">
       <div>Client / Management — name &amp; signature</div>
       <div>Prepared by (360 IT Hub)</div>
@@ -588,7 +614,7 @@
       <div>Agreed on (date)</div>
     </div>
     <div class="btn-row no-print">
-      <a class="btn-print" href="/assets/erp_dacsinc_custom/docs/tab-access-worksheet.pdf?v=6" download="Dacsinc - Tab Access Worksheet.pdf" data-dl-name="Dacsinc - Tab Access Worksheet">⤓ Download PDF</a>
+      <a class="btn-print" href="/assets/erp_dacsinc_custom/docs/tab-access-worksheet.pdf?v=7" download="Dacsinc - Tab Access Worksheet.pdf" data-dl-name="Dacsinc - Tab Access Worksheet">⤓ Download PDF</a>
       <button class="btn-print is-outline" type="button" onclick="printWorksheet()" style="color: var(--indigo);">⎙ Print</button>
     </div>
   </section>
@@ -600,11 +626,12 @@
       <div style="font-size:11px;">Date: ______________</div>
     </div>
     <h2>Document access by role <span class="sheet-tag">blank worksheet</span></h2>
-    <p class="block-intro">For marking on paper. Documents are listed down the side and roles across the top. Each cell has six small boxes:
+    <p class="block-intro">For marking on paper. Documents are listed down the side and roles across the top. Each cell has seven small boxes:
       tick the rights that role should have for that document, and leave the cell empty for no access.</p>
     <div class="dt-legend">
       <span><b>V</b> View <small>(open, print, email, reports, export)</small></span>
-      <span><b>E</b> Create &amp; Edit</span>
+      <span><b>N</b> New <small>(create)</small></span>
+      <span><b>E</b> Edit <small>(change saved records)</small></span>
       <span><b>S</b> Submit / Approve</span>
       <span><b>C</b> Cancel <small>(incl. amend)</small></span>
       <span><b>D</b> Delete</span>
@@ -618,7 +645,7 @@
       <div>Agreed on (date)</div>
     </div>
     <div class="btn-row no-print">
-      <a class="btn-print" href="/assets/erp_dacsinc_custom/docs/document-access-worksheet.pdf?v=6" download="Dacsinc - Document Access Worksheet.pdf" data-dl-name="Dacsinc - Document Access Worksheet" style="background: var(--clay);">⤓ Download PDF</a>
+      <a class="btn-print" href="/assets/erp_dacsinc_custom/docs/document-access-worksheet.pdf?v=7" download="Dacsinc - Document Access Worksheet.pdf" data-dl-name="Dacsinc - Document Access Worksheet" style="background: var(--clay);">⤓ Download PDF</a>
       <button class="btn-print is-outline" type="button" onclick="printDocWorksheet()" style="color: var(--clay);">⎙ Print</button>
     </div>
   </section>
@@ -706,11 +733,11 @@
     const roleHead = WS_ROLES.map(r => Array.isArray(r)
       ? `<th class="role"><span>${esc(r[0])} <small>(${esc(r[1])})</small></span></th>`
       : `<th class="role"><span>${esc(r)}</span></th>`).join("");
-    // Small labelled boxes inside every cell: V E / S D / O (S only where submitted).
+    // Small labelled boxes inside every cell: V N E S / C D O (S and C only where submitted).
     // Faint letter inside each box — the client ticks over it. S is shaded
     // (not a box) on documents that are never submitted.
     const mini = (sub) => `<div class="mini">
-        <b>V</b><b>E</b>${sub ? `<b>S</b>` : `<b class="off"></b>`}
+        <b>V</b><b>N</b><b>E</b>${sub ? `<b>S</b>` : `<b class="off"></b>`}
         ${sub ? `<b>C</b>` : `<b class="off"></b>`}<b>D</b><b class="own">O</b></div>`;
     let body = "";
     DT_GROUPS.forEach(([group, docs]) => {
@@ -811,8 +838,10 @@
   };
   // Documents opened as tick boxes in the sheet (see "Tick boxes inside the sheet").
   const EXP = { open: new Set(), data: {}, version: null, export_roles: [], loading: false };
-  const LETTERS = "VESCDO";
-  const BOX_NAME = { V: "View", E: "Create & Edit", S: "Submit", C: "Cancel", D: "Delete", O: "Only own records" };
+  // N (New = create) and E (Edit = write) are separate boxes; the marked worksheet's E
+  // meant both, so it reads as N + E (as do sheets saved before N, on the server).
+  const LETTERS = "VNESCDO";
+  const BOX_NAME = { V: "View", N: "New (create)", E: "Edit (change)", S: "Submit", C: "Cancel", D: "Delete", O: "Only own records" };
   const norm = (str, doc) => LETTERS.split("").filter(l => str.includes(l)
     && (SUBMITTABLE[doc] || (l !== "S" && l !== "C"))).join("");
   // DA_CLIENT columns are in this order; a role added later has no marked answer.
@@ -821,7 +850,7 @@
     "Production Assistant", "Production Manager", "Purchase Executive", "Purchase Manager", "Warehouse Incharge",
     "Warhouse Executive", "Packing Team", "Logistics"];
   const clientCell = (doc, i) => { const j = CLIENT_ROLES.indexOf(ROLE_NAMES[i]); if (j < 0) return "";
-    const v = (DA_CLIENT[doc] || "").split(/\s+/)[j] || "-"; return v === "-" ? "" : norm(v, doc); };
+    const v = (DA_CLIENT[doc] || "").split(/\s+/)[j] || "-"; return v === "-" ? "" : norm(v.includes("E") ? v + "N" : v, doc); };
 
   // Order Flow tabs → documents they show. Used by "Suggest from Document Access".
   const TAB_DOCS = {
@@ -868,7 +897,7 @@
   const WS_ACTIVE = !!(WS_BOOT && WS_BOOT.active);
 
   async function saveSheet(sheet, cells, version, reset) {
-    const body = new URLSearchParams({ sheet, roles: JSON.stringify(ROLE_NAMES), cells: JSON.stringify(cells), base_version: version || 0 });
+    const body = new URLSearchParams({ sheet, roles: JSON.stringify(ROLE_NAMES), cells: JSON.stringify(cells), base_version: version || 0, letters: LETTERS });
     if (reset) body.set("reset", reset);
     const r = await fetch("/api/method/erp_dacsinc_custom.access_worksheet.save_sheet", {
       method: "POST", credentials: "same-origin", body,
@@ -1087,7 +1116,7 @@
         if (!names.includes(dt.trim())) { await askConfirm({ title: "Not found", body: `${esc2(dt)} isn't a document type that can be added (or it's on the sheet already).`, ok: "OK" }); return; }
         let pre;
         try { pre = await wsCall("access_reverse.add_sheet_document", { doctype: dt.trim(), group: grp, confirm: 0 }); } catch (e) { S.toast(e.message, true); return; }
-        const name = { V: "view", E: "edit", S: "submit", C: "cancel", D: "delete", O: "own only" };
+        const name = { V: "view", N: "create", E: "edit", S: "submit", C: "cancel", D: "delete", O: "own only" };
         const items = Object.entries(pre.row).map(([r, v]) => `<b>${esc2(r)}</b>: ${v ? `<span class="add">${esc2(v.split("").map(l => name[l]).join(", "))}</span>` : "no access"}`);
         if (!await askConfirm({ title: `Add ${esc2(pre.doctype)}?`, ok: "Add", items,
           body: `Goes under <b>${esc2(pre.group)}</b>${pre.submittable ? "" : " (never submitted, so no Submit / Cancel)"}, starting as each role has it now:` })) return;
@@ -1110,7 +1139,7 @@
           if (!r.ok) { let m = "Could not sync."; try { m = JSON.parse(JSON.parse(j._server_messages)[0]).message; } catch (e) {} throw new Error(String(m).replace(/<[^>]+>/g, "")); }
           return j.message;
         };
-        const name = { V: "view", E: "edit", S: "submit", C: "cancel", D: "delete", O: "own only" };
+        const name = { V: "view", N: "create", E: "edit", S: "submit", C: "cancel", D: "delete", O: "own only" };
         const words = (v) => v ? v.split("").map(l => name[l]).join(", ") : "no access";
         btn.disabled = true; btn.textContent = "Reading the ERP…";
         let pre;
@@ -1127,7 +1156,7 @@
         const items = pre.changes.map(c => `<b>${esc2(c.role)}</b> · ${esc2(c.row)}: ${esc2(words(c.old))} → <span class="${c.new.length >= c.old.length ? "add" : "del"}">${esc2(words(c.new))}</span>`);
         if (!await askConfirm({ title: "Sync the sheet from the ERP?", ok: "Sync", danger: true, typed: "SYNC", items,
           body: `${plural(items.length, "cell")} will be set to what the roles can actually do in the ERP now, recorded as version ${((S.meta && S.meta.version) || 0) + 1}.
-            The ERP's rights stay as they are; they're only tidied to the sheet's boxes (e.g. Edit = write and create).` })) return;
+            The ERP's rights stay as they are; they're only tidied to the sheet's boxes (e.g. View = read, print, email, report and export).` })) return;
         try {
           const done = await call(true);
           S.take(done.saved); S.cur = clone(S.saved); S.pendingReset = null; S.render();
@@ -1195,7 +1224,7 @@
   // sheet stays the one place rights are decided. "ERP now" is what the role has today.
   const RIGHTS = [
     ["See it", [["select", "Select", "pick it in a link field", "V"], ["read", "Read", "open records and see the list", "V"]]],
-    ["Work on it", [["create", "Create", "make new ones", "E"], ["write", "Write", "change them", "E"]]],
+    ["Work on it", [["create", "Create", "make new ones", "N"], ["write", "Write", "change saved ones", "E"]]],
     ["Approve", [["submit", "Submit", "submit / approve", "S"], ["cancel", "Cancel", "cancel submitted ones", "C"],
                  ["amend", "Amend", "make a corrected copy after cancelling", "C"]]],
     ["Remove", [["delete", "Delete", "delete records for good", "D"]]],
@@ -1203,10 +1232,10 @@
                  ["report", "Report", "report view and reports on it", "V"], ["export", "Export", "download to Excel / CSV", "V"]]],
     ["Never given by this sheet", [["import", "Import", "bulk upload (Data Import)", null], ["share", "Share", "share a record with another user", null]]],
   ];
-  const LETTER_FIELDS_JS = { V: ["select", "read", "print", "email", "report", "export"], E: ["create", "write"],
+  const LETTER_FIELDS_JS = { V: ["select", "read", "print", "email", "report", "export"], N: ["create"], E: ["write"],
     S: ["submit"], C: ["cancel", "amend"], D: ["delete"] };
   const TAKE_OUT = ["print", "email", "report", "export"];
-  const LETTER_WORD = { V: "View", E: "Create & Edit", S: "Submit", C: "Cancel", D: "Delete" };
+  const LETTER_WORD = { V: "View", N: "New", E: "Edit", S: "Submit", C: "Cancel", D: "Delete" };
 
   async function openRights(doc, i) {
     const dlg = document.getElementById("ws-rights");
@@ -1233,7 +1262,8 @@
       // One sentence in plain words.
       const words = [];
       if (v.includes("V")) { words.push("open and list it"); if (!info.master) words.push("print / email / report / export it"); }
-      if (v.includes("E")) words.push("create and change it");
+      if (v.includes("N")) words.push("create it");
+      if (v.includes("E")) words.push("change it");
       if (v.includes("S") && info.submittable) words.push("submit it");
       if (v.includes("C") && info.submittable) words.push("cancel and amend it");
       if (v.includes("D")) words.push("delete it");
@@ -1281,7 +1311,7 @@
         <table class="rp-tbl"><thead><tr><th>Permission</th><th class="c-src">Given by</th><th style="text-align:center">ERP now</th></tr></thead>
         <tbody>${rows}</tbody></table>
         <p class="rp-note" style="margin-top:10px">Rights come in sets: <b>V</b> gives Select, Read, Print, Email, Report and Export;
-        <b>E</b> Create and Write; <b>C</b> Cancel and Amend. Unticking one takes its whole set off.</p>`;
+        <b>N</b> Create; <b>E</b> Write; <b>C</b> Cancel and Amend. Unticking one takes its whole set off.</p>`;
     };
     body.onchange = async (e) => {
       const cb = e.target.closest("input[data-l]"); if (!cb || !CAN_EDIT) return;
@@ -1326,7 +1356,7 @@
     ["print", "Print", "print / PDF"], ["email", "Email", "send by email"], ["report", "Report", "report view, reports"],
     ["export", "Export", "download Excel / CSV"], ["import", "Import", "bulk upload"], ["share", "Share", "share a record"],
     ["own", "Only If Creator", "only records they created"]];
-  const FIELD_LETTER = { select: "V", read: "V", print: "V", email: "V", report: "V", export: "V", write: "E", create: "E",
+  const FIELD_LETTER = { select: "V", read: "V", print: "V", email: "V", report: "V", export: "V", write: "E", create: "N",
     submit: "S", cancel: "C", amend: "C", delete: "D", own: "O" };
 
   function plannedRights(v, sub, master) {
@@ -1394,17 +1424,102 @@
     expBar(); DOCS.render();
     if (open) { await expLoad(docs); DOCS.render(); }
   }
+  /* ── By document / by role (as Role Permission Manager) ── */
+  // Besides the sheet (with ▸ tick-box rows), the same rights as one table: every role on
+  // one document, or one role on every document. Read from the ERP like the ▸ rows;
+  // ticking switches the letter that gives that right.
+  const RPM = { mode: "sheet", doc: null, role: null, data: null, busy: false };
+  try { const m = localStorage.getItem("rp_view"); if (["sheet", "doc", "role"].includes(m)) RPM.mode = m; } catch (e) {}
+  async function rpmLoad(quiet) {
+    if (RPM.mode === "sheet" || RPM.busy) return;
+    const body = document.querySelector("#dd-rpm .rpm-body");
+    if (!quiet) body.innerHTML = `<p class="rp-sum">Reading the ERP…</p>`;
+    RPM.busy = true;
+    let r;
+    try { r = await wsCall("access_sync.sheet_rights", RPM.mode === "doc" ? { row: RPM.doc } : { role: RPM.role }, "POST"); }
+    catch (e) { if (!quiet) body.innerHTML = `<p class="rp-note warn">${esc2(e.message)}</p>`; return; }
+    finally { RPM.busy = false; }
+    const changed = quiet && RPM.data && JSON.stringify(RPM.data.items) !== JSON.stringify(r.items);
+    RPM.data = r; EXP.export_roles = r.export_roles;
+    rpmDraw();
+    if (changed) DOCS.toast("Tick boxes updated from the ERP.");
+  }
+  function rpmDraw() {
+    const body = document.querySelector("#dd-rpm .rpm-body");
+    if (RPM.mode === "sheet" || !RPM.data) return;
+    const groupOf = {}; DT_LIVE.forEach(([g, docs]) => docs.forEach(([d]) => groupOf[d] = g));
+    const lines = RPM.mode === "doc"
+      ? ROLE_NAMES.map((r, i) => [r, RPM.doc, i, r]).filter(([r]) => RPM.data.items[r])
+      : DOC_ROWS().map(d => [d, d, ROLE_NAMES.indexOf(RPM.role), d]).filter(([d]) => RPM.data.items[d]);
+    // One document: only the rights it has. One role over many documents: every right,
+    // shaded where a document has none (never submitted).
+    const docSub = RPM.mode === "doc" ? !!(RPM.data.submittable || {})[RPM.doc] : null;
+    const cols = RPM.mode === "doc" ? docCols(docSub) : RPM_COLS;
+    let rows = "", diffs = 0, lastGroup = null;
+    lines.forEach(([label, doc, i, key]) => {
+      if (i < 0 || !DOCS.cur[doc]) return;
+      const sub = RPM.mode === "doc" ? docSub : !!(RPM.data.submittable || {})[doc];
+      const cells = rpmRow(doc, i, RPM.data.items[key], sub, cols);
+      diffs += cells.filter(c => c.cls.includes("diff")).length;
+      if (RPM.mode === "role" && groupOf[doc] !== lastGroup) {
+        lastGroup = groupOf[doc];
+        rows += `<tr class="grp"><td colspan="${cols.length + 2}">${esc2(lastGroup || "")}</td></tr>`;
+      }
+      const v = DOCS.cur[doc][i];
+      rows += `<tr><td class="who">${esc2(label)}</td>
+        <td class="ltr" title="${esc2(`${ROLE_NAMES[i]} · ${doc} on the sheet`)}">${v ? v.split("").map(l => `<i class="k ${l === "O" ? "own" : "on"}" title="${esc2(BOX_NAME[l])}">${l}</i>`).join("") : `<span class="n">no access</span>`}</td>
+        ${cells.map(c => {
+          const na = !sub && SUBMIT_ONLY.includes(c.f);
+          return na ? `<td class="cb na" title="${esc2(`${doc} is never submitted`)}"></td>`
+            : `<td class="cb ${c.cls}" title="${esc2(`${ROLE_NAMES[i]} · ${doc} · ${(RPM_COLS.find(([f]) => f === c.f) || [, c.f])[1]}: ${c.tip}`)}"><input type="checkbox" data-doc="${esc2(doc)}" data-i="${i}" data-f="${c.f}" ${c.on ? "checked" : ""} ${c.dis ? "disabled" : ""}></td>`;
+        }).join("")}</tr>`;
+    });
+    body.innerHTML = `
+      ${diffs ? `<p class="rp-note warn">${plural(diffs, "box differs", "boxes differ")} between the ERP today and the sheet (yellow). Saving the sheet puts the sheet's rights in the ERP.</p>` : ""}
+      <div class="rpm-wrap"><table class="rpm">
+        <thead><tr><th class="who">${RPM.mode === "doc" ? "Role" : "Document"}</th><th class="ltr">Sheet</th>${cols.map(([f, l, what]) => `<th title="${esc2(what)}">${esc2(l)}</th>`).join("")}</tr></thead>
+        <tbody>${rows}</tbody></table></div>`;
+  }
   function expBar() {
     const all = DOC_ROWS().length, n = EXP.open.size;
+    if (!RPM.doc || !DOC_ROWS().includes(RPM.doc)) RPM.doc = DOC_ROWS()[0];
+    if (!RPM.role || !ROLE_NAMES.includes(RPM.role)) RPM.role = ROLE_NAMES[0];
+    const m = RPM.mode;
     document.getElementById("dd-view").innerHTML = `
-      <button type="button" class="xp-all" data-xpall="${n < all ? 1 : 0}">${n < all ? "▸ Show all tick boxes" : "▾ Hide all tick boxes"}</button>
-      <span class="xp-hint">Click <b>▸</b> on a document to see each right as a tick box.
+      <span class="seg" role="tablist" aria-label="View">
+        <button type="button" data-view="sheet" class="${m === "sheet" ? "on" : ""}" title="Every role and document, with the boxes">Sheet</button>
+        <button type="button" data-view="doc" class="${m === "doc" ? "on" : ""}" title="Every role on one document, as tick boxes">By document</button>
+        <button type="button" data-view="role" class="${m === "role" ? "on" : ""}" title="One role on every document, as tick boxes">By role</button></span>
+      <select id="rpm-doc" ${m === "doc" ? "" : "hidden"} aria-label="Document">${DOC_ROWS().map(d => `<option ${d === RPM.doc ? "selected" : ""}>${esc2(d)}</option>`).join("")}</select>
+      <select id="rpm-role" ${m === "role" ? "" : "hidden"} aria-label="Role">${ROLE_NAMES.map(r => `<option ${r === RPM.role ? "selected" : ""}>${esc2(r)}</option>`).join("")}</select>
+      <button type="button" class="xp-all" data-xpall="${n < all ? 1 : 0}" ${m === "sheet" ? "" : "hidden"}>${n < all ? "▸ Show all tick boxes" : "▾ Hide all tick boxes"}</button>
+      <span class="xp-hint">${m === "sheet" ? "Click <b>▸</b> on a document to see each right as a tick box. " : ""}
         Grey tick: allowed only to choose it in other documents · greyed box: can't be changed here (point at it to see why) ·
         yellow: not yet as agreed on the sheet.</span>`;
+    document.getElementById("dd-table").closest(".table-wrap").hidden = m !== "sheet";
+    document.getElementById("dd-rpm").hidden = m === "sheet";
   }
   document.getElementById("dd-view").addEventListener("click", (e) => {
+    const v = e.target.closest("button[data-view]");
+    if (v) {
+      RPM.mode = v.dataset.view; RPM.data = null;
+      try { localStorage.setItem("rp_view", RPM.mode); } catch (err) {}
+      expBar(); rpmLoad(); return;
+    }
     const b = e.target.closest("button[data-xpall]"); if (!b) return;
     expToggle(DOC_ROWS(), b.dataset.xpall === "1");
+  });
+  document.getElementById("dd-view").addEventListener("change", (e) => {
+    if (e.target.id === "rpm-doc") RPM.doc = e.target.value;
+    else if (e.target.id === "rpm-role") RPM.role = e.target.value;
+    else return;
+    RPM.data = null; rpmLoad();
+  });
+  document.getElementById("dd-rpm").addEventListener("change", async (e) => {
+    const cb = e.target.closest("input[data-f]"); if (!cb || !CAN_EDIT) return;
+    const doc = cb.dataset.doc, i = +cb.dataset.i, l = FIELD_LETTER[cb.dataset.f];
+    if (l && cb.checked !== DOCS.cur[doc][i].includes(l)) await docOnCell(DOCS, doc, i, l);
+    DOCS.render();
   });
   document.getElementById("dd-table").addEventListener("click", (e) => {
     const b = e.target.closest("button.xp[data-xp]"); if (!b) return;
@@ -1419,8 +1534,13 @@
   // After a save (new version) the ERP changed: read the opened documents again.
   {
     const render0 = DOCS.render;
+    let rpmVersion = null;
     DOCS.render = () => {
       render0();
+      if (RPM.mode !== "sheet") {
+        const v = DOCS.meta && DOCS.meta.version;
+        if (v && rpmVersion && v > rpmVersion) { rpmVersion = v; rpmLoad(true); } else { rpmVersion = rpmVersion || v; rpmDraw(); }
+      }
       const v = DOCS.meta && DOCS.meta.version;
       if (EXP.open.size && !EXP.loading && v && EXP.version && v > EXP.version) {
         EXP.data = {}; EXP.version = v; expLoad([...EXP.open]).then(() => render0());
@@ -1430,6 +1550,7 @@
   // Live: the opened documents re-read the ERP (with the page's 15 s check), so a change
   // made elsewhere (Role Permission Manager, another user's save) shows up by itself.
   async function expRefresh() {
+    if (RPM.mode !== "sheet" && !DOCS.saving && !document.hidden) await rpmLoad(true);
     if (!EXP.open.size || EXP.loading || DOCS.saving || document.hidden) return;
     const docs = [...EXP.open];
     let r;
@@ -1442,7 +1563,7 @@
     DOCS.render();
     if (before !== after) DOCS.toast("Tick boxes updated from the ERP.");
   }
-  expBar();
+  expBar(); rpmLoad();
 
 
   /* ── Order Flow tabs, decided ── */
@@ -1455,7 +1576,7 @@
   function suggestTabs() {
     const out = emptyTabs();
     TAB_ROWS.forEach(([key, tab, sub]) => {
-      const act = tab === "SO Approvals" ? /S/ : /[ES]/;     // approving = submitting the Sales Order
+      const act = tab === "SO Approvals" ? /S/ : /[NES]/;    // approving = submitting the Sales Order
       out[key] = ROLE_NAMES.map((r, i) => {
         if (NO_ORDER_FLOW.includes(r)) return "";
         const vals = (TAB_DOCS[key] || []).map(d => (DOCS.cur[d] || [])[i] || "");

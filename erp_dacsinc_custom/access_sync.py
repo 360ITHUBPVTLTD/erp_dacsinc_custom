@@ -107,7 +107,8 @@ DOC_TARGETS = {"Contact & Address": ["Contact", "Address"]}
 # Sheet letter → Custom DocPerm fields.
 LETTER_FIELDS = {
 	"V": ("read", "select", "print", "email", "report", "export"),
-	"E": ("write", "create"),
+	"N": ("create",),  # New
+	"E": ("write",),  # Edit
 	"S": ("submit",),
 	"C": ("cancel", "amend"),
 	"D": ("delete",),
@@ -903,7 +904,7 @@ def _map_set(key, data):
 
 # Bump when the rules in this file change (dependencies, companions, pages…), so each
 # site re-applies its sheets once on the next migrate (sync_from_bundle).
-RULES_VERSION = "2026-10-02.1"
+RULES_VERSION = "2026-10-02.2"
 
 
 def bundle_fingerprint(data):
@@ -973,10 +974,14 @@ def sync_from_bundle():
 
 
 def read_bundle():
+	from erp_dacsinc_custom.access_worksheet import upgrade_doc_sheet
+
 	if not os.path.exists(BUNDLE_PATH):
 		return {}
 	with open(BUNDLE_PATH) as f:
-		return json.load(f) or {}
+		data = json.load(f) or {}
+	upgrade_doc_sheet(data.get("doc_access"))  # a bundle from before N (E = create and edit)
+	return data
 
 
 def apply_sheet(sheet_name, sheet):
@@ -1069,7 +1074,7 @@ def derive_tab_cells(doc_sheet):
 		keys = [(tab, tab, None)] + [(f"{tab} › {sub}", tab, sub) for sub in SUBTAB_KEYS.get(tab, {})]
 		for key, _t, _s in keys:
 			docs = TAB_DOCS.get(key) or TAB_DOCS.get(tab) or []
-			act = ("S",) if tab == "SO Approvals" else ("E", "S")
+			act = ("S",) if tab == "SO Approvals" else ("N", "E", "S")
 			row = []
 			for i in range(len(roles)):
 				if roles[i] in NO_ORDER_FLOW_ROLES:

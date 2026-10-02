@@ -9,6 +9,8 @@
 // 5. Email Receipt from the store's own email account, with its default message
 //    (POS Profile › Receipt Email), see pos_receipt_email.py.
 // 6. Close the POS: the closing entry is built on the server and opens filled (pos_closing.py).
+// 7. Open the POS: a user on only one POS Profile gets it filled in (pos_scope.my_pos_profiles), and
+//    the cash opening is carried from the store's last closing (pos_cash.py).
 (function () {
 	const page = frappe.pages["point-of-sale"];
 	if (!page || page.__dacs_extended) return;
@@ -169,6 +171,111 @@
 			}, done);
 		};
 
+		// ---------------- Open the POS (Controller): ERPNext's opening dialog, with the cash in
+		// the drawer carried from the store's last closing (pos_cash.py):
+		// - a user on only one POS Profile gets it filled in (pos_scope.my_pos_profiles);
+		// - only cash is entered (card / UPI open at 0), pre-filled with what the last closing
+		//   left in the drawer, which is shown above the table;
+		// - a different cash amount asks for the reason (checked again on the server).
+		PS.Controller.prototype.create_opening_voucher = function () {
+			const me = this;
+			let info = null;   // pos_cash.opening_defaults for the chosen store
+			const money = (v) => format_currency(v, frappe.defaults.get_default("currency"));
+			const cash_total = () => (dialog.fields_dict.balance_details.df.data || []).reduce((t, d) => t + flt(d.opening_amount), 0);
+			const differs = () => !!(info && info.last) && Math.abs(cash_total() - flt(info.last.left)) > 0.004;
+			const check = () => {
+				const off = differs();
+				dialog.set_df_property("reason", "hidden", !off);
+				dialog.set_df_property("reason", "reqd", off);
+				if (off) dialog.set_df_property("reason", "description",
+					__("Opening with {0}, but {1} was left in the drawer at the last closing.", [money(cash_total()), money(info.last.left)]));
+			};
+			const load = async () => {
+				const pos_profile = dialog.get_value("pos_profile");
+				info = null;
+				dialog.fields_dict.balance_details.df.data = [];
+				dialog.fields_dict.balance_details.grid.refresh();
+				dialog.fields_dict.carry.$wrapper.html("");
+				check();
+				if (!pos_profile) return;
+				const r = await frappe.call({ method: "erp_dacsinc_custom.pos_cash.opening_defaults", args: { pos_profile } });
+				if (dialog.get_value("pos_profile") !== pos_profile || !r || !r.message) return;
+				info = r.message;
+				const left = info.last ? flt(info.last.left) : 0;
+				dialog.fields_dict.balance_details.df.data = info.cash.map((m, i) => ({ mode_of_payment: m, opening_amount: i === 0 ? left : 0 }));
+				dialog.fields_dict.balance_details.grid.refresh();
+				const esc = frappe.utils.escape_html;
+				const l = info.last;
+				dialog.fields_dict.carry.$wrapper.html(`<div class="dacs-carry">${l
+					? `${__("Cash left in the drawer at the last closing")}: <b>${money(l.left)}</b>
+						<div class="text-muted small">${esc(l.name)} · ${esc(l.period_end)} · ${esc(l.user_name || "")} ·
+						${__("counted")} ${money(l.counted)} − ${__("handed over")} ${money(l.handed_over)}</div>`
+					: __("No earlier closing for this store: enter the cash in the drawer now.")}
+					${info.other.length ? `<div class="text-muted small">${esc(info.other.join(", "))}: ${__("start at 0")}</div>` : ""}</div>`);
+				check();
+			};
+			const dialog = new frappe.ui.Dialog({
+				title: __("Create POS Opening Entry"),
+				static: true,
+				fields: [
+					{ fieldtype: "Link", label: __("Company"), default: frappe.defaults.get_default("company"), options: "Company",
+					  fieldname: "company", reqd: 1 },
+					{ fieldtype: "Link", label: __("POS Profile"), options: "POS Profile", fieldname: "pos_profile", reqd: 1,
+					  get_query: () => ({ query: "erpnext.accounts.doctype.pos_profile.pos_profile.pos_profile_query",
+						  filters: { company: dialog.get_value("company") } }),
+					  onchange: () => load() },
+					{ fieldtype: "HTML", fieldname: "carry" },
+					{ fieldname: "balance_details", fieldtype: "Table", label: __("Cash in the drawer now"), cannot_add_rows: true,
+					  cannot_delete_rows: true, in_place_edit: true, reqd: 1, data: [],
+					  fields: [
+						{ fieldname: "mode_of_payment", fieldtype: "Link", in_list_view: 1, label: __("Mode of Payment"),
+						  options: "Mode of Payment", reqd: 1, read_only: 1 },
+						{ fieldname: "opening_amount", fieldtype: "Currency", in_list_view: 1, label: __("Opening Amount"),
+						  options: "company:company_currency",
+						  onchange: function () {
+							dialog.fields_dict.balance_details.df.data.some((d) => {
+								if (d.idx == this.doc.idx) { d.opening_amount = this.value; return true; }
+							});
+							check();
+						  } },
+					  ] },
+					{ fieldtype: "Data", fieldname: "reason", label: __("Reason the cash differs"), hidden: 1 },
+				],
+				primary_action: async function ({ company, pos_profile, reason }) {
+					if (!info) return;
+					const cash = (dialog.fields_dict.balance_details.df.data || []).map((d) => ({ mode_of_payment: d.mode_of_payment, opening_amount: flt(d.opening_amount) }));
+					if (differs() && !(reason || "").trim()) {
+						frappe.msgprint(__("Give the reason the cash differs from the last closing."));
+						return;
+					}
+					const balance_details = cash.concat(info.other.map((m) => ({ mode_of_payment: m, opening_amount: 0 })));
+					if (!balance_details.length) {
+						frappe.msgprint(__("This POS Profile has no payment methods."));
+						return;
+					}
+					const res = await frappe.call({
+						method: "erp_dacsinc_custom.pos_cash.create_opening",
+						args: { pos_profile, company, balance_details, reason: differs() ? reason : "" },
+						freeze: true,
+					});
+					if (res.exc || !res.message) return;
+					me.prepare_app_defaults(res.message);
+					dialog.hide();
+				},
+				primary_action_label: __("Submit"),
+			});
+			dialog.show();
+			// only the store's cash rows: no adding, uploading or removing rows
+			dialog.$wrapper.addClass("dacs-opening");
+			frappe.call({
+				method: "erp_dacsinc_custom.pos_scope.my_pos_profiles",
+				args: { company: dialog.get_value("company") },
+			}).then((r) => {
+				const mine = (r && r.message) || [];
+				if (mine.length === 1 && !dialog.get_value("pos_profile")) dialog.set_value("pos_profile", mine[0]);
+			});
+		};
+
 		// ---------------- Close the POS (Controller): the closing entry is built on the
 		// server in one call (pos_closing.make_closing_entry: bills, payments, taxes,
 		// totals) and opens already filled. ERPNext opened it empty and loaded it in the
@@ -291,6 +398,12 @@
 		const css = document.createElement("style");
 		css.id = "dacs-pos-style";
 		css.textContent = `
+			/* opening dialog: what the last closing left in the drawer */
+			.dacs-carry { padding: 10px 12px; border-radius: var(--border-radius-md, 8px); background: var(--subtle-fg, #f4f5f6);
+				font-size: var(--text-sm, 13px); line-height: 1.5; margin-bottom: 4px; }
+			.dacs-carry .small { font-size: 12px; }
+			.dacs-opening .grid-add-row, .dacs-opening .grid-add-multiple-rows, .dacs-opening .grid-upload,
+			.dacs-opening .grid-remove-rows, .dacs-opening .grid-remove-all-rows, .dacs-opening .grid-footer { display: none !important; }
 			/* same card as the customer / cart cards (.pos-card), kept to one row */
 			.point-of-sale-app .customer-cart-container > .dacs-walkin { background-color: var(--fg-color);
 				box-shadow: var(--shadow-base); border-radius: var(--border-radius-md); flex-shrink: 0;

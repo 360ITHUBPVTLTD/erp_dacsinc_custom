@@ -1514,3 +1514,10 @@ td > .of-action-btn {
     color: var(--of-blue);
     border-color: var(--of-blue);
 }
+
+/* Merchandiser: "Show my customers' orders" (own orders only when off) */
+.of-my-customers { display: inline-flex; align-items: center; gap: 6px; margin: 0; padding: 0 10px; height: 30px;
+	border: 1px solid var(--border-color); border-radius: var(--border-radius); background: var(--control-bg);
+	font-size: var(--text-sm); color: var(--text-color); cursor: pointer; white-space: nowrap; font-weight: 500; }
+.of-my-customers input { margin: 0; accent-color: var(--primary); }
+.of-my-customers:has(input:checked) { border-color: var(--primary); }

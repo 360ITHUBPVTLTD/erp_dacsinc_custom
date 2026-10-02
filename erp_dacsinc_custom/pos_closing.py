@@ -55,9 +55,11 @@ def make_closing_entry(pos_opening_entry):
 			row["amount"] += flt(t.tax_amount)
 	for f in ("grand_total", "net_total", "total_quantity"):
 		doc.set(f, flt(doc.get(f), 2))
+	# Every mode starts at its expected amount; the cashier changes it only where the drawer /
+	# machine / app shows something else (pos_cash.py).
 	for row in payments.values():
 		row["expected_amount"] = flt(row["expected_amount"], 2)
-		row["closing_amount"] = row["expected_amount"]  # the cashier corrects what was counted
+		row["closing_amount"] = row["expected_amount"]
 		row["difference"] = 0
 		doc.append("payment_reconciliation", row)
 	for row in taxes.values():
