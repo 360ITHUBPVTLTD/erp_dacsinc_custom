@@ -234,13 +234,24 @@ def _reads_so():
 
 
 # What a scoped Merchandiser User sees of an order, in every Order Flow query that joins the
-# Sales Order as `so` and its customer as `cust`: their own customers' orders, orders whose
-# customer has no merchandiser assigned yet, orders they raised, and orders they're Lead
-# Owner of. Same rule as custom_script's Sales Order permission hooks. Rows with no Sales
-# Order (e.g. a Material Request raised without one) are not "unassigned" — they stay out.
-_MERCH_SCOPE_SO = ("(cust.custom_merchandiser_user = %(merch_scope)s"
-                   " OR (so.name IS NOT NULL AND IFNULL(cust.custom_merchandiser_user, '') = '')"
-                   " OR so.owner = %(merch_scope)s OR so.custom_lead_owner = %(merch_scope)s)")
+# Sales Order as `so` and its customer as `cust`.
+def _hide_pos(clause):
+    """`clause` (a "not a POS document" condition) unless the user switched on
+    "Show POS documents" (order_flow_permissions.show_pos_docs); else None."""
+    from erp_dacsinc_custom.order_flow_permissions import show_pos_docs
+
+    return None if show_pos_docs() else clause
+
+
+def _merch_scope_so():
+    """The orders a scoped Merchandiser User sees on the Order Flow dashboard: the Sales Orders
+    they created; with "Show my customers' orders" on (order_flow_permissions.show_my_customers)
+    also those of customers assigned to them. Rows with no Sales Order stay out."""
+    from erp_dacsinc_custom.order_flow_permissions import show_my_customers
+
+    if show_my_customers():
+        return "(so.owner = %(merch_scope)s OR cust.custom_merchandiser_user = %(merch_scope)s)"
+    return "(so.owner = %(merch_scope)s)"
 
 
 def _guard(tab=None):
@@ -843,7 +854,7 @@ def _get_tracker_rows(days=120, search=None, scope="open", merchandiser=None, ap
     # so the client's button-hiding can never disagree with what rows the
     # server actually returns.
     if is_scoped_to_own_customers(tab):
-        conditions.append(_MERCH_SCOPE_SO)
+        conditions.append(_merch_scope_so())
         params["merch_scope"] = frappe.session.user
 
     total_matching = frappe.db.sql(f"""
@@ -1309,13 +1320,15 @@ def get_sales_tracker(days=120, search=None, scope="open", stage_filter=None, me
 
     if is_scoped_to_own_customers("tracker"):
         mr_params["merch_scope"] = frappe.session.user
-        mr_conditions.append(_MERCH_SCOPE_SO)
+        mr_conditions.append(_merch_scope_so())
 
     # POS logins: the same Material Requests as their list (pos_scope.material_request_query).
     from erp_dacsinc_custom.pos_scope import material_request_query
     pos_mr = material_request_query()
     if pos_mr:
         mr_conditions.append(pos_mr.replace("`tabMaterial Request`", "mr"))
+    if (c := _hide_pos("IFNULL(mr.custom_is_pos_request, 0) = 0")):
+        mr_conditions.append(c)  # stores' stock requests only with "Show POS documents"
 
     _mr_from_join = """`tabMaterial Request Item` mri
         JOIN `tabMaterial Request` mr ON mr.name = mri.parent
@@ -3001,7 +3014,7 @@ def get_purchase_flow(days=120, search=None, scope="open", merchandiser=None,
     # already JOIN through to `cust` the same way).
     if is_scoped_to_own_customers("purchase"):
         params["merch_scope"] = frappe.session.user
-        conditions.append(_MERCH_SCOPE_SO)
+        conditions.append(_merch_scope_so())
         # a Merchandiser sees only Subcontract POs (same as the Purchase Order list hook)
         conditions.append("po.is_subcontracted = 1")
 
@@ -3077,7 +3090,7 @@ def get_purchase_flow(days=120, search=None, scope="open", merchandiser=None,
             mr_conditions.append(f"(mr.name LIKE %({param_key})s OR mri.sales_order LIKE %({param_key})s OR mri.item_code LIKE %({param_key})s)")
             params[param_key] = f"%{word}%"
     if is_scoped_to_own_customers("purchase"):
-        mr_conditions.append(_MERCH_SCOPE_SO)
+        mr_conditions.append(_merch_scope_so())
 
     pr_conditions = ["pr.docstatus < 2", "pr.posting_date >= %(from_date)s", "IFNULL(pr.is_subcontracted, 0) = 0", _NOT_DISABLED_SO]
     scr_conditions = ["scr.docstatus < 2", "scr.posting_date >= %(from_date)s", _NOT_DISABLED_SO]
@@ -3096,8 +3109,8 @@ def get_purchase_flow(days=120, search=None, scope="open", merchandiser=None,
             scr_conditions.append(f"(scr.name LIKE %({param_key})s OR scr.supplier LIKE %({param_key})s OR sup.supplier_name LIKE %({param_key})s)")
             params[param_key] = f"%{word}%"
     if is_scoped_to_own_customers("purchase"):
-        pr_conditions.append(_MERCH_SCOPE_SO)
-        scr_conditions.append(_MERCH_SCOPE_SO)
+        pr_conditions.append(_merch_scope_so())
+        scr_conditions.append(_merch_scope_so())
 
     _pr_from_join = """`tabPurchase Receipt Item` pri
         JOIN `tabPurchase Receipt` pr ON pr.name = pri.parent
@@ -3263,7 +3276,7 @@ def _ewo_lists(days=180, search=None, scope="open", scope_tab="jobwork",
 
     if is_scoped_to_own_customers(scope_tab):
         params["merch_scope"] = frappe.session.user
-        conditions.append(_MERCH_SCOPE_SO)
+        conditions.append(_merch_scope_so())
 
     def _sql(conds):
         return f"""
@@ -3359,7 +3372,7 @@ def get_jobwork_flow(days=180, search=None, scope="open", merchandiser=None,
     # matching lines.
     if is_scoped_to_own_customers("jobwork"):
         params["merch_scope"] = frappe.session.user
-        conditions.append(_MERCH_SCOPE_SO)
+        conditions.append(_merch_scope_so())
 
     _po_from_join = """`tabPurchase Order Item` poi
         JOIN `tabPurchase Order` po ON po.name = poi.parent
@@ -3409,8 +3422,8 @@ def get_jobwork_flow(days=180, search=None, scope="open", merchandiser=None,
             scr_conditions.append(f"(scr.name LIKE %({param_key})s OR scr.supplier LIKE %({param_key})s OR sup.supplier_name LIKE %({param_key})s)")
             params[param_key] = f"%{word}%"
     if is_scoped_to_own_customers("jobwork"):
-        pr_conditions.append(_MERCH_SCOPE_SO)
-        scr_conditions.append(_MERCH_SCOPE_SO)
+        pr_conditions.append(_merch_scope_so())
+        scr_conditions.append(_merch_scope_so())
 
     _pr_from_join = """`tabPurchase Receipt Item` pri
         JOIN `tabPurchase Receipt` pr ON pr.name = pri.parent
@@ -3647,7 +3660,9 @@ def get_accounts_flow(days=120, search=None, scope="open", merchandiser=None,
     # unambiguous WHERE condition — no multi-customer aggregation caveat.
     if is_scoped_to_own_customers("accounts"):
         params["merch_scope"] = frappe.session.user
-        si_conditions.append(_MERCH_SCOPE_SO)
+        si_conditions.append(_merch_scope_so())
+    if (c := _hide_pos("IFNULL(si.is_pos, 0) = 0")):
+        si_conditions.append(c)  # POS Sales Invoices only with "Show POS documents"
 
     sales_invoices = _paged_query(f"""
         SELECT si.name, si.posting_date, si.due_date, si.status, si.docstatus,
@@ -3700,7 +3715,7 @@ def get_accounts_flow(days=120, search=None, scope="open", merchandiser=None,
     # up to only the matching lines" behavior as Purchase/Job Work.
     if is_scoped_to_own_customers("accounts"):
         pi_params["merch_scope"] = frappe.session.user
-        pi_conditions.append(_MERCH_SCOPE_SO)
+        pi_conditions.append(_merch_scope_so())
 
     def _purchase_invoice_sql(jobber_flag):
         return f"""
@@ -3830,10 +3845,14 @@ def get_logistics_flow(days=None, search=None, scope="open", page=1, page_size=1
     # invoices here too; a combined-role user, or one actually configured on
     # of_tab_logistics_roles, sees the full company-wide queue.
     if is_scoped_to_own_customers("logistics"):
-        conditions.append("(cust.custom_merchandiser_user = %(merch_scope)s"
-                          " OR (cust.name IS NOT NULL AND IFNULL(cust.custom_merchandiser_user, '') = '')"
-                          " OR si.owner = %(merch_scope)s)")
+        from erp_dacsinc_custom.order_flow_permissions import show_my_customers
+        own = ("(si.owner = %(merch_scope)s OR EXISTS (SELECT 1 FROM `tabSales Invoice Item` sii"
+               " JOIN `tabSales Order` so2 ON so2.name = sii.sales_order"
+               " WHERE sii.parent = si.name AND so2.owner = %(merch_scope)s))")
+        conditions.append(f"({own} OR cust.custom_merchandiser_user = %(merch_scope)s)" if show_my_customers() else own)
         params["merch_scope"] = frappe.session.user
+    if (c := _hide_pos("IFNULL(si.is_pos, 0) = 0")):
+        conditions.append(c)  # POS Sales Invoices only with "Show POS documents"
 
     result = _paged_query(f"""
         SELECT si.name, si.posting_date, si.customer, si.customer_name, si.currency,
@@ -4073,7 +4092,7 @@ def get_pick_list_flow(search=None, scope="open", page=1, page_size=100, days=No
             JOIN `tabSales Order` so ON so.name = pli.sales_order
             LEFT JOIN `tabCustomer` cust ON cust.name = so.customer
             WHERE pli.parent = pl.name
-              AND """ + _MERCH_SCOPE_SO + "))")
+              AND """ + _merch_scope_so() + "))")
 
     paged = _paged_query(f"""
         SELECT pl.name, pl.docstatus, pl.status, pl.purpose, pl.company,
@@ -4690,6 +4709,14 @@ def get_pending_approvals(search=None, merchandiser=None, approval_stage=None, p
     if merchandiser:
         conditions.append("cust.custom_merchandiser_user = %(me)s")
         params["me"] = merchandiser
+    elif is_scoped_to_own_customers("approval"):
+        # scoped merchandiser: their own orders (+ their customers' with the filter on), and —
+        # always — every order of a customer with no merchandiser yet while it can still be
+        # approved and claimed (Unassigned Orders), whoever created it
+        own = _merch_scope_so().replace("%(merch_scope)s", "%(me)s")
+        conditions.append(f"""({own} OR (IFNULL(cust.custom_merchandiser_user, '') = ''
+            AND (IFNULL(so.workflow_state, '') IN ('', 'Draft', 'Pending Merchandiser Approval'))))""")
+        params["me"] = frappe.session.user
     else:
         clause = [
             "LOWER(cust.custom_merchandiser_user) = LOWER(%(me)s)",

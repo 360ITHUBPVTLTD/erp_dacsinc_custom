@@ -4,12 +4,12 @@ The sheet on /roles-and-permissions is the source of truth, and saving it writes
 permissions (access_sync.apply_doc_access). When someone changes a sheet role's rights
 on a sheet document in Role Permission Manager instead, the sheet follows:
 
-- the change is read back into the sheet's letters (V E S C D O) and stored as a new
+- the change is read back into the sheet's letters (V N E S C D O) and stored as a new
   sheet version ("Role Permission Manager · <user>"), and in developer mode the bundle
   (access/agreed_access.json) is rewritten, so the next deploy carries it to live;
 - the sheet is then re-applied in the background, so linked-document rights, reports
-  and tabs follow too, and the rows are normalised to the sheet's letters (E = write
-  AND create, V = read, print, email, report, export…).
+  and tabs follow too, and the rows are normalised to the sheet's letters (N = create,
+  E = write, V = read, print, email, report, export…).
 
 A tweak that doesn't change a letter (e.g. unticking only Export) isn't a sheet change;
 it stays until the sheet is applied next, which puts the letter's full set back.
@@ -23,7 +23,7 @@ import frappe
 
 from frappe.core.page.permission_manager import permission_manager as pm
 
-LETTERS = "VESCDO"
+LETTERS = "VNESCDO"
 V_EXTRA = {"print", "email", "report", "export"}
 
 
@@ -61,8 +61,9 @@ def letters_from_perms(rows, need, old, submittable):
 		out = set()
 		if "read" in have and ("read" not in need or (have & V_EXTRA) - need or "V" in old):
 			out.add("V")
-		edit = have & {"write", "create"}
-		if edit and (not edit <= need or "E" in old):
+		if "create" in have and ("create" not in need or "N" in old):
+			out.add("N")
+		if "write" in have and ("write" not in need or "E" in old):
 			out.add("E")
 		if submittable and "submit" in have:
 			out.add("S")

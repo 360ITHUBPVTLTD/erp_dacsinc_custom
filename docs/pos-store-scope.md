@@ -115,7 +115,9 @@ permission query conditions (`item_query` / `has_item_permission`).
       By Item Group, Stock and Account Value Comparison, …).
   - **POS Profile column:** for a POS Store Manager, the POS Profile filter is set to
     their store and other stores' rows are removed. POS Register shows only their store;
-    POS Admin sees all stores.
+    POS Admin sees all stores. But POS Register is built on POS Invoice, which store
+    managers hold only for their own records (O on the access sheet), and Frappe refuses
+    to run a report on own-record rights, so today only POS Admin can run it.
   - Reports without Item / Warehouse columns are untouched; non-POS users never.
   - Checked as JP Nagar's store manager: Stock Balance, Stock Ledger, Stock Projected
     Qty, Stock Ageing, Warehouse-wise Item Balance Age and Value and Item Shortage
@@ -214,6 +216,113 @@ screen is built.
     to it.
   - Tested headless at 1300×650, 1300×690, 1366×768, 1920×1080, 1024×768, 768×1024 and 390×844.
 
+## Open the POS (`Controller.create_opening_voucher`, `pos_cash.py`)
+
+The "Create POS Opening Entry" dialog is our own (`pos_page_extend.js`), with ERPNext's
+fields and submit (`pos_cash.create_opening` makes and submits the entry the same way):
+- The POS Profile is filled in when the user is listed (POS Profile › Applicable for
+  Users) on exactly one enabled profile of the company (`pos_scope.my_pos_profiles`).
+- Only cash rows are entered ("Cash in the drawer now"). Card / UPI and other non-cash
+  modes are sent at 0. No rows can be added, uploaded or removed.
+- The cash row starts from what the store's last closing left in the drawer; the box
+  above it shows that closing (number, time, cashier, counted − handed over). The
+  first shift of a store has nothing to carry.
+- A cash amount that differs asks for "Reason the cash differs".
+
+See "Cash in the drawer" for the rules behind it.
+
+## Cash in the drawer (`pos_cash.py`)
+
+One rule from shift to shift, enforced on the documents (validate / before_submit), so
+it holds however an entry is made. Cash = a Mode of Payment of type Cash.
+
+- **One open shift per store** (POS Profile) at a time (`opening_validate`): a store has
+  one drawer, so its cash is counted once and the next shift carries the right amount.
+  ERPNext itself only limits one open shift per cashier. (Before this, Administrator test
+  shifts overlapped the JP Nagar login's; VV Puram's store login still has a shift open
+  since 2 March 2026.)
+- **Opening** (`opening_validate`): only cash has an opening amount; card / UPI must be 0.
+  `custom_previous_closing` / `custom_carried_forward` record the store's last submitted
+  closing (ending before the shift opened) and its cash left in the drawer. A cash
+  opening that differs needs `custom_opening_change_reason`. No previous closing → no rule.
+- **Closing** (`make_closing_entry` + `closing_validate` / `closing_before_submit`):
+  - Every Closing Amount starts at its expected amount (as ERPNext did); the cashier
+    changes it only where the cash counted / card machine / UPI app differs.
+  - "Cash expected in the drawer" spells out its sum under it: opening cash + cash received
+    in the shift (sales − refunds − change) = expected. The table's cash row already includes
+    the opening; card / UPI show only their sales (they open at 0).
+  - **Form layout** (`pos_cash.apply_closing_layout`, Property Setters exported with the
+    custom fields to `custom/pos_closing_entry.json`, synced on migrate): what the cashier
+    fills in comes first — "Close the cash drawer" (notes on what to do, steps 1–3), then
+    "Payment modes" (card / UPI note) — then "Shift (filled in automatically)", Totals and
+    "Bills in this shift" (collapsed). The opening entry's fields are exported to
+    `custom/pos_opening_entry.json`. `create_fields` (after_migrate) defines the same fields.
+  - The cash fields sit above the payment table as steps ("Close the cash drawer"):
+    Cash expected (read only) · **1. Cash counted in the drawer** (typed here, copied into
+    the cash row's Closing Amount; either can be typed, they stay the same; read only when
+    a store has several cash modes) · Short / extra · **2. Why short / extra** (shown and
+    required only when any mode differs, `depends_on`) · **3. Cash taken out now** (more
+    than counted is refused on the spot and on save) · Cash left in drawer for the next shift.
+  - Difference = closing − expected, recomputed on the server.
+  - `custom_expected_cash`, `custom_cash_counted` (= the cash rows' closing amounts),
+    `custom_cash_short_extra`, `custom_cash_handed_over` (taken out, 0 … counted) and
+    `custom_cash_left_in_drawer` (counted − taken out: the next opening starts from it)
+    are recomputed on the server.
+  - Any mode with a difference needs `custom_difference_reason` before submit.
+  - The form says what to do at the top (amounts are pre-filled / give the reason), and
+    the totals follow as the cashier types (`pos_closing_entry.js`; the cash modes come
+    from `pos_cash.which_are_cash`, since store logins can't list Mode of Payment).
+- Closings made before these fields count their cash rows, with nothing handed over.
+- The fields are created by `pos_cash.create_fields` (after_migrate).
+- The closing report email (`pos_notify.closing_mail_html`; email-safe tables and inline
+  styles, 640 px, fits a phone): a dark header with store, shift times, cashier and **net
+  collected**; then the parts below; "How it was paid" tiles (cash net of change, card,
+  UPI, share of takings); bills / returns / items / discounts; shift details and totals in
+  two columns; taxes; top 15 items (ranked); the bills (first 60); a button to the closing
+  entry. Payment modes are shown without the store suffix ("Card Payment", not "Card
+  Payment - JP Nagar"). The cash parts (`cash_statement` / `_cash_html`):
+  - a status line: green "All amounts match", or red "Check:" listing cash short /
+    extra (with the reason), an opening that differed from the last closing (with the
+    reason) and any card / UPI difference;
+  - **Cash drawer**, a statement that adds up: opening cash (left at the last closing
+    <name>, or "no earlier closing") + cash sales − cash refunds − change given back
+    = cash expected; cash counted; short / extra (reason); − cash taken out; = cash left
+    for the next shift;
+  - **Card / UPI**: expected (sales) vs as per machine / app, and the difference.
+  It replaces the old per-mode Payments table. The Excel summary carries the same lines.
+  "Net collected" is the bills' rounded totals (what was paid), so it matches the cash.
+- Checked 2 Oct 2026 against every POS bill (payments − change = bill total, all 44) and
+  every shift since 1 Sep (expected per mode = an independent recount, all 13). One old
+  closing, POS-CLO-2026-00020 (25 Aug, made by the earlier ERPNext closing load), stored
+  ₹246 expected for a ₹236 cash bill.
+
+**One-time clean-up** (patch `close_stale_pos_shifts` → `pos_cash.close_stale_shifts`, the
+user's choice on 2 Oct 2026):
+- Submitted POS bills dated before 1 Sep 2026 (`TEST_BILLS_BEFORE`) that never reached the
+  accounts are cancelled, with a comment: setup-time tests (on the live copy: JP00012,
+  VV00023, ACC-PSINV-2026-00001…00004, ₹878 together).
+- Every shift still open from before the migrate day is closed: a closing entry with closing
+  = expected (a comment says the cash was not counted), no closing email
+  (`flags.dacs_auto_closed`). A September-or-later bill in it is posted as usual. On the live
+  copy: Counter 10 (since 28 Feb), VV Puram (since 2 Mar), Rajajinagar (since 26 Sep).
+- Shifts opened that day (in use) are left alone. Each step runs on its own (savepoint): a
+  failure is logged (Error Log "POS clean-up: …") and the rest go on.
+- Bills no shift will ever close (made without an open shift of that cashier and store)
+  are only listed in the patch output.
+- `close_stale_shifts(dry_run=True)` shows what it would do.
+
+**Store Cash Book** (report, `report/store_cash_book`): one line per shift (POS Opening
+Entry) in the date range: left at the previous closing, opening cash, opening differs
+by (and why), cash sales net of change, card, UPI, other modes, expected and counted
+cash, short / extra (and why), handed over, left in drawer, the opening / closing
+entries. Mismatches are red; a shift not yet closed shows "Open".
+- Based on POS Profile (`ref_doctype`): store managers hold POS Opening / Closing Entry
+  only for their own records, which Frappe doesn't accept for running a report, but
+  they view their POS Profile. Who may run it follows the access sheet's View on POS
+  Profile (plus POS Admin, POS Store Manager, System Manager on the report).
+- POS logins: allowed in `pos_report_scope` (POS_REPORTS_ALLOWED); a store manager's
+  Store filter is set to their store and other stores' lines are cut.
+
 ## Close the POS (`pos_closing.py`, `public/js/pos_closing_entry.js`)
 
 "Close the POS" (`Controller.close_pos`, patched in `pos_page_extend.js`) calls
@@ -222,8 +331,8 @@ screen is built.
   profile, user and company; the session's POS Invoices (ERPNext's `get_pos_invoices`);
   grand / net total and qty; taxes per account and rate; and payments.
 - Payments: opening amount, plus each bill's payments, minus change given back on the
-  change account. The closing amount starts at the expected amount, and the cashier
-  enters what was counted.
+  change account. Cash closing amounts start at 0 and card / UPI at the expected amount
+  (see "Cash in the drawer").
 - The form opens already filled (about 0.5 s). Save takes about 1 s; ERPNext's
   before_save reads the bills once more.
 
@@ -331,7 +440,7 @@ Account on the site.
 - **POS Closing Entry** submitted → a report to *POS Closing Report — Send To*:
   - Summary tiles: sales, returns, net collected, invoices, qty, discounts.
   - Store, cashier, opening and closing entry, net / taxes / discounts.
-  - Payments per mode: opening, sales, expected, closing, difference.
+  - Cash drawer statement and card / UPI check (see "Cash in the drawer" above).
   - Taxes, top 15 items, and the invoice list (first 60, with walk-in name / mobile).
   - Attached Excel: **Summary / Invoices / Items / Payments**. It's built in memory
     (openpyxl) and attached as content, so **no File record is created**; the only

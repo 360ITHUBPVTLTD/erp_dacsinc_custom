@@ -34,7 +34,7 @@ from erp_dacsinc_custom import pos_scope
 # (cut to their brands / stores below) and the POS Register — never finance, GST, HR,
 # projects, manufacturing or CRM reports, nor stock valuation / accounting checks.
 POS_REPORT_MODULES = ("Stock", "Selling")
-POS_REPORTS_ALLOWED = ("POS Register", "Stock Balance Summary")
+POS_REPORTS_ALLOWED = ("POS Register", "Stock Balance Summary", "Store Cash Book")
 POS_REPORTS_BLOCKED = ("COGS By Item Group", "Stock and Account Value Comparison", "Incorrect Stock Value Report",
 					   "Incorrect Serial No Valuation", "Stock Ledger Variance", "Incorrect Balance Qty After Transaction")
 

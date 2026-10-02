@@ -337,6 +337,21 @@ def pos_source_warehouse():
 
 
 @frappe.whitelist()
+def my_pos_profiles(company=None):
+	"""The enabled POS Profiles (of this company) the user is listed on (POS Profile ›
+	Applicable for Users). The POS opening dialog picks the profile itself when there
+	is exactly one."""
+	filters = {"disabled": 0}
+	if company:
+		filters["company"] = company
+	names = frappe.get_all("POS Profile", filters=filters, pluck="name")
+	if not names:
+		return []
+	return sorted(set(frappe.get_all("POS Profile User", filters={"parent": ["in", names], "user": frappe.session.user},
+								 pluck="parent")))
+
+
+@frappe.whitelist()
 def get_my_pos_defaults():
 	"""Defaults for a new Material Request / Stock Entry made from a POS login
 	(POS Admin / POS Store Manager, admins excluded):

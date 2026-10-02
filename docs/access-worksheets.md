@@ -14,10 +14,17 @@ client-facing. The roles are `WS_ROLES` (Admin excluded) and the documents are
 
 ## Decided sheets
 
-- **Document Access**: each cell holds six boxes: V view, E create & edit, S submit,
-  C cancel, D delete, O only own records. S and C are shaded (not possible) on
-  documents that are never submitted. Clicking a box toggles it. Unticking V clears
-  the whole cell, and ticking any other box also ticks V.
+- **Document Access**: each cell holds seven boxes: V view, N new (create), E edit
+  (change saved records), S submit, C cancel, D delete, O only own records. N and E are
+  separate, so a role can create without changing saved records (N only) or change
+  without creating (E only). S and C are shaded (not possible) on documents that are
+  never submitted. Clicking a box toggles it. Unticking V clears the whole cell, and
+  ticking any other box also ticks V.
+- **Letters before N existed:** E meant create and edit. A sheet stored without the
+  `letters` marker (live before this change, an older bundle, `DA_CLIENT`) is read as
+  N + E (`access_worksheet.upgrade_doc_sheet`, also in `access_sync.read_bundle`), and a
+  page opened before the change (its save sends no `letters`) has its E saved as N + E.
+  So nobody loses a right; every new save stores `letters: "VNESCDO"`.
 - The starting point is `DA_CLIENT`, the client's hand-marked sheet from 28 Sep 2026,
   typed in. It was read like this:
   - A cell struck through with lines, or one big X over the whole cell = no access,
@@ -85,8 +92,8 @@ a `DefaultValue` row under parent `__dacsinc_access_ws`, so no migration is need
 Once the site is switched on (below), saving a sheet applies it in the same transaction; if applying fails, nothing is saved.
 
 - **Document access** → Custom DocPerm for the sheet roles on the sheet documents.
-  - The sheet row is exact: V = read, select, print, email, report, export; E = write,
-    create; S = submit; C = cancel, amend; D = delete; O = if_owner.
+  - The sheet row is exact: V = read, select, print, email, report, export; N = create;
+    E = write; S = submit; C = cancel, amend; D = delete; O = if_owner.
     "Contact & Address" covers both Contact and Address.
   - Other roles' rows are never touched, and no role is deleted. HR Manager and the
     like stay manual.
@@ -208,7 +215,7 @@ never disagree.
   the sheet is switched on.
 - **Reading back:** each role's permission-level-0 rows on that document are turned
   back into letters, combining a role's rows as Frappe does:
-  - V = read, E = write or create, S = submit, C = cancel, D = delete;
+  - V = read, N = create, E = write, S = submit, C = cancel, D = delete;
   - O when only the "Only if creator" row has rights.
 
   Read / Select that the sheet itself adds for linked documents (Address, Contact,
@@ -221,7 +228,7 @@ never disagree.
     live.
   - The Document access sheet is re-applied in a background job (`queue="short"`,
     deduplicated) so linked-document rights and reports follow. This also normalises
-    the rows: E = write + create, V = its whole set.
+    the rows: V = its whole set, C = cancel + amend.
 - **Not a sheet change:** a tweak that doesn't change a letter (e.g. unticking only
   Export) is left alone until the sheet is next applied, which restores the letter's
   full set.
@@ -269,12 +276,18 @@ never disagree.
     linked documents. Greyed boxes can't be ticked (hover says why: never
     submitted, master data, Import / Share only in Role Permission Manager).
   - Ticking switches the letter that gives it, so its set follows (V = Select,
-    Read, Print, Email, Report, Export · E = Create, Write · C = Cancel, Amend).
+    Read, Print, Email, Report, Export · N = Create · E = Write · C = Cancel, Amend).
   - Rows follow the document: one that is never submitted has no Submit / Cancel /
     Amend rows. The ⋯ panel drops its Approve group the same way.
   - Live: opened documents re-read the ERP with the page's 15 s check, and after
     each save. A change made in Role Permission Manager, or by another user, shows
     up by itself ("Tick boxes updated from the ERP").
+- **Views** (switch above the sheet, remembered per browser): **Sheet** (the grid
+  above, with the ▸ rows), **By document** (every role on one document, one row per
+  role) and **By role** (one role on every document, grouped). Both tables show the
+  same tick boxes as the ▸ rows, plus the cell's letters, from `access_sync.sheet_rights`
+  (`row=` / `role=`). Ticking works the same, and they follow the 15 s check and saves.
+  Printing always prints the sheet.
 - **Printing** (the Print / Save as PDF button or the browser's own Ctrl+P) prints
   only the sheet on screen: its print header (version, printed date), the legend and
   the table. The status strip, Reset profiles, the tabs, the heading, the intro text,
@@ -296,7 +309,7 @@ never disagree.
     highlighted.
   - A one-line summary sits on top, e.g. "can only pick Customer in forms… the
     list and records stay closed".
-  - Ticking a line switches its letter. Rights come in sets (V, E, C), so the
+  - Ticking a line switches its letter. Rights come in sets (V, C), so the
     sheet stays the only place rights are decided. Nothing applies until Save.
 - **Page:** every 15 s (and when the tab becomes visible) it fetches
   `access_worksheet.get_saved`. A newer version replaces the table, with a toast and

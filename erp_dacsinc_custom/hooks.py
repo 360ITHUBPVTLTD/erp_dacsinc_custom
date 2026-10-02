@@ -254,8 +254,15 @@ doc_events = {
         "on_trash": "erp_dacsinc_custom.access_reverse.on_custom_docperm_change",
     },
     # Submitted closing → sales report email with Excel (pos_notify.py).
+    # Cash in the drawer: counted / handed over / left, a reason for any short or extra (pos_cash.py).
     "POS Closing Entry": {
+        "validate": "erp_dacsinc_custom.pos_cash.closing_validate",
+        "before_submit": "erp_dacsinc_custom.pos_cash.closing_before_submit",
         "on_submit": "erp_dacsinc_custom.pos_notify.send_closing_report",
+    },
+    # Card / UPI open at 0; the cash opening is carried from the last closing, or has a reason.
+    "POS Opening Entry": {
+        "validate": "erp_dacsinc_custom.pos_cash.opening_validate",
     },
     # A customer's first POS Invoice gives them that store (pos_scope.py).
     "POS Invoice": {
@@ -580,6 +587,8 @@ doc_events = {
 # of relying on a one-shot patch that could drift from the real config over
 # time.
 after_migrate = [
+    # Cash-in-the-drawer fields on POS Opening / Closing Entry (pos_cash.py). Idempotent.
+    "erp_dacsinc_custom.pos_cash.create_fields",
     # Sheets changed locally and pushed with the code are taken once (access_sync).
     "erp_dacsinc_custom.access_sync.sync_from_bundle",
     "erp_dacsinc_custom.order_flow_permissions.sync_order_flow_page_roles",
