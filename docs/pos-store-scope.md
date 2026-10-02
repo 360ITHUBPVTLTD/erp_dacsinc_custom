@@ -91,6 +91,36 @@ permission query conditions (`item_query` / `has_item_permission`).
 - **POS Admin:** every brand the stores list. Stores without brands are ignored.
 - The per-document-type rule applies: a POS user whose other role reads Items
   (e.g. DAC CRM) sees all Items.
+- **Barcode scan in forms** (`erpnext.stock.utils.scan_barcode`, overridden by
+  `pos_scope.scan_barcode`): a barcode, serial or batch of an item outside their brands
+  finds nothing, the same as typing it in the item field.
+- **Reports** (`pos_report_scope.py`). Query / script reports read the whole company
+  with their own SQL. So every report a POS login runs (on screen, exported, or as a
+  prepared report in the background) is cut. The hooks before_request and before_job
+  wrap `frappe.desk.query_report.generate_report_result`, which both paths call.
+  - Before it runs, the Warehouse filter is set to their store when they have one
+    store, or replaced when it names a warehouse outside theirs. Reports that add stock
+    up across warehouses (Stock Ageing) or show warehouses as columns then count only
+    that store. If a report rejects that filter, it is retried as a list, then with the
+    user's own filters.
+  - After it runs, any row whose Item column (Link → Item) is another brand, or whose
+    Warehouse column (Link → Warehouse) is outside their warehouses, is removed. Charts
+    and summary cards go when rows were removed.
+  - Warehouses: Store Manager, their stores' warehouses. POS Admin, every store's
+    warehouse plus the supply warehouse (Admin Settings › POS Stock Requests).
+  - **Which reports run at all** (`check_pos_report`, before running): for a POS login
+    (`pos_scope.is_pos_staff`), stock and selling reports and POS Register only.
+    - Finance, GST, HR, projects, manufacturing and CRM reports are refused ("not
+      available for POS logins"), and so are stock valuation / accounting checks (COGS
+      By Item Group, Stock and Account Value Comparison, …).
+  - **POS Profile column:** for a POS Store Manager, the POS Profile filter is set to
+    their store and other stores' rows are removed. POS Register shows only their store;
+    POS Admin sees all stores.
+  - Reports without Item / Warehouse columns are untouched; non-POS users never.
+  - Checked as JP Nagar's store manager: Stock Balance, Stock Ledger, Stock Projected
+    Qty, Stock Ageing, Warehouse-wise Item Balance Age and Value and Item Shortage
+    show only JP Nagar brands and the JP Nagar store. Stock Ageing qty equals the store's
+    stock on 400 / 400 items checked.
 
 ## Customer › POS Store (`custom_pos_store`)
 

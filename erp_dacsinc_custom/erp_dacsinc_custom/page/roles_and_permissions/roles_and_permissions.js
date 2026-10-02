@@ -659,8 +659,9 @@ class RolesAndPermissions {
 		const total = users.length;
 		const enabled = users.filter((u) => u.enabled).length;
 		const disabled = total - enabled;
-		const multi = users.filter((u) => u.role_profiles.length > 1).length;
-		const unassigned = users.filter((u) => u.role_profiles.length === 0).length;
+		// profile counts are about the people who can log in: enabled users only
+		const multi = users.filter((u) => u.enabled && u.role_profiles.length > 1).length;
+		const unassigned = users.filter((u) => u.enabled && u.role_profiles.length === 0).length;
 		this.$body.find('.rp-stats').html([
 			this.stat_card('users', total, __('Total Users'), '#2490ef'),
 			this.stat_card('check_circle', enabled, __('Enabled'), '#29a745'),
@@ -752,8 +753,14 @@ class RolesAndPermissions {
 			: `<span class="rp-no-profile">${__('No profile')}</span>`;
 		const is_open = this.expanded.has(row.user);
 
-		const locked = !row.enabled;
-		const locked_attr = locked ? 'disabled title="' + __('Enable this user first to make changes') + '"' : '';
+		// A user manager (HR, not an admin) can't change admins, nor their own roles / status.
+		const admin_only = !this.data.is_full_admin && row.is_admin_user;
+		const is_self = row.user === frappe.session.user;
+		const locked = !row.enabled || admin_only;
+		const locked_attr = admin_only
+			? 'disabled title="' + __('Administrator — only an admin can change this user') + '"'
+			: (locked ? 'disabled title="' + __('Enable this user first to make changes') + '"' : '');
+		const own_lock = (!this.data.is_full_admin && is_self) ? 'disabled title="' + __('You cannot change your own access') + '"' : '';
 		const password_icon = this.data.is_system_manager ? 'lock' : 'mail';
 		const password_label = this.data.is_system_manager ? __('Password') : __('Reset Link');
 		const password_title = this.data.is_system_manager
@@ -775,7 +782,7 @@ class RolesAndPermissions {
 			<td>
 				<div class="rp-status-cell">
 					<label class="rp-switch" title="${row.enabled ? __('Click to disable this user') : __('Click to enable this user')}">
-						<input type="checkbox" class="rp-status-switch" ${row.enabled ? 'checked' : ''}>
+						<input type="checkbox" class="rp-status-switch" ${row.enabled ? 'checked' : ''} ${admin_only || own_lock ? 'disabled' : ''}>
 						<span class="rp-switch-track"><span class="rp-switch-thumb"></span></span>
 					</label>
 					<span class="rp-status-text ${row.enabled ? 'is-on' : 'is-off'}">${row.enabled ? __('Enabled') : __('Disabled')}</span>
@@ -785,9 +792,9 @@ class RolesAndPermissions {
 			<td class="rp-actions">
 				<div class="rp-action-row">
 					${rp_action_btn('rp-edit-profile-fields', 'edit', __('Profile'), __('Edit name, phone and other profile details'), locked_attr, 'rp-btn-blue')}
-					${rp_action_btn('rp-edit-profiles', 'shield', __('Roles'), __('Add or remove Role Profiles'), locked_attr, 'rp-btn-blue')}
+					${rp_action_btn('rp-edit-profiles', 'shield', __('Roles'), __('Add or remove Role Profiles'), locked_attr || own_lock, 'rp-btn-blue')}
 					${rp_action_btn('rp-reset-password', password_icon, password_label, password_title, locked_attr, 'rp-btn-amber')}
-					${rp_action_btn('rp-delete-user', 'trash', __('Delete'), __('Permanently delete this user'), '', 'rp-btn-red')}
+					${this.data.is_full_admin ? rp_action_btn('rp-delete-user', 'trash', __('Delete'), __('Permanently delete this user'), '', 'rp-btn-red') : ''}
 				</div>
 			</td>
 		</tr>`);

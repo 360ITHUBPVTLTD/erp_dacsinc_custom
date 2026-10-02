@@ -123,6 +123,11 @@ Once the site is switched on (below), saving a sheet applies it in the same tran
     - DAC CRM needs Read on the order's Customer: its Customer right is own-records
       only (O).
     - Merchandiser and POS refusals were their record-scope rules, as intended.
+- **Records a form reads to show itself** (`VIEW_READS`), view only (read + select).
+  Every role that may view Business Contacts gets Read on Lead, Event Activity and
+  Location Master, which its form loads. Without them, Finance Executive / Finance
+  Collection Executive got "No permission" pop-ups. Tracked like the other dependency
+  grants.
 - **Picked by name only** (`DEP_SELECT_ONLY`): User and Email Account. An editor of
   a document linking them (e.g. POS Profile › Receipt Email Account) gets Select,
   never Read, so mail credentials can't be opened.
@@ -320,6 +325,19 @@ never disagree.
 - Refill from document access and Clear all are System Manager only, typed REFILL /
   CLEAR (see Resets above).
 
+## Hand-flagged profiles reach live (`access/flagged_profiles.json`)
+
+Each sheet role's own profile is flagged on every site by `ensure_profiles`. Profiles
+flagged by hand on top of those (Role Profile › `custom_dacsinc_access_profile`; today
+Admin, HR, Employee) are listed in `access/flagged_profiles.json`.
+- Locally (developer mode), the Role Profile on_update rewrites the file when the flag
+  changes (`write_flagged_profiles`).
+- Every migrate sets the flag on each listed profile that exists
+  (`apply_flagged_profiles`, after_migrate). It only ever sets it, never clears one.
+- Flagged profiles appear on the Roles & Permissions page and can be given there. A
+  user manager still can't give one carrying an admin role. "Reset profiles" only
+  touches the sheet roles' own profiles, never these.
+
 ## Roles and profiles (dynamic)
 
 - The sheet's columns are the roles flagged **Access Sheet Role** (Role ›
@@ -339,6 +357,60 @@ never disagree.
     The per-user Doctype Access tab still shows real access.
 - ERPNext / HRMS remove Employee and Employee Self Service from a user who has no
   Employee record linked (User ID). Link one to keep them.
+
+## Users' roles from the client's user sheet (`user_role_sheet.py`)
+
+`access/user_roles.json` maps each user (email) to the one role the client named for
+them. "" means none, so the Employee profile.
+- **What a listed user gets:** exactly that role's own profile (the role + Employee +
+  Employee Self Service). Every other role is removed, except Sales Order Final
+  Approver, which Admin Settings › final approvers manages user-wise.
+- **HRMS:** it removes Employee / Employee Self Service from a user with no Employee
+  record (e.g. the POS counter logins). That is expected.
+- **User Access Profile:** the profile is kept on the user's record (created when
+  missing), the way the Roles & Permissions page assigns profiles. The User's own Role
+  Profile field is cleared, so every user is managed the same way and a later save
+  keeps the roles.
+- **The page** (`roles_and_permissions_api`) shows and offers the base **Employee**
+  profile next to the access sheet profiles. Users the client sheet left without a
+  role have it; before, they showed "No profile".
+- **Not touched:**
+  - users not in the file (e.g. anuj@dacsinc.in and hr@dacsinc.in, left out on
+    purpose; pankaj@360ithub.com; shanthi@pragatimci.com);
+  - names the site doesn't have, which are skipped and reported.
+- **Running it:**
+  - live: patch `assign_user_roles_from_sheet` on migrate, once. It first makes sure the
+    sheet roles' profiles exist. To apply a changed file again, add a comment to its
+    patches.txt line.
+  - locally: `bench execute erp_dacsinc_custom.user_role_sheet.apply --kwargs
+    '{"dry_run": 1}'` lists what would change.
+- **The 2026-10-02 sheet** (corrected the same day: POS Admin / POS Store Manager
+  swapped back): 109 users; naveenkumar@dacsinc.in doesn't exist; pvidhyadhar20@gmail.com
+  is the sheet's "pvidyadhar20".
+
+## Roles & Permissions desk page: who manages users (`roles_and_permissions_api.py`)
+
+**Admins** (System Manager, Admin, Super Admin) can do everything there. **User
+managers** (`USER_MANAGER_ROLES`: HR Manager) run the people side.
+- A user manager can:
+  - create users;
+  - give / take the access sheet profiles (Employee included) and sheet roles;
+  - edit details;
+  - send a password reset link;
+  - enable / disable.
+- A user manager never:
+  - gives an admin role, or a profile carrying one (`_check_profiles_allowed`; the
+    Admin profile is flagged, so it is listed, but refused);
+  - touches a user holding an admin role (anuj@, Administrator);
+  - changes their own roles, profiles or enabled state (`_check_manageable`);
+  - deletes a user (disable instead).
+- Setting a password stays System Manager only.
+- The page hides Delete and locks those rows / buttons for them (`is_full_admin`,
+  `is_admin_user`).
+- HR Manager is on the page's roles and its Custom Role.
+
+The HR Role Profile has no Admin role (patch `hr_profile_without_admin`). It keeps HR
+Manager, HR User, Leave Approver, Delivery User and Employee.
 
 ## Switched off / on — users' roles are never changed by applying
 

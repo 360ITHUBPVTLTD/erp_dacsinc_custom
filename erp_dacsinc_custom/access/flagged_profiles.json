@@ -1,0 +1,8 @@
+{
+ "note": "Role Profiles flagged for the access sheet by hand; set on every site by migrate.",
+ "profiles": [
+  "Admin",
+  "Employee",
+  "HR"
+ ]
+}

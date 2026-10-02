@@ -24,3 +24,6 @@ erp_dacsinc_custom.patches.correct_pick_lists_missing_stock
 erp_dacsinc_custom.patches.reset_item_grid_columns
 erp_dacsinc_custom.patches.set_customer_protected_field_roles
 erp_dacsinc_custom.patches.reset_item_grid_columns #2026-10-01 all 9 item tables, Price List Rate
+erp_dacsinc_custom.patches.assign_user_roles_from_sheet #client sheet 2026-10-02 corrected POS roles
+erp_dacsinc_custom.patches.hr_profile_without_admin
+erp_dacsinc_custom.patches.party_defaults_and_primary_address

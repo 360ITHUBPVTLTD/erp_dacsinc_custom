@@ -4,7 +4,7 @@
  "docstatus": 0,
  "doctype": "Page",
  "idx": 0,
- "modified": "2026-09-22 12:05:33.205030",
+ "modified": "2026-10-02 11:02:28.911741",
  "modified_by": "Administrator",
  "module": "Erp Dacsinc Custom",
  "name": "roles-and-permissions",
@@ -16,6 +16,9 @@
   },
   {
    "role": "Admin"
+  },
+  {
+   "role": "HR Manager"
   }
  ],
  "script": null,

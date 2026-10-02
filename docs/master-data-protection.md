@@ -72,3 +72,17 @@ master reports. Moving them onto sheet roles only closes it.
 
 The sheet travels in `access/agreed_access.json`. `RULES_VERSION` was bumped,
 so the next migrate re-applies the sheet, the report rules and the non-sheet strip.
+
+## Supplier / Customer defaults (`party_address.py`, patch `party_defaults_and_primary_address`)
+
+- **Default Price List:** every Supplier has Standard Buying. New suppliers get it as the
+  field's default (Property Setter, exported in `custom/supplier.json`).
+- **Primary address:** a Customer / Supplier with an address but no primary address gets
+  one. That is the address ticked Preferred Billing, else the oldest; enabled addresses
+  only.
+  - Done once for all parties (2026-10-02: 455 suppliers, 1 customer).
+  - From then on, whenever an address linked to a party is saved (Address after_insert /
+    on_update).
+  - A primary address already set is never changed.
+- Supplier › Address (`custom_add`, an unused hidden custom field) was removed. The patch
+  deletes it on live too, because customization sync never deletes fields.

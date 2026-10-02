@@ -177,6 +177,14 @@ SUBMIT_WRITES = {
 # Only what the submit needs: the log is inserted (create); the comment is added without
 # a permission check. No read / write: the GST logs stay closed to these roles.
 SUBMIT_WRITES_FIELDS = ("create",)
+# Records a document's form reads to show itself, for every role that may VIEW it — view
+# only (read + select), never more. Business Contacts shows its Lead, the contact's Event
+# Activity and loads Location Master; without these, viewing it popped "No permission"
+# (e.g. Finance Executive / Finance Collection Executive).
+VIEW_READS = {
+	"Business Contacts": ("Lead", "Event Activity", "Location Master"),
+}
+VIEW_READS_FIELDS = ("read", "select")
 EVERY_SHEET_ROLE_READS = ("Page", "Selling Settings", "Stock Settings", "Buying Settings", "Accounts Settings",
 						  "POS Settings", "Global Defaults")
 
@@ -479,6 +487,13 @@ def compute_doc_access(sheet):
 						or d.module in COMPANION_SKIP_MODULES):
 					continue
 				deps.setdefault(target, {}).setdefault(role, set()).update(COMPANION_FIELDS)
+	for parent, targets in VIEW_READS.items():
+		for role, (flags, _o) in direct.get(parent, {}).items():
+			if "read" not in flags:
+				continue
+			for target in targets:
+				if target in info:
+					deps.setdefault(target, {}).setdefault(role, set()).update(VIEW_READS_FIELDS)
 	for target, parents in SUBMIT_WRITES.items():
 		if target not in info or target in direct:
 			continue
@@ -888,7 +903,7 @@ def _map_set(key, data):
 
 # Bump when the rules in this file change (dependencies, companions, pages…), so each
 # site re-applies its sheets once on the next migrate (sync_from_bundle).
-RULES_VERSION = "2026-10-01.4"
+RULES_VERSION = "2026-10-02.1"
 
 
 def bundle_fingerprint(data):
@@ -1206,3 +1221,42 @@ def sheet_rights(row=None, role=None, rows=None):
 				out["submittable"][r] = bool(frappe.get_meta(targets[0]).is_submittable)
 				out["items"][r] = _rights(targets[0], role, direct, deps)
 	return out
+
+
+# ------------------------------------------------------------------ hand-flagged profiles
+# Role Profiles flagged for the access sheet by hand (Role Profile › custom_dacsinc_access_profile),
+# beyond each sheet role's own profile (which ensure_profiles flags on every site) — e.g.
+# Admin, HR, Employee. Kept in access/flagged_profiles.json so live gets the same flags:
+# rewritten locally (developer mode) whenever a profile's flag changes, applied on every
+# migrate (after_migrate). Applying only ever sets the flag; it never clears one.
+FLAGGED_PROFILES_PATH = os.path.join(os.path.dirname(__file__), "access", "flagged_profiles.json")
+
+
+def hand_flagged_profiles():
+	own = {_profile_name(r) for r in sheet_roles()}
+	return sorted(set(sheet_profiles()) - own)
+
+
+def write_flagged_profiles(doc=None, method=None):
+	"""Role Profile on_update (developer mode): keep the file in step with the flags."""
+	if not frappe.conf.developer_mode or not frappe.db.has_column("Role Profile", PROFILE_FLAG):
+		return
+	if doc is not None and not doc.has_value_changed(PROFILE_FLAG):
+		return
+	names = hand_flagged_profiles()
+	os.makedirs(os.path.dirname(FLAGGED_PROFILES_PATH), exist_ok=True)
+	with open(FLAGGED_PROFILES_PATH, "w") as f:
+		json.dump({"note": "Role Profiles flagged for the access sheet by hand; set on every site by migrate.",
+				   "profiles": names}, f, indent=1)
+		f.write("\n")
+
+
+def apply_flagged_profiles():
+	"""after_migrate: flag the listed profiles that exist on this site."""
+	if not os.path.exists(FLAGGED_PROFILES_PATH) or not frappe.db.has_column("Role Profile", PROFILE_FLAG):
+		return
+	with open(FLAGGED_PROFILES_PATH) as f:
+		names = json.load(f).get("profiles") or []
+	for name in names:
+		if frappe.db.exists("Role Profile", name) and not frappe.db.get_value("Role Profile", name, PROFILE_FLAG):
+			frappe.db.set_value("Role Profile", name, PROFILE_FLAG, 1, update_modified=False)

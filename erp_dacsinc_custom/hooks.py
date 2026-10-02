@@ -386,6 +386,15 @@ doc_events = {
     #     "after_insert": "erp_dacsinc_custom.custom_customer.customer_after_insert",
     #     "on_update": "erp_dacsinc_custom.custom_customer.update_customer_sharing"
     # }
+    "Address": {
+        # its Customers / Suppliers without a primary address get this one (party_address.py)
+        "after_insert": "erp_dacsinc_custom.party_address.on_address_save",
+        "on_update": "erp_dacsinc_custom.party_address.on_address_save",
+    },
+    "Role Profile": {
+        # its access-sheet flag ticked / unticked locally → access/flagged_profiles.json
+        "on_update": "erp_dacsinc_custom.access_sync.write_flagged_profiles",
+    },
     "POS Profile": {
         # Store Name set / changed: bills of this store without one get it.
         "on_update": "erp_dacsinc_custom.pos_receipt_email.fill_store_names",
@@ -586,6 +595,8 @@ after_migrate = [
     "erp_dacsinc_custom.so_embroidery.create_embroidery_pick_list_fields",
     # POS Invoice › Store Name on bills without one, from their POS Profile.
     "erp_dacsinc_custom.pos_receipt_email.fill_store_names",
+    # Role Profiles flagged for the access sheet by hand (Admin, HR, Employee…).
+    "erp_dacsinc_custom.access_sync.apply_flagged_profiles",
 ]
 
 # Ships these Custom Fields with the app rather than leaving them to be
@@ -673,6 +684,8 @@ scheduler_events = {
 
 # Map Purchase Receipt to Purchase Invoice
 override_whitelisted_methods = {
+    # Barcode scan in forms: POS logins only find their stores' brands (pos_scope.py)
+    "erpnext.stock.utils.scan_barcode": "erp_dacsinc_custom.pos_scope.scan_barcode",
     # Global search without master records the user may not open (master_guard.py)
     "frappe.utils.global_search.search": "erp_dacsinc_custom.master_guard.global_search",
     "erpnext.stock.doctype.purchase_receipt.purchase_receipt.make_purchase_invoice": "erp_dacsinc_custom.purchase_order.make_purchase_invoice_custom",
@@ -709,7 +722,13 @@ override_whitelisted_methods = {
 # ----------------
 # before_request = ["erp_dacsinc_custom.utils.before_request"]
 # Link search on Customer / Supplier / Item Price for pick-only users: capped rows.
-before_request = ["erp_dacsinc_custom.master_guard.before_request"]
+before_request = [
+    "erp_dacsinc_custom.master_guard.before_request",
+    # Reports run by POS logins: their brands' items and their stores' warehouses only.
+    "erp_dacsinc_custom.pos_report_scope.install",
+]
+# Prepared reports run in the background: the same report rule there.
+before_job = ["erp_dacsinc_custom.pos_report_scope.install"]
 # after_request = ["erp_dacsinc_custom.utils.after_request"]
 
 # Job Events
