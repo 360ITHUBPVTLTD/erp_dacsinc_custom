@@ -25,8 +25,8 @@
     "",
     "VEO",
     "VE",
-    "VE",
-    "VE",
+    "V",
+    "V",
     "",
     "",
     "",
@@ -65,7 +65,7 @@
     "VE",
     "V",
     "V",
-    "V",
+    "VE",
     "VE",
     "VE",
     "V",
@@ -610,7 +610,7 @@
     "V"
    ]
   },
-  "note": "Role Permission Manager \u00b7 Administrator: Merchandiser User \u00b7 Customer: VE \u2192 V",
+  "note": "Business Contacts: Finance Executive / Finance Collection Executive view only",
   "roles": [
    "Accounts Executive",
    "Accounts Manager",
@@ -632,10 +632,10 @@
   ],
   "saved_by": "Administrator",
   "saved_by_name": "Administrator",
-  "saved_on": "2026-10-01 18:45:25.260672",
+  "saved_on": "2026-10-02 11:16:38.516551",
   "version": 37
  },
- "fingerprint": "6aa574ce03bb8c30a31352837f131f32dc3e75d1",
+ "fingerprint": "a12a83c6d27ed196cef9b93eeabf6b10797b23d0",
  "tab_access": {
   "cells": {
    "Embroidery Transfers": [

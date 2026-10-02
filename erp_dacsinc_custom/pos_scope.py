@@ -441,3 +441,19 @@ def has_sales_invoice_permission(doc, ptype=None, user=None, debug=False):
 		return None
 	stores, owners = sc
 	return doc.owner in [user] + owners or bool(doc.get("is_pos") and doc.get("pos_profile") in stores)
+
+
+# ------------------------------------------------------------------ barcode scan
+@frappe.whitelist()
+def scan_barcode(search_value: str) -> dict:
+	"""erpnext.stock.utils.scan_barcode (override_whitelisted_methods): a POS login scanning
+	(barcode / serial / batch) an item outside their stores' brands gets nothing back —
+	the same as typing it in the item field, where the Item rule hides it."""
+	from erpnext.stock.utils import scan_barcode as erpnext_scan_barcode
+
+	found = erpnext_scan_barcode(search_value)
+	code = (found or {}).get("item_code")
+	brands = _scope_brands(get_scope(frappe.session.user, "Item")) if code else None
+	if brands is not None and frappe.db.get_value("Item", code, "brand") not in brands:
+		return {}
+	return found

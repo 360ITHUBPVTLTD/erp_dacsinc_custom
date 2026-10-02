@@ -4,10 +4,13 @@ Server side for the "Roles & Permissions" desk page (erp_dacsinc_custom.page
 built on top of erp_dacsinc_custom.role_permission_matrix (the single source
 of truth for what each role/profile actually means).
 
-Every whitelisted method here is admin-only: this page can create users and
-reset passwords, so it stays restricted to System Manager / Admin / Super
-Admin, same three roles order_flow_permissions.ADMIN_ROLES already treats as
-"full access, no further configuration" for this app.
+Every whitelisted method here is for admins (System Manager / Admin / Super
+Admin, same three roles order_flow_permissions.ADMIN_ROLES treats as "full
+access") and user managers (HR Manager). A user manager runs the people side
+— create users, give / take the access sheet profiles and roles, edit details,
+send a password reset link, enable / disable — but never: gives an admin role,
+touches a user who holds one, changes their own access, or deletes a user
+(_check_manageable). Setting a password stays System Manager only.
 """
 
 import frappe
@@ -20,14 +23,25 @@ from erp_dacsinc_custom.erp_dacsinc_custom.doctype.user_access_profile.user_acce
 from erp_dacsinc_custom.role_permission_matrix import ROLE_PROFILES
 
 ADMIN_ROLES = ("System Manager", "Admin", "Super Admin")
+USER_MANAGER_ROLES = ("HR Manager",)  # manage users here, within the limits above
+
+
+# The base profile (Employee + Employee Self Service only) is what users with no access
+# sheet role get (the client's user sheet, user_role_sheet.py); shown and offered here too.
+BASE_PROFILE = "Employee"
 
 
 def _sheet_profiles():
     """Role Profiles this page offers: the ones flagged by the access sheet
-    (erp_dacsinc_custom.access_sync). Falls back to every profile only on a site
-    where the flag field doesn't exist yet (before the one-time setup ran)."""
+    (erp_dacsinc_custom.access_sync), plus the base Employee profile. Falls back to
+    every profile only on a site where the flag field doesn't exist yet (before the
+    one-time setup ran)."""
     from erp_dacsinc_custom.access_sync import sheet_profiles
-    return sheet_profiles() or sorted(frappe.get_all("Role Profile", pluck="name"))
+    flagged = sheet_profiles()
+    if not flagged:
+        return sorted(frappe.get_all("Role Profile", pluck="name"))
+    base = [BASE_PROFILE] if frappe.db.exists("Role Profile", BASE_PROFILE) else []
+    return sorted(set(flagged) | set(base))
 
 
 def _shown_roles():
@@ -42,7 +56,7 @@ def _shown_roles():
 def _shown_profiles():
     from erp_dacsinc_custom.access_sync import sheet_profiles
     flagged = sheet_profiles()
-    return set(flagged) if flagged else None
+    return (set(flagged) | {BASE_PROFILE}) if flagged else None
 
 
 def _sheet_roles_allowed():
@@ -65,11 +79,42 @@ PROFILE_FIELDS = (
 def _guard():
     if frappe.session.user == "Administrator":
         return
-    if not (set(frappe.get_roles()) & set(ADMIN_ROLES)):
+    if not (set(frappe.get_roles()) & (set(ADMIN_ROLES) | set(USER_MANAGER_ROLES))):
         frappe.throw(
             _("You are not permitted to manage roles and permissions."),
             frappe.PermissionError,
         )
+
+
+def _is_full_admin():
+    return frappe.session.user == "Administrator" or bool(set(frappe.get_roles()) & set(ADMIN_ROLES))
+
+
+def _check_manageable(user, own_access=False):
+    """A user manager (not an admin) may not act on a user holding an admin role, and
+    (own_access) may not change their own roles / profiles / enabled state."""
+    if _is_full_admin():
+        return
+    if user == "Administrator" or set(frappe.get_roles(user)) & set(ADMIN_ROLES):
+        frappe.throw(_("{0} is an administrator. Only an admin can change this user.").format(user),
+                     frappe.PermissionError)
+    if own_access and user == frappe.session.user:
+        frappe.throw(_("You cannot change your own access. Ask an admin."), frappe.PermissionError)
+
+
+def _check_profiles_allowed(role_profiles):
+    """A user manager can't hand out a profile that carries an admin role."""
+    if _is_full_admin():
+        return
+    for p in role_profiles or []:
+        roles = set(frappe.get_all("Has Role", filters={"parent": p, "parenttype": "Role Profile"}, pluck="role"))
+        if roles & set(ADMIN_ROLES):
+            frappe.throw(_("Profile {0} includes an admin role. Only an admin can give it.").format(p), frappe.PermissionError)
+
+
+def _only_full_admin(action):
+    if not _is_full_admin():
+        frappe.throw(_("Only an admin can {0}.").format(action), frappe.PermissionError)
 
 
 def _is_system_manager():
@@ -205,6 +250,8 @@ def get_users_overview():
             "profile_summaries": profile_summaries,
             "extra_roles": extra_roles,
             "managed_by_multi_profile": u.name in uap_by_user,
+            # holds an admin role: only an admin may change this user
+            "is_admin_user": bool(current_roles_by_user.get(u.name, set()) & set(ADMIN_ROLES)),
             "profile_fields": {f: u.get(f) for f in PROFILE_FIELDS},
             "language_display": language_names.get(language_code, language_code),
         })
@@ -219,6 +266,8 @@ def get_users_overview():
         # standard reset-link email; they can make the user change their
         # password, they can never see or choose it.
         "is_system_manager": _is_system_manager(),
+        # a user manager (HR) doesn't delete users, give admin roles or touch admins
+        "is_full_admin": _is_full_admin(),
     }
 
 
@@ -227,6 +276,7 @@ def create_user(email, first_name, last_name=None, role_profiles=None):
     _guard()
     if frappe.db.exists("User", email):
         frappe.throw(_("User {0} already exists.").format(email))
+    _check_profiles_allowed(frappe.parse_json(role_profiles) if isinstance(role_profiles, str) else role_profiles)
 
     user_doc = frappe.get_doc({
         "doctype": "User",
@@ -254,6 +304,7 @@ def update_user_role_profiles(user, role_profiles=None):
     """
     _guard()
     _check_editable(user)
+    _check_manageable(user, own_access=True)
     role_profiles = role_profiles or []
     if isinstance(role_profiles, str):
         role_profiles = frappe.parse_json(role_profiles)
@@ -266,6 +317,7 @@ def update_user_role_profiles(user, role_profiles=None):
     not_offered = [p for p in role_profiles if p not in offered]
     if not_offered:
         frappe.throw(_("Not an access sheet profile: {0}").format(", ".join(not_offered)))
+    _check_profiles_allowed([p for p in role_profiles if p not in _current_role_profiles(user)])
 
     if frappe.db.exists("User Access Profile", user):
         uap = frappe.get_doc("User Access Profile", user)
@@ -296,6 +348,7 @@ def set_user_password(user, new_password):
     if not frappe.db.exists("User", user):
         frappe.throw(_("User {0} does not exist.").format(user))
     _check_editable(user)
+    _check_manageable(user)
     if not _is_system_manager():
         frappe.throw(
             _("Only a System Manager can set a password directly. Use 'Send Reset Email' instead."),
@@ -314,6 +367,7 @@ def send_password_reset_email(user):
     if user_doc.name == "Administrator":
         frappe.throw(_("Administrator's password cannot be reset this way."))
     _check_editable(user)
+    _check_manageable(user)
     user_doc.validate_reset_password()
     user_doc.reset_password(send_email=True)
     return {"user": user}
@@ -325,6 +379,7 @@ def update_user_profile(user, values=None):
     never the password, never anything role-permission-relevant."""
     _guard()
     _check_editable(user)
+    _check_manageable(user)
     values = values or {}
     if isinstance(values, str):
         values = frappe.parse_json(values)
@@ -349,9 +404,12 @@ def toggle_user_role(user, role, enabled):
     if not frappe.db.exists("Role", role):
         frappe.throw(_("Role {0} does not exist.").format(role))
 
+    _check_manageable(user, own_access=True)
     allowed = _sheet_roles_allowed()
     if enabled and allowed is not None and role not in allowed:
         frappe.throw(_("{0} is not an access sheet role. Only the roles on the agreed access sheet can be given.").format(role))
+    if enabled and role in ADMIN_ROLES:
+        _only_full_admin(_("give the {0} role").format(role))
 
     user_doc = frappe.get_doc("User", user)
     if enabled:
@@ -364,6 +422,7 @@ def toggle_user_role(user, role, enabled):
 @frappe.whitelist()
 def set_user_enabled(user, enabled):
     _guard()
+    _check_manageable(user, own_access=True)
     if user == "Administrator":
         frappe.throw(_("Administrator cannot be disabled."))
     frappe.db.set_value("User", user, "enabled", frappe.utils.cint(enabled))
@@ -383,6 +442,7 @@ def delete_user(user):
     throwaway/test account.
     """
     _guard()
+    _only_full_admin(_("delete a user (disable them instead)"))
     if user in ("Administrator", "Guest"):
         frappe.throw(_("{0} cannot be deleted.").format(user))
     if user == frappe.session.user:
