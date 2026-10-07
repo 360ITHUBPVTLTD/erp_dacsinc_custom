@@ -86,3 +86,18 @@ so the next migrate re-applies the sheet, the report rules and the non-sheet str
   - A primary address already set is never changed.
 - Supplier › Address (`custom_add`, an unused hidden custom field) was removed. The patch
   deletes it on live too, because customization sync never deletes fields.
+
+## Admin Settings (`admin_settings.has_permission`)
+
+Admin Settings holds recipients, user lists and role lists. Many roles have Read on it
+because screens and the mobile app read their settings as the signed-in user.
+- **Roles with Read** (DAC CRM, Merchandiser User, …) may read it through the API
+  (`/api/resource`, `frappe.client.get` / `get_single_value`): the mobile app needs this.
+  Before 7 Oct 2026 every read needed Write, and the app failed for them.
+- **Only roles with Write** (System Manager, Admin) open the desk form
+  (`frappe.desk.form.load.getdoc`), print it (`/printview`, PDF download), or email /
+  export / report / share it. Frappe prints whatever may be read, so print is blocked by
+  request path.
+- Server code reads it with `get_single_value` / `get_cached_doc`, which this doesn't touch.
+- Never give Write just to make a screen or the app work: Write lets the role change the
+  dashboard tabs, final approvers and recipients for everyone.

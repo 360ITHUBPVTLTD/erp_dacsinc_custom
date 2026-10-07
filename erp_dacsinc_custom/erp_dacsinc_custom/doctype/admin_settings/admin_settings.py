@@ -9,17 +9,31 @@ class AdminSettings(Document):
 	pass
 
 
+# Opening the form on the desk (frappe.desk.form.load.getdoc) shows every recipient, user
+# and role list; that stays with those who may edit it.
+DESK_FORM_METHODS = ("frappe.desk.form.load.getdoc", "frappe.desk.form.load.getdoctype",
+					 "frappe.utils.print_format.download_pdf", "frappe.utils.print_format.download_multi_pdf",
+					 "frappe.www.printview.get_html_and_style")
+
+
 def has_permission(doc, ptype=None, user=None, debug=False):
-	"""Admin Settings is readable by many roles (server code reads it on their behalf),
-	but its contents — recipients, users, role lists — are shown only to those who may
-	edit it. Opening / reading / exporting it needs write access. Server code reads it
-	with get_single_value / get_cached_doc, which don't check this, so nothing that
-	depends on the settings stops working."""
+	"""Admin Settings: roles with Read may read it through the API (the mobile app reads its
+	settings as the signed-in user, e.g. DAC CRM), but only those who may edit it open the
+	desk form or print / email / export / share it. Server code reads it with
+	get_single_value / get_cached_doc, which don't check this."""
 	user = user or frappe.session.user
 	if user == "Administrator" or ptype in ("write", "create", "submit", "cancel", "delete", "amend"):
 		return None
-	if not frappe.has_permission("Admin Settings", "write", user=user):
+	if frappe.has_permission("Admin Settings", "write", user=user):
+		return None
+	if ptype in ("print", "email", "export", "report", "share"):
 		return False
+	method = getattr(frappe.local, "form_dict", {}).get("cmd") or ""
+	if not method and getattr(frappe.local, "request", None):
+		method = (frappe.local.request.path or "").rsplit("/api/method/", 1)[-1]
+	path = (frappe.local.request.path or "") if getattr(frappe.local, "request", None) else ""
+	if method in DESK_FORM_METHODS or path.startswith("/printview"):
+		return False  # Frappe prints whatever may be read: printing it needs edit rights too
 	return None
 
 
