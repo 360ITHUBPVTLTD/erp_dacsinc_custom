@@ -611,6 +611,7 @@
    ]
   },
   "letters": "VNESCDO",
+  "note": "Role Permission Manager \u00b7 Administrator: DAC CRM \u00b7 Contact & Address: VNEO \u2192 VNE",
   "roles": [
    "Accounts Executive",
    "Accounts Manager",
@@ -632,8 +633,8 @@
   ],
   "saved_by": "Administrator",
   "saved_by_name": "Administrator",
-  "saved_on": "2026-10-02 15:00:31.645328",
-  "version": 40
+  "saved_on": "2026-10-07 10:54:55.644367",
+  "version": 21
  },
  "fingerprint": "43ce0e3d5360ebb683571292a1b9cdbe98e74547",
  "tab_access": {
@@ -1212,7 +1213,7 @@
   ],
   "saved_by": "Administrator",
   "saved_by_name": "Administrator",
-  "saved_on": "2026-10-01 15:42:55.294818",
-  "version": 23
+  "saved_on": "2026-10-01 18:03:48.624722",
+  "version": 7
  }
 }
