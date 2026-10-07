@@ -9179,6 +9179,38 @@ def get_so_item_commitment(sales_order_item, exclude_doctype=None, exclude_name=
     }
 
 
+def po_room_by_so_item(sales_order_items, exclude_po=None, this_doc=None):
+    """{Sales Order Item: (room, [PO docs])} — how much more a Purchase Order row linked to
+    that line may still order, by the SAME count guard_po_item_not_over_so_need enforces:
+    the line's qty minus every other draft / submitted PO row linked to it (any status —
+    a Completed or Closed PO still ordered it; fg_item_qty on a subcontracted PO). The
+    fetch dialogs cap what they offer with this, so they never offer what saving refuses.
+    exclude_po: the PO being edited (its saved rows); this_doc: {line: qty} its rows on screen."""
+    if isinstance(this_doc, str):
+        this_doc = json.loads(this_doc or "{}")
+    this_doc = this_doc or {}
+    names = [n for n in set(sales_order_items or []) if n]
+    if not names:
+        return {}
+    qty = dict(frappe.db.sql("SELECT name, qty FROM `tabSales Order Item` WHERE name IN %(n)s", {"n": names}))
+    used, docs = {}, {}
+    for r in frappe.db.sql("""
+        SELECT poi.sales_order_item AS soi, poi.parent AS name, po.docstatus, po.status,
+               CASE WHEN po.is_subcontracted = 1 THEN poi.fg_item_qty ELSE poi.qty END AS qty
+        FROM `tabPurchase Order Item` poi
+        JOIN `tabPurchase Order` po ON po.name = poi.parent
+        WHERE poi.sales_order_item IN %(n)s AND po.docstatus IN (0, 1) AND po.name != %(excl)s
+    """, {"n": names, "excl": exclude_po or ""}, as_dict=True):
+        used[r.soi] = used.get(r.soi, 0) + flt(r.qty)
+        docs.setdefault(r.soi, []).append({"id": r.name, "qty": flt(r.qty),
+                                           "status": _("Draft") if cint(r.docstatus) == 0 else r.status})
+    for n, q in this_doc.items():
+        if flt(q) > 0:
+            used[n] = used.get(n, 0) + flt(q)
+            docs.setdefault(n, []).append({"id": _("this Purchase Order"), "qty": flt(q), "status": _("on screen")})
+    return {n: (max(0.0, flt(qty.get(n)) - used.get(n, 0)), docs.get(n, [])) for n in names if n in qty}
+
+
 def _commitment_doc_list(info):
     """"PUR-ORD-… (Draft, 10)" for every document holding part of a line."""
     return ", ".join(
