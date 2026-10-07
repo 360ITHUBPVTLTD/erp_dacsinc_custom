@@ -1,3 +1,14 @@
+// Qty this (possibly unsaved) PO already holds per Sales Order line — the save check
+// counts these rows too, so the fetch dialogs leave room for them (po_room_by_so_item).
+function dacs_rows_by_so_item(frm) {
+    const out = {};
+    (frm.doc.items || []).forEach((r) => {
+        if (!r.sales_order_item) return;
+        out[r.sales_order_item] = (out[r.sales_order_item] || 0) + flt(frm.doc.is_subcontracted ? r.fg_item_qty : r.qty);
+    });
+    return JSON.stringify(out);
+}
+
 // --- Place this code in your Purchase Order client script file (e.g., purchase_order.js) ---
 
 // --- Global CSS Definition (New Clean & Mild Style) ---
@@ -691,7 +702,7 @@ frappe.ui.form.on('Purchase Order', {
                 const is_subcontracted = frm.doc.is_subcontracted || 0;
                 frappe.call({
                     method: "erp_dacsinc_custom.purchase_order.get_pending_so_with_material_stock",
-                    args: { is_subcontracted },
+                    args: { is_subcontracted, exclude_po: frm.is_new() ? "" : frm.doc.name, this_doc: dacs_rows_by_so_item(frm) },
                     freeze: true,
                     freeze_message: __("Fetching pending Sales Orders & Material Stock..."),
                     callback: (r) => {
@@ -1718,7 +1729,9 @@ function show_sales_order_dialog(frm, data, is_subcontracted) {
                 method: "erp_dacsinc_custom.purchase_order.validate_and_get_items_for_po",
                 args: {
                     selected_items: JSON.stringify(selected_rows),
-                    is_subcontracted: frm.doc.is_subcontracted ? 1 : 0
+                    is_subcontracted: frm.doc.is_subcontracted ? 1 : 0,
+                    exclude_po: frm.is_new() ? "" : frm.doc.name,
+                    this_doc: dacs_rows_by_so_item(frm),
                 },
                 freeze: true,
                 freeze_message: "Validating and adding items...",

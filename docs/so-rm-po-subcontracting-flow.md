@@ -1286,6 +1286,23 @@ forever once a PO is fully subcontracted, even after some of the resulting
 stock gets diverted elsewhere (sent for further processing, picked for a
 different order, etc.), and silently zeroes out a genuine later shortfall.
 
+**Capped by the save check (`custom_script.po_room_by_so_item`).** Whatever the figures
+above work out, "Fetch Pending Sales Orders" never offers — and its Add step
+(`validate_and_get_items_for_po`) never adds — more than saving the PO accepts:
+the Sales Order line's qty minus every draft / submitted PO row linked to that line
+(`sales_order_item`), whatever the PO's status, `fg_item_qty` on a subcontracted PO —
+the exact count `guard_po_item_not_over_so_need` uses. Rows already on the PO being
+edited count too (the form sends its saved name as `exclude_po` and its on-screen
+rows as `this_doc`). A row capped this way carries `po_room_docs` (the POs holding
+it); a row with no room is left out, and the Add step rejects it naming those POs.
+Before this, the dialog skipped Completed / Closed POs, matched POs by order rather
+than line, and credited only a subcontracted PO's un-converted remainder, so it
+offered qty the save then refused with "Over the Sales Order's Own Need" (live:
+SAL-ORD-2026-00192, Toscano Male Beige Trouser 30, 11 offered with PUR-ORD-2026-00119
+already holding 11; local: SAL-ORD-2026-00138 behind PUR-ORD-2026-00126). A genuine
+later shortfall on a fully ordered line is bought on a row not linked to the order,
+as that error says.
+
 For the subcontracted "Fetch Pending Sales Orders" surface specifically,
 a linked PO's own remaining **capacity** to still absorb a new shortfall is
 `poi.qty − poi.subcontracted_quantity` (ERPNext's own running tracker for

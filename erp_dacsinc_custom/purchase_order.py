@@ -195,11 +195,14 @@ from erp_dacsinc_custom.custom_script import (
     RM_COVERED, RM_SHORT, RM_HELD)
 
 @frappe.whitelist()
-def validate_and_get_items_for_po(selected_items, is_subcontracted=0, allow_held=0):
+def validate_and_get_items_for_po(selected_items, is_subcontracted=0, allow_held=0, exclude_po=None, this_doc=None):
     # allow_held is accepted only so an old cached browser tab doesn't crash;
     # it is ignored — RM reserved for another order is never usable.
     if isinstance(selected_items, str):
         selected_items = json.loads(selected_items)
+    from erp_dacsinc_custom.custom_script import po_room_by_so_item
+    po_room = po_room_by_so_item([e.get("soRowName") for e in selected_items], exclude_po, this_doc)
+    room_left = {k: v[0] for k, v in po_room.items()}
 
     is_subcontracted = cint(is_subcontracted)
     valid_items = []
@@ -251,6 +254,24 @@ def validate_and_get_items_for_po(selected_items, is_subcontracted=0, allow_held
                 "reason": "Sales Order Item not found"
             })
             continue
+
+        # Same count as the save check (guard_po_item_not_over_so_need): never add more than
+        # the line still has room for after every PO already linked to it.
+        if so_item.name not in room_left:
+            po_room.update(po_room_by_so_item([so_item.name], exclude_po, this_doc))
+            room_left[so_item.name] = po_room.get(so_item.name, (qty_to_add, []))[0]
+        room = room_left.get(so_item.name, qty_to_add)
+        if room <= 0.001:
+            held = ", ".join(f"{d['id']} ({d['status']}, {d['qty']:g})" for d in po_room.get(so_item.name, (0, []))[1])
+            rejected_items.append({
+                "sales_order": sales_order,
+                "item_name": entry.get("itemName", item_code),
+                "reason": f"Already fully ordered for this Sales Order line on {held or 'other Purchase Orders'}."
+            })
+            continue
+        if qty_to_add > room:
+            qty_to_add = room
+        room_left[so_item.name] = room - qty_to_add
 
         # ── Subcontracted path ────────────────────────────────────────
         if is_subcontracted:
@@ -1302,7 +1323,9 @@ from frappe.utils import flt, cint
 from collections import defaultdict
 
 @frappe.whitelist()
-def get_pending_so_with_material_stock(is_subcontracted=False):
+def get_pending_so_with_material_stock(is_subcontracted=False, exclude_po=None, this_doc=None):
+    """exclude_po: the Purchase Order the dialog is open on (its own saved rows are counted
+    by the save check as this document, not as another PO)."""
     is_subcontracted = cint(is_subcontracted)
     join_field = "fg_item" if is_subcontracted else "item_code"
     if is_subcontracted:
@@ -1451,6 +1474,9 @@ def get_pending_so_with_material_stock(is_subcontracted=False):
         entry["qty"] += flt(r.open_qty)
         entry["links"].append({"id": r.mr_name, "status": r.status, "qty": flt(r.open_qty)})
 
+    from erp_dacsinc_custom.custom_script import po_room_by_so_item
+    po_room = po_room_by_so_item([r.so_row_name for r in pending_orders], exclude_po, this_doc)
+
     final_rows = []
 
     so_linked_po_tracker = defaultdict(float)
@@ -1554,7 +1580,14 @@ def get_pending_so_with_material_stock(is_subcontracted=False):
         # permanently disabled anyway) just clutters the list with rows
         # nobody can act on.
         to_buy = max(0, rem_after_po - allocated_mr)
-        if to_buy <= 0:
+        # Never more than saving the PO will accept: the line's qty minus every PO already
+        # linked to it, as guard_po_item_not_over_so_need counts (any PO status — the
+        # figures above skip Completed / Closed POs and match by order, not by line).
+        room, room_docs = po_room.get(row.so_row_name, (to_buy, []))
+        if room < to_buy:
+            to_buy = room
+            row["po_room_docs"] = room_docs
+        if to_buy <= 0.001:
             continue
         # The one figure the row is actually offering to buy. Kept on the row
         # so the overview can total THIS, rather than re-deriving a need from a
