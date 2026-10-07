@@ -2096,8 +2096,12 @@ function _build_incoming_html(item, d, pair_key) {
  *
  *   🟢 In Stock                  this order's own stock covers it → Subcontract PO can go ahead
  *   🔵 Requested                 an MR / PO / jobber transfer covers it → wait (or submit the draft MR)
- *   🔴 Not in Stock              → [Request RM]
- *   🔴 Reserved for Other Order  on the shelf, but another order's → [Request RM]
+ *   🔴 Short — Request RM        → [Request RM]; when the shelf holds stock bought for other
+ *                                  orders, one grey line says so ("stays with them")
+ *
+ * "In Stock for this Order" is broken down the same way every screen words it (PO fetch
+ * prompt, SCO dialog, their messages): bought for this order + free stock, then what an
+ * earlier line of this order used, then "bought for SO-… — stays with that order".
  *
  * Server statuses are unchanged (get_item_stock_details_bulk); this only
  * decides how they read.
@@ -2114,7 +2118,7 @@ function get_rm_breakdown_html(data, so_name, docstatus, pair_key) {
         const need = flt(item.rm_needed_for_shortfall || 0);
         const short = flt(item.rm_shortfall_total || 0);
         if (need <= 0.005) return 'none';
-        if (short > 0.005) return flt(item.rm_on_shelf_held) > 0.005 ? 'reserved' : 'short';
+        if (short > 0.0005) return 'short';   // one red state, whatever the shelf holds for others
         if (item.status === 'Covered') return 'ok';
         return 'req';   // Requested / MR in Draft / In Process at Jobber
     };
@@ -2130,8 +2134,11 @@ function get_rm_breakdown_html(data, so_name, docstatus, pair_key) {
         const picked = flt(item.rm_picked_elsewhere || 0);
         const reserved = flt(item.rm_on_shelf_held || 0);
         const used_earlier = flt(item.rm_used_by_other_lines || 0);
+        const used_lines = (item.rm_used_by_lines || []).map(l => `${esc(l.item_code)} (${q(l.qty)}${u})`).join(', ');
         const holders = Object.keys(item.rm_held_by || {});
-        const holder_txt = holders.length ? holders.map(h => esc(so_short(h))).join(', ') : 'another order';
+        const holder_txt = holders.length ? holders.map(h => esc(so_short(h))).join(', ') : 'other orders';
+        const holder_amounts = holders.map(h => `${esc(so_short(h))} (${q(item.rm_held_by[h])})`).join(' · ');
+        const own_mark = flt(item.rm_own_earmark || 0), free_stock = flt(item.rm_free_stock || 0);
 
         const mr_pending = flt(item.rm_pending_mr_total || 0);
         const mr_draft = flt(item.rm_draft_mr_total || 0);
@@ -2154,13 +2161,9 @@ function get_rm_breakdown_html(data, so_name, docstatus, pair_key) {
         } else if (v === 'ok') {
             status = `${so_pill('ready', 'check', 'In Stock')}
                       <div class="so-micro">Ready — you can create the Subcontract PO.</div>`;
-        } else if (v === 'reserved') {
-            status = `${so_pill('blocked', 'lock', 'Reserved for Other Order')}
-                      <div class="so-micro">${q(reserved)}${u} on the shelf belongs to ${holder_txt} and cannot be used for this order.</div>
-                      ${request_btn}`;
         } else if (v === 'short') {
-            status = `${so_pill('blocked', 'times', 'Not in Stock')}
-                      <div class="so-micro">Request ${q(short)}${u} for this order.</div>
+            status = `${so_pill('blocked', 'times', `Short ${q(short)}${u} — Request RM`)}
+                      ${reserved > 0.005 ? `<div class="so-micro" style="color:var(--text-muted);">${q(reserved)}${u} on the shelf was bought for ${holder_txt}; request your own so neither order runs short.</div>` : ''}
                       ${request_btn}`;
         } else {
             const draft_mr = (item.draft_mr_documents || []).filter(Boolean)[0];
@@ -2203,11 +2206,12 @@ function get_rm_breakdown_html(data, so_name, docstatus, pair_key) {
                     <span class="so-val" style="font-weight:600;">${q(need)}</span>${u}
                     <div class="so-micro">for ${q(rm.fg_shortfall)} to make</div>
                 </td>
-                <td title="${esc('This order\'s own raw material: stock reserved for it plus unclaimed stock at VV Puram.' + (picked_tip ? '\n\nPicked for delivery (not usable):\n' + picked_tip : ''))}" style="cursor:help;">
-                    <span class="so-val" style="font-weight:600; color:${own + 0.005 >= need ? 'var(--so-green)' : 'var(--so-red)'};">${q(own)}</span>${u}
-                    ${used_earlier > 0.005 ? `<div class="so-micro">${q(used_earlier)}${u} already counted for an earlier item of this order</div>` : ''}
-                    ${reserved > 0.005 ? `<div class="so-micro" style="color:var(--so-red);"><i class="fa fa-lock"></i> +${q(reserved)}${u} on shelf reserved for ${holder_txt} (not usable)</div>` : ''}
-                    ${picked > 0.005 ? `<div class="so-micro" style="color:var(--so-orange);"><i class="fa fa-lock"></i> +${q(picked)}${u} picked for delivery (not usable)</div>` : ''}
+                <td title="${esc('For this order = bought for this order + free stock (bought for no order) at VV Puram, less what earlier lines of this order use.' + (picked_tip ? '\n\nPicked for a delivery:\n' + picked_tip : ''))}" style="cursor:help;">
+                    <span class="so-val" style="font-weight:600; color:${own + 0.0005 >= need ? 'var(--so-green)' : 'var(--so-red)'};">${q(own)}</span>${u}
+                    <div class="so-micro" style="color:var(--text-muted);">bought for this order ${q(own_mark)} · free stock ${q(free_stock)}</div>
+                    ${used_earlier > 0.005 ? `<div class="so-micro">${q(used_earlier)}${u} used by ${used_lines || 'an earlier line'} of this order</div>` : ''}
+                    ${reserved > 0.005 && v !== 'none' ? `<div class="so-micro" style="color:var(--text-muted);"><i class="fa fa-info-circle"></i> on the shelf, bought for other orders: ${q(reserved)}${u}${holder_amounts ? ` — ${holder_amounts}` : ''} — stays with them</div>` : ''}
+                    ${picked > 0.005 && v !== 'none' ? `<div class="so-micro" style="color:var(--text-muted);"><i class="fa fa-info-circle"></i> ${q(picked)}${u} picked for a delivery — stays with it</div>` : ''}
                 </td>
                 <td>
                     ${on_way > 0.005
@@ -2225,10 +2229,12 @@ function get_rm_breakdown_html(data, so_name, docstatus, pair_key) {
 
     // One header pill, worst first.
     const views = (rm.rm_items_status || []).map(view_of);
-    const n_red = views.filter(v => v === 'short' || v === 'reserved').length;
+    const n_red = views.filter(v => v === 'short').length;
     const any_req = views.includes('req');
-    const header = n_red ? so_pill('blocked', 'times', `${n_red} RM to request — Subcontract PO blocked`)
+    const all_none = views.length > 0 && views.every(v => v === 'none');
+    const header = n_red ? so_pill('blocked', 'times', `${n_red} RM short — Request RM before the Subcontract PO`)
         : any_req ? so_pill('dn', 'clock-o', 'RM requested — waiting')
+        : all_none ? so_pill('ready', 'check', 'No raw material needed — finished stock covers it')
         : so_pill('ready', 'check', 'All RM in stock — ready for Subcontract PO');
 
     const fg_uom = esc(data.stock_uom || 'Pcs');
@@ -2266,7 +2272,7 @@ function get_rm_breakdown_html(data, so_name, docstatus, pair_key) {
                         <thead><tr>
                             <th style="width:17%;">Raw Material</th>
                             <th style="width:13%;" title="Raw material needed for the pieces still to make (hover a value for the whole-order total).">Needed</th>
-                            <th style="width:20%;" title="This order's own raw material at VV Puram: stock reserved for it plus unclaimed stock. Stock reserved for another order or picked for a delivery is shown below it but is NOT usable.">In Stock for this Order</th>
+                            <th style="width:20%;" title="This order's raw material at VV Puram: what was bought for this order plus free stock (bought for no order). Stock bought for other orders, or picked for a delivery, is listed under it — it stays with them.">In Stock for this Order</th>
                             <th style="width:16%;" title="Already requested or on its way: Material Requests, Purchase Orders, and material already sent to the jobber for this order.">Requested / On the Way</th>
                             <th style="width:11%;" title="Needed − In Stock − Requested. This is what still has to be requested.">To Request</th>
                             <th style="width:23%;">Status &amp; Next Step</th>
@@ -4100,7 +4106,7 @@ window.so_show_spo_multi_prompt = function (sales_order, items, on_done) {
     };
 
     // What a row may go up to: this order's OWN material only (ready_qty).
-    // Stock reserved for another order is never usable — no tick, no confirm.
+    // Stock bought for another order stays with it — no tick, no confirm.
     const cap_of = (it) => flt(it.ready_qty !== undefined ? it.ready_qty : it.qty);
 
     const row_html = (it, i) => {
@@ -4133,8 +4139,8 @@ window.so_show_spo_multi_prompt = function (sales_order, items, on_done) {
                 <span class="spo-rm-num ${short ? 'spo-bad' : 'spo-ok'}">
                     ${__('you may use')} ${fmt(r.available)}</span>
                 ${short ? `<span class="spo-rm-num spo-bad"><b>${__('short')} ${fmt(r.short)}</b></span>` : ''}
-                ${short && held.length ? `<span class="spo-rm-num spo-bad"><i class="fa fa-lock"></i> ${__('rest reserved for')} ${
-                    held.map(so => `${esc(so)} (${fmt(r.held_by[so])})`).join(', ')} — ${__('not usable')}</span>` : ''}
+                ${short && held.length ? `<span class="spo-rm-num" style="color:var(--text-muted);"><i class="fa fa-info-circle"></i> ${__('on the shelf, bought for')} ${
+                    held.map(so => `${esc(so)} (${fmt(r.held_by[so])})`).join(', ')} — ${__('stays with them')}</span>` : ''}
             </div>`;
         }).join('');
 

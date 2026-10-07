@@ -6341,7 +6341,7 @@ function of_show_request_list(so, opt, kind, on_done) {
         size: 'large',
         fields: [{ fieldtype: 'HTML', fieldname: 'list', options: `
             <div class="text-muted" style="font-size:12px; margin-bottom:8px;">${kind === 'rm'
-                ? __('Short for this order — stock reserved for other orders is not counted. One draft Material Request (purpose Raw Material) is created.')
+                ? __('Short for this order — stock bought for other orders stays with them. One draft Material Request (purpose Raw Material) is created.')
                 : __('Still to buy after stock, picks and existing PO/MR. One draft Material Request is created.')}</div>
             <table class="table table-sm table-bordered" style="font-size:12px;">
                 <thead><tr class="bg-light"><th class="text-center" style="width:32px;"></th><th>${__('Item')}</th>

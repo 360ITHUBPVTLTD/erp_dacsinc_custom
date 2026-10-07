@@ -2615,7 +2615,7 @@ def _compute_primary_stage_info(order):
             # then the exact records that are short (get_so_request_options).
             "action_type": "request",
             "action_label": "Request (2)" if has_trade else "Request RM",
-            "action_hint": "Raw material for a BOM item is not in stock for this order (stock reserved for other orders does not count). Open the order and use Request RM.",
+            "action_hint": "Raw material for a BOM item is not in stock for this order (stock bought for other orders stays with them). Open the order and use Request RM.",
             "action_btn_class": "of-btn--warning",
             "rm_ready_stage": bool(order.get("rm_ready_for_sco")),
         }

@@ -3160,7 +3160,7 @@ def rm_short_text(lines):
     for l in lines:
         t = _("{0} needs {1} {2}, can send {3}").format(l["item_code"], flt(l["required"], 3), l["uom"], flt(l["can_send"], 3))
         if l.get("held_by"):
-            t += _(" (the rest on the shelf is reserved for {0})").format(", ".join(l["held_by"]))
+            t += _(" (the rest on the shelf was bought for {0} and stays with that order)").format(", ".join(l["held_by"]))
         parts.append(t)
     return "; ".join(parts)
 
@@ -3419,11 +3419,11 @@ def check_rm_supply_shortfall(purchase_order_name, updated_materials_for_supply)
             })
 
     if held_items:
-        msg = "<h5 style='color:#b91c1c;'>Reserved for another order — cannot send</h5><ul>"
+        msg = "<h5 style='color:#b91c1c;'>Short for this PO — cannot send more than its own stock</h5><ul>"
         for i in held_items:
             msg += (f"<li><b>{i['item_code']}</b>: this PO's own stock is {i['own_qty']} {i['uom']}, "
-                    f"you entered {i['supplied_qty']}. The rest is reserved for "
-                    f"{frappe.utils.escape_html(i['held_by'])}.</li>")
+                    f"you entered {i['supplied_qty']}. The rest on the shelf was bought for "
+                    f"{frappe.utils.escape_html(i['held_by'])} and stays with that order.</li>")
         msg += "</ul>Reduce Qty to Supply to the PO's own stock, or Request RM for the rest."
         return {"has_shortfall": bool(short_items), "has_held": True, "blocked": True, "block_msg": msg}
 
@@ -3493,9 +3493,9 @@ def create_subcontracting_docs(purchase_order_name, updated_materials_for_supply
                 "{0}: this Purchase Order's own raw material is {1} {2}, you are sending {3}. {4} "
                 "Send only {1} now, or Request RM (Material Request) for the rest."
             ).format(code, flt(m.get("own_qty"), 3), m.get("uom") or "", flt(qty, 3),
-                     _("The rest on the shelf is reserved for {0}.").format(holders) if holders
+                     _("The rest on the shelf was bought for {0} and stays with that order.").format(holders) if holders
                      else _("There is no more on the shelf.")),
-                title=_("Reserved for Another Order") if holders else _("Not in Stock"))
+                title=_("Raw Material Short for This Order"))
 
     if not frappe.db.exists("Warehouse", subcontractor_warehouse):
         frappe.throw(_("Warehouse '{0}' not found. Please create it first.").format(subcontractor_warehouse))

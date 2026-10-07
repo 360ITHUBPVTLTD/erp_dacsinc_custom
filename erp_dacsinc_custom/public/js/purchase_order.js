@@ -1554,8 +1554,8 @@ function show_sales_order_dialog(frm, data, is_subcontracted) {
         // get_pending_so_with_material_stock) can't be selected here even if
         // it otherwise still needs buying — re-checked again server-side in
         // validate_and_get_items_for_po so this can't be bypassed either.
-        // One rule, same as the SO's own RM table: "short" AND "reserved for
-        // another order" both block. rm_held only picks the label.
+        // One rule, same as the SO's own RM table: short is short, whether or not the
+        // shelf holds stock bought for other orders (the hover names them).
         const rm_blocked = !!so.bom && so.rm_in_stock === false;
         const rm_held = rm_blocked && so.rm_state === 'held';
         const isDisabled = to_buy <= 0 || rm_blocked;
@@ -1634,7 +1634,7 @@ function show_sales_order_dialog(frm, data, is_subcontracted) {
                         </a>
                     </div>
                     ${rm_blocked ? `<span class="rm-req" title="${frappe.utils.escape_html(rm_shortage_title)}"><i class="fa fa-ban"></i>
-                          ${rm_held ? 'RM Reserved for Other Order — Request RM' : 'RM Not in Stock — Request RM'}</span>` : ''}
+                          ${'RM short — Request RM'}</span>` : ''}
 
                     <!-- Customer Link (Name + ID) -->
                     <div style="margin-top: 4px;">
@@ -2085,7 +2085,7 @@ function show_so_selection_and_rm_purchase_dialog(frm, sales_orders) {
                 .map(([so, q]) => `${so} (${flt(q).toFixed(2)})`).join(', ');
             const coverage_note = `Need ${total_rm_req.toFixed(2)} ${rm_data.uom}\n`
                 + `In stock for this order: ${stock.toFixed(2)}`
-                + (reserved_txt ? `  (on shelf but reserved for other orders: ${reserved_txt} — not usable)` : '') + `\n`
+                + (reserved_txt ? `  (on the shelf, bought for other orders: ${reserved_txt} — stays with them)` : '') + `\n`
                 + `PO for this order: ${linked_po.toFixed(2)}`
                 + (linked_po_draft > 0 ? `  (${linked_po_draft.toFixed(2)} still on a DRAFT PO)` : '') + `\n`
                 + `MR for this order: ${linked_mr.toFixed(2)}\n`
@@ -2122,7 +2122,7 @@ function show_so_selection_and_rm_purchase_dialog(frm, sales_orders) {
             <thead><tr>
                 <th width="20%">Raw Material</th>
                 <th width="12%" class="text-right" title="Sum of every TICKED Sales Order's own qty-to-make × BOM ratio for this raw material. See the breakdown lines under the number for exactly which orders contributed.">Required</th>
-                <th width="12%" class="text-right" title="Raw material the ticked order(s) may use right now at VV Puram: their own reserved stock plus unclaimed stock. Stock picked for a delivery, or reserved for an order you did not tick, is NOT counted — same figure as the Sales Order's RM table.">In Stock (usable)</th>
+                <th width="12%" class="text-right" title="Raw material the ticked order(s) may use right now at VV Puram: what was bought for them plus free stock (bought for no order). Stock picked for a delivery, or bought for an order you did not tick, stays with it — same figure as the Sales Order's RM table.">In Stock (usable)</th>
                 <th width="12%" class="text-right" title="Only counts: (a) Purchase Orders/Material Requests raised specifically for the Sales Order(s) ticked above, and (b) genuinely unclaimed PO/MR quantity not tied to any Sales Order. A PO or MR dedicated to a DIFFERENT, unticked Sales Order is never included here. DRAFT Purchase Orders count too — the qty is already committed — and the draft share is called out under the number.">Incoming (PO+MR)</th>
                 <th width="12%" class="text-right" title="Stock + Incoming — everything this raw material's need can currently draw on.">Effective</th>
                 <th width="20%">Existing Ref (PO/MR)</th>
@@ -2179,7 +2179,7 @@ function show_so_selection_and_rm_purchase_dialog(frm, sales_orders) {
             <td class="text-right text-muted">
                 ${d.available_stock.toFixed(2)}
                 ${Object.keys(d.reserved_for_others || {}).length
-                    ? `<div class="text-right" style="font-size:9px; color:#b91c1c;" title="${frappe.utils.escape_html('On the shelf but reserved for: ' + Object.entries(d.reserved_for_others).map(([so, q]) => so + ' (' + flt(q).toFixed(2) + ')').join(', ') + '. Not counted here.')}">+ ${Object.values(d.reserved_for_others).reduce((a, q) => a + flt(q), 0).toFixed(2)} reserved for other orders</div>`
+                    ? `<div class="text-right" style="font-size:9px; color:var(--text-muted);" title="${frappe.utils.escape_html('On the shelf, bought for: ' + Object.entries(d.reserved_for_others).map(([so, q]) => so + ' (' + flt(q).toFixed(2) + ')').join(', ') + ' — stays with those orders, not counted here.')}">+ ${Object.values(d.reserved_for_others).reduce((a, q) => a + flt(q), 0).toFixed(2)} bought for other orders — stays with them</div>`
                     : ''}
                 ${d.sent_to_jobber_qty > 0
                     ? `<div class="text-right" style="font-size:9px; color:#d62222;" title="This much of this raw material is currently outstanding at a subcontractor (sent but not yet consumed into finished goods) across all Sales Orders — a batch purchase is a shared pool, so once part of it is committed to subcontracting elsewhere, Stock reads lower than the full purchase would suggest.">⚠ ${d.sent_to_jobber_qty.toFixed(2)} outstanding at jobber (all orders)</div>`
@@ -2391,7 +2391,7 @@ async function show_stock_check_dialog(frm, materials, linked_subcontracting_doc
     const compute_ceiling = (material) => {
         const required_qty = flt(material.required_qty, QTY_PREC);
         // What this PO may send: its OWN share (its Sales Orders' reserved
-        // stock + unclaimed stock), never stock reserved for another order
+        // stock + unclaimed stock), never stock bought for another order
         // and never picked stock — create_subcontracting_docs refuses more.
         const own_qty = material.own_qty != null ? flt(material.own_qty, QTY_PREC) : null;
         const available_qty = own_qty != null
@@ -2570,9 +2570,9 @@ async function show_stock_check_dialog(frm, materials, linked_subcontracting_doc
                                ${__('{0} more picked for delivery', [flt(item.picked_qty, QTY_PREC)])}</div>`
                         : ''}
                     ${item.own_qty != null && qty_exceeds(flt(item.available_qty, QTY_PREC), flt(item.own_qty, QTY_PREC))
-                        ? `<div style="font-size:11px; font-weight:normal; white-space:normal; color:#b91c1c;"
-                               title="${esc('Reserved for: ' + (Object.keys(item.held_by || {}).map(so => so + ' (' + flt(item.held_by[so], 2) + ')').join(', ') || 'other orders') + '. Not usable for this Purchase Order — Request RM for the rest.')}">
-                               <i class="fa fa-ban"></i> ${__('{0} more on shelf reserved for {1} — not usable', [flt(flt(item.available_qty) - flt(item.own_qty), QTY_PREC), esc(Object.keys(item.held_by || {}).join(', ') || __('another order'))])}</div>`
+                        ? `<div style="font-size:11px; font-weight:normal; white-space:normal; color:var(--text-muted);"
+                               title="${esc('Bought for: ' + (Object.keys(item.held_by || {}).map(so => so + ' (' + flt(item.held_by[so], 2) + ')').join(', ') || 'other orders') + ' — stays with those orders. Request RM for the rest of this PO.')}">
+                               <i class="fa fa-info-circle"></i> ${__('{0} more on the shelf, bought for {1} — stays with them', [flt(flt(item.available_qty) - flt(item.own_qty), QTY_PREC), esc(Object.keys(item.held_by || {}).join(', ') || __('other orders'))])}</div>`
                         : ''}</td>
                 <td class="font-weight-bold max-sendable-cell">
                     <span class="max-sendable-value">${max_sendable} ${item.uom}</span>
@@ -2604,7 +2604,7 @@ async function show_stock_check_dialog(frm, materials, linked_subcontracting_doc
                 <thead class="thead-light"><tr>
                     <th>Raw Material</th>
                     <th>Required Qty</th>
-                    <th title="${__('This Purchase Order\'s own stock: its Sales Orders\' reserved raw material plus unclaimed stock. Stock picked for a delivery or reserved for another order is not included.')}">Available for this PO</th>
+                    <th title="${__('This Purchase Order\'s own stock: what was bought for its Sales Orders plus free stock (bought for no order). Stock picked for a delivery or bought for another order stays with it.')}">Available for this PO</th>
                     <th title="${__('Available for this PO, capped by Stock Settings\' Over Transfer Allowance ({0}%) against Required Qty — whichever is lower.', [over_transfer_allowance])}">Max You Can Send</th>
                     <th style="width: 160px;">Qty to Supply to SCO</th>
                     <th>Supply Status</th>
@@ -2798,9 +2798,9 @@ async function show_stock_check_dialog(frm, materials, linked_subcontracting_doc
                 freeze_message: __("Checking quantities..."),
                 callback: function (res) {
                     const m = res.message || {};
-                    // Reserved for another order: a hard stop, no confirm.
+                    // More than the PO's own stock: a hard stop, no confirm.
                     if (m.blocked) {
-                        frappe.msgprint({ title: __("Reserved for Another Order"), message: m.block_msg, indicator: "red" });
+                        frappe.msgprint({ title: __("Raw Material Short for This PO"), message: m.block_msg, indicator: "red" });
                     } else if (m.has_shortfall) {
                         frappe.confirm(m.confirm_msg, () => do_create(), () => { });
                     } else {

@@ -2673,6 +2673,9 @@ def get_item_stock_details_bulk(item_bom_pairs, sales_order_name):
     # one order in — and each shows only what is left after the lines above
     # it. {rm_code: {source: qty already taken}}.
     rm_alloc_used = defaultdict(lambda: defaultdict(float))
+    # {rm_code: [(item_code, qty of this order's stock it took)]} — so a later line can
+    # name which earlier line used the stock ("20 m used by BBQ Shirt 36 of this order").
+    rm_alloc_lines = defaultdict(list)
 
     results = {}
     for pair in item_bom_pairs:
@@ -3597,7 +3600,7 @@ def get_item_stock_details_bulk(item_bom_pairs, sales_order_name):
                         # above — a raw conversion remainder (13.999 against a
                         # needed 14.0) must not read as a real shortfall.
                         rm_map[code]["rm_available_stock"] = flt(
-                            _rm_available_for(pool, sales_order_name), 2)
+                            _rm_available_for(pool, sales_order_name), 3)
                         # Kept alongside so the UI can show the whole picture
                         # rather than one number with no explanation: what is
                         # physically there, which part is this order's own, and
@@ -3876,7 +3879,7 @@ def get_item_stock_details_bulk(item_bom_pairs, sales_order_name):
                         rm["rm_available_stock"] + rm["rm_pending_so_linked_total"]
                         + rm.get("rm_pending_mr_total", 0) + rm.get("rm_draft_mr_total", 0)
                         + rm.get("rm_transferred_to_sc_total", 0), 3)
-                    rm["rm_available_stock_item_total"] = flt(rm["rm_available_stock"], 2)
+                    rm["rm_available_stock_item_total"] = flt(rm["rm_available_stock"], 3)
 
                     # This line's share: each source as it stands after the
                     # order's earlier lines took theirs (see rm_alloc_used). Stock
@@ -3884,6 +3887,8 @@ def get_item_stock_details_bulk(item_bom_pairs, sales_order_name):
                     # then on order, then requested — the order a line would
                     # actually consume them in.
                     used = rm_alloc_used[rm["rm_code"]]
+                    rm["rm_used_by_lines"] = [{"item_code": ic, "qty": flt(q, 3)}
+                                              for ic, q in rm_alloc_lines[rm["rm_code"]] if q > 0.0005]
                     need_left = flt(rm["rm_needed_for_shortfall"], 3)
                     for field in ("rm_available_stock", "rm_transferred_to_sc_total",
                                   "rm_pending_so_linked_total", "rm_pending_mr_total",
@@ -3894,8 +3899,10 @@ def get_item_stock_details_bulk(item_bom_pairs, sales_order_name):
                         take = min(need_left, left)
                         used[field] = flt(used[field] + take, 3)
                         need_left = flt(need_left - take, 3)
+                        if field == "rm_available_stock" and take > 0.0005:
+                            rm_alloc_lines[rm["rm_code"]].append((item_code, take))
                     rm["rm_used_by_other_lines"] = flt(
-                        rm["rm_available_stock_item_total"] - rm["rm_available_stock"], 2)
+                        rm["rm_available_stock_item_total"] - rm["rm_available_stock"], 3)
 
                     # Physically on the shelf and not picked, whoever it belongs
                     # to — shared across this order's lines the same way. The
@@ -4900,7 +4907,7 @@ def check_bom_rm_for_so(bom_no, qty_needed, sales_order, bom_cache=None):
 
 
 def rm_held_warning(lines, sales_order=None):
-    """One line per material blocked because its stock is reserved for another order — for the error messages."""
+    """One line per material blocked because the stock on the shelf was bought for another order — for the error messages."""
     parts = []
     for l in lines or []:
         if l.get("state") != RM_HELD:
@@ -4908,16 +4915,17 @@ def rm_held_warning(lines, sales_order=None):
         holders = ", ".join(f"{so} ({flt(q, 2)})" for so, q in (l.get("held_by") or {}).items())
         if not holders and flt(l.get("owed_to_customers")) > 0:
             holders = _("customers' undelivered orders")
-        parts.append(_("{0}: {1} {2} short — the stock on the shelf is reserved for {3}").format(
+        parts.append(_("{0}: {1} {2} short — the stock on the shelf was bought for {3} and stays with that order").format(
             l["item_code"], flt(flt(l["required"]) - flt(l["own"]), 2), l.get("uom") or "", holders or _("another order")))
     return parts
 
 
 def rm_not_available_text(lines):
     """
-    "Fabric blue needs 60 Meter, this order has 0 (60 on the shelf reserved
-    for SAL-ORD-2026-00147)" for every line that is not covered — the one
-    wording every blocked-RM message uses (PO dialogs, SCO transfer, bulk SPO).
+    "Fabric blue needs 60 Meter, this order has 0 (the rest on the shelf was bought for
+    SAL-ORD-2026-00147 and stays with that order)" for every line that is not covered —
+    the one wording every blocked-RM message uses (PO dialogs, SCO transfer, bulk SPO);
+    the screens say the same ("bought for … — stays with that order").
     """
     parts = []
     for l in lines or []:
@@ -4927,7 +4935,7 @@ def rm_not_available_text(lines):
             l["item_code"], flt(l["required"], 2), l.get("uom") or "", flt(l.get("own"), 2))
         holders = ", ".join(so for so in (l.get("held_by") or {}))
         if l.get("state") == RM_HELD:
-            txt += _(" (the rest on the shelf is reserved for {0})").format(
+            txt += _(" (the rest on the shelf was bought for {0} and stays with that order)").format(
                 holders or _("customers' undelivered orders"))
         parts.append(txt)
     return "; ".join(parts)
@@ -9645,7 +9653,7 @@ def flag_subcontract_rm_borrowing(doc, method=None):
         lenders = _rm_borrowable_from(pool, sales_order) or {}
         blocked.append(_("{0}: sending {1}, but {2}'s own raw material is only {3} — {4}").format(
             code, flt(qty, 3), sales_order, flt(own, 3),
-            _("the rest is reserved for {0}").format(", ".join(sorted(lenders))) if lenders
+            _("the rest on the shelf was bought for {0} and stays with that order").format(", ".join(sorted(lenders))) if lenders
             else _("there is no more of it for this order")))
 
     if blocked:
@@ -9653,7 +9661,7 @@ def flag_subcontract_rm_borrowing(doc, method=None):
             _("This transfer sends more raw material than this Sales Order owns:<br>{0}<br><br>"
               "Reduce the qty to this order's own stock, or raise a Material Request (Request RM) "
               "for the rest.").format("<br>".join(blocked)),
-            title=_("Reserved for Another Order"))
+            title=_("Raw Material Short for This Order"))
 
 
 def record_subcontract_rm_borrowing(doc, method=None):
