@@ -3906,7 +3906,7 @@ def get_item_stock_details_bulk(item_bom_pairs, sales_order_name):
                     real_item = max(0.0, flt(rm.get("rm_total_stock", 0)) - flt(rm.get("rm_picked_elsewhere", 0)))
                     real_left = max(0.0, flt(real_item - used["real"], 3))
                     used["real"] = flt(used["real"] + min(flt(rm["rm_needed_for_shortfall"]), real_left), 3)
-                    rm["rm_on_shelf_held"] = flt(max(0.0, real_left - rm["rm_available_stock"]), 2)
+                    rm["rm_on_shelf_held"] = flt(max(0.0, real_left - rm["rm_available_stock"]), 3)
 
                     # Coverage = Physical + PO + MR (submitted or draft) + already
                     # sent to a subcontractor. Measured against
@@ -3932,10 +3932,15 @@ def get_item_stock_details_bulk(item_bom_pairs, sales_order_name):
                     # read as a real "Shortage"/"Requested" even though the
                     # displayed numbers show an exact match and a 0.00
                     # shortfall right next to it.
-                    needed_r = flt(rm["rm_needed_for_shortfall"], 2)
-                    coverage_r = flt(coverage, 2)
-                    available_r = flt(rm["rm_available_stock"], 2)
-                    shortfall = max(0, needed_r - coverage_r)
+                    # At the Stock Entry's qty precision (3), the same as "Create SCO &
+                    # Material Transfer" and the PO submit check (purchase_order.rm_sendable):
+                    # at 2 decimals 23.996 against 24 read "In Stock — ready", and the SCO
+                    # dialog then stopped it. 3 decimals still absorbs float residue
+                    # (13.9999999 → 14.000).
+                    needed_r = flt(rm["rm_needed_for_shortfall"], 3)
+                    coverage_r = flt(coverage, 3)
+                    available_r = flt(rm["rm_available_stock"], 3)
+                    shortfall = flt(max(0, needed_r - coverage_r), 3)
                     rm["rm_shortfall_total"] = shortfall
                     # "Covered" must mean stock actually in hand, not "a PO/MR
                     # was raised for it". A pending MR/PO still legitimately
@@ -3945,7 +3950,7 @@ def get_item_stock_details_bulk(item_bom_pairs, sales_order_name):
                     # MR just raised for the full need immediately flipped
                     # this to "Covered" with zero stock on hand. "Requested"
                     # is the honest middle state.
-                    transferred_r = flt(rm.get("rm_transferred_to_sc_total", 0), 2)
+                    transferred_r = flt(rm.get("rm_transferred_to_sc_total", 0), 3)
                     if needed_r <= 0:
                         # Nothing is being drawn on this RM right now (e.g. the
                         # finished good already has enough stock, so fg_shortfall
@@ -3953,7 +3958,7 @@ def get_item_stock_details_bulk(item_bom_pairs, sales_order_name):
                         # level, including zero, so this must never read as
                         # "Covered" and imply real stock is sitting there.
                         rm["status"] = "Not Required"
-                    elif shortfall > 0 and flt(rm["rm_on_shelf_held"], 2) >= flt(shortfall, 2):
+                    elif shortfall > 0 and flt(rm["rm_on_shelf_held"], 3) >= flt(shortfall, 3):
                         # Short of its OWN material, but the shelf holds enough —
                         # it belongs to another order. The amber middle state:
                         # an SCO can still go ahead after a confirm naming the
@@ -3963,8 +3968,8 @@ def get_item_stock_details_bulk(item_bom_pairs, sales_order_name):
                         rm["status"] = "Shortage"
                     elif available_r >= needed_r:
                         rm["status"] = "Covered"
-                    elif (flt(rm.get("rm_draft_mr_total", 0), 2) > 0
-                          and flt(coverage - rm.get("rm_draft_mr_total", 0), 2) < needed_r):
+                    elif (flt(rm.get("rm_draft_mr_total", 0), 3) > 0
+                          and flt(coverage - rm.get("rm_draft_mr_total", 0), 3) < needed_r):
                         # Only closed by an MR that is still a draft: nothing is
                         # requested for real until it's submitted, and the
                         # purchasing side never sees it. Its own state so the

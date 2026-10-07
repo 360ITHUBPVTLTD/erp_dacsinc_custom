@@ -1732,6 +1732,8 @@ function show_sales_order_dialog(frm, data, is_subcontracted) {
                     is_subcontracted: frm.doc.is_subcontracted ? 1 : 0,
                     exclude_po: frm.is_new() ? "" : frm.doc.name,
                     this_doc: dacs_rows_by_so_item(frm),
+                    this_fg: JSON.stringify((frm.doc.items || []).filter(r => r.fg_item && flt(r.fg_item_qty) > 0)
+                        .map(r => ({ bom: r.bom, qty: r.fg_item_qty, sales_order: r.sales_order }))),
                 },
                 freeze: true,
                 freeze_message: "Validating and adding items...",
@@ -2559,6 +2561,9 @@ async function show_stock_check_dialog(frm, materials, linked_subcontracting_doc
                 <td>${frappe.utils.get_form_link("Item", item.item_code, true)}${source_breakdown_html(item)}</td>
                 <td class="required-qty-cell">${required_qty} ${item.uom}</td>
                 <td class="font-weight-bold ${qty_exceeds(required_qty, available_qty) ? 'text-danger' : ''}">${available_qty} ${item.uom}
+                    <div style="font-size:11px; font-weight:normal; white-space:normal; color:var(--text-color);"
+                         title="${esc(__('Physical stock of this raw material in the warehouse right now, whoever it belongs to.'))}">
+                         ${__('Actual stock in warehouse: {0} {1}', ['<b>' + flt(item.in_warehouse_qty != null ? item.in_warehouse_qty : item.available_qty, QTY_PREC) + '</b>', esc(item.uom)])}</div>
                     ${flt(item.picked_qty) > 0.0005
                         ? `<div style="font-size:11px; font-weight:normal; white-space:normal; color:var(--text-muted);"
                                title="${esc('Picked for a delivery, so it can\'t be sent to a jobber: ' + Object.keys(item.picked_docs || {}).map(pl => pl + ' (' + flt(item.picked_docs[pl], 2) + ')').join(', '))}">

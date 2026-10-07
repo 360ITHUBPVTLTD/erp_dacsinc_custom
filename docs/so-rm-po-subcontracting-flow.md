@@ -391,12 +391,42 @@ in three states (`covered` / `held` / `short`), but `held` ("on the shelf,
 reserved for another order") is **blocked exactly like `short`** — it only
 exists so the message can name the order the stock belongs to.
 
+**One count, from the Sales Order to the SCO (`purchase_order.rm_sendable`).** What
+"Create SCO & Material Transfer" lets a PO send — its Sales Orders' own share (their
+earmarks plus unclaimed stock, `rm_line_state`), never more than is on the shelf and not
+picked, at the Stock Entry's qty precision (3) — is computed once, in `rm_sendable`, from
+the requirement `rm_rows_requirement` works out exactly as `_explode_rm_requirements` does
+(BOM Item.stock_qty / BOM.quantity × qty, BOM by `_resolve_po_item_bom`). Every earlier
+step uses it, so a row they let through is never stopped at SCO time (only stock taken by
+someone else in between can change that):
+- **Sales Order RM table** (`get_item_stock_details_bulk`): already shares stock across the
+  order's lines in line order (`rm_alloc_used`); its statuses now compare at 3 decimals too
+  (at 2, 23.996 against 24 read "In Stock — ready" and the SCO dialog then stopped it).
+- **"Fetch Pending Sales Orders"** (`get_pending_so_with_material_stock`): each row is also
+  checked with `rm_short_lines`, and an order's rows take its raw material in line order
+  (step 3b) — so the row is offered exactly when the SO table says "In Stock".
+- **Add step** (`validate_and_get_items_for_po`): the ticked rows together, after the
+  finished goods already on the PO (`this_fg`). This is where two **different** orders
+  drawing on the same unclaimed stock are caught: each order's own table rightly shows it
+  available, but only one PO can take it.
+- **PO submit** (`guard_subcontract_po_rm`, before_submit): all the PO's rows together,
+  however they got there.
+
+Before (live, Oct 2026): rows were judged one at a time at 2 decimals against each
+order's share, so a PO needing Corp Blue Dacs Label 360 with 359 available (7 rows), and
+Adarsh Denmark 24 against 23.85, was raised and submitted and only stopped in the SCO
+dialog. Verified 7 Oct 2026 on local data with raw material cut to 70% of the need
+(rolled back): SO table = prompt on 18/18 lines; all offered rows ticked together → the
+Add step kept 5 and refused 2 (another order had the same unclaimed stock); the PO submit
+check passed the 5.
+
 | Where | What enforces it |
 | --- | --- |
 | SO RM table | status "Reserved for Other Order" / "Not in Stock" + **Request RM** button |
 | Sales Tracker "Create Subcontract PO" / SO "Subcontract PO" prompt | `get_rm_ready_bom_items` lists only `ready_qty > 0`; `make_subcontract_purchase_orders_bulk` caps at `ready_qty` |
-| PO "Fetch Pending Sales Orders" (subcontracted) | row disabled with "RM Reserved for Other Order — Request RM" / "RM Not in Stock — Request RM"; `validate_and_get_items_for_po` rejects any non-covered row |
-| PO "Create SCO & Material Transfer" dialog | Max You Can Send = this PO's own share; `check_rm_supply_shortfall` returns `blocked`; `create_subcontracting_docs` refuses |
+| PO "Fetch Pending Sales Orders" (subcontracted) | row disabled with "RM Reserved for Other Order — Request RM" / "RM Not in Stock — Request RM" (each row judged alone); each row also checked with `rm_short_lines`, an order's rows in line order; `validate_and_get_items_for_po` judges the ticked rows **together**, after the finished goods already on the PO (`this_fg`), and rejects a row whose raw material the rows before it have used up |
+| Subcontract PO **submit** (however its rows got there) | `purchase_order.guard_subcontract_po_rm` (before_submit): all finished-good rows together, `rm_short_lines` — refuses naming each short raw material |
+| PO "Create SCO & Material Transfer" dialog | Max You Can Send = this PO's own share; `check_rm_supply_shortfall` returns `blocked`; `create_subcontracting_docs` refuses. "Available for this PO" also shows **Actual stock in warehouse** (`in_warehouse_qty`, physical, whoever it belongs to) |
 | Any "Send to Subcontractor" Stock Entry (incl. ERPNext's own Transfer button, hand-made entries) | `block_subcontract_transfer_of_picked_stock` then `flag_subcontract_rm_borrowing` (before_submit) — both **block** |
 | Material Request | `guard_mr_rm_not_over_so_shortfall` caps an order's RM request at its RM table "To Request" |
 

@@ -432,6 +432,8 @@ doc_events = {
             "erp_dacsinc_custom.custom_script.guard_po_item_not_over_so_need",
             "erp_dacsinc_custom.procurement_purpose.set_procurement_purpose",
         ],
+        # Subcontract PO: raw material for all its rows together must be the PO's own.
+        "before_submit": "erp_dacsinc_custom.purchase_order.guard_subcontract_po_rm",
         "on_update": "erp_dacsinc_custom.order_flow_api.broadcast_order_flow_change",
         "on_cancel": "erp_dacsinc_custom.order_flow_api.broadcast_order_flow_change",
         # Never leave an Embroidery Work Order pointing at a PO/SCO that is gone.
