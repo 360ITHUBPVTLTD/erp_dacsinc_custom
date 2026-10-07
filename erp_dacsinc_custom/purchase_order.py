@@ -195,7 +195,7 @@ from erp_dacsinc_custom.custom_script import (
     RM_COVERED, RM_SHORT, RM_HELD)
 
 @frappe.whitelist()
-def validate_and_get_items_for_po(selected_items, is_subcontracted=0, allow_held=0, exclude_po=None, this_doc=None):
+def validate_and_get_items_for_po(selected_items, is_subcontracted=0, allow_held=0, exclude_po=None, this_doc=None, this_fg=None):
     # allow_held is accepted only so an old cached browser tab doesn't crash;
     # it is ignored — RM reserved for another order is never usable.
     if isinstance(selected_items, str):
@@ -203,6 +203,9 @@ def validate_and_get_items_for_po(selected_items, is_subcontracted=0, allow_held
     from erp_dacsinc_custom.custom_script import po_room_by_so_item
     po_room = po_room_by_so_item([e.get("soRowName") for e in selected_items], exclude_po, this_doc)
     room_left = {k: v[0] for k, v in po_room.items()}
+    # Raw material for the ticked rows TOGETHER, after the finished goods already on this
+    # PO (this_fg: its rows on screen) — the same count the PO's submit check uses.
+    rm_rows = list(json.loads(this_fg) if isinstance(this_fg, str) else (this_fg or [])) if cint(is_subcontracted) else []
 
     is_subcontracted = cint(is_subcontracted)
     valid_items = []
@@ -295,18 +298,27 @@ def validate_and_get_items_for_po(selected_items, is_subcontracted=0, allow_held
             # its Item Stock & Action Plan — not the warehouse total, which is
             # what let this dialog raise an SCO on raw material the order's
             # own widget said it didn't have (it was held for another order).
-            rm = check_bom_rm_for_so(bom_name, qty_to_add, sales_order, rm_bom_cache)
+            # Counted together with the rows already accepted (and those already on the
+            # PO): two rows sharing a raw material can't both claim the same stock.
+            # The same count "Create SCO & Material Transfer" uses (rm_short_lines), for
+            # this row TOGETHER with the rows already accepted and those already on the PO.
+            candidate = {"bom": bom_name, "qty": qty_to_add, "sales_order": sales_order}
+            short = [l for l in rm_short_lines(rm_rows + [candidate])
+                     if l["item_code"] in rm_rows_requirement([candidate])]
             # One rule, no override: RM reserved for another order is as
             # unusable as RM that isn't there (same as the SO RM table).
-            if rm["state"] != RM_COVERED:
+            if short:
+                room_left[so_item.name] = room_left.get(so_item.name, 0) + qty_to_add  # not taken
                 rejected_items.append({
                     "sales_order": sales_order,
                     "item_name": entry.get("itemName", item_code),
-                    "reason": "Raw material not available for this order — "
-                              + rm_not_available_text(rm["lines"])
+                    "reason": "Raw material not available for this order (counted together with the other "
+                              "rows ticked and those already on this PO, as Create SCO & Material Transfer will) — "
+                              + rm_short_text(short)
                               + ". Request RM (Material Request) for this order first."
                 })
                 continue
+            rm_rows.append(candidate)
 
             # 1. From passed BOM
             if bom_name:
@@ -1345,7 +1357,7 @@ def get_pending_so_with_material_stock(is_subcontracted=False, exclude_po=None, 
     pending_orders = frappe.db.sql(f"""
         SELECT
             soi.name as so_row_name, soi.parent AS sales_order, so.customer, so.customer_name,
-            so.sales_partner AS jobber_name, soi.item_code, soi.item_name, 
+            so.sales_partner AS jobber_name, soi.item_code, soi.item_name, soi.idx AS so_idx,
             soi.qty, soi.delivered_qty, soi.bom_no AS bom
         FROM `tabSales Order Item` soi
         JOIN `tabSales Order` so ON so.name = soi.parent
@@ -1621,8 +1633,44 @@ def get_pending_so_with_material_stock(is_subcontracted=False, exclude_po=None, 
                 for l in rm["lines"] if l["state"] != RM_COVERED]
             row["rm_held_lines"] = rm_held_warning(rm["lines"])
             row["rm_block_reason"] = rm_not_available_text(rm["lines"])
+            # Same count as "Create SCO & Material Transfer" (3-decimal precision): a row
+            # the 2-decimal check above rounds up to "covered" must not be offered either.
+            if row["rm_in_stock"]:
+                short = rm_short_lines([{"bom": row.bom, "qty": to_buy, "sales_order": row.sales_order}])
+                if short:
+                    row["rm_in_stock"], row["rm_state"] = False, RM_SHORT
+                    row["rm_block_reason"] = rm_short_text(short)
+                    row["rm_shortage_items"] = [{"item_code": l["item_code"], "uom": l["uom"], "required_qty": l["required"],
+                                                 "available_qty": l["can_send"], "reserved_for": list(l["held_by"])} for l in short]
 
         final_rows.append(row)
+
+    # --- 3b. One order's lines share its raw material ---
+    # Each row's RM check above judges the row alone. Lines of the same Sales Order draw on
+    # the same stock, so — as its Item Stock & Action Plan does — they take it in line order:
+    # a later line whose raw material the earlier ones use up is blocked here too (the Add
+    # step and the PO submit check would refuse it anyway, rm_short_lines).
+    if is_subcontracted:
+        by_so = defaultdict(list)
+        for r in final_rows:
+            by_so[r.sales_order].append(r)
+        for so_rows in by_so.values():
+            if len(so_rows) < 2:
+                continue
+            taken = []
+            for r in sorted(so_rows, key=lambda x: cint(x.so_idx)):
+                if not r["rm_in_stock"]:
+                    continue
+                me = {"bom": r.bom, "qty": r.to_buy, "sales_order": r.sales_order}
+                mine = rm_rows_requirement([me])
+                short = [l for l in rm_short_lines(taken + [me]) if l["item_code"] in mine]
+                if short:
+                    r["rm_in_stock"], r["rm_state"] = False, RM_SHORT
+                    r["rm_block_reason"] = rm_short_text(short) + " — after this order's earlier lines take theirs"
+                    r["rm_shortage_items"] = [{"item_code": l["item_code"], "uom": l["uom"], "required_qty": l["required"],
+                                               "available_qty": l["can_send"], "reserved_for": list(l["held_by"])} for l in short]
+                else:
+                    taken.append(me)
 
     # --- 4. ITEM SUMMARY (GLOBAL) ---
     item_summaries = defaultdict(lambda: {"qty_need": 0, "item_name": "", "draft_po": 0.0, "draft_po_ids": []})
@@ -3047,6 +3095,96 @@ def _explode_rm_requirements(po):
     return rm_requirements
 
 
+def rm_rows_requirement(rows):
+    """{raw material: required qty} for finished-good rows [{"bom", "qty"}], exactly as
+    _explode_rm_requirements counts them for the SCO dialog: BOM Item.stock_qty / BOM.quantity
+    per piece × the row's qty."""
+    req, bom_qty, bom_items = defaultdict(float), {}, {}
+    for r in rows:
+        bom, qty = r.get("bom"), flt(r.get("qty"))
+        if not bom or qty <= 0:
+            continue
+        if bom not in bom_qty:
+            bom_qty[bom] = flt(frappe.db.get_value("BOM", bom, "quantity")) or 1.0
+            bom_items[bom] = frappe.get_all("BOM Item", filters={"parent": bom}, fields=["item_code", "stock_qty"])
+        for bi in bom_items[bom]:
+            req[bi.item_code] += flt(bi.stock_qty) / bom_qty[bom] * qty
+    return req
+
+
+def rm_sendable(requirement, sales_orders, warehouse="VV Puram - IND"):
+    """For each raw material: what "Create SCO & Material Transfer" will let this PO send
+    (get_required_raw_materials_for_po + check_rm_supply_shortfall): this PO's Sales Orders'
+    own share — their earmarks plus unclaimed stock — never more than is on the shelf and
+    not picked, at the Stock Entry's qty precision. Returns {rm: {"required", "can_send",
+    "held_by", "item_name", "uom"}} and is the ONE count the fetch prompt, the PO submit
+    check and the SCO dialog share, so a PO that passed the first two is never stopped at
+    the third (stock taken by others in between aside)."""
+    from erp_dacsinc_custom.order_flow_api import _rm_stock_pools
+    from erp_dacsinc_custom.custom_script import rm_line_state
+
+    precision = frappe.get_precision("Stock Entry Detail", "qty") or 3
+    sos = sorted({so for so in (sales_orders or []) if so})
+    items = [k for k, v in requirement.items() if flt(v) > 0]
+    if not items:
+        return {}
+    pools = _rm_stock_pools(set(items), warehouse)
+    bins = dict(frappe.db.sql("SELECT item_code, actual_qty FROM `tabBin` WHERE warehouse = %s AND item_code IN %s",
+                              (warehouse, tuple(items))))
+    meta = {d.name: d for d in frappe.get_all("Item", filters={"name": ["in", items]}, fields=["name", "item_name", "stock_uom"])}
+    out = {}
+    for it in items:
+        required = flt(requirement[it], precision)
+        share = rm_line_state(pools.get(it) or {}, sos, required)
+        on_shelf = flt(min(flt(bins.get(it), precision), share["on_shelf"]), precision)
+        own = flt(share["own"], precision) if sos else on_shelf
+        out[it] = {"required": required, "can_send": flt(min(on_shelf, own), precision),
+                   "held_by": share["held_by"] if sos else {},
+                   "item_name": (meta.get(it) or {}).get("item_name") or it, "uom": (meta.get(it) or {}).get("stock_uom") or ""}
+    return out
+
+
+def rm_short_lines(rows, warehouse="VV Puram - IND"):
+    """The raw materials finished-good rows [{"bom", "qty", "sales_order"}] TOGETHER can't
+    send in full at SCO time (rm_sendable): [{item_code, item_name, uom, required, can_send,
+    held_by}]."""
+    req = rm_rows_requirement(rows)
+    send = rm_sendable(req, [r.get("sales_order") for r in rows], warehouse)
+    precision = frappe.get_precision("Stock Entry Detail", "qty") or 3
+    return [dict(item_code=it, **v) for it, v in send.items()
+            if flt(v["required"] - v["can_send"], precision) > 0]
+
+
+def rm_short_text(lines):
+    parts = []
+    for l in lines:
+        t = _("{0} needs {1} {2}, can send {3}").format(l["item_code"], flt(l["required"], 3), l["uom"], flt(l["can_send"], 3))
+        if l.get("held_by"):
+            t += _(" (the rest on the shelf is reserved for {0})").format(", ".join(l["held_by"]))
+        parts.append(t)
+    return "; ".join(parts)
+
+
+def po_fg_rows(po):
+    """A Subcontract PO's finished-good rows still to be sent, as rm_short_lines takes them."""
+    return [{"bom": _resolve_po_item_bom(i), "qty": _remaining_fg_qty(i), "sales_order": i.get("sales_order"),
+             "idx": i.idx, "fg_item": i.fg_item} for i in po.items if i.get("fg_item") and _remaining_fg_qty(i) > 0]
+
+
+def guard_subcontract_po_rm(doc, method=None):
+    """Purchase Order before_submit: a Subcontract PO is submitted only when "Create SCO &
+    Material Transfer" will be able to send ALL its raw material — the same count
+    (rm_short_lines), however the rows got there. One rule, no override."""
+    if not doc.get("is_subcontracted"):
+        return
+    short = rm_short_lines(po_fg_rows(doc))
+    if short:
+        frappe.throw(_("This Subcontract PO can't be sent to the jobber in full — raw material is not available "
+                       "for its rows together:") + f"<ul>{''.join(f'<li>{frappe.utils.escape_html(rm_short_text([l]))}</li>' for l in short)}</ul>"
+                     + _("Reduce or remove rows, or Request RM (Material Request) for their orders first."),
+                     title=_("Raw Material Not Available"))
+
+
 @frappe.whitelist()
 def get_required_raw_materials_for_po(purchase_order_name):
     po = frappe.get_doc("Purchase Order", purchase_order_name)
@@ -3076,6 +3214,8 @@ def get_required_raw_materials_for_po(purchase_order_name):
     for rm_code, requirement in rm_requirements.items():
         req_qty = requirement["required_qty"]
         item_details = frappe.db.get_value("Item", rm_code, ["item_name", "stock_uom"], as_dict=1)
+        # NOTE: rm_sendable() below repeats this exact calculation for the PO submit
+        # check and the fetch prompt — change both together.
 
         # CHANGED: Query filtered by the specific Warehouse
         stock_data = frappe.db.get_value("Bin",
