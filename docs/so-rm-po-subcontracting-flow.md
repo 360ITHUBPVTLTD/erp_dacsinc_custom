@@ -377,12 +377,19 @@ float-noise "13.999 vs 14" reading as a shortage that isn't real):
 Every screen answers "can this order use this raw material?" the same way,
 and **no screen can override it**:
 
-> An order may use its **own reserved raw material** (bought against it —
-> Purchase Receipt rows with `sales_order` and purpose Raw Material, less
-> what its own subcontracting already sent) **plus unclaimed stock**.
-> Stock reserved for another order, and stock on any Pick List (draft or
-> submitted), is on the shelf but **not usable**. If it is not enough, the
-> answer is **Request RM** (a Material Request), never borrowing.
+> An order may use the **raw material bought for it** (Purchase Receipt rows
+> with `sales_order` and purpose Raw Material, less what its own
+> subcontracting already sent) **plus free stock** (bought for no order).
+> Stock bought for another order, and stock on any Pick List (draft or
+> submitted), is on the shelf but **stays with that order**. If it is not
+> enough, the answer is **Request RM** (a Material Request), never borrowing.
+
+**One wording on every screen** (SO RM table, SO Subcontract PO prompt, PO fetch prompts,
+SCO dialog, Material Request dialog, Order Flow hints, every error message): "bought for
+this order", "free stock", "on the shelf, bought for SO-… — stays with them" and one red
+status "Short N — Request RM". The words "reserved" / "not usable" read like a fault and
+are no longer used for raw material (ERPNext's own "Reserved for Sales / Production" Bin
+figures are a different thing and keep their names).
 
 The shared helpers are `_rm_stock_pools` / `_rm_available_for`
 (order_flow_api.py) and `check_bom_rm_for_so` / `rm_line_state` /
@@ -422,9 +429,9 @@ check passed the 5.
 
 | Where | What enforces it |
 | --- | --- |
-| SO RM table | status "Reserved for Other Order" / "Not in Stock" + **Request RM** button |
+| SO RM table | status "Short N — Request RM" + **Request RM** button |
 | Sales Tracker "Create Subcontract PO" / SO "Subcontract PO" prompt | `get_rm_ready_bom_items` lists only `ready_qty > 0`; `make_subcontract_purchase_orders_bulk` caps at `ready_qty` |
-| PO "Fetch Pending Sales Orders" (subcontracted) | row disabled with "RM Reserved for Other Order — Request RM" / "RM Not in Stock — Request RM" (each row judged alone); each row also checked with `rm_short_lines`, an order's rows in line order; `validate_and_get_items_for_po` judges the ticked rows **together**, after the finished goods already on the PO (`this_fg`), and rejects a row whose raw material the rows before it have used up |
+| PO "Fetch Pending Sales Orders" (subcontracted) | row disabled with "RM short — Request RM" (reason on hover); each row also checked with `rm_short_lines`, an order's rows in line order; `validate_and_get_items_for_po` judges the ticked rows **together**, after the finished goods already on the PO (`this_fg`), and rejects a row whose raw material the rows before it have used up |
 | Subcontract PO **submit** (however its rows got there) | `purchase_order.guard_subcontract_po_rm` (before_submit): all finished-good rows together, `rm_short_lines` — refuses naming each short raw material |
 | PO "Create SCO & Material Transfer" dialog | Max You Can Send = this PO's own share; `check_rm_supply_shortfall` returns `blocked`; `create_subcontracting_docs` refuses. "Available for this PO" also shows **Actual stock in warehouse** (`in_warehouse_qty`, physical, whoever it belongs to) |
 | Any "Send to Subcontractor" Stock Entry (incl. ERPNext's own Transfer button, hand-made entries) | `block_subcontract_transfer_of_picked_stock` then `flag_subcontract_rm_borrowing` (before_submit) — both **block** |
@@ -448,7 +455,7 @@ To Make = Still to Cover − Free Finished Stock).
 | --- | --- |
 | Raw Material | the material, and how much one piece needs |
 | Needed | for the pieces still to make (`rm_needed_for_shortfall`); hover shows the whole-order total |
-| In Stock for this Order | this order's own raw material (`rm_available_stock`); under it, in red, "+N on shelf reserved for SO-… (not usable)" and "+N picked for delivery (not usable)"; "N already counted for an earlier item" when two lines share it |
+| In Stock for this Order | this order's raw material (`rm_available_stock`), with "bought for this order N (`rm_own_earmark`) · free stock N (`rm_free_stock`)" under it; "N used by <item> (N) of this order" when an earlier line took some (`rm_used_by_lines`); and — only when the line needs raw material — in grey "on the shelf, bought for other orders: N (`rm_on_shelf_held`) — SO-… (N) (`rm_held_by`) — stays with them" and "N picked for a delivery — stays with it" |
 | Requested / On the Way | open MR (submitted + draft), PO, and material already at the jobber, each linked |
 | To Request | Needed − In Stock − Requested (`rm_shortfall_total`) |
 | Status & Next Step | one status + at most one button |
@@ -457,8 +464,8 @@ To Make = Still to Cover − Free Finished Stock).
 | --- | --- | --- |
 | 🟢 **In Stock** | own stock covers it | "Ready — you can create the Subcontract PO" |
 | 🔵 **Requested** | an MR / PO / jobber transfer covers it | wait; a draft MR shows **Submit MR** |
-| 🔴 **Not in Stock** | short, nothing on the shelf | orange **Request RM (N)** |
-| 🔴 **Reserved for Other Order** | short, and the shelf's stock belongs to another order | orange **Request RM (N)** |
+| 🔴 **Short N — Request RM** | this order's own stock doesn't cover it; a grey line adds "N on the shelf was bought for SO-…; request your own so neither order runs short" when that is why | orange **Request RM (N)** |
+| 🟢 **Not Needed** | finished-good stock covers the line | — (header: "No raw material needed — finished stock covers it") |
 
 The Request RM button is always the orange `so-btn--warning` sourcing
 button (it used to render as the plain grey variant in the held case and

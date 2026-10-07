@@ -93,7 +93,7 @@
   <div class="flow">
     <div class="step"><b>1 · Sales Order</b>Approved order. Each line shows what is still to make or buy.</div>
     <div class="step"><b>2 · Request</b>Short raw material → <b>Request RM</b>. Short trade item → <b>Raise MR</b>.</div>
-    <div class="step"><b>3 · Buy</b>Material Request → Purchase Order → Purchase Receipt. The RM is now <b>reserved</b> for this order.</div>
+    <div class="step"><b>3 · Buy</b>Material Request → Purchase Order → Purchase Receipt. The RM is now <b>bought for this order</b> — it stays with it.</div>
     <div class="step"><b>4 · Subcontract</b>Subcontract PO → SCO + RM sent to the jobber → Subcontracting Receipt (finished goods in).</div>
     <div class="step"><b>5 · Pick</b>Pick List (draft → submitted). Optional: send draft-picked qty for embroidery.</div>
     <div class="step"><b>6 · Dispatch</b>Delivery Note draft = <b>To Be Dispatched (Draft)</b>; submitted = <b>Dispatched</b>.</div>
@@ -105,8 +105,9 @@
   <h2 id="rules"><span class="num">02</span>The rules</h2>
 
   <h3>Rule 1 — Only this order's own raw material counts</h3>
-  <div class="rule">An order may use <strong>its own reserved raw material</strong> (bought against it) <strong>plus unclaimed stock</strong>.
-    Stock reserved for another order, and stock on any Pick List (draft or submitted), is on the shelf but <strong>not usable</strong>.
+  <div class="rule">An order may use <strong>raw material bought for it</strong> <strong>plus free stock</strong> (bought for no order).
+    Stock bought for another order, and stock on any Pick List (draft or submitted), is on the shelf but <strong>stays with that order</strong> —
+    request your own, so neither order runs short.
     If there isn't enough, the answer is <strong>Request RM</strong>. No screen offers a "use it anyway" option.</div>
   <p class="sub">This applies to the SO RM table, the Sales Tracker's Create Subcontract PO, the PO form's Fetch Pending Sales Orders
     and Create SCO &amp; Material Transfer dialogs, and any "Send to Subcontractor" Stock Entry, including ERPNext's own Transfer button
@@ -151,7 +152,7 @@
   <div class="table-wrap"><table>
     <tr><th>Column</th><th>Meaning</th></tr>
     <tr><td>Needed</td><td>Raw material for the pieces still to make (hover for the whole-order total).</td></tr>
-    <tr><td>In Stock for this Order</td><td>This order's own raw material. Below it in red: "+N on shelf reserved for SO-… (not usable)" and "+N picked for delivery (not usable)".</td></tr>
+    <tr><td>In Stock for this Order</td><td>This order's raw material, with "bought for this order N · free stock N" under it; "N used by &lt;earlier line&gt; of this order"; and, in grey, "on the shelf, bought for other orders: N — SO-… (N) — stays with them" and "N picked for a delivery — stays with it".</td></tr>
     <tr><td>Requested / On the Way</td><td>Open Material Requests, Purchase Orders, and RM already at the jobber, each linked.</td></tr>
     <tr><td>To Request</td><td>Needed − In Stock − Requested.</td></tr>
   </table></div>
@@ -159,8 +160,8 @@
     <tr><th>Status</th><th>When</th><th>Next step</th></tr>
     <tr><td><span class="pill g">In Stock</span></td><td>Own stock covers it</td><td>Create the Subcontract PO</td></tr>
     <tr><td><span class="pill b">Requested</span></td><td>An MR / PO / jobber transfer covers it</td><td>Wait. A draft MR shows <b>Submit MR</b></td></tr>
-    <tr><td><span class="pill r">Not in Stock</span></td><td>Short, nothing on the shelf</td><td>Orange <b>Request RM (N)</b> button</td></tr>
-    <tr><td><span class="pill r">Reserved for Other Order</span></td><td>Short; the shelf's stock belongs to another order</td><td>Orange <b>Request RM (N)</b> button</td></tr>
+    <tr><td><span class="pill r">Short N — Request RM</span></td><td>This order's own stock doesn't cover it (a grey line says when the shelf holds stock bought for other orders)</td><td>Orange <b>Request RM (N)</b> button</td></tr>
+    <tr><td><span class="pill g">Not Needed</span></td><td>Finished-good stock covers the line</td><td>Nothing to do</td></tr>
   </table></div>
 
   <h3>Sales Tracker — Current Stage and Action Required</h3>
@@ -187,9 +188,9 @@
   <h3>Purchase Order form</h3>
   <div class="table-wrap"><table>
     <tr><th>Dialog</th><th>What it shows now</th></tr>
-    <tr><td>Fetch Pending Sales Orders (subcontracted)</td><td>A row whose RM isn't this order's own is disabled: <span class="pill r">RM Reserved for Other Order — Request RM</span> or <span class="pill r">RM Not in Stock — Request RM</span>. The server rejects it too.</td></tr>
-    <tr><td>Fetch Raw Materials from SO</td><td>"To Make" and "In Stock (usable)" are the same figures as each order's RM table; "+N reserved for other orders" is shown but not counted. Line status: <span class="pill g">In Stock</span> <span class="pill b">Requested (PO/MR)</span> <span class="pill r">To Buy N</span>.</td></tr>
-    <tr><td>Create SCO &amp; Material Transfer</td><td>"Available for this PO" = the PO's own share. Max You Can Send never goes beyond it. Sending more is refused.</td></tr>
+    <tr><td>Fetch Pending Sales Orders (subcontracted)</td><td>A row is offered exactly when its Sales Order's RM table says <span class="pill g">In Stock</span> (an order's lines take their raw material in line order); otherwise it is disabled with <span class="pill r">RM short — Request RM</span> and the reason on hover. Rows ticked together, and the PO on submit, are checked together the same way.</td></tr>
+    <tr><td>Fetch Raw Materials from SO</td><td>"To Make" and "In Stock (usable)" are the same figures as each order's RM table; "+N bought for other orders — stays with them" is shown but not counted. Line status: <span class="pill g">In Stock</span> <span class="pill b">Requested (PO/MR)</span> <span class="pill r">To Buy N</span>.</td></tr>
+    <tr><td>Create SCO &amp; Material Transfer</td><td>"Available for this PO" = the PO's own share, with "Actual stock in warehouse" under it. Max You Can Send never goes beyond it. Sending more is refused. A PO that passed the fetch prompt and its submit check is never stopped here (unless someone else used the stock in between).</td></tr>
   </table></div>
 
   <h3>Material Request → Procurement Planner → Consolidated BOM Components</h3>
@@ -197,9 +198,9 @@
     An order that is already covered is <b>not listed</b>, and the MR is split by what each order still needs.</p>
 
   <h2 id="messages"><span class="num">04</span>Messages you will see</h2>
-  <div class="msg">Raw material not available for this order — Fabric blue needs 60 Meter, this order has 0 (the rest on the shelf is reserved for SAL-ORD-2026-00147). Request RM (Material Request) for this order first.</div>
+  <div class="msg">Raw material not available for this order — Fabric blue needs 60 Meter, this order has 0 (the rest on the shelf was bought for SAL-ORD-2026-00147 and stays with that order). Request RM (Material Request) for this order first.</div>
   <div class="msg">Item 2 with BOM: this order's own raw material covers only 30, not 31. Request RM (Material Request) for the rest first.</div>
-  <div class="msg">Fabric blue: this Purchase Order's own raw material is 60 Meter, you are sending 65. The rest on the shelf is reserved for SAL-ORD-…. Send only 60 now, or Request RM for the rest.</div>
+  <div class="msg">Fabric blue: this Purchase Order's own raw material is 60 Meter, you are sending 65. The rest on the shelf was bought for SAL-ORD-… and stays with that order. Send only 60 now, or Request RM for the rest.</div>
   <div class="msg">This transfer sends more raw material than this Sales Order owns: … Reduce the qty to this order's own stock, or raise a Material Request (Request RM) for the rest.</div>
   <div class="msg">Only 0 of Item 1 without BOM can be sent now — only qty on a DRAFT Pick List of this order can go to embroidery …</div>
   <div class="msg">Pick List STO-PICK-… cannot go back to draft: Delivery Note DN-… is already made from it. Goods on a Delivery Note cannot be sent for embroidery.</div>
@@ -209,12 +210,12 @@
   <p class="sub">Use two dummy orders for the same BOM item, e.g. <b>A</b> and <b>B</b> (SAL-ORD-2026-00146 / 00147 style). Buy the raw material against <b>A</b> only
     (Request RM on A → MR → PO → Purchase Receipt).</p>
   <ol class="tests">
-    <li>Open <b>B</b>'s RM table.<span class="exp">Expect: <span class="pill r">Reserved for Other Order</span>, "+60 on shelf reserved for A (not usable)", orange Request RM (60).</span></li>
+    <li>Open <b>B</b>'s RM table.<span class="exp">Expect: <span class="pill r">Short 60 — Request RM</span>, "on the shelf, bought for other orders: 60 — A (60) — stays with them", orange Request RM (60).</span></li>
     <li>Open <b>A</b>'s RM table.<span class="exp">Expect: <span class="pill g">In Stock</span>, header "All RM in stock — ready for Subcontract PO".</span></li>
     <li>Sales Tracker, both rows.<span class="exp">Expect: B "Waiting for Raw Material → Request RM"; A "RM Ready — Make Subcontract PO" with Create Subcontract PO (qty).</span></li>
-    <li>New subcontracted PO → Fetch Pending Sales Orders.<span class="exp">Expect: B's row disabled with "RM Reserved for Other Order — Request RM"; A's row selectable.</span></li>
+    <li>New subcontracted PO → Fetch Pending Sales Orders.<span class="exp">Expect: B's row disabled with "RM short — Request RM"; A's row selectable.</span></li>
     <li>Sales Tracker → A → Create Subcontract PO with qty + 1.<span class="exp">Expect: refused, "own raw material covers only …". With the exact qty: the PO draft opens.</span></li>
-    <li>Submit that PO → Create SCO &amp; Material Transfer, type more than "Available for this PO".<span class="exp">Expect: red "Reserved for another order — cannot send" (or "no more on the shelf"). With the exact qty: SCO + transfer are created.</span></li>
+    <li>Submit that PO → Create SCO &amp; Material Transfer, type more than "Available for this PO".<span class="exp">Expect: red "Short for this PO — cannot send more than its own stock" (or "no more on the shelf"). With the exact qty: SCO + transfer are created.</span></li>
     <li>From the SCO, try ERPNext's Transfer Material for extra RM.<span class="exp">Expect: the Stock Entry refuses on submit.</span></li>
     <li>PO → Fetch Raw Materials from SO; compare with A's and B's RM tables.<span class="exp">Expect: identical To Make and In Stock figures.</span></li>
     <li>Material Request → Procurement Planner → Consolidated BOM Components.<span class="exp">Expect: A not listed (its RM is at the jobber); B asks for its full need.</span></li>
