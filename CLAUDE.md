@@ -28,12 +28,21 @@ previously-buggy edge cases — are documented in `docs/`:
 - `docs/stock-hold.md` — stock held for Sales Orders (Pick Lists, jobber, earmarks)
   can't be delivered, moved, reconciled or cancelled away by anything else.
 
+- `www/project-guide.html` (`/project-guide`, signed-in staff) — the one-page project
+  guide for newcomers: overview, business flow, roles & where access is controlled, BRD,
+  FRD, task tracker (delivered / MOM / Phase 2 / decisions — the `TASKS`, `BRD`, `FRD`
+  arrays in its script), developer guide, deploy, glossary. When a task is finished or a
+  new one agreed, update its row there. Its PDF
+  (`public/docs/project-guide.pdf`) is rebuilt by `scripts/make_worksheet_pdfs.sh`.
+
 ## Rule: keep the docs current
 
 **Whenever you change how any of these flows actually behaves** — a
 coverage formula, a status calculation, a button's condition, a dialog's
 fields, a new edge case fixed — **update the matching file in `docs/` in the
-same piece of work**, not as a follow-up. These docs exist specifically so
+same piece of work**, not as a follow-up — and, when a flow, a role or a business rule
+changes, the matching tab of `www/project-guide.html` too (then rebuild its PDF and bump
+its `?v=`). These docs exist specifically so
 the next person (human or Claude) doesn't have to re-derive the reasoning
 from scratch or repeat a mistake that was already fixed once. Add a new file
 under `docs/` rather than a long inline comment if a change introduces a

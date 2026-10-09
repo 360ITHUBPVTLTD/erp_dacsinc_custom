@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# Regenerates the two printable worksheets offered by /roles-and-permissions
+# Regenerates the two printable worksheets offered by /roles-and-permissions, and the
+# project guide PDF offered by /project-guide (bump its ?v= too when the guide changes)
 # ("Download PDF" buttons) from the live page, with headless Chrome — run it
 # after changing the role or document lists in www/roles-and-permissions.html,
 # then bump the ?v= number on the Download links there so browsers fetch the new file.
@@ -30,4 +31,9 @@ PY
 done
 cp "$TMP/ws.pdf" "$OUT/tab-access-worksheet.pdf"
 cp "$TMP/dt.pdf" "$OUT/document-access-worksheet.pdf"
-echo "Written: $OUT/tab-access-worksheet.pdf, $OUT/document-access-worksheet.pdf"
+# The project guide (/project-guide): its print CSS lays every tab out in order (A4 portrait).
+curl -sf -H "Host: $HOST" -H "Cookie: sid=$SID" "http://127.0.0.1:$PORT/project-guide" -o "$TMP/guide.html"
+"$CHROME" --headless=new --disable-gpu --no-sandbox --no-pdf-header-footer \
+  --print-to-pdf="$TMP/guide.pdf" "file://$TMP/guide.html" 2>/dev/null
+cp "$TMP/guide.pdf" "$OUT/project-guide.pdf"
+echo "Written: $OUT/tab-access-worksheet.pdf, $OUT/document-access-worksheet.pdf, $OUT/project-guide.pdf"

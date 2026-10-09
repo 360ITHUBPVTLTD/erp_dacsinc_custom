@@ -1,0 +1,998 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Project Guide — Dacsinc ERP</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Newsreader:ital,wght@0,400;0,500;0,600;0,700;1,400;1,500&family=IBM+Plex+Mono:wght@400;500;600&display=swap">
+<style>
+  :root {
+    --ink: #211d1b; --ink-soft: #4a4540; --paper: #f1eee7; --surface: #fbfaf7;
+    --line: #cfc8ba; --line-soft: #e2ddd0;
+    --indigo: #2e3f6b; --indigo-soft: #e7eaf2; --clay: #a9622f; --clay-soft: #f2e5d9;
+    --pine: #3b5a4c; --pine-soft: #e2ebe6; --gold: #b8863b; --gold-soft: #f5ecda; --red: #a3352b; --red-soft: #f6e2df;
+    --shadow: rgba(33, 29, 27, 0.08);
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --ink: #ece7de; --ink-soft: #b9b2a4; --paper: #1b1815; --surface: #242019;
+      --line: #4a423a; --line-soft: #332e27; --indigo: #8fa3d9; --indigo-soft: #262b3c;
+      --clay: #d99a68; --clay-soft: #362a1f; --pine: #8bb39f; --pine-soft: #1f2b25;
+      --gold: #d9ad6b; --gold-soft: #33291a; --red: #e58a7f; --red-soft: #3a2220; --shadow: rgba(0, 0, 0, 0.4);
+    }
+  }
+  :root[data-theme="dark"] {
+    --ink: #ece7de; --ink-soft: #b9b2a4; --paper: #1b1815; --surface: #242019;
+    --line: #4a423a; --line-soft: #332e27; --indigo: #8fa3d9; --indigo-soft: #262b3c;
+    --clay: #d99a68; --clay-soft: #362a1f; --pine: #8bb39f; --pine-soft: #1f2b25;
+    --gold: #d9ad6b; --gold-soft: #33291a; --red: #e58a7f; --red-soft: #3a2220; --shadow: rgba(0, 0, 0, 0.4);
+  }
+  * { box-sizing: border-box; }
+  html { background: var(--paper); }
+  body { margin: 0; background: var(--paper); color: var(--ink); font-family: "Newsreader", Georgia, serif;
+    font-size: 17px; line-height: 1.6; -webkit-font-smoothing: antialiased; }
+  .mono, code { font-family: "IBM Plex Mono", Consolas, monospace; }
+  code { font-size: .8em; background: var(--line-soft); padding: 1px 5px; border-radius: 3px; word-break: break-word; }
+  a { color: var(--indigo); }
+
+  .topbar { position: sticky; top: 0; z-index: 30; display: flex; align-items: center; gap: 14px; padding: 12px clamp(16px, 2.5vw, 40px);
+    background: var(--paper); border-bottom: 1px solid var(--line-soft); font-family: "IBM Plex Mono", monospace; font-size: 12.5px; letter-spacing: .02em; }
+  .topbar__mark { font-weight: 600; white-space: nowrap; }
+  .topbar__mark span { color: var(--clay); }
+  .topbar nav { display: flex; gap: 6px; margin-left: auto; flex-wrap: wrap; }
+  .topbar nav a { padding: 5px 10px; border-radius: 3px; text-decoration: none; color: var(--ink-soft); border: 1px solid transparent; }
+  .topbar nav a:hover { border-color: var(--line); background: var(--surface); color: var(--ink); }
+  @media (max-width: 860px) { .topbar nav { display: none; } }
+
+  .page { max-width: none; margin: 0; padding: 0 clamp(16px, 2.5vw, 40px) 100px; }
+  header.masthead { padding: 34px 0 20px; border-bottom: 1px solid var(--line-soft);
+    display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 18px 30px; align-items: end; }
+  @media (max-width: 900px) { header.masthead { grid-template-columns: 1fr; } }
+  .eyebrow { font-family: "IBM Plex Mono", monospace; font-size: 12px; letter-spacing: .09em; text-transform: uppercase; color: var(--clay); margin: 0 0 10px; }
+  h1.title { font-size: clamp(1.9rem, 3.4vw, 2.5rem); font-weight: 600; line-height: 1.12; margin: 0 0 10px; }
+  h1.title em { font-style: italic; color: var(--indigo); }
+  .lede { font-size: 1.06em; margin: 0; max-width: 1050px; }
+  .actions { display: flex; flex-wrap: wrap; gap: 8px; justify-content: flex-end; }
+  @media (max-width: 900px) { .actions { justify-content: flex-start; } }
+  .btn { display: inline-flex; align-items: center; gap: 8px; padding: 9px 14px; border-radius: 6px; cursor: pointer;
+    font-family: "IBM Plex Mono", monospace; font-size: 12px; font-weight: 600; text-decoration: none;
+    border: 1.5px solid var(--indigo); background: var(--indigo); color: #fbfaf7; white-space: nowrap; }
+  .btn.outline { background: transparent; color: var(--indigo); }
+  .btn:hover { opacity: .88; }
+  .btn.sm { padding: 5px 10px; font-size: 11.5px; }
+  .btn[hidden] { display: none; }
+
+  .stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 10px; margin: 18px 0 0; }
+  .stat { background: var(--surface); border: 1px solid var(--line-soft); border-radius: 10px; padding: 10px 14px; cursor: pointer; text-align: left; font: inherit; color: inherit; }
+  .stat:hover { border-color: var(--indigo); }
+  .stat b { display: block; font-size: 1.6rem; line-height: 1.1; }
+  .stat span { font-family: "IBM Plex Mono", monospace; font-size: 11px; color: var(--ink-soft); text-transform: uppercase; letter-spacing: .05em; }
+  .stat.done b { color: var(--pine); } .stat.open b { color: var(--clay); } .stat.dec b { color: var(--red); }
+
+  .ptabs { position: sticky; top: 45px; z-index: 20; display: flex; flex-wrap: wrap; gap: 2px; background: var(--paper);
+    border-bottom: 2px solid var(--line); margin: 18px 0 24px; }
+  @media (max-width: 860px) { .ptabs { flex-wrap: nowrap; overflow-x: auto; top: 0; } }
+  .ptabs button { flex: none; font: 600 14.5px/1 "Newsreader", serif; padding: 11px 14px; border: 1px solid transparent; border-bottom: 0;
+    border-radius: 8px 8px 0 0; background: transparent; color: var(--ink-soft); cursor: pointer; margin-bottom: -2px; white-space: nowrap; }
+  .ptabs button:hover { color: var(--ink); background: var(--line-soft); }
+  .ptabs button[aria-selected="true"] { background: var(--surface); color: var(--ink); border-color: var(--line); border-bottom: 2px solid var(--surface); }
+  .ptabs .num { font-family: "IBM Plex Mono", monospace; font-size: 10.5px; color: var(--clay); margin-right: 6px; }
+  .ptabs .cnt { font-family: "IBM Plex Mono", monospace; font-size: 10.5px; background: var(--clay-soft); color: var(--clay); border-radius: 10px; padding: 1px 6px; margin-left: 6px; }
+  .tabpanel[hidden] { display: none !important; }
+  .print-title { display: none; }
+
+  h2 { font-size: 1.6rem; font-weight: 600; margin: 0 0 4px; }
+  h3 { font-size: 1.2rem; font-weight: 600; margin: 26px 0 8px; }
+  h4 { font-size: 1.02rem; font-weight: 700; margin: 0 0 4px; }
+  .sub { color: var(--ink-soft); margin: 0 0 16px; max-width: 1100px; }
+  p { margin: 0 0 10px; }
+  ul, ol { margin: 0 0 12px; padding-left: 22px; }
+  li { margin: 3px 0; }
+
+  .grid2 { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(420px, 100%), 1fr)); gap: 18px; }
+  .table-wrap { overflow-x: auto; border: 1px solid var(--line-soft); border-radius: 8px; background: var(--surface); margin: 8px 0 16px; }
+  table { width: 100%; border-collapse: collapse; font-size: 14px; }
+  th, td { text-align: left; padding: 8px 11px; border-bottom: 1px solid var(--line-soft); vertical-align: top; }
+  tbody tr:last-child td { border-bottom: 0; }
+  th { font-family: "IBM Plex Mono", monospace; font-size: 10.5px; text-transform: uppercase; letter-spacing: .04em;
+    color: var(--ink-soft); font-weight: 600; background: var(--paper); white-space: nowrap; }
+  th.sortable { cursor: pointer; } th.sortable:hover { color: var(--ink); }
+  th.sorted::after { content: " ▾"; } th.sorted.asc::after { content: " ▴"; }
+  td.k { font-weight: 600; }
+  td.id { font-family: "IBM Plex Mono", monospace; font-size: 11.5px; color: var(--clay); white-space: nowrap; }
+  td.nw { white-space: nowrap; }
+  tbody tr:hover td { background: var(--paper); }
+
+  .cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); gap: 12px; margin: 8px 0 18px; }
+  .card { background: var(--surface); border: 1px solid var(--line-soft); border-radius: 10px; padding: 13px 15px; }
+  .card p { margin: 0; font-size: 14.5px; color: var(--ink-soft); }
+  .card .tag { font-family: "IBM Plex Mono", monospace; font-size: 10.5px; color: var(--clay); text-transform: uppercase; letter-spacing: .06em; }
+
+  .note { padding: 11px 15px; border-radius: 8px; border: 1px solid var(--line-soft); background: var(--indigo-soft); font-size: 15px; margin: 8px 0 16px; }
+  .note.warn { background: var(--clay-soft); } .note.ok { background: var(--pine-soft); } .note.bad { background: var(--red-soft); }
+
+  .filters { display: flex; flex-wrap: wrap; gap: 8px 10px; align-items: center; margin: 4px 0 12px; padding: 10px 12px;
+    background: var(--surface); border: 1px solid var(--line-soft); border-radius: 10px; }
+  .filters input[type=search], .filters select { font: 14px "Newsreader", serif; padding: 6px 10px; border: 1px solid var(--line);
+    border-radius: 7px; background: var(--paper); color: var(--ink); }
+  .filters input[type=search] { flex: 1 1 220px; min-width: 180px; }
+  .chips { display: flex; flex-wrap: wrap; gap: 6px; }
+  .chip { font-family: "IBM Plex Mono", monospace; font-size: 11.5px; padding: 4px 10px; border-radius: 20px; border: 1px solid var(--line);
+    background: transparent; color: var(--ink-soft); cursor: pointer; }
+  .chip[aria-pressed="true"] { background: var(--indigo); border-color: var(--indigo); color: #fff; }
+  .chip .n { opacity: .75; margin-left: 5px; }
+  .count { font-family: "IBM Plex Mono", monospace; font-size: 12px; color: var(--ink-soft); margin-left: auto; }
+
+  .pill { display: inline-block; font-family: "IBM Plex Mono", monospace; font-size: 10.5px; font-weight: 600; padding: 1px 8px;
+    border-radius: 20px; border: 1.2px solid currentColor; white-space: nowrap; }
+  .s-done { color: var(--pine); background: var(--pine-soft); border-color: transparent; }
+  .s-open { color: var(--clay); background: var(--clay-soft); border-color: transparent; }
+  .s-todo { color: var(--indigo); background: var(--indigo-soft); border-color: transparent; }
+  .s-disc { color: var(--gold); background: var(--gold-soft); border-color: transparent; }
+  .s-hold { color: var(--ink-soft); background: var(--line-soft); border-color: transparent; }
+  .s-dec { color: var(--red); background: var(--red-soft); border-color: transparent; }
+  .p-high { color: var(--red); font-weight: 600; } .p-med { color: var(--clay); } .p-low { color: var(--ink-soft); }
+  .area { color: var(--ink-soft); }
+
+  .xitem { background: var(--surface); border: 1px solid var(--line-soft); border-radius: 10px; margin: 0 0 8px; }
+  .xhead { display: flex; gap: 12px; align-items: flex-start; padding: 11px 14px; cursor: pointer; }
+  .xhead:hover { background: var(--paper); border-radius: 10px; }
+  .xid { font-family: "IBM Plex Mono", monospace; font-size: 11.5px; color: var(--clay); white-space: nowrap; padding-top: 3px; min-width: 52px; }
+  .xtitle { flex: 1; min-width: 0; }
+  .xtitle b { font-size: 1.02rem; }
+  .xtitle small { display: block; color: var(--ink-soft); font-size: 14px; }
+  .xmeta { display: flex; gap: 6px; flex-wrap: wrap; justify-content: flex-end; }
+  .chev { color: var(--ink-soft); transition: transform .15s; padding-top: 2px; }
+  .xitem.open .chev { transform: rotate(90deg); }
+  .xbody { display: none; padding: 0 14px 14px 78px; font-size: 15px; }
+  .xitem.open .xbody { display: block; }
+  .xbody dl { display: grid; grid-template-columns: 170px 1fr; gap: 6px 14px; margin: 0; }
+  .xbody dt { font-family: "IBM Plex Mono", monospace; font-size: 11px; text-transform: uppercase; letter-spacing: .04em; color: var(--ink-soft); padding-top: 3px; }
+  .xbody dd { margin: 0; }
+  .xbody ul { margin: 0; }
+  @media (max-width: 700px) { .xbody { padding-left: 14px; } .xbody dl { grid-template-columns: 1fr; } .xhead { flex-wrap: wrap; } .xmeta { width: 100%; justify-content: flex-start; } }
+
+  .step .xid { min-width: 30px; }
+  .num { display: inline-block; width: 28px; height: 28px; border-radius: 50%; background: var(--indigo); color: #fff;
+    font: 600 12px/28px "IBM Plex Mono", monospace; text-align: center; }
+  .step.pos .num { background: var(--clay); }
+  .who { display: inline-block; font-family: "IBM Plex Mono", monospace; font-size: 10.5px; padding: 1px 8px; border-radius: 20px;
+    border: 1px solid var(--pine); color: var(--pine); white-space: nowrap; margin-top: 3px; }
+  .lane { display: flex; flex-wrap: wrap; gap: 4px; align-items: center; margin: 4px 0 16px; font-family: "IBM Plex Mono", monospace; font-size: 11.5px; }
+  .lane span { padding: 4px 9px; border-radius: 6px; background: var(--surface); border: 1px solid var(--line-soft); cursor: pointer; }
+  .lane span:hover { border-color: var(--indigo); color: var(--indigo); }
+  .lane i { color: var(--ink-soft); font-style: normal; }
+
+  .rolepick { display: flex; flex-wrap: wrap; gap: 6px; margin: 6px 0 14px; }
+  .rolecard { background: var(--surface); border: 1px solid var(--line-soft); border-radius: 12px; padding: 16px 18px; margin-bottom: 8px; }
+  .rolecard h3 { margin-top: 0; }
+  .rolecard .cols { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 14px 24px; }
+  .rolecard h5 { font-family: "IBM Plex Mono", monospace; font-size: 11px; text-transform: uppercase; letter-spacing: .05em; color: var(--clay); margin: 0 0 4px; }
+  .role-all { display: none; }
+
+  footer.foot { margin-top: 40px; padding-top: 16px; border-top: 1px solid var(--line-soft); font-size: 13px; color: var(--ink-soft); }
+
+  @media print {
+    :root, :root[data-theme="dark"] { --ink: #000; --ink-soft: #333; --paper: #fff; --surface: #fff; --line: #999; --line-soft: #ccc; }
+    @page { size: A4; margin: 11mm; }
+    body { font-size: 11px; }
+    .topbar, .ptabs, .actions, .no-print, .filters, .rolepick, .stats, .lane, #role-card { display: none !important; }
+    .page { padding: 0; }
+    header.masthead { display: block; padding-top: 0; }
+    .tabpanel, .tabpanel[hidden] { display: block !important; break-before: page; }
+    .tabpanel:first-of-type { break-before: auto; }
+    .print-title { display: block; font-family: "IBM Plex Mono", monospace; font-size: 9.5px; color: #555; margin-bottom: 4px; }
+    .xbody { display: block !important; padding-left: 14px; }
+    .chev { display: none; }
+    .xitem, .card, tr, .note, .rolecard { break-inside: avoid; }
+    .pill, th, .num { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+    a { color: #000; text-decoration: none; }
+    .table-wrap { overflow: visible; }
+    .role-all { display: block !important; }
+  }
+</style>
+</head>
+<body>
+
+<div class="topbar">
+  <span class="topbar__mark">DACSINC<span> · </span>PROJECT GUIDE</span>
+  <nav>
+    <a href="/app/order-flow">Order Flow ↗</a>
+    <a href="/order-flow-rules">Order flow rules</a>
+    <a href="/process-flow">Process flow</a>
+    <a href="/process-flow-diagram" target="_blank" rel="noopener">Workflow diagram ↗</a>
+    <a href="/roles-and-permissions">Access sheet</a>
+    <a href="/app/roles-and-permissions">Roles &amp; Permissions ↗</a>
+    <a href="#pages">All pages</a>
+  </nav>
+</div>
+
+<div class="page">
+  <header class="masthead">
+    <div>
+      <p class="eyebrow">Dacsinc ERP — project guide · updated 9 Oct 2026</p>
+      <h1 class="title">How the Dacsinc ERP <em>works</em> — and where the project stands.</h1>
+      <p class="lede">For everyone joining the project: the business, the end-to-end flow, who controls what, the business and functional
+        requirements, how to build and deploy, and the task list — delivered, open from the 8 Oct meeting, and Phase 2.</p>
+    </div>
+    <div class="actions no-print">
+      <a class="btn" href="/assets/erp_dacsinc_custom/docs/project-guide.pdf?v=4" download="Dacsinc ERP - Project Guide.pdf" data-dl-name="Dacsinc ERP - Project Guide">⤓ Download PDF</a>
+      <button class="btn outline" type="button" id="btn-pdf">⎙ Print all</button>
+      <button class="btn outline" type="button" id="btn-tab">⎙ Print this tab</button>
+      <button class="btn outline" type="button" id="btn-html">⤓ HTML copy</button>
+      <button class="btn outline" type="button" id="btn-csv" hidden>⤓ Tasks to Excel</button>
+    </div>
+  </header>
+
+  <div class="stats no-print" id="stats"></div>
+
+  <nav class="ptabs no-print" role="tablist" aria-label="Guide sections">
+    <button type="button" role="tab" data-tab="overview">01 Overview</button>
+    <button type="button" role="tab" data-tab="flow">02 Business flow</button>
+    <button type="button" role="tab" data-tab="roles">03 Roles &amp; control</button>
+    <button type="button" role="tab" data-tab="brd">04 BRD — business needs</button>
+    <button type="button" role="tab" data-tab="frd">05 FRD — how it works</button>
+    <button type="button" role="tab" data-tab="tasks">06 Tasks &amp; status<span class="cnt" id="tab-open-count"></span></button>
+    <button type="button" role="tab" data-tab="dev">07 Developer guide</button>
+    <button type="button" role="tab" data-tab="ops">08 Deploy &amp; operations</button>
+    <button type="button" role="tab" data-tab="glossary">09 Glossary</button>
+  </nav>
+
+  <!-- 01 OVERVIEW -->
+  <section class="tabpanel" id="tab-overview" role="tabpanel">
+    <div class="print-title">01 · Overview</div>
+    <h2>Overview</h2>
+    <p class="sub">What the company does, what the system is for, and how the pieces fit.</p>
+    <div class="grid2">
+      <div>
+        <h3 style="margin-top:6px">The business</h3>
+        <p>Dac's Inc supplies <b>uniforms and garments</b> to corporate and institutional customers (hotels, restaurants, schools, hospitals)
+          and runs <b>retail POS stores</b>. Customer orders are filled in two ways — <b>trade items</b> bought and resold, and
+          <b>BOM items</b> made by outside <b>jobbers</b> (the company buys the fabric and trims, sends them to the jobber and receives
+          finished garments). Pieces or panels can also go to <b>embroidery</b> jobbers.</p>
+        <div class="cards">
+          <div class="card"><span class="tag">Sales</span><h4>Orders &amp; approvals</h4><p>CRM, Sales Orders, merchandiser and final approval.</p></div>
+          <div class="card"><span class="tag">Supply</span><h4>Buy &amp; make</h4><p>Raw material, purchase, subcontracting, embroidery.</p></div>
+          <div class="card"><span class="tag">Fulfil</span><h4>Pick, dispatch, bill</h4><p>Pick List → Delivery Note → Sales Invoice → logistics.</p></div>
+          <div class="card"><span class="tag">Retail</span><h4>POS stores</h4><p>Shifts, billing, cash drawer, store stock.</p></div>
+        </div>
+      </div>
+      <div>
+        <h3 style="margin-top:6px">What the system solves</h3>
+        <ul>
+          <li><b>One order tracked end to end</b> on one dashboard (Order Flow), with the next action for each order.</li>
+          <li><b>No cross-order leaks</b> — material bought for one order is never used by another.</li>
+          <li><b>No over-ordering, no duplicates</b> — purchases capped at each order line's need; one draft per source line.</li>
+          <li><b>Approvals</b> — merchandiser, then a named final approver.</li>
+          <li><b>Controlled visibility</b> — merchandisers see their orders, stores their store, master data stays inside.</li>
+          <li><b>Store cash control</b> — counted every shift, carried to the next, reported.</li>
+          <li><b>One agreed access sheet</b> — the client signs off who may do what; saving applies it.</li>
+        </ul>
+      </div>
+    </div>
+    <h3>System landscape</h3>
+    <div class="table-wrap"><table>
+      <thead><tr><th>Component</th><th>What it is</th><th>Notes</th></tr></thead>
+      <tbody>
+      <tr><td class="k">ERPNext v15 (frappe, erpnext, hrms, india_compliance)</td><td>Standard platform: accounts, stock, buying, selling, HR, GST</td><td>Small local edits are recorded in <code>docs/core-modifications.md</code> at the bench root.</td></tr>
+      <tr><td class="k">erp_dacsinc_custom</td><td>The custom app — all Dacsinc business logic</td><td>Its hooks run before ERPNext's.</td></tr>
+      <tr><td class="k">mobile_app_360ithub</td><td>Mobile app backend (HR, attendance, CRM)</td><td>Reads settings through the API as the signed-in user.</td></tr>
+      <tr><td class="k">fcm_360ithub · webtoolex_whatsapp</td><td>Push notifications · WhatsApp</td><td></td></tr>
+      </tbody>
+    </table></div>
+    <div class="grid2">
+      <div>
+        <h3>Warehouses</h3>
+        <ul>
+          <li><b>VV Puram - IND</b> — main stock warehouse; all customer picking; supplies the stores.</li>
+          <li><b>Jobers Warehouse - IND</b> — raw material sent to jobbers.</li>
+          <li><b>Store warehouses</b> — one per POS store (JP Nagar, Rajajinagar, Varthur…).</li>
+        </ul>
+      </div>
+    </div>
+
+    <h3 id="pages">Pages &amp; links</h3>
+    <p class="sub">Every screen built for this project, with its address. Click to open; <b>Copy link</b> copies the full address of this site, ready to share.</p>
+    <div class="table-wrap"><table id="pages-table">
+      <thead><tr><th>Page</th><th>Address</th><th>Who can open it</th><th>What it is for</th><th class="no-print"></th></tr></thead>
+      <tbody>
+      <tr><td class="k">Order Flow (dashboard)</td><td><a href="/app/order-flow" target="_blank" rel="noopener"><code>/app/order-flow</code></a></td>
+        <td>Staff roles given on the access sheet (Merchandiser, Purchase, Production, Warehouse, Accounts, Finance, Logistics…); admins see every tab</td>
+        <td>Daily work: approvals, Sales Tracker, Pick Lists, Purchase Flow, Job Work, Stock, Pending DN/SI, Finance, Embroidery, Logistics</td>
+        <td class="no-print"><button class="btn sm outline" type="button" data-copy="/app/order-flow">Copy link</button></td></tr>
+      <tr><td class="k">Roles &amp; Permissions (desk)</td><td><a href="/app/roles-and-permissions" target="_blank" rel="noopener"><code>/app/roles-and-permissions</code></a></td>
+        <td>Admin · System Manager · HR Manager (limited)</td>
+        <td>Give users their role profiles; see which users hold which profile</td>
+        <td class="no-print"><button class="btn sm outline" type="button" data-copy="/app/roles-and-permissions">Copy link</button></td></tr>
+      <tr><td class="k">Roles &amp; permissions — access sheet</td><td><a href="/roles-and-permissions" target="_blank" rel="noopener"><code>/roles-and-permissions</code></a></td>
+        <td>Admin (edit) · System Manager (resets, apply)</td>
+        <td>The agreed access sheet: document rights per role (V N E S C D O), Order Flow tabs (✓ / A), blank worksheets to print</td>
+        <td class="no-print"><button class="btn sm outline" type="button" data-copy="/roles-and-permissions">Copy link</button></td></tr>
+      <tr><td class="k">Order flow rules</td><td><a href="/order-flow-rules" target="_blank" rel="noopener"><code>/order-flow-rules</code></a></td>
+        <td>Any signed-in user</td>
+        <td>The rules every screen enforces, the messages users see, and test steps</td>
+        <td class="no-print"><button class="btn sm outline" type="button" data-copy="/order-flow-rules">Copy link</button></td></tr>
+      <tr><td class="k">Project guide (this page)</td><td><a href="/project-guide"><code>/project-guide</code></a></td>
+        <td>Any signed-in user</td>
+        <td>Overview, flow, roles, BRD, FRD, task status, developer and deploy notes</td>
+        <td class="no-print"><button class="btn sm outline" type="button" data-copy="/project-guide">Copy link</button></td></tr>
+      <tr><td class="k">Process flow</td><td><a href="/process-flow" target="_blank" rel="noopener"><code>/process-flow</code></a></td>
+        <td>Anyone (public)</td>
+        <td>Stage-by-stage overview for the client — older (Aug 2026); this guide wins where they differ</td>
+        <td class="no-print"><button class="btn sm outline" type="button" data-copy="/process-flow">Copy link</button></td></tr>
+      <tr><td class="k">Workflow diagram</td><td><a href="/process-flow-diagram" target="_blank" rel="noopener"><code>/process-flow-diagram</code></a></td>
+        <td>Anyone (public)</td>
+        <td>One-page diagram, downloadable as PNG / SVG — older (Aug 2026)</td>
+        <td class="no-print"><button class="btn sm outline" type="button" data-copy="/process-flow-diagram">Copy link</button></td></tr>
+      <tr><td class="k">Store Cash Book (report)</td><td><a href="/app/query-report/Store Cash Book" target="_blank" rel="noopener"><code>/app/query-report/Store Cash Book</code></a></td>
+        <td>POS Admin · POS Store Manager (own store) · System Manager</td>
+        <td>One line per store shift: opening, sales by mode, counted cash, short / extra, cash left</td>
+        <td class="no-print"><button class="btn sm outline" type="button" data-copy="/app/query-report/Store Cash Book">Copy link</button></td></tr>
+      <tr><td class="k">Point of Sale</td><td><a href="/app/point-of-sale" target="_blank" rel="noopener"><code>/app/point-of-sale</code></a></td>
+        <td>Store users (POS Store Manager, POS Admin)</td>
+        <td>Open shift, bill, close shift</td>
+        <td class="no-print"><button class="btn sm outline" type="button" data-copy="/app/point-of-sale">Copy link</button></td></tr>
+      </tbody>
+    </table></div>
+  </section>
+
+  <!-- 02 FLOW -->
+  <section class="tabpanel" id="tab-flow" role="tabpanel">
+    <div class="print-title">02 · Business flow</div>
+    <h2>Business flow</h2>
+    <p class="sub">Click a step for its screen, the rules that apply and tips. Pick a stage to narrow the list, or click a box in the strip to jump to a step.</p>
+    <div class="filters no-print">
+      <div class="chips" id="flow-chips"></div>
+      <button class="btn sm outline" type="button" data-expand="flow-list">Expand all</button>
+      <button class="btn sm outline" type="button" data-collapse="flow-list">Collapse all</button>
+    </div>
+    <div class="lane no-print" id="flow-lane"></div>
+    <div id="flow-list"></div>
+    <h3>Order status words (Sales Tracker)</h3>
+    <p><span class="pill s-open">Not Dispatched</span> → <span class="pill s-todo">To Be Dispatched (Draft)</span> → <span class="pill s-done">Dispatched</span>
+      → <span class="pill s-todo">Delivered (Draft)</span> → <span class="pill s-done">Delivered</span> → Completed</p>
+  </section>
+
+  <!-- 03 ROLES -->
+  <section class="tabpanel" id="tab-roles" role="tabpanel">
+    <div class="print-title">03 · Roles &amp; control</div>
+    <h2>Roles &amp; control</h2>
+    <p class="sub">Pick a role to see what it does, which dashboard tabs it uses and what limits it. Below: where each kind of access is changed.</p>
+    <div class="rolepick no-print" id="role-pick"></div>
+    <div id="role-card"></div>
+    <div class="role-all" id="role-all"></div>
+    <h3>Where access is controlled — change it only here</h3>
+    <div class="table-wrap"><table>
+      <thead><tr><th>What</th><th>Where</th><th>Who may change it</th></tr></thead>
+      <tbody>
+      <tr><td class="k">Document rights per role</td><td><a href="/roles-and-permissions">Roles &amp; permissions</a> › Document access (V N E S C D O)</td><td>Admin saves · System Manager resets / syncs / applies</td></tr>
+      <tr><td class="k">Order Flow tabs per role</td><td>Roles &amp; permissions › Order Flow dashboard (✓ see, A act)</td><td>Admin</td></tr>
+      <tr><td class="k">Which roles a user has</td><td>Desk page <b>Roles &amp; Permissions</b> (profiles)</td><td>Admin · System Manager · HR Manager (limited)</td></tr>
+      <tr><td class="k">Final approvers</td><td>Admin Settings › Sales Order final approvers</td><td>Admin · System Manager</td></tr>
+      <tr><td class="k">Customer's merchandiser / industry / store</td><td>Customer form · list "Assign Merchandiser"</td><td>Roles in Admin Settings › Customer</td></tr>
+      <tr><td class="k">Users allowed to use held stock</td><td>Admin Settings › Stock Hold</td><td>Admin · System Manager</td></tr>
+      <tr><td class="k">PO price check</td><td>Admin Settings › PO price check roles (empty = nobody)</td><td>Admin · System Manager</td></tr>
+      <tr><td class="k">A store's users and brands</td><td>POS Profile › Applicable for Users / Brands</td><td>POS Admin · Admin</td></tr>
+      <tr><td class="k">POS emails, supply warehouse</td><td>Admin Settings › POS</td><td>Admin · System Manager</td></tr>
+      </tbody>
+    </table></div>
+    <div class="note warn"><b>Golden rule:</b> the access sheet is the single source of truth — edits made in Role Permission Manager are read back into it.
+      Never give a role <b>Write on Admin Settings</b> just to make a screen work.</div>
+    <p class="sub">Rights letters: <b>V</b> view · <b>N</b> new (create) · <b>E</b> edit saved records · <b>S</b> submit · <b>C</b> cancel · <b>D</b> delete · <b>O</b> only own records.
+      Each sheet role has one <b>Role Profile</b> (role + Employee + Employee Self Service); a user may hold several.</p>
+  </section>
+
+  <!-- 04 BRD -->
+  <section class="tabpanel" id="tab-brd" role="tabpanel">
+    <div class="print-title">04 · Business Requirements (BRD)</div>
+    <h2>BRD — what the business needs</h2>
+    <p class="sub">Each requirement states the <b>problem</b>, what the business <b>needs</b>, how we know it is <b>met</b>, and its <b>status</b>. Click one to open it.</p>
+    <div class="grid2">
+      <div class="card"><span class="tag">Objectives</span>
+        <ul style="margin:6px 0 0">
+          <li>Deliver every order on time with the right material, without one order consuming another's stock.</li>
+          <li>One place (Order Flow) for every team to see what is pending and act.</li>
+          <li>Buy only what orders need — never twice.</li>
+          <li>Control store cash and stock every shift.</li>
+          <li>Keep customer, supplier and price data inside the company.</li>
+          <li>Access agreed in writing with management.</li>
+        </ul></div>
+      <div class="card"><span class="tag">Scope &amp; stakeholders</span>
+        <p style="margin-top:6px"><b>In scope:</b> CRM → Sales Order → approvals → planning → purchase → subcontracting → embroidery → picking → dispatch → invoice → logistics; POS stores; access control; mobile-app integration.</p>
+        <p><b>Standard ERPNext (not customised):</b> general ledger, taxes, payroll, payment engine.</p>
+        <p><b>Stakeholders:</b> Management · Sales/CRM · Merchandisers · Purchase · Production · Warehouse &amp; Packing · Accounts &amp; Finance · Logistics · Stores · HR · 360 IT Hub.</p></div>
+    </div>
+    <div class="filters no-print" style="margin-top:16px">
+      <input type="search" id="brd-q" placeholder="Search business requirements…">
+      <div class="chips" id="brd-st"></div>
+      <span class="count" id="brd-count"></span>
+    </div>
+    <div class="filters no-print" style="margin-top:-4px">
+      <div class="chips" id="brd-chips"></div>
+      <button class="btn sm outline" type="button" data-expand="brd-list">Expand all</button>
+      <button class="btn sm outline" type="button" data-collapse="brd-list">Collapse all</button>
+    </div>
+    <div id="brd-list"></div>
+  </section>
+
+  <!-- 05 FRD -->
+  <section class="tabpanel" id="tab-frd" role="tabpanel">
+    <div class="print-title">05 · Functional Requirements (FRD)</div>
+    <h2>FRD — how the system does it</h2>
+    <p class="sub">Each function: <b>who</b> uses it, <b>where</b> (screen), <b>what happens</b>, the <b>rules</b>, how to <b>check</b> it, and the code that enforces it (for developers).</p>
+    <div class="filters no-print">
+      <input type="search" id="frd-q" placeholder="Search functions, screens, rules…">
+      <div class="chips" id="frd-st"></div>
+      <span class="count" id="frd-count"></span>
+    </div>
+    <div class="filters no-print" style="margin-top:-4px">
+      <div class="chips" id="frd-chips"></div>
+      <button class="btn sm outline" type="button" data-expand="frd-list">Expand all</button>
+      <button class="btn sm outline" type="button" data-collapse="frd-list">Collapse all</button>
+    </div>
+    <div id="frd-list"></div>
+    <h3>Non-functional requirements</h3>
+    <ul>
+      <li><b>One count everywhere</b> — screens answering the same question use the same server function, so no screen shows one number and another a different one.</li>
+      <li><b>Server-side rules</b> — every rule is checked on the server; screens only explain.</li>
+      <li><b>Precision</b> — raw-material checks use the stock precision (3 decimals).</li>
+      <li><b>Performance</b> — company-wide lists are computed in batches, not row by row.</li>
+      <li><b>Real time</b> — Order Flow and the Sales Order refresh when a linked document changes.</li>
+    </ul>
+  </section>
+
+  <!-- 06 TASKS -->
+  <section class="tabpanel" id="tab-tasks" role="tabpanel">
+    <div class="print-title">06 · Tasks &amp; status</div>
+    <h2>Tasks &amp; status</h2>
+    <p class="sub">Delivered work, the open actions from the <b>8 Oct 2026 meeting</b> (Operation Flow Trial, client place — Dac operation team, Chandra ma'am, Mohan,
+      Hithashini, Namitha), and the <b>Phase 2</b> list. Filter by status, source, module, phase or priority; click a column title to sort.</p>
+    <div class="filters no-print">
+      <input type="search" id="task-q" placeholder="Search tasks…">
+      <select id="task-source"><option value="">All sources</option></select>
+      <select id="task-module"><option value="">All modules</option></select>
+      <select id="task-phase"><option value="">All phases</option></select>
+      <select id="task-priority"><option value="">All priorities</option></select>
+      <span class="count" id="task-count"></span>
+    </div>
+    <div class="filters no-print" style="margin-top:-4px">
+      <div class="chips" id="task-chips"></div>
+      <button class="btn sm outline" type="button" id="task-reset">Reset filters</button>
+    </div>
+    <div class="table-wrap"><table id="task-table">
+      <thead><tr>
+        <th class="sortable" data-sort="id">#</th><th class="sortable" data-sort="status">Status</th><th class="sortable" data-sort="module">Module</th>
+        <th>Task</th><th class="sortable" data-sort="source">Source</th><th class="sortable" data-sort="phase">Phase</th>
+        <th class="sortable" data-sort="priority">Priority</th><th class="sortable" data-sort="date">Date</th><th>Owner</th><th>Remarks</th>
+      </tr></thead>
+      <tbody id="task-body"></tbody>
+    </table></div>
+    <div class="note warn"><b>Needs a decision before building:</b> MOM 1(a)(i) "all customers visible to all merchandisers while creating a Sales Order"
+      changes business rule <b>BR-08</b> (merchandisers see their own customers). Suggested: every merchandiser may <i>pick</i> any customer on a new order,
+      while lists and dashboards stay scoped. To confirm with the client.</div>
+  </section>
+
+  <!-- 07 DEV -->
+  <section class="tabpanel" id="tab-dev" role="tabpanel">
+    <div class="print-title">07 · Developer guide</div>
+    <h2>Developer guide</h2>
+    <p class="sub">How the code is organised, the conventions, and how to test safely.</p>
+    <div class="grid2">
+      <div>
+        <h3 style="margin-top:6px">Repositories</h3>
+        <ul>
+          <li><b>Bench root</b> — a small Git repo for project scaffolding only (<code>CLAUDE.md</code>, <code>CONTEXT.md</code>, <code>docs/</code>, <code>.scratch/</code>). Never <code>git add -A</code> there.</li>
+          <li><b>Each app</b> in <code>apps/</code> is its own Git repo — do Git work inside the app. <code>erp_dacsinc_custom</code> → GitHub organisation 360ITHUBPVTLTD.</li>
+          <li><b>Developer copy</b> — a local site restored from a live backup; never test on live.</li>
+        </ul>
+        <h3>Conventions</h3>
+        <ul>
+          <li><b>Docs in the same change:</b> update <code>docs/*.md</code> — and this guide when a flow, role, rule or task status changes.</li>
+          <li><b>One rule, one function:</b> screens answering the same question call the same server function.</li>
+          <li><b>Scope by sales order:</b> every demand / supply figure is keyed by (item, warehouse, sales order).</li>
+          <li><b>Vendor apps:</b> never edit silently — record in <code>docs/core-modifications.md</code>.</li>
+          <li><b>Fields from code:</b> <code>create_custom_fields</code> in after_migrate or exported <code>custom/*.json</code>; removals need a patch.</li>
+          <li><b>Issues &amp; specs:</b> local markdown in <code>.scratch/&lt;feature&gt;/</code> (not GitHub Issues).</li>
+        </ul>
+      </div>
+      <div>
+        <h3 style="margin-top:6px">Code map (erp_dacsinc_custom)</h3>
+        <div class="table-wrap"><table><tbody>
+          <tr><td class="k">Hooks</td><td><code>hooks.py</code> — document events, permission hooks, overrides, after_migrate, schedulers</td></tr>
+          <tr><td class="k">Planning &amp; guards</td><td><code>custom_script.py</code>, <code>purchase_order.py</code>, <code>stock_hold.py</code>, <code>draft_guard.py</code>, <code>so_embroidery.py</code></td></tr>
+          <tr><td class="k">Order Flow</td><td><code>order_flow_api.py</code>, <code>order_flow_permissions.py</code>, <code>page/order_flow/</code></td></tr>
+          <tr><td class="k">Access</td><td><code>access_sync.py</code>, <code>access_worksheet.py</code>, <code>access_reverse.py</code>, <code>roles_and_permissions_api.py</code>, <code>master_guard.py</code>, <code>access/*.json</code></td></tr>
+          <tr><td class="k">POS</td><td><code>pos_scope.py</code>, <code>pos_cash.py</code>, <code>pos_closing.py</code>, <code>pos_notify.py</code>, <code>pos_report_scope.py</code>, <code>pos_receipt_email.py</code></td></tr>
+          <tr><td class="k">CRM / HR</td><td><code>custom_lead.py</code>, <code>custom_customer.py</code>, <code>notifications.py</code>, <code>custom_leave.py</code></td></tr>
+          <tr><td class="k">Front-end</td><td><code>public/js/*.js</code> (form scripts), <code>www/*.html</code> (these pages)</td></tr>
+          <tr><td class="k">Setup</td><td><code>custom/*.json</code>, <code>patches/</code>, <code>report/</code>, <code>docs/*.md</code></td></tr>
+        </tbody></table></div>
+      </div>
+    </div>
+    <div class="grid2">
+      <div>
+        <h3>Testing</h3>
+        <ul>
+          <li>Rolled-back scripts with <code>bench --site &lt;site&gt; execute</code>; suites in <code>.scratch/order-flow-strict-rules/</code>.</li>
+          <li>Always stub <code>frappe.db.commit</code> — saving Admin Settings commits, so rollback alone won't undo it.</li>
+          <li>Browser checks with headless Chrome and a temporary session.</li>
+          <li>After a planning change, compare the SO RM table, PO prompt and SCO dialog on the same data — they must agree.</li>
+        </ul>
+      </div>
+      <div>
+        <h3>Pitfalls</h3>
+        <ul>
+          <li><code>picked_qty</code>, MR <code>ordered_qty</code>, <code>subcontracted_quantity</code> move only on submit — net drafts by hand.</li>
+          <li>ERPNext clears <code>Purchase Order Item.bom</code> on save — use the SO line's <code>bom_no</code>.</li>
+          <li>Query reports bypass permission hooks — POS reports are scoped separately.</li>
+          <li><code>frm.set_intro</code> adds to the message area — clear it first. Form scripts need a hard refresh.</li>
+        </ul>
+      </div>
+    </div>
+    <div class="note bad"><b>Never</b> share <code>site_config.json</code> (passwords, encryption key); never run <code>bench migrate</code>, <code>git reset --hard</code>,
+      <code>git clean</code>, commit or push for someone without being asked.</div>
+  </section>
+
+  <!-- 08 OPS -->
+  <section class="tabpanel" id="tab-ops" role="tabpanel">
+    <div class="print-title">08 · Deploy &amp; operations</div>
+    <h2>Deploy &amp; operations</h2>
+    <p class="sub">How a change reaches live, and what to check afterwards.</p>
+    <div id="ops-steps"></div>
+    <div class="grid2">
+      <div>
+        <h3>What runs on migrate</h3>
+        <ul>
+          <li><b>Patches</b> (once per site): access sheet set-up and apply, POS store scope, user roles from the client sheet, HR profile, party defaults, POS clean-up of stale shifts, and others.</li>
+          <li><b>after_migrate</b> (every migrate): cash-drawer fields, access-sheet sync from <code>access/agreed_access.json</code>, Order Flow page roles, final approver role, procurement / logistics / embroidery fields, store names, flagged profiles.</li>
+          <li><b>Customisations</b> from <code>custom/*.json</code>. Sync never deletes fields.</li>
+        </ul>
+      </div>
+      <div>
+        <h3>Safe read-only checks</h3>
+        <ul>
+          <li><code>stock_hold.report_missing</code> — stock claimed but missing.</li>
+          <li><code>user_role_sheet.apply(dry_run=True)</code> — what the user-role sheet would change.</li>
+          <li><code>pos_cash.close_stale_shifts(dry_run=True)</code> — what the POS clean-up would do.</li>
+        </ul>
+      </div>
+    </div>
+    <h3>Older pages that differ</h3>
+    <div class="note warn"><b>Process flow &amp; diagram (Aug 2026) are older:</b>
+      <ul>
+        <li>They show direct billing from the Pick List (Sales Invoice with Update Stock) — <b>now refused</b>: Pick List → DN → SI only.</li>
+        <li>They create a Pick List on SO submission — now when stock is available (Create Pick List).</li>
+        <li>They count pending MRs / POs as raw material for a Subcontract PO — now only material on the shelf, bought for the order or free.</li>
+        <li>They use team names; the ERP roles are in the Roles tab.</li>
+      </ul></div>
+  </section>
+
+  <!-- 09 GLOSSARY -->
+  <section class="tabpanel" id="tab-glossary" role="tabpanel">
+    <div class="print-title">09 · Glossary</div>
+    <h2>Glossary</h2>
+    <div class="filters no-print"><input type="search" id="glo-q" placeholder="Find a word…"><span class="count" id="glo-count"></span></div>
+    <div class="table-wrap"><table><thead><tr><th>Term</th><th>Meaning</th></tr></thead><tbody id="glo-body"></tbody></table></div>
+    <footer class="foot">Details: the app's <code>docs/</code> folder and <a href="/order-flow-rules">Order flow rules</a>. Prepared by 360 IT Hub for Dac's Inc.
+      Update this page with every change that alters a flow, a role, a rule or a task's status.</footer>
+  </section>
+</div>
+
+<script>
+/* ───────────── DATA ───────────── */
+// [stage, title, roles, screen/document, what happens, rules[], tip]
+const FLOW = [
+  ["Sales", "Lead & quotation", "DAC CRM · DAC CRM Head", "Lead · Event Activity · Business Contacts · Quotation", "CRM follows the enquiry; the quotation is shared with the lead owner.", ["Daily / weekly / monthly CRM reports are emailed automatically.", "Rate 0 is not allowed."], "The Sales Order's Lead Owner comes from the Lead."],
+  ["Sales", "Customer", "DAC CRM · Admin", "Customer", "Each customer is assigned a merchandiser.", ["Merchandiser, Industry and POS Store change only by roles in Admin Settings › Customer.", "Customer data printed / exported only by Accounts."], "List action Assign Merchandiser sets many customers at once."],
+  ["Sales", "Sales Order", "DAC CRM · Merchandiser", "Sales Order (Draft)", "Order entered with items, qty, rate and BOM for made items.", ["Shared with the Lead Owner automatically.", "Rate 0 is not allowed."], "A row with a BOM is made through a jobber; without a BOM it is bought."],
+  ["Sales", "Merchandiser approval", "Merchandiser", "Order Flow › SO Approvals", "The merchandiser checks and approves through Verify Customer Details.", ["Addresses are set on this order only.", "The creator may approve this step."], "Unassigned customers' orders appear for every merchandiser to claim."],
+  ["Sales", "Final approval", "Sales Order Final Approver", "Order Flow › SO Approvals › Pending Final SO Approval", "A named approver approves or rejects; a BOM-split check confirms which rows are made and which are bought.", ["Never the creator.", "Approvers are set user-wise in Admin Settings."], "A rejected order can be re-approved, which resubmits it."],
+  ["Plan", "Stock check", "Merchandiser · Purchase", "Sales Order › Item Stock & Action Plan", "Per line: Ordered · Delivered · Still to Cover · Free Finished Stock · To Make, with the next action.", ["Stock picked or bought for other orders is not counted as free."], "Next Action lists every pending step: source, ship, invoice."],
+  ["Plan", "Raw material plan", "Merchandiser · Production", "Sales Order › RM table under each BOM line", "Needed · In Stock for this Order · Requested / On the Way · To Request.", ["Only material bought for this order plus free stock counts.", "Lines of one order share material in line order.", "Short → Request RM."], "Grey text names other orders' stock — it stays with them."],
+  ["Supply", "Material Request", "Merchandiser · Production · Purchase", "Material Request (SO buttons or the MR planner)", "Requests raw material or trade items for the order.", ["Capped at what the order still needs; a draft MR already counts."], "The MR planner requests for several orders at once."],
+  ["Supply", "Purchase Order", "Purchase Executive · Purchase Manager", "Purchase Order › Fetch Raw Materials / Fetch Pending Sales Orders / Get Items from MR", "Buys material and trade items.", ["All POs for an order line together ≤ its qty (drafts count).", "Fetch prompts never offer more than saving allows.", "No plain PO for BOM items."], "Fetch dialogs add to the PO; they never replace rows."],
+  ["Supply", "Purchase Receipt", "Warehouse · Inward", "Purchase Receipt → Purchase Invoice", "Goods received; material received against an order is bought for that order.", ["One draft per source line."], "A receipt for a sold item drafts a put-away Pick List."],
+  ["Make", "Subcontract PO", "Merchandiser · Production · Purchase", "Purchase Order (subcontracted)", "Orders the jobber's work for the finished qty the material covers.", ["Offered only when the RM table says In Stock.", "Submit refused unless all rows' material is available together."], "A partial PO is fine; the rest stays claimable."],
+  ["Make", "Send material to jobber", "Production · Merchandiser (own orders)", "PO › Create SCO & Material Transfer", "Creates the Subcontracting Order and moves material to the jobber.", ["Send at most this PO's own stock.", "Picked stock and other orders' material can never be sent."], "The dialog shows actual warehouse stock under each material."],
+  ["Make", "Receive finished goods", "Warehouse · Inward", "PO › Receive Goods for SCO", "Creates the Subcontracting Receipt and the Purchase Receipt.", ["Over-collection within the allowed % is booked as extra."], "MOM 8 Oct: qty to receive should start at 0, plus invoice no. and date (open)."],
+  ["Make", "Embroidery", "Production · Merchandiser", "Embroidery Work Order (Full Piece / Panel) · Uniform Embroidery Transfer", "Sends pieces or panels for embroidery and receives them back.", ["From order stock only draft Pick List qty can be sent; that Pick List is held until goods return.", "One Full Piece allowance per (order, item)."], "MOM 8 Oct: many orders to one embroidery order, design name in the tab (open)."],
+  ["Fulfil", "Pick List", "Merchandiser · Packing Team · Warehouse", "Pick List (VV Puram)", "Picks the order's goods.", ["Claims only free stock.", "Submit asks the qty actually picked — it can only go down."], "Picked stock is held for this order."],
+  ["Fulfil", "Delivery Note", "Accounts · Warehouse", "Delivery Note from the Pick List", "Dispatches the goods.", ["One route: Pick List → DN → SI.", "Rows from the Pick List are locked."], ""],
+  ["Fulfil", "Sales Invoice", "Accounts Executive · Accounts Manager", "Sales Invoice from the DN", "Bills the customer.", ["Rate locked to the order's rate.", "Update-Stock invoice against a Sales Order is refused."], ""],
+  ["Fulfil", "Logistics", "Logistics", "Order Flow › Logistics", "Records transporter, LR No and signed copy.", ["Every submitted invoice without LR No and Signed Copy is listed."], "One Update dialog for all three."],
+  ["Fulfil", "Payment", "Finance · Accounts", "Payment Entry · Order Flow › Finance", "Collects and pays.", ["Receivables, supplier and jobber payables are followed on Finance."], ""],
+  ["POS", "Open the shift", "POS Store Manager · POS user", "POS › Create POS Opening Entry", "Starts a store shift.", ["Store filled in for single-store users.", "Only cash is entered; it starts from the cash left at the last closing — a different amount needs a reason.", "One open shift per store."], ""],
+  ["POS", "Bill customers", "POS user", "Point of Sale", "Sells over the counter.", ["Only the store's brands are visible.", "Walk-in name and mobile on the bill.", "Receipt emailed from the store's own account."], "MOM 8 Oct: POS return entries (open)."],
+  ["POS", "Close the shift", "POS Store Manager", "POS Closing Entry", "1. Cash counted · 2. Why short / extra · 3. Cash taken out.", ["Any difference needs a reason.", "Cash left is carried to the next shift.", "A closing report with Excel is emailed."], ""],
+  ["POS", "Store stock", "POS Store Manager · POS Admin · Warehouse", "Material Request (transfer) → Stock Entry", "Requests stock from VV Puram; transfers between stores.", ["Supply transfers approved by Warehouse Incharge / Warehouse Executive / POS Admin.", "Store-to-store: only the receiving store submits."], ""],
+  ["POS", "Review", "POS Admin · Finance", "Store Cash Book · POS Register", "One line per shift: carried, opening, sales by mode, expected, counted, short/extra, taken out, left.", ["Mismatches shown in red."], ""],
+];
+
+const ROLES = [
+  {r: "DAC CRM", job: "Sales executive", does: ["Leads, follow-ups, quotations", "Creates Sales Orders"], tabs: ["Sales Tracker (as given on the sheet)"], ctl: ["Own customers only (O)"]},
+  {r: "DAC CRM Head", job: "Sales manager", does: ["Team's CRM and reports", "Sales Orders"], tabs: ["Sales Tracker"], ctl: ["Head view in CRM"]},
+  {r: "Merchandiser User", job: "Merchandiser", does: ["Approves orders (merchandiser step)", "Plans raw material, Request RM", "Subcontract POs; sends material to jobber (own orders)", "Pick Lists, embroidery"], tabs: ["SO Approvals", "Sales Tracker", "Pick Lists", "Job Work", "Stock (requested — MOM 8 Oct)"], ctl: ["Sees orders they created; a toggle adds their customers' orders", "Only subcontracted POs", "Stock Entry only for own jobber transfers"]},
+  {r: "Sales Order Final Approver", job: "Management", does: ["Final approval / rejection"], tabs: ["SO Approvals › Pending Final SO Approval", "Rejected"], ctl: ["Set user-wise in Admin Settings", "Never approves own order"]},
+  {r: "Purchase Executive / Manager", job: "Purchase", does: ["Material Requests, plain POs", "Receipts, purchase invoices"], tabs: ["Purchase Flow", "Sales Tracker › Material Requests"], ctl: ["PO price check if listed in Admin Settings"]},
+  {r: "Production Manager / Assistant", job: "Production", does: ["BOMs, subcontracting, embroidery"], tabs: ["Job Work", "Embroidery Transfers", "Stock (requested — MOM 8 Oct)"], ctl: ["Subcontracting PO analysis report (requested — MOM 8 Oct)"]},
+  {r: "Warehouse Incharge / Executive", job: "Warehouse / Inward", does: ["Receipts, stock entries, picking", "Approves POS supply transfers"], tabs: ["Pick Lists", "Stock Tracker"], ctl: ["Held stock protected unless listed in Admin Settings › Stock Hold"]},
+  {r: "Packing Team", job: "Packing", does: ["Pick Lists"], tabs: ["Pick Lists"], ctl: []},
+  {r: "Accounts Executive / Manager", job: "Accounts", does: ["Delivery Notes, Sales Invoices", "Purchase invoices"], tabs: ["Pending DN/SI", "Finance"], ctl: ["Only roles that may print / export customer, supplier and price data"]},
+  {r: "Finance Executive / Collection", job: "Finance", does: ["Receivables, collections"], tabs: ["Finance"], ctl: []},
+  {r: "Logistics", job: "Logistics", does: ["Transporter, LR No, signed copy"], tabs: ["Logistics"], ctl: []},
+  {r: "POS Admin", job: "Operations store manager", does: ["All stores, transfers, POS reports"], tabs: ["None — works in POS"], ctl: ["All stores", "Approves supply transfers"]},
+  {r: "POS Store Manager", job: "Store manager", does: ["Own store's shifts, bills, stock requests", "Store Cash Book"], tabs: ["None — works in POS"], ctl: ["Own store and its brands only"]},
+  {r: "HR Manager", job: "HR", does: ["Creates users, gives sheet profiles"], tabs: [], ctl: ["Never gives admin roles, never edits admins or self, never deletes"]},
+  {r: "Admin", job: "Business admin", does: ["Edits the access sheet", "Admin Settings"], tabs: ["All"], ctl: ["Sees everything"]},
+  {r: "System Manager", job: "IT / 360 IT Hub", does: ["Resets, sync, apply", "Bulk Add Stock"], tabs: ["All"], ctl: ["Sees everything"]},
+];
+
+// [id, area, title, problem, need, accepted-when[], status]
+const BRD = [
+  ["BR-01", "Planning", "Each order uses only its own material", "Material bought for one order was quietly used by another, which then fell short late.", "An order may use only raw material bought for it plus free stock. Stock bought for another order stays with that order.", ["The SO RM table, PO prompts and the jobber transfer all show the same figure.", "No screen offers to use another order's stock."], "Done"],
+  ["BR-02", "Purchase", "Never order more than an order needs", "Duplicate or extra POs / MRs were raised for the same order line.", "Purchase Orders and open Material Requests linked to an order line never exceed its qty, drafts included.", ["Saving an over-quantity PO / MR is refused, naming the documents that already hold the qty.", "Fetch prompts never offer more."], "Done"],
+  ["BR-03", "Subcontracting", "A Subcontract PO must be sendable", "POs were raised, then the jobber transfer was stopped for lack of material.", "A Subcontract PO is raised only for what the order's material on the shelf covers, all rows together.", ["PO submit is refused when material for all rows together isn't there.", "A PO that passed is never stopped at the transfer."], "Done"],
+  ["BR-04", "General", "No duplicate documents", "Two drafts for the same line led to double receipts or invoices.", "Only one draft per source line for PO, SCO, PR, PI, SCR, MR, DN, SI.", ["Creating a second draft shows the existing one to open instead."], "Done"],
+  ["BR-05", "Stock", "Promised stock stays promised", "Picked or reserved stock was delivered or moved for other orders.", "Stock held for an order (picked, at a jobber, bought for it) cannot be taken by anything else.", ["DN, Stock Entry, reconciliation, returns and cancels are refused when they would take held stock."], "Done"],
+  ["BR-06", "Fulfilment", "One fulfilment route", "Direct-billing invoices and DNs gave two different sets of numbers.", "Fulfilment is Pick List → Delivery Note → Sales Invoice.", ["An Update-Stock invoice against a Sales Order is refused."], "Done"],
+  ["BR-07", "Sales", "Four-eyes approval", "Orders went to production without management review.", "Merchandiser approval, then final approval by a named approver who did not create the order.", ["The creator cannot give final approval."], "Done"],
+  ["BR-08", "Sales", "Clear ownership of orders", "Merchandisers saw and changed each other's orders.", "Merchandisers see their own orders and customers; they raise only subcontract POs.", ["Lists and dashboard show only their orders (option: their customers' orders).", "Change requested (MOM 8 Oct 1a-i): all customers selectable while creating an order."], "Decision pending"],
+  ["BR-09", "Master data", "Master data stays inside", "Customer, supplier and price lists could be exported by anyone.", "Only Accounts may print / export customer, supplier and price data; others only pick them in forms.", ["Export / print / report hidden for other roles."], "Done"],
+  ["BR-10", "POS", "Stores see only their store", "Store users saw all stores' bills and stock.", "Store users see only their store's documents and brands.", ["Lists, scans and reports filtered by store and brand."], "Done"],
+  ["BR-11", "POS", "Store cash is accounted for", "Cash differences between shifts were not traceable.", "One open shift per store; cash carried closing → opening; every difference has a reason.", ["Store Cash Book shows each shift; mismatches in red."], "Done"],
+  ["BR-12", "Access", "Access agreed in writing", "Permissions drifted from what management approved.", "The client-agreed access sheet decides rights and dashboard tabs, and is applied.", ["Saving the sheet changes the ERP; changes made elsewhere are read back."], "Done"],
+  ["BR-13", "General", "No hidden overrides", "\"Use anyway\" buttons let rules be bypassed silently.", "Rules have no override on business screens; exceptions are explicit admin settings.", ["Exceptions only via Admin Settings lists (e.g. held-stock users)."], "Done"],
+  ["BR-14", "Sales", "Rates fixed on orders", "Rates were edited on orders after pricing.", "Rate is read-only on Sales Order and Purchase Order (MOM 8 Oct).", ["Users cannot edit the rate field."], "Open"],
+  ["BR-15", "General", "Print straight after creating", "Users had to search for the print option after creating documents.", "Direct print right after creating Sales Invoice, Purchase Order, Subcontract PO and embroidery transfer (MOM 8 Oct).", ["A Print button appears as soon as the document is created."], "Open"],
+  ["BR-16", "POS", "Customer returns at the store", "Returns could not be recorded at the POS.", "POS return entries (MOM 8 Oct) and a return policy (Phase 2).", ["A return against a POS bill reverses stock and payment."], "Open"],
+  ["BR-17", "Subcontracting", "Production sees subcontracting at a glance", "No single view of subcontracting POs for the production team.", "A Subcontracting PO analysis report with sorting, available to production (MOM 8 Oct).", ["Production users open and sort the report."], "Open"],
+  ["BR-18", "Embroidery", "Combine orders for embroidery", "Each Sales Order needed its own embroidery order and receipt.", "Many Sales Orders to one embroidery order; many POs to one Purchase Receipt; design name shown (MOM 8 Oct).", ["One embroidery order can carry several orders' items."], "Open"],
+];
+
+// [id, module, title, who, where, what, rules[], check, code, status]
+const FRD = [
+  ["FR-A1", "Sales & approvals", "Sales Order approval workflow", "Merchandiser · Final approver", "Order Flow › SO Approvals", "Draft → Pending Merchandiser Approval → Pending Final Approval → Approved / Rejected.", ["The creator may pass the merchandiser step, never the final step.", "Approval opens Verify Customer Details (addresses on this order only)."], "Create an order, approve as merchandiser, try final approval as the creator → refused.", "Workflow · order_flow_api", "Done"],
+  ["FR-A2", "Sales & approvals", "Final approvers", "Admin", "Admin Settings › Sales Order final approvers", "Listed users get the Sales Order Final Approver role automatically.", [], "Add a user → they see Pending Final SO Approval.", "order_flow_permissions", "Done"],
+  ["FR-A3", "Sales & approvals", "Order shared with lead owner", "System", "Sales Order", "The lead owner can read and edit the order.", [], "Open the order as the lead owner.", "so_share", "Done"],
+  ["FR-A4", "Sales & approvals", "Rate locked downstream", "System", "Delivery Note · Sales Invoice", "DN / SI rate equals the Sales Order rate.", ["Rate 0 refused on SO, quotation, PO, PI."], "Change a rate on an SI → reset to the order rate.", "lock_item_rate_to_sales_order", "Done"],
+  ["FR-A5", "Sales & approvals", "Rate read-only on SO and PO", "All users", "Sales Order · Purchase Order", "Rate field cannot be edited (MOM 8 Oct).", [], "Try to change the rate → not editable.", "—", "Open"],
+  ["FR-A6", "Sales & approvals", "Customer pick for all merchandisers", "Merchandiser", "Sales Order › Customer field", "Any customer can be chosen while creating an order (MOM 8 Oct) — lists stay scoped.", ["Needs client confirmation (changes BR-08)."], "A merchandiser finds another merchandiser's customer in the field.", "—", "Decision pending"],
+  ["FR-B1", "Planning", "Item Stock & Action Plan", "Merchandiser · Purchase", "Sales Order (Order Details tab) · Sales Tracker row", "Per line: Ordered · Delivered · Still to Cover · Free Finished Stock · To Make · Next Action.", ["To Make = Still to Cover − Free Finished Stock."], "Open an order; each line shows its next action.", "get_item_stock_details_bulk", "Done"],
+  ["FR-B2", "Planning", "Raw material table", "Merchandiser · Production", "Sales Order › under each BOM line", "Needed · In Stock for this Order (bought for this order + free stock) · Requested / On the Way · To Request · Status.", ["Statuses: In Stock · Requested · Short N — Request RM · Not Needed.", "Lines share material in line order (\"used by <line> of this order\").", "Other orders' stock shown in grey — \"stays with them\"."], "Two lines needing the same fabric → the second shows what the first used.", "sales_order.js · rm_alloc_used", "Done"],
+  ["FR-B3", "Planning", "Material Request caps", "Merchandiser · Purchase", "Material Request", "MR qty capped at the order line's need / the RM table's To Request.", ["A draft MR already counts."], "Request more than To Request → refused.", "guard_mr_item_not_over_so_need · guard_mr_rm_not_over_so_shortfall", "Done"],
+  ["FR-C1", "Purchase & subcontracting", "PO never over an order line", "Purchase", "Purchase Order", "All POs linked to an order line together ≤ the line qty, any status, drafts included.", ["Fetch Pending Sales Orders never offers more than saving allows; the Add step caps too."], "Fetch a fully ordered line → not offered.", "guard_po_item_not_over_so_need · po_room_by_so_item", "Done"],
+  ["FR-C2", "Purchase & subcontracting", "Subcontract PO material check", "Merchandiser · Purchase", "PO › Fetch Pending Sales Orders · PO submit", "Rows offered only when the order's RM table says In Stock; ticked rows checked together; submit refused if material for all rows isn't sendable.", ["Same count as the jobber transfer (3 decimals)."], "Tick two rows sharing a fabric that covers only one → the second is refused.", "rm_sendable · rm_short_lines · guard_subcontract_po_rm", "Done"],
+  ["FR-C3", "Purchase & subcontracting", "Create SCO & Material Transfer", "Production · Merchandiser", "Purchase Order (submitted, subcontracted)", "Creates the Subcontracting Order and the transfer to the jobber.", ["Max You Can Send = this PO's own stock (and the over-transfer allowance).", "Shows actual warehouse stock.", "Sending less asks to confirm; more is refused."], "Type more than Available for this PO → refused.", "get_required_raw_materials_for_po · create_subcontracting_docs", "Done"],
+  ["FR-C4", "Purchase & subcontracting", "Jobber transfers protected", "System", "Stock Entry (Send to Subcontractor)", "A transfer cannot take picked stock or another order's material.", [], "Use ERPNext's Transfer Material for extra → refused.", "block_subcontract_transfer_of_picked_stock · flag_subcontract_rm_borrowing", "Done"],
+  ["FR-C5", "Purchase & subcontracting", "No duplicate drafts", "System", "PO · SCO · PR · PI · SCR · MR · DN · SI", "A second draft for the same source line is refused, naming the existing one.", [], "Create a PO twice from the same MR line.", "draft_guard", "Done"],
+  ["FR-C6", "Purchase & subcontracting", "Finished goods receipt entry", "Inward · Production", "PO › Receive Goods for SCO · Purchase Receipt", "Qty to receive starts at 0; supplier invoice number and date captured (MOM 8 Oct).", [], "Open the receive window → qty 0, invoice fields present.", "—", "Open"],
+  ["FR-C7", "Purchase & subcontracting", "Subcontracting PO analysis report", "Production", "Report", "Analysis of subcontracting POs with sorting; access for production (MOM 8 Oct).", [], "A production user opens and sorts the report.", "—", "Open"],
+  ["FR-C8", "Purchase & subcontracting", "Direct print after create", "Accounts · Purchase · Production", "Sales Invoice · PO · Subcontract PO · Embroidery transfer", "Print offered right after the document is created (MOM 8 Oct).", [], "Create a PO → Print appears at once.", "—", "Open"],
+  ["FR-D1", "Stock & dispatch", "Pick List claims free stock only", "Merchandiser · Packing", "Pick List", "A draft claims only free stock; submit asks the qty actually picked (only down).", [], "Pick more than free → reduced.", "fit_pick_list_to_free", "Done"],
+  ["FR-D2", "Stock & dispatch", "Held stock protected", "System", "DN · SI · Stock Entry · Reconciliation · returns · cancel", "Held stock cannot leave for anything else; listed users get a warning instead.", [], "DN for another order on held stock → refused.", "stock_hold", "Done"],
+  ["FR-D3", "Stock & dispatch", "Locked derived rows, one route", "Accounts", "Delivery Note · Sales Invoice", "Rows from a Pick List / DN are locked; Update-Stock SI against an order is refused.", [], "Edit qty on a derived DN row → reset.", "guard_dn/si_items_locked_to_pick_list · guard_so_fulfillment_route_lock", "Done"],
+  ["FR-D4", "Stock & dispatch", "Embroidery from order stock", "Merchandiser · Production", "Sales Order › Send to Embroidery", "Full Piece from draft Pick List qty; the Pick List is held until goods return; one allowance per (order, item).", [], "Send from a submitted Pick List → asks Revert to Draft.", "so_embroidery", "Done"],
+  ["FR-D5", "Stock & dispatch", "Multi-order embroidery", "Production", "Embroidery Work Order · Purchase Receipt", "Many Sales Orders to one embroidery order; many POs to one Purchase Receipt; design name in the tab (MOM 8 Oct).", [], "Create one embroidery order from two Sales Orders.", "—", "Open"],
+  ["FR-E1", "POS", "Shift opening", "Store manager", "POS › Create POS Opening Entry", "Store auto-filled; cash only; carried from last closing; reason if different; one open shift per store.", [], "Open with a different cash amount → reason asked.", "pos_cash.opening_validate", "Done"],
+  ["FR-E2", "POS", "Shift closing", "Store manager", "POS Closing Entry", "Built on the server; steps cash counted / why / taken out; left carried; closing email with Excel.", ["Every difference needs a reason."], "Count less than expected → reason required.", "pos_closing · pos_cash · pos_notify", "Done"],
+  ["FR-E3", "POS", "Store & brand scope", "POS users", "Lists, barcode scan, reports", "Store users see their stores' records and brands everywhere.", [], "A store login sees only its store's bills.", "pos_scope · pos_report_scope · pos_brand_filter", "Done"],
+  ["FR-E4", "POS", "Store stock requests & transfers", "Store manager · Warehouse", "Material Request · Stock Entry", "Store MR = transfer from VV Puram; supply transfers approved by warehouse roles / POS Admin.", [], "Store manager submits a supply transfer → asks approval.", "pos_notify", "Done"],
+  ["FR-E5", "POS", "Store Cash Book", "Store manager · POS Admin", "Report", "One line per shift; mismatches in red.", [], "Run for a store and a date range.", "report/store_cash_book", "Done"],
+  ["FR-E6", "POS", "POS return entries", "Store manager", "Point of Sale", "Create return entries against POS bills (MOM 8 Oct).", [], "Return an item → stock and payment reversed.", "—", "Open"],
+  ["FR-F1", "Access", "Access sheet", "Admin · System Manager", "Roles & permissions page", "Document rights (V N E S C D O) and Order Flow tabs (✓ / A) per role; Sheet / By document / By role views; saving applies.", ["Typed confirmations for resets.", "Create (N) and Edit (E) are separate — e.g. create a customer but not edit it after saving."], "Untick E for a role → it can create but not edit.", "access_sync · access_worksheet · access_reverse", "Done"],
+  ["FR-F2", "Access", "Master data protection", "System", "Customer · Supplier · Item Price", "View gives read / select; print / export only Accounts; pick-only users get link search without list or form.", [], "A non-accounts role has no Export on Customer.", "master_guard", "Done"],
+  ["FR-F3", "Access", "Admin Settings readable by the app", "System", "API", "Roles with Read read it through the API (mobile app); the desk form and print only for editors.", [], "DAC CRM user reads via the API → OK; opens the form → refused.", "admin_settings.has_permission", "Done"],
+  ["FR-F4", "Access", "Stock tab for more teams", "Admin", "Access sheet › Order Flow tabs", "Stock Tracker tab for Merchandiser, Inward and Production (MOM 8 Oct).", [], "Those roles see the Stock tab.", "Access sheet", "Open"],
+];
+
+// [status, module, task, source, phase, priority, date, owner, remarks]
+const TASKS = [
+  ["Done", "Order Flow", "POS documents hidden by default; \"Show POS documents\" toggle on Finance › Receivables, Logistics and Tracker › MRs", "Delivered", "1", "", "2026-10-02", "360ithub", ""],
+  ["Done", "Order Flow", "Merchandiser sees own Sales Orders; \"Show my customers' orders\" toggle on every tab", "Delivered", "1", "", "2026-10-02", "360ithub", ""],
+  ["Done", "Order Flow", "Unassigned orders always shown for approval; \"Waiting for Final Approval\" view-only sub-tab", "Delivered", "1", "", "2026-10-02", "360ithub", ""],
+  ["Done", "Order Flow", "Jobber line in insights shows the Purchase Order instead of the SCO", "Delivered", "1", "", "2026-10-02", "360ithub", ""],
+  ["Done", "Order Flow", "\"Draft already exists\" prompt before a new document opens", "Delivered", "1", "", "2026-10-02", "360ithub", ""],
+  ["Done", "Order Flow", "Create-document preview with tick boxes grouped by Sales Order", "Delivered", "1", "", "2026-10-02", "360ithub", ""],
+  ["Done", "Roles & permissions", "Agreed access sheet applied to the ERP (single source of truth)", "Delivered", "1", "", "2026-09-28", "360ithub", ""],
+  ["Done", "Roles & permissions", "Access sheet: tick-box rows, Sheet / By document / By role views, confirmations, client-only print notes", "Delivered", "1", "", "2026-10-07", "360ithub", ""],
+  ["Done", "Roles & permissions", "Create (N) and Edit (E) separate rights — e.g. Accounts Manager can create a customer but not edit it after saving", "Delivered", "2", "", "2026-10-07", "360ithub", "Covers Phase 2 roles item 1 (earlier marked \"Not possible\")"],
+  ["Done", "Roles & permissions", "User roles applied from the client's user sheet (with live patch)", "Delivered", "1", "", "2026-10-02", "360ithub", ""],
+  ["Done", "Roles & permissions", "HR profile without Admin; HR Manager manages users within limits", "Delivered", "1", "", "2026-10-02", "360ithub", ""],
+  ["Done", "Roles & permissions", "Roles & Permissions page shows the Employee profile; counts enabled users only", "Delivered", "1", "", "2026-10-02", "360ithub", ""],
+  ["Done", "Roles & permissions", "Business Contacts view dependencies for Finance roles; GST Return Log for roles that submit", "Delivered", "1", "", "2026-10-02", "360ithub", ""],
+  ["Done", "Roles & permissions", "Admin Settings readable by the mobile app without Write access", "Delivered", "1", "", "2026-10-07", "360ithub", "Untick Write for DAC CRM on live after deploy"],
+  ["Done", "Roles & permissions", "Master data protection: only Accounts print / export customer, supplier and price data", "Delivered", "1", "", "2026-10-02", "360ithub", ""],
+  ["Done", "Roles & permissions", "No delete option for any role", "Phase 2 list", "2", "", "", "360ithub", "Marked Done in the Phase 2 sheet"],
+  ["Done", "Roles & permissions", "Store manager cannot see all quotations", "Phase 2 list", "2", "", "", "360ithub", "Marked Done in the Phase 2 sheet"],
+  ["Done", "Master data", "Supplier default price list = Standard Buying; primary address set automatically; unused Supplier field removed", "Delivered", "1", "", "2026-10-02", "360ithub", ""],
+  ["Done", "Purchase", "PO fetch prompt never offers more than saving allows (fixes \"Over the Sales Order's Own Need\")", "Delivered", "1", "", "2026-10-07", "360ithub", ""],
+  ["Done", "Subcontracting", "Raw material checked together for ticked rows and on Subcontract PO submit — same count as the jobber transfer", "Delivered", "1", "", "2026-10-07", "360ithub", ""],
+  ["Done", "Subcontracting", "Create SCO dialog shows actual warehouse stock", "Delivered", "1", "", "2026-10-07", "360ithub", ""],
+  ["Done", "Sales Order", "RM table: bought-for-this-order / free stock breakdown, earlier line named, one \"Short — Request RM\" status; same words on SO, PO and MR screens", "Delivered", "1", "", "2026-10-07", "360ithub", ""],
+  ["Done", "POS", "POS invoice print format: wider item column", "Delivered", "1", "", "2026-10-02", "360ithub", ""],
+  ["Done", "POS", "POS screen responsive layout; correct change / balance labels", "Delivered", "1", "", "2026-10-02", "360ithub", ""],
+  ["Done", "POS", "Email receipt: store email account, message, light template with PDF, store name as sender, email saved on the invoice", "Delivered", "1", "", "2026-10-02", "360ithub", ""],
+  ["Done", "POS", "Shift closing built on the server — fast and correct", "Delivered", "1", "", "2026-10-02", "360ithub", ""],
+  ["Done", "POS", "Brand scope for barcode scan and stock reports; no finance / HR reports for store users; POS Register own store", "Delivered", "1", "", "2026-10-02", "360ithub", ""],
+  ["Done", "POS", "Opening: store filled in for single-store users; cash carried from last closing; one open shift per store", "Delivered", "1", "", "2026-10-02", "360ithub", ""],
+  ["Done", "POS", "Closing: cash counted / why short-extra / taken out / left; closing form laid out in steps", "Delivered", "1", "", "2026-10-02", "360ithub", ""],
+  ["Done", "POS", "Store Cash Book report", "Delivered", "1", "", "2026-10-02", "360ithub", ""],
+  ["Done", "POS", "Closing report email redesigned with cash statement and card / UPI check", "Delivered", "1", "", "2026-10-02", "360ithub", ""],
+  ["Done", "POS", "Clean-up: old test bills cancelled, stale shifts closed (runs on live migrate)", "Delivered", "1", "", "2026-10-02", "360ithub", ""],
+  ["Done", "Order Flow", "Order Flow dashboard page — /app/order-flow (approvals, trackers, pick lists, purchase, job work, stock, billing, finance, embroidery, logistics)", "Delivered", "1", "", "", "360ithub", "Address in Overview › Pages & links"],
+  ["Done", "Roles & permissions", "Roles & Permissions desk page — /app/roles-and-permissions (profiles per user) and access sheet — /roles-and-permissions", "Delivered", "1", "", "", "360ithub", "Address in Overview › Pages & links"],
+  ["Done", "Documentation", "Project guide page — /project-guide: flow, roles, BRD, FRD, task status, page links, PDF download", "Delivered", "1", "", "2026-10-09", "360ithub", ""],
+  ["Open", "Sales Order", "All customers visible to all merchandisers while creating a Sales Order", "MOM 08-Oct", "1", "High", "2026-10-08", "360ithub", "Changes BR-08 — confirm: pick any customer, lists stay scoped?"],
+  ["Open", "Sales Order", "Rate field read-only on Sales Order and Purchase Order", "MOM 08-Oct", "1", "High", "2026-10-08", "360ithub", ""],
+  ["Open", "Print", "Direct print once created: Sales Invoice, Purchase Order, Subcontracting PO, Embroidery Transfer", "MOM 08-Oct", "1", "Medium", "2026-10-08", "360ithub", ""],
+  ["Open", "Embroidery", "Multiple Sales Orders to a single embroidery order", "MOM 08-Oct", "1", "High", "2026-10-08", "360ithub", ""],
+  ["Open", "Embroidery", "Multiple Purchase Orders to a single Purchase Receipt", "MOM 08-Oct", "1", "High", "2026-10-08", "360ithub", ""],
+  ["Open", "Embroidery", "Design name visible in the embroidery tab", "MOM 08-Oct", "1", "Medium", "2026-10-08", "360ithub", ""],
+  ["Open", "POS", "Option to create POS return entries", "MOM 08-Oct", "1", "High", "2026-10-08", "360ithub", ""],
+  ["Open", "Subcontracting", "Subcontracting PO analysis report with sorting; access for the production team", "MOM 08-Oct", "1", "Medium", "2026-10-08", "360ithub", ""],
+  ["Open", "Subcontracting", "Receive finished goods: \"Quantity to receive\" starts at 0 (also in Purchase Receipt)", "MOM 08-Oct", "1", "High", "2026-10-08", "360ithub", ""],
+  ["Open", "Subcontracting", "Receive finished goods: field for supplier invoice number and date", "MOM 08-Oct", "1", "Medium", "2026-10-08", "360ithub", ""],
+  ["Open", "Order Flow", "Stock tab access for Merchandiser, Inward team and Production team", "MOM 08-Oct", "1", "Medium", "2026-10-08", "360ithub", "A change on the access sheet's Order Flow tab"],
+  ["To Do", "Accounts", "Payment follow-up calendar for accounting (same as LSA)", "Phase 2 list", "2", "Low", "", "360ithub", "We will do in the next phase"],
+  ["To Do", "Accounts", "GST integration — fetch address from GSTIN", "Phase 2 list", "2", "Low", "", "360ithub", "On live we can update"],
+  ["To Do", "POS", "Item return policy — after the invoice send a \"Thank you\" message; returns accepted based on it", "Phase 2 list", "2", "High", "", "", "Need to understand from the client"],
+  ["To Do", "Sales", "Discount restriction — school products: no discount at first, max 5% if asked", "Phase 2 list", "2", "Low", "", "", "Need to check internally"],
+  ["Pending", "General", "To discuss: ticketing, exhibition data entry, collection, client dashboard", "Phase 2 list", "2", "Low", "", "", "Focus on operations first"],
+  ["Open", "Embroidery", "Multiple ready-made POs to single embroidery work; single embroidery to multiple Purchase Receipts", "Phase 2 list", "2", "Low", "2026-08-27", "360ithub", "Overlaps MOM 1(b)"],
+  ["Need to Discuss", "Subcontracting", "Fabric issue to jobber for damage / shortage — \"Goods Issue Note\" print format", "Phase 2 list", "2", "Low", "2026-08-27", "360ithub", ""],
+  ["Hold", "Sales Order", "Sales Order status changed according to the stage", "Phase 2 list", "2", "Low", "", "", "Client review: Hold"],
+  ["Need to Discuss", "Purchase", "Purchase team to have a Job Work receipt option", "Phase 2 list", "", "", "", "", ""],
+  ["To Do", "CRM", "Customer SO value total in the executive's CRM dashboard", "Phase 2 list", "2", "", "2026-09-17", "", ""],
+  ["To Do", "Roles & permissions", "Untick \"Show in Quotation\" for all items except footwear, Trident and APO", "Phase 2 list", "", "", "", "", ""],
+  ["To Do", "Roles & permissions", "Share all login IDs with credentials", "Phase 2 list", "", "", "", "360ithub", "Share securely — not as plain text by email"],
+  ["To Do", "RFID", "RFID — material inward, auto-billing by box, item variation, stock taking", "Phase 2 list", "2", "", "", "", "Discussion first"],
+  ["Hold", "POS", "POS counters 7–10 have no POS Profile", "Open decision", "", "Low", "2026-10-02", "Client", "Parked"],
+];
+
+const GLOSSARY = [
+  ["FG / RM", "Finished good / raw material."], ["BOM item / trade item", "An order line made through a jobber (has a BOM) / an item bought and resold."],
+  ["To Make", "Still to Cover − Free Finished Stock. Drives the raw material need."], ["Bought for this order", "Raw material received against this Sales Order. Stays with the order."],
+  ["Free stock", "On the shelf, bought for no order, not picked, not at a jobber."], ["Held stock", "Stock claimed by a Pick List, a jobber or an order's purchase. Others cannot take it."],
+  ["Request RM", "Create a Material Request for this order's raw material shortfall."], ["Jobber", "Subcontractor (Supplier with Is Jobber)."],
+  ["Subcontract PO / SCO / SCR", "Purchase Order for the jobber's work / Subcontracting Order / Subcontracting Receipt."], ["Send to Subcontractor", "Stock Entry moving raw material to the jobber."],
+  ["EWO · FP · Panel", "Embroidery Work Order · Full Piece (finished pieces) · Panel (cut panels)."], ["Over-collection", "The jobber returns more than ordered, within the allowed %, booked as extra."],
+  ["Route lock", "Fulfilment is always Pick List → DN → SI."], ["V N E S C D O", "Access sheet rights: View, New, Edit, Submit, Cancel, Delete, Only own records."],
+  ["✓ / A", "Can see a dashboard tab / can see and act."], ["Pick-only", "Can choose a master in a form field, but has no list or form."],
+  ["Store", "A POS Profile; its users and brands decide what a store login sees."], ["Carried forward", "Cash left in the drawer at the last closing; the next opening starts from it."],
+  ["LR No · Signed Copy", "Transport receipt number · attached proof of delivery, on the Sales Invoice."], ["Admin Settings", "The settings record: approvers, tab roles, POS emails, held-stock users, customer field roles."],
+  ["MOM", "Minutes of meeting — the client meeting's action list."], ["Phase 1 / Phase 2", "Current operations go-live / the next set of improvements."],
+  ["BRD / FRD", "Business Requirements (what the business needs and why) / Functional Requirements (what the system does, where, and how to check it)."],
+];
+
+/* ───────────── HELPERS ───────────── */
+const esc = (t) => String(t == null ? "" : t).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/"/g, "&quot;");
+const STATUS_CLS = { "Done": "s-done", "Open": "s-open", "To Do": "s-todo", "Need to Discuss": "s-disc", "Pending": "s-disc", "Hold": "s-hold", "Decision pending": "s-dec" };
+const pill = (s) => `<span class="pill ${STATUS_CLS[s] || "s-todo"}">${esc(s)}</span>`;
+const PR_CLS = { High: "p-high", Medium: "p-med", Low: "p-low" };
+const matches = (q, ...fields) => !q || fields.join(" ").toLowerCase().includes(q.trim().toLowerCase());
+const stamp = () => { const d = new Date(), p = n => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}-${p(d.getMinutes())}`; };
+function chips(el, values, current, onPick, counts) {
+  el.innerHTML = ["All", ...values].map(v => `<button type="button" class="chip" data-v="${esc(v)}" aria-pressed="${v === current}">${esc(v)}${counts && counts[v] != null ? `<span class="n">${counts[v]}</span>` : ""}</button>`).join("");
+  el.onclick = (e) => { const b = e.target.closest(".chip"); if (b) onPick(b.dataset.v); };
+}
+// One expandable item. key: DOM id; label: what shows in the left column.
+function xitem(key, label, title, sub, meta, body, cls) {
+  return `<div class="xitem ${cls || ""}" id="${esc(key)}"><div class="xhead"><span class="xid">${label}</span>
+    <span class="xtitle"><b>${title}</b>${sub ? `<small>${sub}</small>` : ""}</span><span class="xmeta">${meta || ""}</span><span class="chev">▸</span></div>
+    <div class="xbody">${body}</div></div>`;
+}
+document.addEventListener("click", (e) => {
+  const h = e.target.closest(".xhead"); if (h) h.parentElement.classList.toggle("open");
+  const ex = e.target.closest("[data-expand]"); if (ex) document.querySelectorAll(`#${ex.dataset.expand} .xitem`).forEach(x => x.classList.add("open"));
+  const co = e.target.closest("[data-collapse]"); if (co) document.querySelectorAll(`#${co.dataset.collapse} .xitem`).forEach(x => x.classList.remove("open"));
+});
+
+/* ───────────── FLOW ───────────── */
+(function () {
+  const stages = ["Sales", "Plan", "Supply", "Make", "Fulfil", "POS"];
+  let stage = "All";
+  function draw() {
+    chips(document.getElementById("flow-chips"), stages, stage, (v) => { stage = v; draw(); });
+    const list = FLOW.map((f, i) => ({ i, f })).filter(x => stage === "All" || x.f[0] === stage);
+    document.getElementById("flow-lane").innerHTML = list.map(x => `<span data-go="${x.i}">${x.i + 1}. ${esc(x.f[1])}</span>`).join("<i>→</i>");
+    document.getElementById("flow-list").innerHTML = list.map(({ i, f }) => {
+      const [st, title, who, doc, what, rules, tip] = f;
+      const body = `<dl><dt>Screen / document</dt><dd>${esc(doc)}</dd><dt>What happens</dt><dd>${esc(what)}</dd>
+        ${rules.length ? `<dt>Rules</dt><dd><ul>${rules.map(r => `<li>${esc(r)}</li>`).join("")}</ul></dd>` : ""}
+        ${tip ? `<dt>Tip / note</dt><dd>${esc(tip)}</dd>` : ""}</dl>`;
+      return xitem(`step-${i}`, `<span class="num">${i + 1}</span>`, esc(title), `<span class="who">${esc(who)}</span>`,
+        `<span class="pill area">${esc(st)}</span>`, body, "step" + (st === "POS" ? " pos" : ""));
+    }).join("");
+  }
+  document.getElementById("flow-lane").addEventListener("click", (e) => {
+    const s = e.target.closest("[data-go]"); if (!s) return;
+    const el = document.getElementById("step-" + s.dataset.go); el.classList.add("open");
+    window.scrollTo({ top: el.getBoundingClientRect().top + scrollY - 120, behavior: "smooth" });
+  });
+  draw();
+})();
+
+/* ───────────── ROLES ───────────── */
+(function () {
+  const card = (x) => `<div class="rolecard"><h3>${esc(x.r)} <span class="mono" style="font-size:12px;color:var(--ink-soft)">· ${esc(x.job)}</span></h3>
+    <div class="cols"><div><h5>Main work</h5><ul>${x.does.map(d => `<li>${esc(d)}</li>`).join("")}</ul></div>
+    <div><h5>Order Flow tabs</h5>${x.tabs.length ? `<ul>${x.tabs.map(d => `<li>${esc(d)}</li>`).join("")}</ul>` : "<p>—</p>"}</div>
+    <div><h5>Control / limits</h5>${x.ctl.length ? `<ul>${x.ctl.map(d => `<li>${esc(d)}</li>`).join("")}</ul>` : "<p>As on the access sheet.</p>"}</div></div></div>`;
+  let cur = "Merchandiser User";
+  function draw() {
+    document.getElementById("role-pick").innerHTML = ROLES.map(x => `<button type="button" class="chip" data-r="${esc(x.r)}" aria-pressed="${x.r === cur}">${esc(x.r)}</button>`).join("");
+    document.getElementById("role-card").innerHTML = card(ROLES.find(x => x.r === cur));
+  }
+  document.getElementById("role-pick").addEventListener("click", (e) => { const b = e.target.closest("[data-r]"); if (b) { cur = b.dataset.r; draw(); } });
+  document.getElementById("role-all").innerHTML = ROLES.map(card).join("");
+  draw();
+})();
+
+/* ───────────── BRD / FRD ───────────── */
+function reqList(cfg) {
+  let area = "All", status = "All";
+  const areas = [...new Set(cfg.data.map(r => r[1]))];
+  const statuses = [...new Set(cfg.data.map(cfg.status))];
+  const q = document.getElementById(cfg.q);
+  function draw() {
+    const inArea = cfg.data.filter(r => area === "All" || r[1] === area);
+    const sc = Object.fromEntries(statuses.map(s => [s, inArea.filter(r => cfg.status(r) === s).length])); sc.All = inArea.length;
+    chips(document.getElementById(cfg.st), statuses, status, (v) => { status = v; draw(); }, sc);
+    const ac = Object.fromEntries(areas.map(a => [a, cfg.data.filter(r => r[1] === a).length])); ac.All = cfg.data.length;
+    chips(document.getElementById(cfg.chips), areas, area, (v) => { area = v; draw(); }, ac);
+    const rows = inArea.filter(r => (status === "All" || cfg.status(r) === status) && matches(q.value, ...r.flat()));
+    document.getElementById(cfg.list).innerHTML = rows.map(cfg.render).join("") || `<p class="sub">Nothing matches.</p>`;
+    document.getElementById(cfg.count).textContent = `${rows.length} of ${cfg.data.length}`;
+  }
+  q.addEventListener("input", draw);
+  draw();
+}
+reqList({ data: BRD, status: r => r[6], q: "brd-q", st: "brd-st", chips: "brd-chips", list: "brd-list", count: "brd-count",
+  render: ([id, area, title, problem, need, acc, st]) => xitem(id, id, esc(title), esc(need), `${pill(st)}<span class="pill area">${esc(area)}</span>`,
+    `<dl><dt>Problem today</dt><dd>${esc(problem)}</dd><dt>Business need</dt><dd>${esc(need)}</dd>
+     <dt>Accepted when</dt><dd><ul>${acc.map(a => `<li>${esc(a)}</li>`).join("")}</ul></dd><dt>Status</dt><dd>${pill(st)}</dd></dl>`) });
+reqList({ data: FRD, status: r => r[9], q: "frd-q", st: "frd-st", chips: "frd-chips", list: "frd-list", count: "frd-count",
+  render: ([id, mod, title, who, where, what, rules, check, code, st]) => xitem(id, id, esc(title), esc(what), `${pill(st)}<span class="pill area">${esc(mod)}</span>`,
+    `<dl><dt>Who</dt><dd>${esc(who)}</dd><dt>Where</dt><dd>${esc(where)}</dd><dt>What happens</dt><dd>${esc(what)}</dd>
+     ${rules.length ? `<dt>Rules</dt><dd><ul>${rules.map(a => `<li>${esc(a)}</li>`).join("")}</ul></dd>` : ""}
+     <dt>How to check</dt><dd>${esc(check)}</dd><dt>Code (developers)</dt><dd><code>${esc(code)}</code></dd><dt>Status</dt><dd>${pill(st)}</dd></dl>`) });
+
+/* ───────────── TASKS ───────────── */
+(function () {
+  const rows = TASKS.map((t, i) => ({ id: i + 1, status: t[0], module: t[1], task: t[2], source: t[3], phase: t[4], priority: t[5], date: t[6], owner: t[7], remarks: t[8] }));
+  const statuses = ["Done", "Open", "To Do", "Need to Discuss", "Pending", "Hold", "Decision pending"].filter(s => rows.some(r => r.status === s));
+  const sel = (id, vals) => { const s = document.getElementById(id); vals.forEach(v => s.insertAdjacentHTML("beforeend", `<option>${esc(v)}</option>`)); s.onchange = draw; return s; };
+  const fSource = sel("task-source", [...new Set(rows.map(r => r.source))]);
+  const fModule = sel("task-module", [...new Set(rows.map(r => r.module))].sort());
+  const fPhase = sel("task-phase", ["1", "2"]);
+  const fPrio = sel("task-priority", ["High", "Medium", "Low"]);
+  const q = document.getElementById("task-q");
+  let st = "All", sortKey = "id", sortDir = 1;
+  const PRIO = { High: 0, Medium: 1, Low: 2 };
+  const passes = (r) => (!fSource.value || r.source === fSource.value) && (!fModule.value || r.module === fModule.value)
+    && (!fPhase.value || r.phase === fPhase.value) && (!fPrio.value || r.priority === fPrio.value) && matches(q.value, r.task, r.module, r.remarks, r.source, r.owner);
+  const filtered = () => rows.filter(r => passes(r) && (st === "All" || r.status === st));
+  function draw() {
+    const base = rows.filter(passes);
+    const counts = Object.fromEntries(statuses.map(s => [s, base.filter(r => r.status === s).length])); counts.All = base.length;
+    chips(document.getElementById("task-chips"), statuses, st, (v) => { st = v; draw(); }, counts);
+    const list = filtered().sort((a, b) => {
+      let x = a[sortKey], y = b[sortKey];
+      if (sortKey === "priority") { x = PRIO[x] ?? 9; y = PRIO[y] ?? 9; }
+      if (sortKey === "status") { x = statuses.indexOf(x); y = statuses.indexOf(y); }
+      return (x > y ? 1 : x < y ? -1 : 0) * sortDir;
+    });
+    document.querySelectorAll("#task-table th[data-sort]").forEach(th => { th.classList.toggle("sorted", th.dataset.sort === sortKey); th.classList.toggle("asc", sortDir === 1); });
+    document.getElementById("task-body").innerHTML = list.map(r => `<tr><td class="id">${r.id}</td><td class="nw">${pill(r.status)}</td><td class="nw">${esc(r.module)}</td>
+      <td>${esc(r.task)}</td><td class="nw">${esc(r.source)}</td><td>${esc(r.phase)}</td><td class="${PR_CLS[r.priority] || ""}">${esc(r.priority)}</td>
+      <td class="nw mono" style="font-size:12px">${esc(r.date)}</td><td class="nw">${esc(r.owner)}</td><td style="color:var(--ink-soft)">${esc(r.remarks)}</td></tr>`).join("")
+      || `<tr><td colspan="10" class="sub">Nothing matches these filters.</td></tr>`;
+    document.getElementById("task-count").textContent = `${list.length} of ${rows.length}`;
+  }
+  q.addEventListener("input", draw);
+  const reset = () => { st = "All"; [fSource, fModule, fPhase, fPrio].forEach(s => s.value = ""); q.value = ""; };
+  document.getElementById("task-reset").onclick = () => { reset(); draw(); };
+  document.querySelectorAll("#task-table th[data-sort]").forEach(th => th.onclick = () => {
+    sortDir = sortKey === th.dataset.sort ? -sortDir : 1; sortKey = th.dataset.sort; draw(); });
+
+  const n = (f) => rows.filter(f).length;
+  document.getElementById("tab-open-count").textContent = n(r => r.status !== "Done");
+  const stats = [["Delivered", n(r => r.status === "Done"), "status:Done", "done"],
+    ["Open — MOM 8 Oct", n(r => r.source === "MOM 08-Oct" && r.status !== "Done"), "source:MOM 08-Oct", "open"],
+    ["Phase 2 to do", n(r => r.source === "Phase 2 list" && r.status !== "Done"), "source:Phase 2 list", "open"],
+    ["Business needs (BRD)", BRD.length, "tab:brd", ""], ["Functions (FRD)", FRD.length, "tab:frd", ""]];
+  document.getElementById("stats").innerHTML = stats.map(([l, v, k, c]) => `<button type="button" class="stat ${c}" data-k="${esc(k)}" title="Show these"><b>${v}</b><span>${esc(l)}</span></button>`).join("");
+  document.getElementById("stats").onclick = (e) => {
+    const b = e.target.closest(".stat"); if (!b) return;
+    const [kind, val] = b.dataset.k.split(":");
+    if (kind === "tab") return showTab(val, true);
+    reset(); if (kind === "status") st = val; else fSource.value = val;
+    draw(); showTab("tasks", true);
+  };
+  const csv = document.getElementById("btn-csv");
+  window.addEventListener("pg-tab", (e) => { csv.hidden = e.detail !== "tasks"; });
+  csv.onclick = () => {
+    const head = ["#", "Status", "Module", "Task", "Source", "Phase", "Priority", "Date", "Owner", "Remarks"];
+    const cell = (v) => `"${String(v == null ? "" : v).replace(/"/g, '""')}"`;
+    const lines = [head.map(cell).join(",")].concat(filtered().map(r => [r.id, r.status, r.module, r.task, r.source, r.phase, r.priority, r.date, r.owner, r.remarks].map(cell).join(",")));
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(new Blob(["﻿" + lines.join("\r\n")], { type: "text/csv" }));
+    a.download = `Dacsinc ERP - Tasks - ${stamp()}.csv`; document.body.appendChild(a); a.click(); a.remove();
+  };
+  draw();
+})();
+
+/* ───────────── OPS + GLOSSARY ───────────── */
+document.getElementById("ops-steps").innerHTML = [
+  ["Build & test on the developer copy", "A local site restored from a live backup. Update the docs and this guide. Run the relevant test suites."],
+  ["Rehearse on a fresh live backup", "Restore locally, mute emails and stop the scheduler, run migrate, read the patch output."],
+  ["Commit & push the app", "Inside the app's own repository, on the release branch."],
+  ["Deploy on live", "Pull, migrate, restart web and workers — after the stores close (the POS clean-up closes shifts opened before the deploy day)."],
+  ["Check after deploy", "Order Flow loads for each role; one PO fetch; one store opening carries the right cash; mobile app works; update task statuses here."],
+].map(([t, d], i) => xitem(`ops-${i}`, `<span class="num">${i + 1}</span>`, esc(t), esc(d), "", `<p>${esc(d)}</p>`, "step")).join("");
+(function () {
+  const q = document.getElementById("glo-q");
+  function draw() {
+    const list = GLOSSARY.filter(g => matches(q.value, ...g));
+    document.getElementById("glo-body").innerHTML = list.map(([t, m]) => `<tr><td class="k">${esc(t)}</td><td>${esc(m)}</td></tr>`).join("");
+    document.getElementById("glo-count").textContent = `${list.length} of ${GLOSSARY.length}`;
+  }
+  q.addEventListener("input", draw); draw();
+})();
+
+/* ───────────── TABS, PRINT, DOWNLOADS ───────────── */
+const TAB_BTNS = [...document.querySelectorAll(".ptabs button[data-tab]")];
+const TAB_NAMES = TAB_BTNS.map(b => b.dataset.tab);
+function showTab(name, push) {
+  if (!TAB_NAMES.includes(name)) name = "overview";
+  TAB_BTNS.forEach(b => b.setAttribute("aria-selected", String(b.dataset.tab === name)));
+  TAB_NAMES.forEach(n => { document.getElementById("tab-" + n).hidden = n !== name; });
+  if (push) { history.replaceState(null, "", "#" + name); window.scrollTo({ top: document.querySelector(".ptabs").offsetTop - 50 }); }
+  window.dispatchEvent(new CustomEvent("pg-tab", { detail: name }));
+}
+document.querySelector(".ptabs").addEventListener("click", (e) => { const b = e.target.closest("button[data-tab]"); if (b) showTab(b.dataset.tab, true); });
+document.addEventListener("click", (e) => {
+  const a = e.target.closest('a[href^="#"]'); if (!a) return;
+  const n = a.getAttribute("href").slice(1);
+  if (TAB_NAMES.includes(n)) { e.preventDefault(); showTab(n, true); return; }
+  // an anchor inside a tab (e.g. #pages): open its tab, then scroll to it
+  const target = document.getElementById(n), panel = target && target.closest(".tabpanel");
+  if (panel) { e.preventDefault(); showTab(panel.id.slice(4)); setTimeout(() => window.scrollTo({ top: target.getBoundingClientRect().top + scrollY - 110, behavior: "smooth" }), 30); }
+});
+window.addEventListener("hashchange", () => showTab(location.hash.slice(1)));
+showTab(location.hash.slice(1));
+
+// Copy link: the full address on whichever site this page is opened (never a fixed host).
+document.addEventListener("click", async (e) => {
+  const b = e.target.closest("[data-copy]"); if (!b) return;
+  const url = location.origin + encodeURI(b.dataset.copy);
+  try { await navigator.clipboard.writeText(url); }
+  catch (err) { const t = document.createElement("textarea"); t.value = url; document.body.appendChild(t); t.select(); document.execCommand("copy"); t.remove(); }
+  const old = b.textContent; b.textContent = "Copied ✓"; setTimeout(() => { b.textContent = old; }, 1500);
+});
+document.addEventListener("click", (e) => { const a = e.target.closest("a[data-dl-name]"); if (a) a.setAttribute("download", `${a.dataset.dlName} - ${stamp()}.pdf`); });
+document.getElementById("btn-pdf").onclick = () => { const t = document.title; document.title = `Dacsinc ERP - Project Guide - ${stamp()}`; window.print(); setTimeout(() => document.title = t, 1000); };
+document.getElementById("btn-tab").onclick = () => {
+  const open = TAB_NAMES.find(n => !document.getElementById("tab-" + n).hidden);
+  const st = document.createElement("style");
+  st.textContent = `@media print { .tabpanel { display: none !important; } #tab-${open} { display: block !important; break-before: auto; } }`;
+  document.head.appendChild(st);
+  const done = () => { st.remove(); window.removeEventListener("afterprint", done); };
+  window.addEventListener("afterprint", done); window.print();
+};
+document.getElementById("btn-html").onclick = () => {
+  const clone = document.documentElement.cloneNode(true);
+  clone.querySelectorAll(".tabpanel").forEach(p => p.hidden = false);
+  clone.querySelectorAll(".no-print, #role-card").forEach(el => el.remove());
+  clone.querySelectorAll(".role-all").forEach(el => el.style.display = "block");
+  clone.querySelectorAll(".xitem").forEach(x => x.classList.add("open"));
+  clone.querySelectorAll("script").forEach(el => el.remove());
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(new Blob(["<!DOCTYPE html>\n" + clone.outerHTML], { type: "text/html" }));
+  a.download = `Dacsinc ERP - Project Guide - ${stamp()}.html`; document.body.appendChild(a); a.click(); a.remove();
+};
+</script>
+</body>
+</html>
