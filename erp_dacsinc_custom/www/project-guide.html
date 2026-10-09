@@ -69,6 +69,27 @@
   .stat b { display: block; font-size: 1.6rem; line-height: 1.1; }
   .stat span { font-family: "IBM Plex Mono", monospace; font-size: 11px; color: var(--ink-soft); text-transform: uppercase; letter-spacing: .05em; }
   .stat.done b { color: var(--pine); } .stat.open b { color: var(--clay); } .stat.dec b { color: var(--red); }
+  .plan { display: grid; grid-template-columns: minmax(280px, 1fr) minmax(320px, 1.6fr); gap: 14px; margin: 18px 0 0; }
+  @media (max-width: 900px) { .plan { grid-template-columns: 1fr; } }
+  .plan .box { background: var(--surface); border: 1px solid var(--line-soft); border-radius: 12px; padding: 14px 16px; }
+  .plan h5 { font-family: "IBM Plex Mono", monospace; font-size: 11px; text-transform: uppercase; letter-spacing: .06em; color: var(--clay); margin: 0 0 8px; }
+  .bar { height: 12px; border-radius: 6px; background: var(--line-soft); overflow: hidden; display: flex; margin: 6px 0 4px; }
+  .bar i { display: block; height: 100%; }
+  .bar .b-done { background: var(--pine); } .bar .b-open { background: var(--clay); } .bar .b-todo { background: var(--indigo); } .bar .b-wait { background: var(--gold); }
+  .legend { display: flex; flex-wrap: wrap; gap: 4px 14px; font-family: "IBM Plex Mono", monospace; font-size: 11.5px; color: var(--ink-soft); }
+  .legend button { background: none; border: 0; padding: 0; font: inherit; color: inherit; cursor: pointer; }
+  .legend button:hover { color: var(--ink); text-decoration: underline; }
+  .legend .dot { display: inline-block; width: 9px; height: 9px; border-radius: 50%; margin-right: 5px; vertical-align: 0; }
+  .src-row { display: grid; grid-template-columns: 120px 1fr auto; gap: 10px; align-items: center; margin: 8px 0 0; font-size: 14px; cursor: pointer; }
+  .src-row:hover b { text-decoration: underline; }
+  .src-row .bar { margin: 0; height: 8px; }
+  .src-row span { font-family: "IBM Plex Mono", monospace; font-size: 11.5px; color: var(--ink-soft); white-space: nowrap; }
+  .next { list-style: none; padding: 0; margin: 0; }
+  .next li { display: grid; grid-template-columns: auto 1fr auto; gap: 10px; align-items: baseline; padding: 6px 4px; border-bottom: 1px dashed var(--line-soft); cursor: pointer; font-size: 14.5px; }
+  .next li:last-child { border-bottom: 0; }
+  .next li:hover { background: var(--paper); }
+  .next .m { font-family: "IBM Plex Mono", monospace; font-size: 11px; color: var(--ink-soft); white-space: nowrap; }
+  tr.flash td { background: var(--gold-soft) !important; transition: background .6s; }
 
   .ptabs { position: sticky; top: 45px; z-index: 20; display: flex; flex-wrap: wrap; gap: 2px; background: var(--paper);
     border-bottom: 2px solid var(--line); margin: 18px 0 24px; }
@@ -159,6 +180,22 @@
   .step.pos .num { background: var(--clay); }
   .who { display: inline-block; font-family: "IBM Plex Mono", monospace; font-size: 10.5px; padding: 1px 8px; border-radius: 20px;
     border: 1px solid var(--pine); color: var(--pine); white-space: nowrap; margin-top: 3px; }
+  .flowgrid { display: grid; grid-template-columns: minmax(380px, 560px) minmax(0, 1fr); gap: 20px; align-items: start; }
+  .flowside { position: sticky; top: 100px; max-height: calc(100vh - 115px); overflow: auto; }
+  @media (max-width: 1000px) { .flowgrid { grid-template-columns: 1fr; } .flowside { position: static; max-height: none; } }
+  @media print { .flowgrid { display: block; } .flowside { position: static; max-height: none; overflow: visible; } }
+  .diagram { background: var(--surface); border: 1px solid var(--line-soft); border-radius: 12px; padding: 14px 16px 10px; margin: 0 0 16px; }
+  .diagram[hidden] { display: none; }
+  .dg-title { margin: 0 0 6px; }
+  .dg-body { overflow-x: auto; min-height: 60px; }
+  .dg-body svg { max-width: 100%; height: auto; display: block; margin: 0 auto; }
+  .dg-body .node { cursor: pointer; }
+  .dg-legend { margin-top: 6px; }
+  @media print {
+    .diagram, .diagram[hidden] { display: block !important; break-inside: avoid; break-after: page; }
+    .dg-body { overflow: visible; }
+    .dg-body svg { max-height: 245mm; width: auto !important; max-width: 100% !important; }
+  }
   .lane { display: flex; flex-wrap: wrap; gap: 4px; align-items: center; margin: 4px 0 16px; font-family: "IBM Plex Mono", monospace; font-size: 11.5px; }
   .lane span { padding: 4px 9px; border-radius: 6px; background: var(--surface); border: 1px solid var(--line-soft); cursor: pointer; }
   .lane span:hover { border-color: var(--indigo); color: var(--indigo); }
@@ -170,6 +207,11 @@
   .rolecard .cols { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 14px 24px; }
   .rolecard h5 { font-family: "IBM Plex Mono", monospace; font-size: 11px; text-transform: uppercase; letter-spacing: .05em; color: var(--clay); margin: 0 0 4px; }
   .role-all { display: none; }
+  .devnav { position: sticky; top: 92px; z-index: 15; }
+  .devnav a.chip { text-decoration: none; }
+  .mini-steps { padding-left: 20px; font-size: 15px; } .mini-steps li { margin: 4px 0; }
+  .steps-ol { margin: 0; padding-left: 20px; } .steps-ol li { margin: 4px 0; }
+  @media (max-width: 860px) { .devnav { position: static; } }
 
   footer.foot { margin-top: 40px; padding-top: 16px; border-top: 1px solid var(--line-soft); font-size: 13px; color: var(--ink-soft); }
 
@@ -177,7 +219,7 @@
     :root, :root[data-theme="dark"] { --ink: #000; --ink-soft: #333; --paper: #fff; --surface: #fff; --line: #999; --line-soft: #ccc; }
     @page { size: A4; margin: 11mm; }
     body { font-size: 11px; }
-    .topbar, .ptabs, .actions, .no-print, .filters, .rolepick, .stats, .lane, #role-card { display: none !important; }
+    .topbar, .ptabs, .actions, .no-print, .filters, .rolepick, .plan, .lane, #role-card { display: none !important; }
     .page { padding: 0; }
     header.masthead { display: block; padding-top: 0; }
     .tabpanel, .tabpanel[hidden] { display: block !important; break-before: page; }
@@ -217,7 +259,7 @@
         requirements, how to build and deploy, and the task list — delivered, open from the 8 Oct meeting, and Phase 2.</p>
     </div>
     <div class="actions no-print">
-      <a class="btn" href="/assets/erp_dacsinc_custom/docs/project-guide.pdf?v=4" download="Dacsinc ERP - Project Guide.pdf" data-dl-name="Dacsinc ERP - Project Guide">⤓ Download PDF</a>
+      <a class="btn" href="/assets/erp_dacsinc_custom/docs/project-guide.pdf?v=8" download="Dacsinc ERP - Project Guide.pdf" data-dl-name="Dacsinc ERP - Project Guide">⤓ Download PDF</a>
       <button class="btn outline" type="button" id="btn-pdf">⎙ Print all</button>
       <button class="btn outline" type="button" id="btn-tab">⎙ Print this tab</button>
       <button class="btn outline" type="button" id="btn-html">⤓ HTML copy</button>
@@ -225,7 +267,6 @@
     </div>
   </header>
 
-  <div class="stats no-print" id="stats"></div>
 
   <nav class="ptabs no-print" role="tablist" aria-label="Guide sections">
     <button type="button" role="tab" data-tab="overview">01 Overview</button>
@@ -233,8 +274,8 @@
     <button type="button" role="tab" data-tab="roles">03 Roles &amp; control</button>
     <button type="button" role="tab" data-tab="brd">04 BRD — business needs</button>
     <button type="button" role="tab" data-tab="frd">05 FRD — how it works</button>
-    <button type="button" role="tab" data-tab="tasks">06 Tasks &amp; status<span class="cnt" id="tab-open-count"></span></button>
-    <button type="button" role="tab" data-tab="dev">07 Developer guide</button>
+    <button type="button" role="tab" data-tab="tasks">06 Project status<span class="cnt" id="tab-open-count"></span></button>
+    <button type="button" role="tab" data-tab="dev">07 Developer handbook</button>
     <button type="button" role="tab" data-tab="ops">08 Deploy &amp; operations</button>
     <button type="button" role="tab" data-tab="glossary">09 Glossary</button>
   </nav>
@@ -341,14 +382,26 @@
   <section class="tabpanel" id="tab-flow" role="tabpanel">
     <div class="print-title">02 · Business flow</div>
     <h2>Business flow</h2>
-    <p class="sub">Click a step for its screen, the rules that apply and tips. Pick a stage to narrow the list, or click a box in the strip to jump to a step.</p>
+    <p class="sub">Two separate journeys. Pick one, follow the arrows — <b>six-sided boxes are decisions</b> — then click any box to open that step's screen, rules and tips below.</p>
     <div class="filters no-print">
+      <div class="chips" id="journey-chips"></div>
       <div class="chips" id="flow-chips"></div>
       <button class="btn sm outline" type="button" data-expand="flow-list">Expand all</button>
       <button class="btn sm outline" type="button" data-collapse="flow-list">Collapse all</button>
     </div>
-    <div class="lane no-print" id="flow-lane"></div>
+    <div class="flowgrid">
+    <div class="flowside">
+    <div class="diagram" id="flow-diagram-b2b"><h4 class="dg-title">A · Customer order — from enquiry to payment</h4><div class="dg-body">Loading diagram…</div>
+      <div class="legend dg-legend"><span><span class="dot" style="background:#5b6fa8"></span>Sell</span><span><span class="dot" style="background:#b8863b"></span>Plan</span>
+        <span><span class="dot" style="background:#a9622f"></span>Buy</span><span><span class="dot" style="background:#7a5aa6"></span>Make</span><span><span class="dot" style="background:#3b7a5c"></span>Fulfil</span>
+        <span>⬡ decision · click a box to open its step</span></div></div>
+    <div class="diagram" id="flow-diagram-pos"><h4 class="dg-title">B · POS store — one shift, and store stock</h4><div class="dg-body">Loading diagram…</div></div>
+    </div>
+    <div>
+    <h3 id="flow-steps-title" style="margin-top:0">Steps</h3>
     <div id="flow-list"></div>
+    </div>
+    </div>
     <h3>Order status words (Sales Tracker)</h3>
     <p><span class="pill s-open">Not Dispatched</span> → <span class="pill s-todo">To Be Dispatched (Draft)</span> → <span class="pill s-done">Dispatched</span>
       → <span class="pill s-todo">Delivered (Draft)</span> → <span class="pill s-done">Delivered</span> → Completed</p>
@@ -444,8 +497,11 @@
 
   <!-- 06 TASKS -->
   <section class="tabpanel" id="tab-tasks" role="tabpanel">
-    <div class="print-title">06 · Tasks &amp; status</div>
-    <h2>Tasks &amp; status</h2>
+    <div class="print-title">06 · Project status</div>
+    <h2>Project status</h2>
+    <p class="sub">Where the project stands: progress, what is left per source, and the next highest-priority work. Click anything to filter the task list below.</p>
+    <div class="plan no-print" id="plan" style="margin-top:0"></div>
+    <h3>All tasks</h3>
     <p class="sub">Delivered work, the open actions from the <b>8 Oct 2026 meeting</b> (Operation Flow Trial, client place — Dac operation team, Chandra ma'am, Mohan,
       Hithashini, Namitha), and the <b>Phase 2</b> list. Filter by status, source, module, phase or priority; click a column title to sort.</p>
     <div class="filters no-print">
@@ -475,63 +531,122 @@
 
   <!-- 07 DEV -->
   <section class="tabpanel" id="tab-dev" role="tabpanel">
-    <div class="print-title">07 · Developer guide</div>
-    <h2>Developer guide</h2>
-    <p class="sub">How the code is organised, the conventions, and how to test safely.</p>
+    <div class="print-title">07 · Developer handbook</div>
+    <h2>Developer handbook</h2>
+    <p class="sub">Everything a developer needs to change this system safely: how it is built, where each feature lives, step-by-step recipes for common changes,
+      how to test, and what to do when something doesn't work.</p>
+    <div class="filters no-print devnav">
+      <a class="chip" href="#dev-start">1 · Start here</a><a class="chip" href="#dev-arch">2 · Architecture</a>
+      <a class="chip" href="#dev-map">3 · Feature map</a><a class="chip" href="#dev-play">4 · Change playbooks</a>
+      <a class="chip" href="#dev-rules">5 · Rules &amp; conventions</a><a class="chip" href="#dev-test">6 · Testing</a>
+      <a class="chip" href="#dev-faq">7 · Troubleshooting</a>
+    </div>
+
+    <h3 id="dev-start">1 · Start here — your first day</h3>
+    <div class="grid2">
+      <div class="card"><span class="tag">Read in this order</span>
+        <ol style="margin:6px 0 0">
+          <li>This guide: <b>Overview</b> → <b>Business flow</b> → <b>Roles</b> (1 hour).</li>
+          <li><a href="/order-flow-rules">Order flow rules</a> — the rules every screen enforces.</li>
+          <li>The app's <code>CLAUDE.md</code> and <code>docs/README.md</code>, then the doc for the area you will touch (see the feature map).</li>
+          <li><code>hooks.py</code> — every place the app plugs into ERPNext.</li>
+          <li>Open a Sales Order and the Order Flow dashboard on the developer copy and follow one order end to end.</li>
+        </ol></div>
+      <div class="card"><span class="tag">Set-up</span>
+        <ul style="margin:6px 0 0">
+          <li>Bench with Frappe / ERPNext v15 and the apps listed in Overview; the custom app is <code>apps/erp_dacsinc_custom</code>
+            (GitHub 360ITHUBPVTLTD/erp_dacsinc_custom, current branch <code>360ithub_masterv2</code>).</li>
+          <li>Site = a restore of a recent live backup, with <b>developer mode on</b>, <code>mute_emails</code> on and the scheduler off.</li>
+          <li>Run <code>bench start</code> (or <code>bench serve</code>) and sign in as Administrator.</li>
+          <li>To act as another role, use a test user that holds only that role's profile.</li>
+          <li>Never connect a developer copy's email accounts to real mailboxes.</li>
+        </ul></div>
+    </div>
+    <div class="note ok"><b>Three habits that keep this project healthy:</b> (1) one rule = one server function, used by every screen that shows it;
+      (2) every rule is enforced on the server (hooks), the screen only explains; (3) update <code>docs/</code> and this guide in the same change.</div>
+
+    <h3 id="dev-arch">2 · Architecture</h3>
     <div class="grid2">
       <div>
-        <h3 style="margin-top:6px">Repositories</h3>
-        <ul>
-          <li><b>Bench root</b> — a small Git repo for project scaffolding only (<code>CLAUDE.md</code>, <code>CONTEXT.md</code>, <code>docs/</code>, <code>.scratch/</code>). Never <code>git add -A</code> there.</li>
-          <li><b>Each app</b> in <code>apps/</code> is its own Git repo — do Git work inside the app. <code>erp_dacsinc_custom</code> → GitHub organisation 360ITHUBPVTLTD.</li>
-          <li><b>Developer copy</b> — a local site restored from a live backup; never test on live.</li>
-        </ul>
-        <h3>Conventions</h3>
-        <ul>
-          <li><b>Docs in the same change:</b> update <code>docs/*.md</code> — and this guide when a flow, role, rule or task status changes.</li>
-          <li><b>One rule, one function:</b> screens answering the same question call the same server function.</li>
-          <li><b>Scope by sales order:</b> every demand / supply figure is keyed by (item, warehouse, sales order).</li>
-          <li><b>Vendor apps:</b> never edit silently — record in <code>docs/core-modifications.md</code>.</li>
-          <li><b>Fields from code:</b> <code>create_custom_fields</code> in after_migrate or exported <code>custom/*.json</code>; removals need a patch.</li>
-          <li><b>Issues &amp; specs:</b> local markdown in <code>.scratch/&lt;feature&gt;/</code> (not GitHub Issues).</li>
-        </ul>
-      </div>
-      <div>
-        <h3 style="margin-top:6px">Code map (erp_dacsinc_custom)</h3>
+        <h4>Layers</h4>
         <div class="table-wrap"><table><tbody>
-          <tr><td class="k">Hooks</td><td><code>hooks.py</code> — document events, permission hooks, overrides, after_migrate, schedulers</td></tr>
-          <tr><td class="k">Planning &amp; guards</td><td><code>custom_script.py</code>, <code>purchase_order.py</code>, <code>stock_hold.py</code>, <code>draft_guard.py</code>, <code>so_embroidery.py</code></td></tr>
-          <tr><td class="k">Order Flow</td><td><code>order_flow_api.py</code>, <code>order_flow_permissions.py</code>, <code>page/order_flow/</code></td></tr>
-          <tr><td class="k">Access</td><td><code>access_sync.py</code>, <code>access_worksheet.py</code>, <code>access_reverse.py</code>, <code>roles_and_permissions_api.py</code>, <code>master_guard.py</code>, <code>access/*.json</code></td></tr>
-          <tr><td class="k">POS</td><td><code>pos_scope.py</code>, <code>pos_cash.py</code>, <code>pos_closing.py</code>, <code>pos_notify.py</code>, <code>pos_report_scope.py</code>, <code>pos_receipt_email.py</code></td></tr>
-          <tr><td class="k">CRM / HR</td><td><code>custom_lead.py</code>, <code>custom_customer.py</code>, <code>notifications.py</code>, <code>custom_leave.py</code></td></tr>
-          <tr><td class="k">Front-end</td><td><code>public/js/*.js</code> (form scripts), <code>www/*.html</code> (these pages)</td></tr>
-          <tr><td class="k">Setup</td><td><code>custom/*.json</code>, <code>patches/</code>, <code>report/</code>, <code>docs/*.md</code></td></tr>
+          <tr><td class="k">Browser</td><td>Form scripts <code>public/js/&lt;doctype&gt;.js</code> (via <code>doctype_js</code> in hooks), desk pages <code>page/order_flow</code>, <code>page/roles_and_permissions</code>, web pages <code>www/*.html</code></td></tr>
+          <tr><td class="k">API</td><td><code>@frappe.whitelist()</code> functions the screens call — <code>order_flow_api.py</code>, <code>custom_script.py</code>, <code>purchase_order.py</code>, <code>pos_*.py</code>, <code>access_*.py</code></td></tr>
+          <tr><td class="k">Rules</td><td><code>doc_events</code> in <code>hooks.py</code> (validate / before_submit / before_cancel guards) and permission hooks (<code>permission_query_conditions</code>, <code>has_permission</code>)</td></tr>
+          <tr><td class="k">ERPNext</td><td>Standard DocTypes, overridden only where listed in <code>override_whitelisted_methods</code></td></tr>
+          <tr><td class="k">Config</td><td><b>Admin Settings</b> (approvers, tab roles, POS emails, held-stock users…), <b>access sheet</b> (<code>access/agreed_access.json</code>), <code>custom/*.json</code> (fields &amp; property setters)</td></tr>
         </tbody></table></div>
       </div>
+      <div>
+        <h4>What happens when a user saves / submits a document</h4>
+        <ol class="mini-steps">
+          <li>The form script may warn early (e.g. qty above the order's room) — <i>advice only</i>.</li>
+          <li><code>before_insert</code>: duplicate-draft check (<code>draft_guard</code>).</li>
+          <li><code>validate</code>: caps and locks (order-line caps, rate lock, derived-row lock, procurement purpose).</li>
+          <li><code>before_submit</code>: hard rules (held stock, route lock, Subcontract PO material, POS approvals).</li>
+          <li>ERPNext's own logic runs (our app's hooks run <b>before</b> ERPNext's — app order).</li>
+          <li><code>on_update / on_submit</code>: side effects (emails, sharing, Pick List updates) and <code>broadcast_order_flow_change</code> → Order Flow and open Sales Orders refresh.</li>
+        </ol>
+        <h4>Who sees which records</h4>
+        <p style="font-size:15px">Document rights come from the access sheet (Custom DocPerm). On top, code narrows rows: merchandiser scope (<code>custom_script</code>),
+          store scope (<code>pos_scope</code>), master-data guard (<code>master_guard</code>). Query reports skip these hooks, so POS reports are cut in <code>pos_report_scope</code>.</p>
+      </div>
     </div>
+
+    <h3 id="dev-map">3 · Feature map — where things live</h3>
+    <p class="sub">Search a feature, screen, file or function. "Front-end" is the JavaScript that draws it; "Server" is the Python that computes or enforces it.</p>
+    <div class="filters no-print"><input type="search" id="map-q" placeholder="e.g. RM table, Pick List, closing, tab, approval…"><span class="count" id="map-count"></span></div>
+    <div class="table-wrap"><table>
+      <thead><tr><th>Feature</th><th>Screen</th><th>Front-end</th><th>Server</th><th>Doc</th><th>Test</th></tr></thead>
+      <tbody id="map-body"></tbody>
+    </table></div>
+
+    <h3 id="dev-play">4 · Change playbooks</h3>
+    <p class="sub">Step-by-step recipes for the changes asked most often. Click one to open it.</p>
+    <div class="filters no-print"><input type="search" id="play-q" placeholder="Search recipes…">
+      <button class="btn sm outline" type="button" data-expand="play-list">Expand all</button><span class="count" id="play-count"></span></div>
+    <div id="play-list"></div>
+
+    <h3 id="dev-rules">5 · Rules &amp; conventions</h3>
     <div class="grid2">
       <div>
-        <h3>Testing</h3>
         <ul>
-          <li>Rolled-back scripts with <code>bench --site &lt;site&gt; execute</code>; suites in <code>.scratch/order-flow-strict-rules/</code>.</li>
-          <li>Always stub <code>frappe.db.commit</code> — saving Admin Settings commits, so rollback alone won't undo it.</li>
-          <li>Browser checks with headless Chrome and a temporary session.</li>
-          <li>After a planning change, compare the SO RM table, PO prompt and SCO dialog on the same data — they must agree.</li>
+          <li><b>One rule, one function.</b> If two screens answer the same question (e.g. "how much raw material may this order use"), they call the same server function. Never copy a formula into JS.</li>
+          <li><b>Server enforces, screen explains.</b> Every rule lives in a hook; the dialog only hides or warns.</li>
+          <li><b>Scope by sales order.</b> Every demand / supply figure is keyed by (item, warehouse, sales order) — never by item alone.</li>
+          <li><b>No silent overrides.</b> No "use anyway" button; exceptions only through Admin Settings lists.</li>
+          <li><b>Same words everywhere.</b> Raw material: "bought for this order", "free stock", "Short N — Request RM".</li>
         </ul>
       </div>
       <div>
-        <h3>Pitfalls</h3>
         <ul>
-          <li><code>picked_qty</code>, MR <code>ordered_qty</code>, <code>subcontracted_quantity</code> move only on submit — net drafts by hand.</li>
-          <li>ERPNext clears <code>Purchase Order Item.bom</code> on save — use the SO line's <code>bom_no</code>.</li>
-          <li>Query reports bypass permission hooks — POS reports are scoped separately.</li>
-          <li><code>frm.set_intro</code> adds to the message area — clear it first. Form scripts need a hard refresh.</li>
+          <li><b>Find the live function first.</b> Many functions have old commented-out copies, and some have a second live copy in <code>purchase_order_custom.py</code>. Search for the method path the screen calls (e.g. <code>erp_dacsinc_custom.purchase_order.validate_and_get_items_for_po</code>).</li>
+          <li><b>Fields from code.</b> New fields via <code>create_custom_fields</code> (after_migrate) or export to <code>custom/*.json</code>; deleting a field needs a patch.</li>
+          <li><b>Vendor apps.</b> Don't edit frappe / erpnext / hrms / india_compliance unless unavoidable; record it in <code>docs/core-modifications.md</code>.</li>
+          <li><b>Docs in the same change.</b> <code>docs/*.md</code> describe how it works now (not a changelog); update this guide's tabs and task status.</li>
+          <li><b>Git.</b> Work inside the app repo; never <code>git add -A</code> at the bench root; never commit or push for someone without being asked.</li>
         </ul>
       </div>
     </div>
-    <div class="note bad"><b>Never</b> share <code>site_config.json</code> (passwords, encryption key); never run <code>bench migrate</code>, <code>git reset --hard</code>,
-      <code>git clean</code>, commit or push for someone without being asked.</div>
+
+    <h3 id="dev-test">6 · Testing</h3>
+    <p class="sub">Tests are Python scripts that run inside the site and <b>roll back</b>, so they never leave data behind. They live in <code>.scratch/order-flow-strict-rules/</code> at the bench root.</p>
+    <div class="note"><b>How to run one:</b> copy it into the app package as a temporary module (e.g. <code>_cc_t.py</code>), run
+      <code>bench --site &lt;site&gt; execute erp_dacsinc_custom._cc_t.run</code>, read the <code>PASS</code> / <code>FAIL</code> lines, then delete the copy.
+      Every test must stub <code>frappe.db.commit</code> first — some saves (Admin Settings) commit and would survive the rollback.</div>
+    <div class="table-wrap"><table><thead><tr><th>Suite</th><th>Covers</th><th>Run after changing</th></tr></thead><tbody id="test-body"></tbody></table></div>
+    <ul>
+      <li><b>Screen checks:</b> headless Chrome with a temporary session for a test user; check for script errors and take a screenshot. Drop the session afterwards.</li>
+      <li><b>Planning changes:</b> on the same data, the SO RM table, the PO prompt and the SCO dialog must give the same answer — compare them (tight-stock case included, inside a rolled-back transaction).</li>
+      <li><b>Performance changes:</b> compare old vs new output on a copy of live data before replacing a loop.</li>
+    </ul>
+
+    <h3 id="dev-faq">7 · Troubleshooting</h3>
+    <div class="filters no-print"><input type="search" id="faq-q" placeholder="Describe the problem…"><span class="count" id="faq-count"></span></div>
+    <div id="faq-list"></div>
+
+    <div class="note bad"><b>Never</b> share <code>site_config.json</code> (passwords, encryption key); never run <code>bench migrate</code> on live, <code>git reset --hard</code>,
+      <code>git clean</code>, commit or push for someone without being asked; never test on live.</div>
   </section>
 
   <!-- 08 OPS -->
@@ -579,20 +694,21 @@
   </section>
 </div>
 
+{% raw %}
 <script>
 /* ───────────── DATA ───────────── */
 // [stage, title, roles, screen/document, what happens, rules[], tip]
 const FLOW = [
-  ["Sales", "Lead & quotation", "DAC CRM · DAC CRM Head", "Lead · Event Activity · Business Contacts · Quotation", "CRM follows the enquiry; the quotation is shared with the lead owner.", ["Daily / weekly / monthly CRM reports are emailed automatically.", "Rate 0 is not allowed."], "The Sales Order's Lead Owner comes from the Lead."],
-  ["Sales", "Customer", "DAC CRM · Admin", "Customer", "Each customer is assigned a merchandiser.", ["Merchandiser, Industry and POS Store change only by roles in Admin Settings › Customer.", "Customer data printed / exported only by Accounts."], "List action Assign Merchandiser sets many customers at once."],
-  ["Sales", "Sales Order", "DAC CRM · Merchandiser", "Sales Order (Draft)", "Order entered with items, qty, rate and BOM for made items.", ["Shared with the Lead Owner automatically.", "Rate 0 is not allowed."], "A row with a BOM is made through a jobber; without a BOM it is bought."],
-  ["Sales", "Merchandiser approval", "Merchandiser", "Order Flow › SO Approvals", "The merchandiser checks and approves through Verify Customer Details.", ["Addresses are set on this order only.", "The creator may approve this step."], "Unassigned customers' orders appear for every merchandiser to claim."],
-  ["Sales", "Final approval", "Sales Order Final Approver", "Order Flow › SO Approvals › Pending Final SO Approval", "A named approver approves or rejects; a BOM-split check confirms which rows are made and which are bought.", ["Never the creator.", "Approvers are set user-wise in Admin Settings."], "A rejected order can be re-approved, which resubmits it."],
+  ["Sell", "Lead & quotation", "DAC CRM · DAC CRM Head", "Lead · Event Activity · Business Contacts · Quotation", "CRM follows the enquiry; the quotation is shared with the lead owner.", ["Daily / weekly / monthly CRM reports are emailed automatically.", "Rate 0 is not allowed."], "The Sales Order's Lead Owner comes from the Lead."],
+  ["Sell", "Customer", "DAC CRM · Admin", "Customer", "Each customer is assigned a merchandiser.", ["Merchandiser, Industry and POS Store change only by roles in Admin Settings › Customer.", "Customer data printed / exported only by Accounts."], "List action Assign Merchandiser sets many customers at once."],
+  ["Sell", "Sales Order", "DAC CRM · Merchandiser", "Sales Order (Draft)", "Order entered with items, qty, rate and BOM for made items.", ["Shared with the Lead Owner automatically.", "Rate 0 is not allowed."], "A row with a BOM is made through a jobber; without a BOM it is bought."],
+  ["Sell", "Merchandiser approval", "Merchandiser", "Order Flow › SO Approvals", "The merchandiser checks and approves through Verify Customer Details.", ["Addresses are set on this order only.", "The creator may approve this step."], "Unassigned customers' orders appear for every merchandiser to claim."],
+  ["Sell", "Final approval", "Sales Order Final Approver", "Order Flow › SO Approvals › Pending Final SO Approval", "A named approver approves or rejects; a BOM-split check confirms which rows are made and which are bought.", ["Never the creator.", "Approvers are set user-wise in Admin Settings."], "A rejected order can be re-approved, which resubmits it."],
   ["Plan", "Stock check", "Merchandiser · Purchase", "Sales Order › Item Stock & Action Plan", "Per line: Ordered · Delivered · Still to Cover · Free Finished Stock · To Make, with the next action.", ["Stock picked or bought for other orders is not counted as free."], "Next Action lists every pending step: source, ship, invoice."],
   ["Plan", "Raw material plan", "Merchandiser · Production", "Sales Order › RM table under each BOM line", "Needed · In Stock for this Order · Requested / On the Way · To Request.", ["Only material bought for this order plus free stock counts.", "Lines of one order share material in line order.", "Short → Request RM."], "Grey text names other orders' stock — it stays with them."],
-  ["Supply", "Material Request", "Merchandiser · Production · Purchase", "Material Request (SO buttons or the MR planner)", "Requests raw material or trade items for the order.", ["Capped at what the order still needs; a draft MR already counts."], "The MR planner requests for several orders at once."],
-  ["Supply", "Purchase Order", "Purchase Executive · Purchase Manager", "Purchase Order › Fetch Raw Materials / Fetch Pending Sales Orders / Get Items from MR", "Buys material and trade items.", ["All POs for an order line together ≤ its qty (drafts count).", "Fetch prompts never offer more than saving allows.", "No plain PO for BOM items."], "Fetch dialogs add to the PO; they never replace rows."],
-  ["Supply", "Purchase Receipt", "Warehouse · Inward", "Purchase Receipt → Purchase Invoice", "Goods received; material received against an order is bought for that order.", ["One draft per source line."], "A receipt for a sold item drafts a put-away Pick List."],
+  ["Buy", "Material Request", "Merchandiser · Production · Purchase", "Material Request (SO buttons or the MR planner)", "Requests raw material or trade items for the order.", ["Capped at what the order still needs; a draft MR already counts."], "The MR planner requests for several orders at once."],
+  ["Buy", "Purchase Order", "Purchase Executive · Purchase Manager", "Purchase Order › Fetch Raw Materials / Fetch Pending Sales Orders / Get Items from MR", "Buys material and trade items.", ["All POs for an order line together ≤ its qty (drafts count).", "Fetch prompts never offer more than saving allows.", "No plain PO for BOM items."], "Fetch dialogs add to the PO; they never replace rows."],
+  ["Buy", "Purchase Receipt", "Warehouse · Inward", "Purchase Receipt → Purchase Invoice", "Goods received; material received against an order is bought for that order.", ["One draft per source line."], "A receipt for a sold item drafts a put-away Pick List."],
   ["Make", "Subcontract PO", "Merchandiser · Production · Purchase", "Purchase Order (subcontracted)", "Orders the jobber's work for the finished qty the material covers.", ["Offered only when the RM table says In Stock.", "Submit refused unless all rows' material is available together."], "A partial PO is fine; the rest stays claimable."],
   ["Make", "Send material to jobber", "Production · Merchandiser (own orders)", "PO › Create SCO & Material Transfer", "Creates the Subcontracting Order and moves material to the jobber.", ["Send at most this PO's own stock.", "Picked stock and other orders' material can never be sent."], "The dialog shows actual warehouse stock under each material."],
   ["Make", "Receive finished goods", "Warehouse · Inward", "PO › Receive Goods for SCO", "Creates the Subcontracting Receipt and the Purchase Receipt.", ["Over-collection within the allowed % is booked as extra."], "MOM 8 Oct: qty to receive should start at 0, plus invoice no. and date (open)."],
@@ -790,27 +906,100 @@ document.addEventListener("click", (e) => {
 });
 
 /* ───────────── FLOW ───────────── */
+// Diagrams: Mermaid (loaded below); each box carries the FLOW index it opens.
+const FLOW_B2B = `flowchart TD
+  L["1 · Lead & quotation"]:::fc_sell --> C["2 · Customer"]:::fc_sell --> SO["3 · Sales Order"]:::fc_sell --> MA{{"4 · Merchandiser<br/>approves?"}}:::fc_sell
+  MA -- yes --> FA{{"5 · Final<br/>approval?"}}:::fc_sell
+  MA -- no --> SO
+  FA -- rejected --> SO
+  FA -- approved --> CHK{{"6 · Free finished<br/>stock covers it?"}}:::fc_plan
+  CHK -- yes --> PK
+  CHK -- no --> BOM{{"Made here?<br/>(line has a BOM)"}}:::fc_plan
+  BOM -- "no · trade item" --> MR
+  BOM -- yes --> RM{{"7 · Order's own raw<br/>material in stock?"}}:::fc_plan
+  RM -- "no · Request RM" --> MR["8 · Material Request"]:::fc_buy
+  MR --> PO["9 · Purchase Order"]:::fc_buy --> PR["10 · Purchase Receipt"]:::fc_buy
+  PR -- "raw material" --> RM
+  PR -- "trade item" --> PK
+  RM -- yes --> SPO["11 · Subcontract PO"]:::fc_make --> SCO["12 · Send material<br/>to jobber"]:::fc_make --> RCV["13 · Receive finished<br/>goods"]:::fc_make
+  RCV --> EMB{{"Embroidery<br/>needed?"}}:::fc_make
+  EMB -- yes --> EW["14 · Embroidery"]:::fc_make --> PK
+  EMB -- no --> PK["15 · Pick List"]:::fc_ful --> DN["16 · Delivery Note"]:::fc_ful --> SI["17 · Sales Invoice"]:::fc_ful --> LG["18 · Logistics"]:::fc_ful --> PAY["19 · Payment"]:::fc_ful
+  classDef fc_sell fill:#e7eaf2,stroke:#5b6fa8,color:#211d1b
+  classDef fc_plan fill:#f5ecda,stroke:#b8863b,color:#211d1b
+  classDef fc_buy fill:#f2e5d9,stroke:#a9622f,color:#211d1b
+  classDef fc_make fill:#ece5f4,stroke:#7a5aa6,color:#211d1b
+  classDef fc_ful fill:#e2ebe6,stroke:#3b7a5c,color:#211d1b
+  click L call pgGo(0)
+  click C call pgGo(1)
+  click SO call pgGo(2)
+  click MA call pgGo(3)
+  click FA call pgGo(4)
+  click CHK call pgGo(5)
+  click BOM call pgGo(6)
+  click RM call pgGo(6)
+  click MR call pgGo(7)
+  click PO call pgGo(8)
+  click PR call pgGo(9)
+  click SPO call pgGo(10)
+  click SCO call pgGo(11)
+  click RCV call pgGo(12)
+  click EMB call pgGo(13)
+  click EW call pgGo(13)
+  click PK call pgGo(14)
+  click DN call pgGo(15)
+  click SI call pgGo(16)
+  click LG call pgGo(17)
+  click PAY call pgGo(18)`;
+const FLOW_POS = `flowchart TD
+  OP["20 · Open the shift<br/>cash carried from last closing"]:::fc_pos --> BL["21 · Bill customers"]:::fc_pos --> CL["22 · Close the shift<br/>count · why · take out"]:::fc_pos --> RV["24 · Review<br/>Store Cash Book · email"]:::fc_pos
+  CL -- "cash left in drawer" --> OP
+  NEED{{"Store needs<br/>stock?"}}:::fc_stock -- yes --> SR["23 · Request stock<br/>(transfer from VV Puram)"]:::fc_stock --> AP{{"Approved by<br/>warehouse / POS Admin?"}}:::fc_stock -- yes --> IN["Stock in the store"]:::fc_stock --> BL
+  classDef fc_pos fill:#f2e5d9,stroke:#a9622f,color:#211d1b
+  classDef fc_stock fill:#e2ebe6,stroke:#3b7a5c,color:#211d1b
+  click OP call pgGo(19)
+  click BL call pgGo(20)
+  click CL call pgGo(21)
+  click RV call pgGo(23)
+  click NEED call pgGo(22)
+  click SR call pgGo(22)
+  click AP call pgGo(22)
+  click IN call pgGo(22)`;
+
 (function () {
-  const stages = ["Sales", "Plan", "Supply", "Make", "Fulfil", "POS"];
-  let stage = "All";
+  const JOURNEYS = { "Customer order": i => i < 19, "POS store": i => i >= 19 };
+  const STAGES = { "Customer order": ["Sell", "Plan", "Buy", "Make", "Fulfil"], "POS store": [] };
+  let journey = "Customer order", stage = "All";
   function draw() {
-    chips(document.getElementById("flow-chips"), stages, stage, (v) => { stage = v; draw(); });
-    const list = FLOW.map((f, i) => ({ i, f })).filter(x => stage === "All" || x.f[0] === stage);
-    document.getElementById("flow-lane").innerHTML = list.map(x => `<span data-go="${x.i}">${x.i + 1}. ${esc(x.f[1])}</span>`).join("<i>→</i>");
+    const jc = document.getElementById("journey-chips");
+    jc.innerHTML = Object.keys(JOURNEYS).map(j => `<button type="button" class="chip" data-j="${esc(j)}" aria-pressed="${j === journey}">${esc(j)} <span class="n">${FLOW.filter((_, i) => JOURNEYS[j](i)).length} steps</span></button>`).join("");
+    const st = STAGES[journey];
+    const fc = document.getElementById("flow-chips");
+    if (st.length) chips(fc, st, stage, (v) => { stage = v; draw(); }); else fc.innerHTML = "";
+    document.getElementById("flow-diagram-b2b").hidden = journey !== "Customer order";
+    document.getElementById("flow-diagram-pos").hidden = journey !== "POS store";
+    document.getElementById("flow-steps-title").textContent = `Steps — ${journey}`;
+    const list = FLOW.map((f, i) => ({ i, f })).filter(x => JOURNEYS[journey](x.i) && (stage === "All" || x.f[0] === stage));
     document.getElementById("flow-list").innerHTML = list.map(({ i, f }) => {
-      const [st, title, who, doc, what, rules, tip] = f;
+      const [stg, title, who, doc, what, rules, tip] = f;
       const body = `<dl><dt>Screen / document</dt><dd>${esc(doc)}</dd><dt>What happens</dt><dd>${esc(what)}</dd>
         ${rules.length ? `<dt>Rules</dt><dd><ul>${rules.map(r => `<li>${esc(r)}</li>`).join("")}</ul></dd>` : ""}
         ${tip ? `<dt>Tip / note</dt><dd>${esc(tip)}</dd>` : ""}</dl>`;
       return xitem(`step-${i}`, `<span class="num">${i + 1}</span>`, esc(title), `<span class="who">${esc(who)}</span>`,
-        `<span class="pill area">${esc(st)}</span>`, body, "step" + (st === "POS" ? " pos" : ""));
+        `<span class="pill area">${esc(stg)}</span>`, body, "step" + (stg === "POS" ? " pos" : ""));
     }).join("");
   }
-  document.getElementById("flow-lane").addEventListener("click", (e) => {
-    const s = e.target.closest("[data-go]"); if (!s) return;
-    const el = document.getElementById("step-" + s.dataset.go); el.classList.add("open");
+  document.getElementById("journey-chips").addEventListener("click", (e) => {
+    const b = e.target.closest("[data-j]"); if (b) { journey = b.dataset.j; stage = "All"; draw(); } });
+  // A box in a diagram: switch to its journey, open the step, scroll to it.
+  window.pgGo = (i) => {
+    const j = Object.keys(JOURNEYS).find(k => JOURNEYS[k](i));
+    if (j !== journey || stage !== "All") { journey = j; stage = "All"; draw(); }
+    const el = document.getElementById("step-" + i); if (!el) return;
+    el.classList.add("open");
     window.scrollTo({ top: el.getBoundingClientRect().top + scrollY - 120, behavior: "smooth" });
-  });
+  };
+  window.pgFlowPrintAll = () => { journey = "Customer order"; stage = "All"; };
   draw();
 })();
 
@@ -899,17 +1088,52 @@ reqList({ data: FRD, status: r => r[9], q: "frd-q", st: "frd-st", chips: "frd-ch
 
   const n = (f) => rows.filter(f).length;
   document.getElementById("tab-open-count").textContent = n(r => r.status !== "Done");
-  const stats = [["Delivered", n(r => r.status === "Done"), "status:Done", "done"],
-    ["Open — MOM 8 Oct", n(r => r.source === "MOM 08-Oct" && r.status !== "Done"), "source:MOM 08-Oct", "open"],
-    ["Phase 2 to do", n(r => r.source === "Phase 2 list" && r.status !== "Done"), "source:Phase 2 list", "open"],
-    ["Business needs (BRD)", BRD.length, "tab:brd", ""], ["Functions (FRD)", FRD.length, "tab:frd", ""]];
-  document.getElementById("stats").innerHTML = stats.map(([l, v, k, c]) => `<button type="button" class="stat ${c}" data-k="${esc(k)}" title="Show these"><b>${v}</b><span>${esc(l)}</span></button>`).join("");
-  document.getElementById("stats").onclick = (e) => {
-    const b = e.target.closest(".stat"); if (!b) return;
-    const [kind, val] = b.dataset.k.split(":");
-    if (kind === "tab") return showTab(val, true);
-    reset(); if (kind === "status") st = val; else fSource.value = val;
-    draw(); showTab("tasks", true);
+  // Project status: progress, what is left per source, and what to do next.
+  const total = rows.length, done = n(r => r.status === "Done");
+  const isOpen = (r) => r.status === "Open", isTodo = (r) => r.status === "To Do";
+  const isWait = (r) => ["Need to Discuss", "Pending", "Hold", "Decision pending"].includes(r.status);
+  const seg = (k, cls, list) => list.length ? `<i class="${cls}" style="width:${(list.length / k * 100).toFixed(1)}%" title="${list.length}"></i>` : "";
+  const bar = (list) => `<div class="bar">${seg(list.length || 1, "b-done", list.filter(r => r.status === "Done"))}${seg(list.length || 1, "b-open", list.filter(isOpen))}${seg(list.length || 1, "b-todo", list.filter(isTodo))}${seg(list.length || 1, "b-wait", list.filter(isWait))}</div>`;
+  const sources = [["MOM 08-Oct", "MOM 8 Oct"], ["Phase 2 list", "Phase 2"], ["Delivered", "Delivered work"]];
+  const PR = { High: 0, Medium: 1, Low: 2 };
+  const next = rows.filter(r => r.status === "Open" || r.status === "To Do")
+    .sort((a, b) => (PR[a.priority] ?? 3) - (PR[b.priority] ?? 3) || (a.source === "MOM 08-Oct" ? -1 : 1) - (b.source === "MOM 08-Oct" ? -1 : 1) || a.id - b.id).slice(0, 7);
+  document.getElementById("plan").innerHTML = `
+    <div class="box"><h5>Project progress</h5>
+      <div style="font-size:15px"><b style="font-size:1.5rem">${Math.round(done / total * 100)}%</b> delivered — ${done} of ${total} tasks</div>
+      ${bar(rows)}
+      <div class="legend">
+        <button type="button" data-plan="status:Done"><span class="dot" style="background:var(--pine)"></span>Done ${done}</button>
+        <button type="button" data-plan="status:Open"><span class="dot" style="background:var(--clay)"></span>Open ${n(isOpen)}</button>
+        <button type="button" data-plan="status:To Do"><span class="dot" style="background:var(--indigo)"></span>To do ${n(isTodo)}</button>
+        <button type="button" data-plan="wait"><span class="dot" style="background:var(--gold)"></span>Discuss / hold ${n(isWait)}</button>
+      </div>
+      <h5 style="margin-top:14px">Remaining by source</h5>
+      ${sources.map(([k, l]) => { const list = rows.filter(r => r.source === k), left = list.filter(r => r.status !== "Done").length;
+        return `<div class="src-row" data-plan="source:${esc(k)}"><b>${esc(l)}</b>${bar(list)}<span>${left ? `${left} left` : "all done"} / ${list.length}</span></div>`; }).join("")}
+    </div>
+    <div class="box"><h5>Next up — highest priority open work</h5>
+      <ul class="next">${next.map(r => `<li data-task="${r.id}"><span class="${PR_CLS[r.priority] || ""} mono" style="font-size:11px">${esc(r.priority || "—")}</span>
+        <span>${esc(r.task)}</span><span class="m">${esc(r.module)} · ${esc(r.source === "MOM 08-Oct" ? "MOM" : "Ph 2")}</span></li>`).join("")}</ul>
+      <div style="margin-top:8px"><button type="button" class="btn sm outline" data-plan="open">See all open work →</button></div>
+    </div>`;
+  document.getElementById("plan").onclick = (e) => {
+    const t = e.target.closest("[data-task]"), b = e.target.closest("[data-plan]");
+    if (!t && !b) return;
+    reset();
+    if (t) {
+      draw(); showTab("tasks", true);
+      const tr = [...document.querySelectorAll("#task-body tr")].find(x => x.firstElementChild && x.firstElementChild.textContent === t.dataset.task);
+      if (tr) { tr.classList.add("flash"); tr.scrollIntoView({ block: "center" }); setTimeout(() => tr.classList.remove("flash"), 2000); }
+      return;
+    }
+    const [kind, val] = b.dataset.plan.split(":");
+    if (kind === "status") st = val;
+    else if (kind === "source") fSource.value = val;
+    else if (kind === "wait") st = "Need to Discuss";
+    else if (kind === "open") st = "Open";
+    draw(); showTab("tasks");
+    document.getElementById("task-table").scrollIntoView({ behavior: "smooth", block: "start" });
   };
   const csv = document.getElementById("btn-csv");
   window.addEventListener("pg-tab", (e) => { csv.hidden = e.detail !== "tasks"; });
@@ -922,6 +1146,188 @@ reqList({ data: FRD, status: r => r[9], q: "frd-q", st: "frd-st", chips: "frd-ch
     a.download = `Dacsinc ERP - Tasks - ${stamp()}.csv`; document.body.appendChild(a); a.click(); a.remove();
   };
   draw();
+})();
+
+
+/* ───────────── DEVELOPER HANDBOOK ───────────── */
+// [feature, screen, front-end, server, doc, test]
+const FEATURE_MAP = [
+  ["Order Flow dashboard (tabs, lists, actions)", "/app/order-flow", "page/order_flow/order_flow.js (OF_TABS)", "order_flow_api.py: get_sales_tracker, get_pending_approvals, get_purchase_flow, get_jobwork_flow, get_pick_list_flow, get_stock_tracker, get_billing_flow, get_accounts_flow, get_logistics_flow", "order-flow-dashboard.md", "flowtest.py, lifecycle.py"],
+  ["Who sees which dashboard tab / can act", "Order Flow", "order_flow.js (perms)", "order_flow_permissions.py: get_order_flow_permissions, can_act_tab · Admin Settings of_tab_* / of_sub_* roles", "order-flow-dashboard.md, access-worksheets.md", "tab_sync_test.py"],
+  ["Merchandiser scope (own orders / customers)", "Order Flow, lists", "order_flow.js (Show my customers' orders)", "order_flow_api._merch_scope_so · custom_script permission hooks · order_flow_permissions.show_my_customers", "order-flow-dashboard.md", "permission_probe.py"],
+  ["Sales Order approval & final approval", "Order Flow › SO Approvals", "order_flow.js (Verify Customer Details)", "order_flow_api (approve / reject), SO Workflow, sync_sales_order_final_approver_role", "order-flow-dashboard.md", "flowtest.py"],
+  ["Item Stock & Action Plan (per line)", "Sales Order form", "sales_order.js: generate_stock_overview_table", "custom_script.get_item_stock_details_bulk", "so-rm-po-subcontracting-flow.md", "lifecycle.py"],
+  ["Raw material table (In Stock / Short — Request RM)", "Sales Order form, under BOM lines", "sales_order.js: get_rm_breakdown_html", "custom_script.get_item_stock_details_bulk (rm_alloc_used, rm_procurement_status) · order_flow_api._rm_stock_pools, _rm_available_for", "so-rm-po-subcontracting-flow.md", "flowtest.py"],
+  ["Request RM / Raise MR from the order", "Sales Order buttons", "sales_order.js: so_make_rm_material_request(_all)", "custom_script (MR builders) · guard_mr_item_not_over_so_need · guard_mr_rm_not_over_so_shortfall", "so-rm-po-subcontracting-flow.md", "flowtest.py"],
+  ["MR planner (several orders)", "Material Request › Get Item From SO", "material_request.js", "custom_script.fetch_multi_order_requirements", "so-rm-po-subcontracting-flow.md", "—"],
+  ["PO: Fetch Pending Sales Orders", "Purchase Order", "purchase_order.js: show_sales_order_dialog", "purchase_order.get_pending_so_with_material_stock, validate_and_get_items_for_po · custom_script.po_room_by_so_item", "so-rm-po-subcontracting-flow.md", "flowtest.py"],
+  ["PO: Fetch Raw Materials from SO", "Purchase Order", "purchase_order.js: show_so_selection_and_rm_purchase_dialog", "purchase_order.get_pending_so_with_raw_materials_summary, build_rm_purchase_rows", "so-rm-po-subcontracting-flow.md", "—"],
+  ["PO never over an order line", "PO / MR save", "so_qty_cap.js (warning)", "custom_script.guard_po_item_not_over_so_need, get_so_item_commitment", "so-rm-po-subcontracting-flow.md", "flowtest.py"],
+  ["Subcontract PO material check", "PO prompt · PO submit", "purchase_order.js", "purchase_order.rm_sendable, rm_short_lines, guard_subcontract_po_rm", "so-rm-po-subcontracting-flow.md", "flowtest.py"],
+  ["Create SCO & Material Transfer", "Submitted Subcontract PO", "purchase_order.js: show_stock_check_dialog", "purchase_order.get_required_raw_materials_for_po, check_rm_supply_shortfall, create_subcontracting_docs", "so-rm-po-subcontracting-flow.md", "—"],
+  ["Receive finished goods", "PO › Receive Goods for SCO", "purchase_order.js: show_receive_items_dialog, create_receipts_now", "purchase_order (receipt builders)", "so-rm-po-subcontracting-flow.md", "—"],
+  ["Embroidery (Full Piece / Panel)", "SO › Send to Embroidery · PO dashboards", "sales_order.js (embroidery), purchase_order.js: show_po_full_piece_dashboard, show_panel_process_dashboard", "so_embroidery.py · purchase_order (EWO functions)", "so-full-piece-embroidery.md", "stock_hold_test.py"],
+  ["Pick List (free stock only, picked qty)", "Pick List · SO", "pick_list.js · sales_order.js: so_confirm_submit_pick_list", "stock_hold.fit_pick_list_to_free · custom_script.update_and_submit_pick_list", "stock-hold.md, order-flow-dashboard.md", "stock_hold_test.py"],
+  ["Held stock protection", "DN · SI · Stock Entry · Reconciliation", "—", "stock_hold.py (guard_* functions)", "stock-hold.md", "stock_hold_test.py"],
+  ["DN / SI locked rows, one route", "Delivery Note · Sales Invoice", "delivery_note.js · sales_invoice.js", "custom_script.guard_dn/si_items_locked_to_pick_list, guard_so_fulfillment_route_lock, lock_item_rate_to_sales_order", "order-flow-dashboard.md", "flowtest.py"],
+  ["No duplicate drafts", "All create buttons", "sales_order.js (Draft already exists prompt)", "draft_guard.guard_duplicate_draft, existing_drafts", "draft-guard.md", "—"],
+  ["Logistics tab (LR No, signed copy)", "Order Flow › Logistics", "order_flow.js", "order_flow_api.get_logistics_flow · logistics_tab.py", "order-flow-dashboard.md", "—"],
+  ["Access sheet", "/roles-and-permissions", "www/roles-and-permissions.html", "access_worksheet.save_sheet · access_sync.apply_doc_access, sync_from_bundle · access_reverse.py", "access-worksheets.md", "access_sync_test.py, access_reverse_test.py"],
+  ["User profiles", "/app/roles-and-permissions", "page/roles_and_permissions", "roles_and_permissions_api.py · user_role_sheet.py (access/user_roles.json)", "access-worksheets.md", "access_sync_test.py (run_users)"],
+  ["Master data protection", "Customer · Supplier · Item Price", "—", "master_guard.py · access_sync (SENSITIVE_MASTERS)", "master-data-protection.md", "access_sync_test.py"],
+  ["Admin Settings readable by the app", "API / mobile app", "—", "doctype/admin_settings/admin_settings.has_permission", "master-data-protection.md", "—"],
+  ["POS opening / closing / cash drawer", "Point of Sale · POS Closing Entry", "pos_page_extend.js · pos_closing_entry.js", "pos_cash.py · pos_closing.make_closing_entry", "pos-store-scope.md", "pos_cash_test.py"],
+  ["POS store & brand scope", "All POS screens and reports", "pos_page_extend.js", "pos_scope.py · pos_report_scope.py · pos_brand_filter.py", "pos-store-scope.md", "pos_scope_test.py"],
+  ["POS stock requests & transfers", "Material Request · Stock Entry", "pos_stock.js", "pos_notify.py (mark_pos_*, guard_pos_approval) · pos_scope.guard_pos_transfer_submit", "pos-store-scope.md", "pos_stock_test.py"],
+  ["POS emails (closing report, MR, receipt)", "On submit / Email Receipt", "pos_page_extend.js", "pos_notify.py (closing_mail_html) · pos_receipt_email.py", "pos-store-scope.md", "pos_notify_test.py"],
+  ["Store Cash Book report", "/app/query-report/Store Cash Book", "report/store_cash_book/*.js", "report/store_cash_book/store_cash_book.py", "pos-store-scope.md", "pos_cash_test.py"],
+  ["Warehouse › Add Stock", "Warehouse list", "warehouse_list.js", "warehouse_add_stock.py", "warehouse-add-stock.md", "addstock_test.py"],
+  ["Sales Order shared with lead owner", "Sales Order", "—", "so_share.py", "sales-order-sharing.md", "—"],
+  ["CRM (leads, reports)", "Lead · CRM workspace", "lead.js · lead_list.js", "custom_lead.py · notifications.py", "—", "—"],
+];
+
+// [title, when, steps[], files, watch-out]
+const PLAYBOOKS = [
+  ["Add a custom field to a document", "A new piece of data must be stored on a standard document.",
+    ["Add it in Customize Form on the developer copy (developer mode on), or add it to a <code>create_custom_fields</code> list called from <code>after_migrate</code>.",
+     "Export: <code>bench --site &lt;site&gt; export-customizations</code> for the module <i>Erp Dacsinc Custom</i> (or the export button) — it lands in <code>custom/&lt;doctype&gt;.json</code>.",
+     "Commit the JSON. Live gets it on migrate (sync_on_migrate)."],
+    "custom/*.json · hooks.after_migrate", "Customisation sync never deletes fields — removing one needs a patch that deletes the Custom Field."],
+  ["Add a validation rule (block something on save / submit)", "A business rule must be enforced, e.g. \"rate must be read-only\".",
+    ["Write a function <code>def guard_x(doc, method=None)</code> in the module of that area; <code>frappe.throw(...)</code> with a message that says what to do instead.",
+     "Register it in <code>hooks.py › doc_events › &lt;DocType&gt;</code> under <code>validate</code> (always) or <code>before_submit</code> (only on submit).",
+     "If a screen also shows it, make the screen call the same function (or its numbers) — don't re-implement the rule in JS.",
+     "Add a PASS/FAIL check to the matching test suite; update the doc and the FRD here."],
+    "hooks.py · the area's module", "Order matters: our hooks run before ERPNext's. Read-only on screen is not enough — check on the server too."],
+  ["Make a field read-only (e.g. rate on SO / PO)", "Users must not edit a field.",
+    ["Add a Property Setter (Customize Form → Read Only) and export it to <code>custom/&lt;doctype&gt;.json</code>; for child tables set it on the item doctype.",
+     "If prices must still be set by the system (price list), also add a server check that resets or refuses a changed value for non-admin roles.",
+     "Check every place the field is filled (fetch dialogs, mapped documents) still works."],
+    "custom/*.json · a validate hook", "Some dialogs write the field from code — read-only only stops typing."],
+  ["Change who sees an Order Flow tab or sub-tab", "A team needs (or must lose) a dashboard tab.",
+    ["Open <a href=\"/roles-and-permissions\">/roles-and-permissions</a> › Order Flow dashboard as Admin; set ✓ (see) or A (act) for the role; Save.",
+     "Saving writes Admin Settings (<code>of_tab_*_roles</code>, <code>of_sub_*_roles</code>) and, in developer mode, the bundle <code>access/agreed_access.json</code>.",
+     "Commit the bundle — live re-applies it on migrate (<code>access_sync.sync_from_bundle</code>)."],
+    "access/agreed_access.json · order_flow_permissions.py", "Admins always see every tab — test with a normal user."],
+  ["Add a new Order Flow tab or sub-tab", "A new list is needed on the dashboard.",
+    ["Front-end: add it to <code>OF_TABS</code> in <code>page/order_flow/order_flow.js</code> (panel, loader, render).",
+     "Server: a <code>get_&lt;name&gt;_flow</code> in <code>order_flow_api.py</code> that calls <code>_guard_tab</code> and respects the merchandiser scope.",
+     "Permissions: add Admin Settings fields <code>of_tab_&lt;key&gt;_roles</code> / <code>_act_roles</code>, the keys in <code>access_sync.TAB_KEYS / SUBTAB_KEYS / TAB_DOCS</code>, and the row in <code>WS_TABS</code> of <code>www/roles-and-permissions.html</code>.",
+     "Rebuild the worksheet PDFs (<code>scripts/make_worksheet_pdfs.sh</code>) and bump their <code>?v=</code>."],
+    "order_flow.js · order_flow_api.py · access_sync.py · roles-and-permissions.html", "Keep <code>stage_key</code> values stable; only labels may change."],
+  ["Give a role access to a document", "A role needs to view / create / edit / submit a document.",
+    ["On <a href=\"/roles-and-permissions\">/roles-and-permissions</a> › Document access, tick the letters (V N E S C D O) for that role and document; Save (Admin).",
+     "Linked documents the form needs (lookups) are granted automatically as read-only.",
+     "Commit <code>access/agreed_access.json</code> — live applies it on migrate."],
+    "access_sync.py", "Don't edit Role Permission Manager for sheet roles — it is read back into the sheet, but the sheet stays the source of truth."],
+  ["Add a new role", "A new team or job needs its own role.",
+    ["Create the Role and tick <b>Access Sheet Role</b> (<code>custom_dacsinc_access_role</code>) — a matching Role Profile is created automatically.",
+     "Fill its column on the access sheet (documents and tabs) and Save.",
+     "Give users the profile on <a href=\"/app/roles-and-permissions\">/app/roles-and-permissions</a>.",
+     "If live needs it too: add it to <code>access_sync.INITIAL_ROLES</code> (or a patch) so it is created on migrate."],
+    "access_sync.py", "Admin is never a sheet column — it sees everything."],
+  ["Change a planning number (stock, RM, PO room)", "A figure on the SO, PO or MR looks wrong.",
+    ["Find the one server function behind it (feature map). Fix it there — every screen that shows it follows.",
+     "Keep the sales-order scope; drafts count where the doc says they do.",
+     "Re-run the comparison: SO RM table = PO prompt = SCO dialog on the same data, including a tight-stock case (rolled back).",
+     "Update <code>so-rm-po-subcontracting-flow.md</code>."],
+    "custom_script.get_item_stock_details_bulk · purchase_order.rm_sendable · order_flow_api._rm_stock_pools", "Never fix a number only in JS — the next screen will disagree."],
+  ["Add a report (and give store users access)", "A new report is needed.",
+    ["Create a Script Report in module <i>Erp Dacsinc Custom</i> on the developer copy (developer mode) — files land in <code>report/&lt;name&gt;/</code>.",
+     "Set its <code>ref_doctype</code> to a document the target roles can <i>read</i> (own-records-only rights are not enough for Frappe to run a report).",
+     "For POS users add it to <code>POS_REPORTS_ALLOWED</code> in <code>pos_report_scope.py</code>; their rows are then cut to their stores and brands.",
+     "Add it to Overview › Pages &amp; links here."],
+    "report/ · pos_report_scope.py", "Query reports skip permission hooks — filter in the report or rely on pos_report_scope."],
+  ["Add or change an email", "A notification or report email is needed.",
+    ["Build the HTML in the area's module (see <code>pos_notify.closing_mail_html</code> for the house style: tables + inline styles).",
+     "Send from a background job (<code>frappe.enqueue(..., queue=\"short\", enqueue_after_commit=True)</code>).",
+     "Recipients in Admin Settings, not in code."],
+    "pos_notify.py · notifications.py", "On the developer copy keep <code>mute_emails</code> on."],
+  ["Fix data on live (one time)", "Existing records must be corrected once.",
+    ["Write a patch in <code>patches/</code> with <code>execute()</code>; make it safe to run twice and give it a <code>dry_run</code> mode in the module.",
+     "Add it to <code>patches.txt</code> under <code>[post_model_sync]</code>. To run a patch again later, add a comment to its line.",
+     "Rehearse on a fresh live backup and read the output before deploying."],
+    "patches/ · patches.txt", "Patches run once per site; print what they changed."],
+  ["Change the POS screen or closing", "Store users need a change in POS.",
+    ["POS page: <code>public/js/pos_page_extend.js</code> patches ERPNext's classes before the page builds (never edit ERPNext's files).",
+     "Rules for opening / closing: <code>pos_cash.py</code> (validate hooks); closing build: <code>pos_closing.py</code>; form: <code>pos_closing_entry.js</code>.",
+     "Run <code>pos_cash_test.py</code>, <code>pos_scope_test.py</code>, <code>pos_notify_test.py</code>."],
+    "pos_*.py · pos_page_extend.js", "Test as a store user, not Administrator."],
+  ["Edit a vendor app (frappe / erpnext / hrms)", "A change can't be made from the custom app.",
+    ["First try a hook, an override in <code>override_whitelisted_methods</code>, or a JS patch from the custom app.",
+     "If a core edit is unavoidable, make it and record file, reason and date in <code>docs/core-modifications.md</code> at the bench root."],
+    "docs/core-modifications.md", "Vendor apps carry local uncommitted edits — don't revert them."],
+  ["Update this guide and task status", "A task is finished, or a flow / role / rule changed.",
+    ["Edit <code>www/project-guide.html</code>: the <code>TASKS</code>, <code>BRD</code>, <code>FRD</code>, <code>FEATURE_MAP</code> arrays in its script, or the text of a tab.",
+     "Rebuild the PDF with <code>scripts/make_worksheet_pdfs.sh</code> and bump <code>project-guide.pdf?v=</code>."],
+    "www/project-guide.html", ""],
+];
+
+// [suite, covers, run after]
+const TEST_SUITES = [
+  ["access_sync_test.py", "Access sheet → permissions, dependencies, profiles, master data", "Access sheet rules, roles, profiles"],
+  ["access_reverse_test.py", "Role Permission Manager / Admin Settings → sheet read-back; added documents", "Anything in access_reverse / access_worksheet"],
+  ["tab_sync_test.py", "Order Flow tab / sub-tab roles ⇄ Admin Settings, can_act_tab", "Dashboard tabs, order_flow_permissions"],
+  ["permission_probe.py", "Submits real documents per role and rolls back — finds missing rights", "Any permission change"],
+  ["flowtest.py · lifecycle.py", "One order end to end: SO → MR → PO → SCO → receipt → pick → DN → SI", "Planning, guards, Order Flow"],
+  ["stock_hold_test.py", "Held stock, Pick List fit, embroidery holds", "stock_hold.py, so_embroidery.py, Pick List"],
+  ["pos_scope_test.py", "Store / brand scope on POS documents, items, customers", "pos_scope.py"],
+  ["pos_stock_test.py", "Store stock requests, transfer approvals, defaults", "pos_notify.py, pos_stock.js"],
+  ["pos_notify_test.py", "POS MR mail, closing report mail and Excel", "pos_notify.py"],
+  ["pos_cash_test.py", "Opening carry-forward, counted closing, reasons, Store Cash Book", "pos_cash.py, pos_closing.py, report"],
+  ["addstock_test.py", "Warehouse › Add Stock", "warehouse_add_stock.py"],
+];
+
+// [problem, cause / fix]
+const FAQ = [
+  ["My JavaScript change doesn't show", "Form scripts are cached: hard refresh (Ctrl+Shift+R). For files in <code>app_include_js/css</code> run <code>bench build --app erp_dacsinc_custom</code>. Then <code>bench --site &lt;site&gt; clear-cache</code>."],
+  ["My Python change doesn't apply", "Restart bench (<code>bench restart</code> on servers; the dev server reloads by itself). Background jobs need the workers restarted."],
+  ["A web page (www) shows old content", "<code>bench --site &lt;site&gt; clear-website-cache</code>."],
+  ["\"No permission for X\" for a role", "Check the role's cell on the access sheet; if the form needs a linked document, the sheet grants read automatically — re-save the sheet. Never fix it by giving Write on Admin Settings."],
+  ["Access sheet changes didn't reach live", "The bundle <code>access/agreed_access.json</code> must be committed; it is applied on migrate when its content or <code>access_sync.RULES_VERSION</code> changes."],
+  ["\"Over the Sales Order's Own Need\" on save", "All POs linked to that order line already total its qty (any status, drafts included). The message names them — work on that PO, or add an unlinked row for extra."],
+  ["\"Raw Material Not Available\" on Subcontract PO submit", "Material for all rows together isn't this order's (bought for it + free). Reduce rows or Request RM; the SO RM table shows the same figure."],
+  ["Two screens show different numbers", "One of them uses its own formula. Find both functions (feature map) and make the screen call the shared one."],
+  ["A test changed real data", "It didn't stub <code>frappe.db.commit</code> (Admin Settings save commits). Restore from the backup taken before testing; fix the test."],
+  ["A field I deleted is back after migrate", "Customisation sync never deletes — write a patch that deletes the Custom Field, and remove it from <code>custom/*.json</code>."],
+  ["A whitelisted method ignores my new argument", "Frappe drops arguments the function doesn't declare — add it to the function signature."],
+  ["frm.set_intro shows two messages", "It adds to the message area — call <code>frm.set_intro(\"\")</code> first."],
+];
+
+(function () {
+  const q = document.getElementById("map-q");
+  function draw() {
+    const rows = FEATURE_MAP.filter(r => matches(q.value, ...r));
+    document.getElementById("map-body").innerHTML = rows.map(([f, sc, fe, sv, doc, t]) => `<tr><td class="k">${esc(f)}</td><td>${esc(sc)}</td>
+      <td><code>${esc(fe)}</code></td><td><code>${esc(sv)}</code></td><td class="nw"><code>${esc(doc)}</code></td><td><code>${esc(t)}</code></td></tr>`).join("")
+      || `<tr><td colspan="6" class="sub">Nothing matches.</td></tr>`;
+    document.getElementById("map-count").textContent = `${rows.length} of ${FEATURE_MAP.length}`;
+  }
+  q.addEventListener("input", draw); draw();
+})();
+(function () {
+  const q = document.getElementById("play-q");
+  function draw() {
+    const rows = PLAYBOOKS.map((p, i) => ({ p, i })).filter(x => matches(q.value.replace(/<[^>]+>/g, ""), x.p[0], x.p[1], x.p[2].join(" "), x.p[3], x.p[4]));
+    document.getElementById("play-list").innerHTML = rows.map(({ p, i }) => {
+      const [title, when, steps, files, watch] = p;
+      return xitem(`play-${i}`, `P${String(i + 1).padStart(2, "0")}`, esc(title), esc(when), "",
+        `<dl><dt>Steps</dt><dd><ol class="steps-ol">${steps.map(s => `<li>${s}</li>`).join("")}</ol></dd>
+         <dt>Files</dt><dd><code>${esc(files)}</code></dd>${watch ? `<dt>Watch out</dt><dd>${esc(watch)}</dd>` : ""}</dl>`);
+    }).join("") || `<p class="sub">Nothing matches.</p>`;
+    document.getElementById("play-count").textContent = `${rows.length} of ${PLAYBOOKS.length}`;
+  }
+  q.addEventListener("input", draw); draw();
+})();
+document.getElementById("test-body").innerHTML = TEST_SUITES.map(([s, c, r]) => `<tr><td class="nw"><code>${esc(s)}</code></td><td>${esc(c)}</td><td>${esc(r)}</td></tr>`).join("");
+(function () {
+  const q = document.getElementById("faq-q");
+  function draw() {
+    const rows = FAQ.map((f, i) => ({ f, i })).filter(x => matches(q.value, x.f[0], x.f[1].replace(/<[^>]+>/g, "")));
+    document.getElementById("faq-list").innerHTML = rows.map(({ f, i }) => xitem(`faq-${i}`, "?", esc(f[0]), "", "", `<p>${f[1]}</p>`)).join("") || `<p class="sub">Nothing matches.</p>`;
+    document.getElementById("faq-count").textContent = `${rows.length} of ${FAQ.length}`;
+  }
+  q.addEventListener("input", draw); draw();
 })();
 
 /* ───────────── OPS + GLOSSARY ───────────── */
@@ -994,5 +1400,22 @@ document.getElementById("btn-html").onclick = () => {
   a.download = `Dacsinc ERP - Project Guide - ${stamp()}.html`; document.body.appendChild(a); a.click(); a.remove();
 };
 </script>
+<script type="module">
+  // Diagrams render to SVG strings (no visible container needed), so they also print / go into the PDF.
+  import mermaid from "https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs";
+  mermaid.initialize({ startOnLoad: false, securityLevel: "loose", theme: "base",
+    flowchart: { curve: "basis", nodeSpacing: 34, rankSpacing: 34, useMaxWidth: true, htmlLabels: true, padding: 10 },
+    themeVariables: { fontFamily: "IBM Plex Mono, monospace", fontSize: "15px", lineColor: "#8a8378", primaryTextColor: "#211d1b",
+      edgeLabelBackground: "#fbfaf7", tertiaryColor: "#fbfaf7" } });
+  for (const [id, def] of [["flow-diagram-b2b", FLOW_B2B], ["flow-diagram-pos", FLOW_POS]]) {
+    const box = document.querySelector(`#${id} .dg-body`);
+    try {
+      const { svg, bindFunctions } = await mermaid.render(id + "-svg", def);
+      box.innerHTML = svg; if (bindFunctions) bindFunctions(box);
+    } catch (e) { box.textContent = "The diagram could not be drawn (no internet?) — the steps below have the same content."; }
+  }
+  document.documentElement.dataset.diagrams = "ready";
+</script>
+{% endraw %}
 </body>
 </html>

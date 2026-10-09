@@ -33,7 +33,8 @@ cp "$TMP/ws.pdf" "$OUT/tab-access-worksheet.pdf"
 cp "$TMP/dt.pdf" "$OUT/document-access-worksheet.pdf"
 # The project guide (/project-guide): its print CSS lays every tab out in order (A4 portrait).
 curl -sf -H "Host: $HOST" -H "Cookie: sid=$SID" "http://127.0.0.1:$PORT/project-guide" -o "$TMP/guide.html"
-"$CHROME" --headless=new --disable-gpu --no-sandbox --no-pdf-header-footer \
+# --virtual-time-budget: let the flow diagrams (Mermaid, loaded from the CDN) draw before printing.
+"$CHROME" --headless=new --disable-gpu --no-sandbox --no-pdf-header-footer --virtual-time-budget=20000 \
   --print-to-pdf="$TMP/guide.pdf" "file://$TMP/guide.html" 2>/dev/null
 cp "$TMP/guide.pdf" "$OUT/project-guide.pdf"
 echo "Written: $OUT/tab-access-worksheet.pdf, $OUT/document-access-worksheet.pdf, $OUT/project-guide.pdf"
