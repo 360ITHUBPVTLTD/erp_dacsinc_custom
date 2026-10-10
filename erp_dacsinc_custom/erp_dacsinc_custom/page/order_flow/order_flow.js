@@ -4087,7 +4087,6 @@ class OrderFlow {
                 <td><i class="fa fa-caret-right of-ewo-items-toggle" data-ewo="${of_esc(e.name)}" style="cursor:pointer;margin-right:4px;color:var(--text-light);"></i>
                     <b>${of_esc(e.name)}</b>
                     <div class="of-micro">${of_esc(e.work_type || '')}</div>
-                    ${e.notes ? `<div class="of-micro of-ewo-notes" title="${of_esc(e.notes)}"><i class="fa fa-sticky-note-o"></i> ${of_esc(String(e.notes).length > 90 ? String(e.notes).slice(0, 90) + '…' : e.notes)}</div>` : ''}
                     ${of_ewo_thumbs(e.attachments, e.name)}
                     ${of_creator_html(e)}</td>
                 <td style="text-align:left;">
@@ -4107,6 +4106,7 @@ class OrderFlow {
                     ${e.subcontracting_order ? `<div class="of-micro"><span class="of-chip">Subcontract</span></div>` : ''}</td>
                 <td>${of_so_links(e.sales_orders)}
                     ${e.so_customer_names ? `<div class="of-micro text-muted">${of_esc(e.so_customer_names)}</div>` : ''}</td>
+                <td class="of-ewo-notes-cell">${e.notes ? `<div class="of-ewo-notes" title="${of_esc(String(e.notes).trim())}">${of_esc(String(e.notes).trim())}</div>` : '<span class="text-muted">—</span>'}</td>
                 <td class="of-meta">${of_date(e.date)}</td>
                 <td>${of_qty(e.ordered_qty)}</td>
                 <td>${of_qty(e.received_qty, flt_of(e.received_qty) > 0 ? 'pos' : null)}</td>
@@ -4137,9 +4137,9 @@ class OrderFlow {
             is_fp ? 'magic' : 'scissors', `
             <table class="of-table">
                 <thead><tr><th style="min-width:160px;">Work Order</th><th style="min-width:140px;">Jobber</th>
-                    <th>Purchase Order</th><th>Sales Order</th><th>Date</th>
+                    <th>Purchase Order</th><th>Sales Order</th><th style="width:170px;">Notes</th><th>Date</th>
                     <th>Sent</th><th>Received</th><th>Pending</th><th>Stage</th><th>Action</th></tr></thead>
-                <tbody>${this.ewo_rows_html(env.rows, view_only) || of_empty_row(10)}</tbody>
+                <tbody>${this.ewo_rows_html(env.rows, view_only) || of_empty_row(11)}</tbody>
             </table>`, null, of_pagination_html(tab, key, env),
             of_docstatus_pills(tab, key, env.docstatus_counts, (this.docstatus_filter[tab] || {})[key]));
     }

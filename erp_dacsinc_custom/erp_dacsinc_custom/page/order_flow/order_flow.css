@@ -1521,3 +1521,8 @@ td > .of-action-btn {
 	font-size: var(--text-sm); color: var(--text-color); cursor: pointer; white-space: nowrap; font-weight: 500; }
 .of-my-customers input { margin: 0; accent-color: var(--primary); }
 .of-my-customers:has(input:checked) { border-color: var(--primary); }
+
+/* Embroidery work orders: the notes column — narrow, left-aligned, 3 lines (full text on hover) */
+.of-table td.of-ewo-notes-cell { text-align: left; width: 170px; max-width: 170px; }
+.of-ewo-notes { white-space: pre-line; font-size: 11px; line-height: 1.35; color: var(--text-color); word-break: break-word;
+	display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; cursor: help; }
