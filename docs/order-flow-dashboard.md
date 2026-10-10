@@ -641,6 +641,15 @@ so POS documents never appear there.
 
 ## Merchandiser: own orders, or with their customers' orders
 
+**Picking a customer on a Sales Order (MOM 8 Oct 2026):** in the Customer field of a new or
+draft Sales Order a scoped merchandiser can pick **any enabled customer**, including another
+merchandiser's — the field's search, filling the customer's details (`get_party_details`)
+and saving the draft are let through (`custom_script.picking_customer_for_sales_order`,
+used by `get_customer_permission_query_conditions` and `has_customer_permission`). The
+Customer list, opening another merchandiser's customer, and the dashboards stay limited
+(below). Once the order is saved they can open that customer, because it is now a
+customer of an order they raised.
+
 On the Order Flow dashboard, a scoped Merchandiser User sees, on every tab:
 - **by default** only the Sales Orders **they created** (`so.owner`), and the
   documents of those orders;
@@ -1642,3 +1651,14 @@ row (`of_docstatus_pills`) directly above its table.
   satisfy (nothing can be received against an unsubmitted PO) — it is
   already implicitly Submitted-only, so no pill was added there. The Pick
   Lists tab was considered and explicitly left out for now.
+
+## Print right after creating (`public/js/print_prompt.js`)
+
+Loaded on every desk page (`app_include_js`). After a **Sales Invoice** or **Purchase Order /
+Subcontract PO** is submitted, after an **Uniform Embroidery Transfer** is first saved, and after
+every **Embroidery Work Order** created from the PO's Full Piece / Panel dashboards, the Sales
+Order's Send to Embroidery, or the Embroidery Transfers tab, the user is asked "… is created. Do
+you want to print it now?". Yes opens the same PDF as the Print buttons (`dacs_print_url`: work
+orders in "Embroidery Work Order Print Format", POs in "Purchase Order Print Format", others in
+their default format). Embroidery work order rows on the dashboard show their **notes** under the
+name, and Embroidery Transfers rows have a Print button.

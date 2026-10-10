@@ -11253,6 +11253,45 @@ def has_sales_order_permission(doc, ptype=None, user=None):
     return True
 
 
+# MOM 8 Oct 2026 (1a-i): a merchandiser may PICK any customer on a Sales Order — the
+# Customer field's search, filling the customer's details, saving a draft order — while
+# the Customer list, opening another merchandiser's customer and the dashboards stay
+# limited to their own (rule below). Recognised by the request being one of these.
+SO_CUSTOMER_PICK_METHODS = {
+	"frappe.desk.search.search_link", "frappe.desk.search.search_widget",
+	"erpnext.controllers.queries.customer_query",
+}
+SO_CUSTOMER_DETAIL_METHODS = {
+	"erpnext.accounts.party.get_party_details", "frappe.client.validate_link",
+	"frappe.desk.form.utils.validate_link", "frappe.client.get_value",
+}
+
+
+def picking_customer_for_sales_order():
+	"""Is this request a Sales Order picking / filling / saving its customer?"""
+	if not getattr(frappe.local, "request", None):
+		return False
+	fd = frappe.local.form_dict or {}
+	cmd = fd.get("cmd") or ""
+	if not cmd and frappe.local.request.path.startswith("/api/method/"):
+		cmd = frappe.local.request.path[len("/api/method/"):]
+	if cmd in SO_CUSTOMER_PICK_METHODS:
+		return fd.get("doctype") == "Customer" and fd.get("reference_doctype") == "Sales Order"
+	if cmd == "erpnext.accounts.party.get_party_details":
+		return fd.get("party_type") == "Customer" and fd.get("doctype") == "Sales Order"
+	if cmd in SO_CUSTOMER_DETAIL_METHODS:
+		return fd.get("doctype") == "Customer"
+	if cmd in ("frappe.desk.form.save.savedocs", "run_doc_method", "frappe.client.save", "frappe.client.insert"):
+		doc = fd.get("doc") or fd.get("docs")
+		if isinstance(doc, str):
+			try:
+				doc = frappe.parse_json(doc)
+			except Exception:
+				doc = None
+		return isinstance(doc, dict) and doc.get("doctype") == "Sales Order" and int(doc.get("docstatus") or 0) == 0
+	return False
+
+
 def get_customer_permission_query_conditions(user=None):
     """Merchandiser User: the customers whose orders they may see — assigned to
     them or to nobody yet, plus customers they created and customers of orders
@@ -11263,6 +11302,8 @@ def get_customer_permission_query_conditions(user=None):
     user = user or frappe.session.user
     if not is_scoped_merchandiser_for_doctype("Customer", user):
         return ""
+    if picking_customer_for_sales_order():
+        return ""  # the Sales Order's Customer field offers every customer
     esc = frappe.db.escape(user)
     return """(`tabCustomer`.custom_merchandiser_user = {0}
         or ifnull(`tabCustomer`.custom_merchandiser_user, '') = ''
@@ -11277,6 +11318,8 @@ def has_customer_permission(doc, ptype=None, user=None, debug=False):
     user = user or frappe.session.user
     if doc.is_new() or not is_scoped_merchandiser_for_doctype("Customer", user):
         return None
+    if ptype in ("select", "read") and picking_customer_for_sales_order():
+        return True  # picking / filling a customer on a draft Sales Order
     if not doc.get("custom_merchandiser_user") or doc.custom_merchandiser_user == user or doc.owner == user:
         return True
     return bool(frappe.db.sql("""select 1 from `tabSales Order` where customer = %(c)s

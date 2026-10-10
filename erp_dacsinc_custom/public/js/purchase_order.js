@@ -991,11 +991,12 @@ function show_po_full_piece_dashboard(frm) {
                                 attachment_urls: JSON.stringify(files)
                             },
                             freeze: true,
-                            callback: () => {
+                            callback: (r) => {
                                 d_upload.hide();
                                 dialog.hide();
                                 frappe.show_alert({ message: __("Batch dispatched."), indicator: "green" });
                                 setTimeout(() => show_po_full_piece_dashboard(frm), 800);
+                                if (r && r.message && window.dacs_print_prompt) dacs_print_prompt("Embroidery Work Order", r.message, __("Embroidery Work Order"));
                             }
                         });
                     }
@@ -1280,6 +1281,7 @@ function show_panel_process_dashboard(frm) {
                                     frappe.show_alert({ message: __('Batch Initialized Successfully'), indicator: 'green' });
                                     frm.reload_doc();
                                     setTimeout(() => show_panel_process_dashboard(frm), 800);
+                                    if (window.dacs_print_prompt) dacs_print_prompt("Embroidery Work Order", r.message, __("Embroidery Work Order"));
                                 }
                             }
                         });
