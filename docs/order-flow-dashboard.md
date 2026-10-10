@@ -1661,5 +1661,6 @@ Order's Send to Embroidery, or the Embroidery Transfers tab, the user is asked "
 you want to print it now?". Yes opens the same PDF as the Print buttons (`dacs_print_url`: work
 orders in "Embroidery Work Order Print Format", POs in "Purchase Order Print Format", others in
 their default format). The Embroidery work order tables (Full Piece / Panel) have a
-narrow **Notes** column (first 3 lines, full text on hover), and Embroidery Transfers rows have a
+**Notes** column showing the full notes (`of_ewo_notes_html`: one line per entry, the date of
+each "• <date time>: Status changed…" entry in bold; the box scrolls past ~7 lines), and Embroidery Transfers rows have a
 Print button.
