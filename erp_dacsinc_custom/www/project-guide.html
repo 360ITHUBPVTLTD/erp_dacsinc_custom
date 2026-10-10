@@ -259,7 +259,7 @@
         requirements, how to build and deploy, and the task list — delivered, open from the 8 Oct meeting, and Phase 2.</p>
     </div>
     <div class="actions no-print">
-      <a class="btn" href="/assets/erp_dacsinc_custom/docs/project-guide.pdf?v=8" download="Dacsinc ERP - Project Guide.pdf" data-dl-name="Dacsinc ERP - Project Guide">⤓ Download PDF</a>
+      <a class="btn" href="/assets/erp_dacsinc_custom/docs/project-guide.pdf?v=9" download="Dacsinc ERP - Project Guide.pdf" data-dl-name="Dacsinc ERP - Project Guide">⤓ Download PDF</a>
       <button class="btn outline" type="button" id="btn-pdf">⎙ Print all</button>
       <button class="btn outline" type="button" id="btn-tab">⎙ Print this tab</button>
       <button class="btn outline" type="button" id="btn-html">⤓ HTML copy</button>
@@ -524,9 +524,9 @@
       </tr></thead>
       <tbody id="task-body"></tbody>
     </table></div>
-    <div class="note warn"><b>Needs a decision before building:</b> MOM 1(a)(i) "all customers visible to all merchandisers while creating a Sales Order"
-      changes business rule <b>BR-08</b> (merchandisers see their own customers). Suggested: every merchandiser may <i>pick</i> any customer on a new order,
-      while lists and dashboards stay scoped. To confirm with the client.</div>
+    <div class="note warn"><b>Needs a decision before building:</b> MOM 1(a)(ii) "rate read-only" — the price lists hold placeholder prices (₹10) for most items
+      (Standard Buying 17,376 of 17,411; Standard Selling 6,987 of 17,472). Locking the rate to the price list now would lock orders at ₹10.
+      Clean the price lists first, or treat placeholder prices as "no price".</div>
   </section>
 
   <!-- 07 DEV -->
@@ -753,7 +753,7 @@ const BRD = [
   ["BR-05", "Stock", "Promised stock stays promised", "Picked or reserved stock was delivered or moved for other orders.", "Stock held for an order (picked, at a jobber, bought for it) cannot be taken by anything else.", ["DN, Stock Entry, reconciliation, returns and cancels are refused when they would take held stock."], "Done"],
   ["BR-06", "Fulfilment", "One fulfilment route", "Direct-billing invoices and DNs gave two different sets of numbers.", "Fulfilment is Pick List → Delivery Note → Sales Invoice.", ["An Update-Stock invoice against a Sales Order is refused."], "Done"],
   ["BR-07", "Sales", "Four-eyes approval", "Orders went to production without management review.", "Merchandiser approval, then final approval by a named approver who did not create the order.", ["The creator cannot give final approval."], "Done"],
-  ["BR-08", "Sales", "Clear ownership of orders", "Merchandisers saw and changed each other's orders.", "Merchandisers see their own orders and customers; they raise only subcontract POs.", ["Lists and dashboard show only their orders (option: their customers' orders).", "Change requested (MOM 8 Oct 1a-i): all customers selectable while creating an order."], "Decision pending"],
+  ["BR-08", "Sales", "Clear ownership of orders", "Merchandisers saw and changed each other's orders.", "Merchandisers see their own orders and customers; they raise only subcontract POs. On a new Sales Order they may pick any enabled customer (MOM 8 Oct).", ["Lists and dashboard show only their orders (option: their customers' orders).", "The Sales Order's Customer field offers every enabled customer."], "Done"],
   ["BR-09", "Master data", "Master data stays inside", "Customer, supplier and price lists could be exported by anyone.", "Only Accounts may print / export customer, supplier and price data; others only pick them in forms.", ["Export / print / report hidden for other roles."], "Done"],
   ["BR-10", "POS", "Stores see only their store", "Store users saw all stores' bills and stock.", "Store users see only their store's documents and brands.", ["Lists, scans and reports filtered by store and brand."], "Done"],
   ["BR-11", "POS", "Store cash is accounted for", "Cash differences between shifts were not traceable.", "One open shift per store; cash carried closing → opening; every difference has a reason.", ["Store Cash Book shows each shift; mismatches in red."], "Done"],
@@ -773,7 +773,7 @@ const FRD = [
   ["FR-A3", "Sales & approvals", "Order shared with lead owner", "System", "Sales Order", "The lead owner can read and edit the order.", [], "Open the order as the lead owner.", "so_share", "Done"],
   ["FR-A4", "Sales & approvals", "Rate locked downstream", "System", "Delivery Note · Sales Invoice", "DN / SI rate equals the Sales Order rate.", ["Rate 0 refused on SO, quotation, PO, PI."], "Change a rate on an SI → reset to the order rate.", "lock_item_rate_to_sales_order", "Done"],
   ["FR-A5", "Sales & approvals", "Rate read-only on SO and PO", "All users", "Sales Order · Purchase Order", "Rate field cannot be edited (MOM 8 Oct).", [], "Try to change the rate → not editable.", "—", "Open"],
-  ["FR-A6", "Sales & approvals", "Customer pick for all merchandisers", "Merchandiser", "Sales Order › Customer field", "Any customer can be chosen while creating an order (MOM 8 Oct) — lists stay scoped.", ["Needs client confirmation (changes BR-08)."], "A merchandiser finds another merchandiser's customer in the field.", "—", "Decision pending"],
+  ["FR-A6", "Sales & approvals", "Customer pick for all merchandisers", "Merchandiser", "Sales Order › Customer field", "Any enabled customer can be chosen while creating or editing a draft order (MOM 8 Oct); the Customer list and dashboards stay limited.", ["Only the field's search, the customer's details and saving the draft are opened up."], "A merchandiser finds another merchandiser's customer in the field and saves the order; the Customer list still hides it.", "custom_script.picking_customer_for_sales_order", "Done"],
   ["FR-B1", "Planning", "Item Stock & Action Plan", "Merchandiser · Purchase", "Sales Order (Order Details tab) · Sales Tracker row", "Per line: Ordered · Delivered · Still to Cover · Free Finished Stock · To Make · Next Action.", ["To Make = Still to Cover − Free Finished Stock."], "Open an order; each line shows its next action.", "get_item_stock_details_bulk", "Done"],
   ["FR-B2", "Planning", "Raw material table", "Merchandiser · Production", "Sales Order › under each BOM line", "Needed · In Stock for this Order (bought for this order + free stock) · Requested / On the Way · To Request · Status.", ["Statuses: In Stock · Requested · Short N — Request RM · Not Needed.", "Lines share material in line order (\"used by <line> of this order\").", "Other orders' stock shown in grey — \"stays with them\"."], "Two lines needing the same fabric → the second shows what the first used.", "sales_order.js · rm_alloc_used", "Done"],
   ["FR-B3", "Planning", "Material Request caps", "Merchandiser · Purchase", "Material Request", "MR qty capped at the order line's need / the RM table's To Request.", ["A draft MR already counts."], "Request more than To Request → refused.", "guard_mr_item_not_over_so_need · guard_mr_rm_not_over_so_shortfall", "Done"],
@@ -784,7 +784,7 @@ const FRD = [
   ["FR-C5", "Purchase & subcontracting", "No duplicate drafts", "System", "PO · SCO · PR · PI · SCR · MR · DN · SI", "A second draft for the same source line is refused, naming the existing one.", [], "Create a PO twice from the same MR line.", "draft_guard", "Done"],
   ["FR-C6", "Purchase & subcontracting", "Finished goods receipt entry", "Inward · Production", "PO › Receive Goods for SCO · Purchase Receipt", "Qty to receive starts at 0; supplier invoice number and date captured (MOM 8 Oct).", [], "Open the receive window → qty 0, invoice fields present.", "—", "Open"],
   ["FR-C7", "Purchase & subcontracting", "Subcontracting PO analysis report", "Production", "Report", "Analysis of subcontracting POs with sorting; access for production (MOM 8 Oct).", [], "A production user opens and sorts the report.", "—", "Open"],
-  ["FR-C8", "Purchase & subcontracting", "Direct print after create", "Accounts · Purchase · Production", "Sales Invoice · PO · Subcontract PO · Embroidery transfer", "Print offered right after the document is created (MOM 8 Oct).", [], "Create a PO → Print appears at once.", "—", "Open"],
+  ["FR-C8", "Purchase & subcontracting", "Direct print after create", "Accounts · Purchase · Production", "Sales Invoice · PO · Subcontract PO · Embroidery work order / transfer", "\"Print it now?\" right after the document is created (SI / PO on submit, transfer on first save, embroidery work orders from every dialog); Yes opens the PDF. Embroidery rows on the dashboard show their notes and a Print button (MOM 8 Oct).", [], "Submit a PO → asked to print; Yes opens the PDF.", "public/js/print_prompt.js", "Done"],
   ["FR-D1", "Stock & dispatch", "Pick List claims free stock only", "Merchandiser · Packing", "Pick List", "A draft claims only free stock; submit asks the qty actually picked (only down).", [], "Pick more than free → reduced.", "fit_pick_list_to_free", "Done"],
   ["FR-D2", "Stock & dispatch", "Held stock protected", "System", "DN · SI · Stock Entry · Reconciliation · returns · cancel", "Held stock cannot leave for anything else; listed users get a warning instead.", [], "DN for another order on held stock → refused.", "stock_hold", "Done"],
   ["FR-D3", "Stock & dispatch", "Locked derived rows, one route", "Accounts", "Delivery Note · Sales Invoice", "Rows from a Pick List / DN are locked; Update-Stock SI against an order is refused.", [], "Edit qty on a derived DN row → reset.", "guard_dn/si_items_locked_to_pick_list · guard_so_fulfillment_route_lock", "Done"],
@@ -839,9 +839,9 @@ const TASKS = [
   ["Done", "Order Flow", "Order Flow dashboard page — /app/order-flow (approvals, trackers, pick lists, purchase, job work, stock, billing, finance, embroidery, logistics)", "Delivered", "1", "", "", "360ithub", "Address in Overview › Pages & links"],
   ["Done", "Roles & permissions", "Roles & Permissions desk page — /app/roles-and-permissions (profiles per user) and access sheet — /roles-and-permissions", "Delivered", "1", "", "", "360ithub", "Address in Overview › Pages & links"],
   ["Done", "Documentation", "Project guide page — /project-guide: flow, roles, BRD, FRD, task status, page links, PDF download", "Delivered", "1", "", "2026-10-09", "360ithub", ""],
-  ["Open", "Sales Order", "All customers visible to all merchandisers while creating a Sales Order", "MOM 08-Oct", "1", "High", "2026-10-08", "360ithub", "Changes BR-08 — confirm: pick any customer, lists stay scoped?"],
-  ["Open", "Sales Order", "Rate field read-only on Sales Order and Purchase Order", "MOM 08-Oct", "1", "High", "2026-10-08", "360ithub", ""],
-  ["Open", "Print", "Direct print once created: Sales Invoice, Purchase Order, Subcontracting PO, Embroidery Transfer", "MOM 08-Oct", "1", "Medium", "2026-10-08", "360ithub", ""],
+  ["Done", "Sales Order", "All customers visible to all merchandisers while creating a Sales Order", "MOM 08-Oct", "1", "High", "2026-10-10", "360ithub", "Any enabled customer can be picked on a Sales Order; Customer list and dashboards stay limited"],
+  ["Need to Discuss", "Sales Order", "Rate field read-only on Sales Order and Purchase Order", "MOM 08-Oct", "1", "High", "2026-10-08", "360ithub", "Price lists hold placeholder prices (₹10): Buying 17,376 of 17,411, Selling 6,987 of 17,472 — clean prices first or treat placeholders as no price"],
+  ["Done", "Print", "Direct print once created: Sales Invoice, Purchase Order, Subcontracting PO, Embroidery Transfer", "MOM 08-Oct", "1", "Medium", "2026-10-10", "360ithub", "\"Print it now?\" after creating; embroidery notes and Print buttons on dashboard lists"],
   ["Open", "Embroidery", "Multiple Sales Orders to a single embroidery order", "MOM 08-Oct", "1", "High", "2026-10-08", "360ithub", ""],
   ["Open", "Embroidery", "Multiple Purchase Orders to a single Purchase Receipt", "MOM 08-Oct", "1", "High", "2026-10-08", "360ithub", ""],
   ["Open", "Embroidery", "Design name visible in the embroidery tab", "MOM 08-Oct", "1", "Medium", "2026-10-08", "360ithub", ""],

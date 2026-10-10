@@ -31,7 +31,9 @@ extend_bootinfo = "erp_dacsinc_custom.custom_customer.extend_bootinfo"
 
 app_include_js = [
     "/assets/erp_dacsinc_custom/js/workflow.js?v=1.0.7",
-    "/assets/erp_dacsinc_custom/js/toogle.js?v=1.0.5"
+    "/assets/erp_dacsinc_custom/js/toogle.js?v=1.0.5",
+    # "Print it now?" after creating SI / PO / embroidery documents (MOM 8 Oct 2026)
+    "/assets/erp_dacsinc_custom/js/print_prompt.js?v=1.0.0"
 ]
 
 app_include_css = [

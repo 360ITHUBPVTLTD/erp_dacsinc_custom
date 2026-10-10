@@ -1534,6 +1534,11 @@ class OrderFlow {
             e.stopPropagation();
             of_print_ewo($(e.currentTarget).data('name'));
         });
+        this.$body.on('click', '.of-uet-print-btn', (e) => {
+            e.stopPropagation();
+            const name = $(e.currentTarget).data('name');
+            if (name && window.dacs_print_url) window.open(dacs_print_url('Uniform Embroidery Transfer', name), '_blank');
+        });
 
         // Purchase Flow tab's own Print — every row there is a plain
         // (non-subcontracted) PO, so it always prints itself.
@@ -4082,6 +4087,7 @@ class OrderFlow {
                 <td><i class="fa fa-caret-right of-ewo-items-toggle" data-ewo="${of_esc(e.name)}" style="cursor:pointer;margin-right:4px;color:var(--text-light);"></i>
                     <b>${of_esc(e.name)}</b>
                     <div class="of-micro">${of_esc(e.work_type || '')}</div>
+                    ${e.notes ? `<div class="of-micro of-ewo-notes" title="${of_esc(e.notes)}"><i class="fa fa-sticky-note-o"></i> ${of_esc(String(e.notes).length > 90 ? String(e.notes).slice(0, 90) + '…' : e.notes)}</div>` : ''}
                     ${of_ewo_thumbs(e.attachments, e.name)}
                     ${of_creator_html(e)}</td>
                 <td style="text-align:left;">
@@ -5292,13 +5298,14 @@ class OrderFlow {
             // A transfer can be received more than once — the button stays
             // available through "Partially Received", not just "Sent".
             const can_receive = t.status === 'Sent' || t.status === 'Partially Received';
-            const action_html = can_receive ? `
+            const action_html = (can_receive ? `
                 <button class="of-btn of-btn--success of-receive-btn" data-id="${t.name}" data-outstanding="${outstanding}">
                     <i class="fa fa-arrow-down"></i> ${received > 0 ? 'Receive Rest' : 'Receive'}
                 </button>
             ` : (t.status === 'Cancelled'
                     ? `<span class="text-muted" style="font-size: 11px;"><i class="fa fa-ban"></i> Cancelled</span>`
-                    : `<span class="text-muted" style="font-size: 11px;"><i class="fa fa-check"></i> Completed</span>`);
+                    : `<span class="text-muted" style="font-size: 11px;"><i class="fa fa-check"></i> Completed</span>`))
+                + ` <button class="of-btn of-uet-print-btn" data-name="${of_esc(t.name)}" title="${__('Print transfer')}"><i class="fa fa-print"></i></button>`;
 
             return `
                 <tr class="${received > 0 ? 'of-transfer-row' : ''}">
@@ -5571,6 +5578,7 @@ class OrderFlow {
                     dialog.hide();
                     frappe.show_alert({message: __('Plain items transferred to embroidery WIP successfully'), color: 'green'});
                     this.refresh(true);
+                    if (r && r.message && window.dacs_print_prompt) dacs_print_prompt('Uniform Embroidery Transfer', r.message, __('Embroidery transfer'));
                 }).always(() => {
                     dialog.get_primary_btn().attr('disabled', false);
                 });

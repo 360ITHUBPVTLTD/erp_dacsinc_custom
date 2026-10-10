@@ -25,6 +25,8 @@ previously-buggy edge cases — are documented in `docs/`:
   while a draft for the same source line exists.
 - `docs/merchandiser-purchase.md` — Merchandiser User sees and creates only
   subcontracted POs; Stock Entries only for their orders' jobber transfers.
+- `docs/crm-admin-review-dashboard.md` — CRM Admin Review dashboard (a DB-stored HTML
+  block): Draft Pipeline, Visits & Follow-ups (new vs existing), unique Lead / Contact counts.
 - `docs/stock-hold.md` — stock held for Sales Orders (Pick Lists, jobber, earmarks)
   can't be delivered, moved, reconciled or cancelled away by anything else.
 

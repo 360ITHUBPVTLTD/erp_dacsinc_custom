@@ -5822,6 +5822,7 @@ window.so_show_fp_embroidery_prompt = function (sales_order, items, on_done) {
                     indicator: 'green'
                 });
                 if (on_done) on_done(r.message);
+                if (r.message && window.dacs_print_prompt) dacs_print_prompt('Embroidery Work Order', r.message, __('Embroidery Work Order'));
             });
         }
     });
