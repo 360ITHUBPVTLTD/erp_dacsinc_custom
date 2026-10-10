@@ -1660,5 +1660,6 @@ every **Embroidery Work Order** created from the PO's Full Piece / Panel dashboa
 Order's Send to Embroidery, or the Embroidery Transfers tab, the user is asked "… is created. Do
 you want to print it now?". Yes opens the same PDF as the Print buttons (`dacs_print_url`: work
 orders in "Embroidery Work Order Print Format", POs in "Purchase Order Print Format", others in
-their default format). Embroidery work order rows on the dashboard show their **notes** under the
-name, and Embroidery Transfers rows have a Print button.
+their default format). The Embroidery work order tables (Full Piece / Panel) have a
+narrow **Notes** column (first 3 lines, full text on hover), and Embroidery Transfers rows have a
+Print button.
