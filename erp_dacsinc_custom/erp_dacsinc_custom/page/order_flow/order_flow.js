@@ -4106,7 +4106,7 @@ class OrderFlow {
                     ${e.subcontracting_order ? `<div class="of-micro"><span class="of-chip">Subcontract</span></div>` : ''}</td>
                 <td>${of_so_links(e.sales_orders)}
                     ${e.so_customer_names ? `<div class="of-micro text-muted">${of_esc(e.so_customer_names)}</div>` : ''}</td>
-                <td class="of-ewo-notes-cell">${e.notes ? `<div class="of-ewo-notes" title="${of_esc(String(e.notes).trim())}">${of_esc(String(e.notes).trim())}</div>` : '<span class="text-muted">—</span>'}</td>
+                <td class="of-ewo-notes-cell">${e.notes ? of_ewo_notes_html(e.notes) : '<span class="text-muted">—</span>'}</td>
                 <td class="of-meta">${of_date(e.date)}</td>
                 <td>${of_qty(e.ordered_qty)}</td>
                 <td>${of_qty(e.received_qty, flt_of(e.received_qty) > 0 ? 'pos' : null)}</td>
@@ -4137,7 +4137,7 @@ class OrderFlow {
             is_fp ? 'magic' : 'scissors', `
             <table class="of-table">
                 <thead><tr><th style="min-width:160px;">Work Order</th><th style="min-width:140px;">Jobber</th>
-                    <th>Purchase Order</th><th>Sales Order</th><th style="width:170px;">Notes</th><th>Date</th>
+                    <th>Purchase Order</th><th>Sales Order</th><th style="width:230px;">Notes</th><th>Date</th>
                     <th>Sent</th><th>Received</th><th>Pending</th><th>Stage</th><th>Action</th></tr></thead>
                 <tbody>${this.ewo_rows_html(env.rows, view_only) || of_empty_row(11)}</tbody>
             </table>`, null, of_pagination_html(tab, key, env),
@@ -6282,6 +6282,19 @@ function of_settlement_bar(o) {
 }
 
 
+
+// Embroidery work order notes, shown in full: one line per entry; a "• <date time>: …" status
+// entry gets its date in bold. The box scrolls when the notes are long.
+function of_ewo_notes_html(notes) {
+    const lines = String(notes || '').split(/\r?\n/).map(l => l.trim()).filter(Boolean);
+    const html = lines.map(l => {
+        const m = l.match(/^[•\-*]\s*(\d{1,2}-\d{1,2}-\d{4}(?:\s+\d{1,2}:\d{2}(?:\s*[AP]M)?)?)\s*:\s*(.*)$/i);
+        return m
+            ? `<div class="of-ewo-note of-ewo-note--log"><b>${of_esc(m[1])}</b> ${of_esc(m[2])}</div>`
+            : `<div class="of-ewo-note">${of_esc(l)}</div>`;
+    }).join('');
+    return `<div class="of-ewo-notes">${html}</div>`;
+}
 
 function of_empty_row(cols) {
     return `<tr><td colspan="${cols}" class="of-empty"><i class="fa fa-inbox"></i>Nothing here for these filters.</td></tr>`;

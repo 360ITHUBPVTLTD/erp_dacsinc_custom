@@ -1522,7 +1522,10 @@ td > .of-action-btn {
 .of-my-customers input { margin: 0; accent-color: var(--primary); }
 .of-my-customers:has(input:checked) { border-color: var(--primary); }
 
-/* Embroidery work orders: the notes column — narrow, left-aligned, 3 lines (full text on hover) */
-.of-table td.of-ewo-notes-cell { text-align: left; width: 170px; max-width: 170px; }
-.of-ewo-notes { white-space: pre-line; font-size: 11px; line-height: 1.35; color: var(--text-color); word-break: break-word;
-	display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; cursor: help; }
+/* Embroidery work orders: the notes column — full notes, darker text, scrolls past ~7 lines */
+.of-table td.of-ewo-notes-cell { text-align: left; width: 230px; max-width: 230px; vertical-align: top; }
+.of-ewo-notes { font-size: 11.5px; line-height: 1.4; color: var(--heading-color, #1f2937); word-break: break-word;
+	max-height: 112px; overflow-y: auto; padding-right: 4px; }
+.of-ewo-note + .of-ewo-note { margin-top: 3px; }
+.of-ewo-note--log { padding-left: 6px; border-left: 2px solid #c7d2fe; }
+.of-ewo-note--log b { color: #111827; font-weight: 600; white-space: nowrap; }
