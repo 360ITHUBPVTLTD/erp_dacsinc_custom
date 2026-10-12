@@ -2709,21 +2709,24 @@ LEAD_DRAFT_PIPE_COND_SQL = """
     """
 
 
-# Visit vs Follow-up split of Event Activities (Admin Review "Visits & Follow-ups").
-# A visit is a physical meeting by category, or any activity carrying a check-in time;
-# everything else (calls, mail/WA, online meetings, proposal, closure) is a follow-up.
+# Visit vs Follow-up split of Event Activities (Admin Review "Organizations Reached").
+# Decided by activity type alone, so the dashboard can group types under Visits /
+# Follow-ups and the groups add up: a visit is a physical-meeting type; any other type
+# (calls, mail/WA, online meetings, proposal, closure) is a follow-up. An activity with
+# no type is neither.
 ACTIVITY_VISIT_CATEGORIES = (
     "Visit", "Field Visit", "Offline Initial Meeting", "Offline Follow up Meeting",
     "Offline Follow Up Meeting", "Offline Sample Meeting", "Initial Meeting",
     "Follow up meetings", "Meeting (Sample)",
 )
-# Both conditions are wrapped in COALESCE(..., 0) = 1 so a NULL category / reference
-# reads as false, keeping NOT <cond> (the drilldown's other side) its exact complement.
-ACTIVITY_VISIT_COND_SQL = "(COALESCE(ea.category IN ({}) OR ea.actual_visit_at IS NOT NULL, 0) = 1)".format(
+# Conditions are wrapped in COALESCE(..., 0) = 1 so a NULL category / reference reads
+# as false and NOT <cond> stays well defined.
+ACTIVITY_VISIT_COND_SQL = "(COALESCE(ea.category IN ({}), 0) = 1)".format(
     ", ".join("'{}'".format(c) for c in ACTIVITY_VISIT_CATEGORIES))
 # Existing client = a Business Contact at status 'Existing Customer' (or an activity
 # logged directly on a Customer). Every Lead and every other contact counts as new.
 # Needs `tabBusiness Contacts` joined as bc on the activity's reference.
+ACTIVITY_FOLLOWUP_COND_SQL = f"(COALESCE(ea.category, '') != '' AND NOT {ACTIVITY_VISIT_COND_SQL})"
 ACTIVITY_EXISTING_COND_SQL = ("(COALESCE(ea.reference_type = 'Customer' OR (ea.reference_type = 'Business Contacts'"
                               " AND bc.status = 'Existing Customer'), 0) = 1)")
 
@@ -3320,6 +3323,7 @@ def get_event_activity_breakup_data(from_date=None, to_date=None, user=None, per
         (SELECT ea.*,
                 CONCAT(ea.reference_type, '::', ea.reference_name) AS ref_key,
                 CASE WHEN {ACTIVITY_VISIT_COND_SQL} THEN 1 ELSE 0 END AS is_visit,
+                CASE WHEN {ACTIVITY_FOLLOWUP_COND_SQL} THEN 1 ELSE 0 END AS is_fu,
                 CASE WHEN {ACTIVITY_EXISTING_COND_SQL} THEN 1 ELSE 0 END AS is_exist
          FROM `tabEvent Activity` ea
          LEFT JOIN `tabBusiness Contacts` bc
@@ -3328,14 +3332,14 @@ def get_event_activity_breakup_data(from_date=None, to_date=None, user=None, per
     cov_buckets = {
         "visit_new": "is_visit = 1 AND is_exist = 0",
         "visit_exist": "is_visit = 1 AND is_exist = 1",
-        "fu_new": "is_visit = 0 AND is_exist = 0",
-        "fu_exist": "is_visit = 0 AND is_exist = 1",
+        "fu_new": "is_fu = 1 AND is_exist = 0",
+        "fu_exist": "is_fu = 1 AND is_exist = 1",
         "visit": "is_visit = 1",
-        "fu": "is_visit = 0",
+        "fu": "is_fu = 1",
         "visit_lead": "is_visit = 1 AND reference_type = 'Lead'",
         "visit_cont": "is_visit = 1 AND reference_type = 'Business Contacts'",
-        "fu_lead": "is_visit = 0 AND reference_type = 'Lead'",
-        "fu_cont": "is_visit = 0 AND reference_type = 'Business Contacts'",
+        "fu_lead": "is_fu = 1 AND reference_type = 'Lead'",
+        "fu_cont": "is_fu = 1 AND reference_type = 'Business Contacts'",
     }
     cov_parts = [
         "COUNT(DISTINCT ref_key) as uniq_total",
@@ -3393,7 +3397,10 @@ def get_event_activity_breakup_data(from_date=None, to_date=None, user=None, per
     user_cond_lead = " AND l.lead_owner = %(usr)s " if effective_user else ""
     user_cond_cont = " AND assign_to = %(usr)s " if effective_user else ""
     
-    date_cond_ea = " AND DATE(COALESCE(ends_on, modified)) BETWEEN %(sd)s AND %(ed)s " if (from_date and to_date) else ""
+    # Open activities are dated by when they're due: Ends On, else the Next Follow-up
+    # date (starts_on). Open ones never have ends_on, so falling back to `modified`
+    # dated them by their last edit and emptied Today + Upcoming for any period.
+    date_cond_ea = " AND DATE(COALESCE(ends_on, starts_on, modified)) BETWEEN %(sd)s AND %(ed)s " if (from_date and to_date) else ""
     date_cond_lead = " AND DATE(l.creation) BETWEEN %(sd)s AND %(ed)s " if (from_date and to_date) else ""
     date_cond_cont = " AND DATE(creation) BETWEEN %(sd)s AND %(ed)s " if (from_date and to_date) else ""
     
@@ -3459,6 +3466,7 @@ def get_event_activity_breakup_data(from_date=None, to_date=None, user=None, per
         "group_by": "user" if ea_user_grouping else "period",
         "categories": categories,
         "all_categories": all_categories,
+        "visit_categories": list(ACTIVITY_VISIT_CATEGORIES),
         "activities": activities,
         "totals": {
             "category_totals": category_totals,
@@ -3644,13 +3652,13 @@ def get_card_detail_records(card_type, from_date=None, to_date=None, user=None, 
                     OR (ea.ends_on IS NULL AND ea.starts_on IS NOT NULL AND DATE(ea.starts_on) < '{today_str}')
                 ) """
             elif card_type == "ea_today":
-                date_cond_ea = " AND DATE(COALESCE(ea.ends_on, ea.modified)) BETWEEN %(sd)s AND %(ed)s " if (from_date and to_date) else ""
+                date_cond_ea = " AND DATE(COALESCE(ea.ends_on, ea.starts_on, ea.modified)) BETWEEN %(sd)s AND %(ed)s " if (from_date and to_date) else ""
                 date_cond = f""" AND ea.status = 'Open' AND (
                     (ea.ends_on IS NOT NULL AND DATE(ea.ends_on) >= '{today_str}')
                     OR (ea.ends_on IS NULL AND ea.starts_on IS NOT NULL AND DATE(ea.starts_on) >= '{today_str}')
                 ) """
             else:
-                date_cond_ea = " AND DATE(COALESCE(ea.ends_on, ea.modified)) BETWEEN %(sd)s AND %(ed)s " if (from_date and to_date) else ""
+                date_cond_ea = " AND DATE(COALESCE(ea.ends_on, ea.starts_on, ea.modified)) BETWEEN %(sd)s AND %(ed)s " if (from_date and to_date) else ""
                 date_cond = " AND ea.status = 'Open' "
 
             user_cond_ea = " AND ea.assigned_to = %(usr)s " if effective_user else ""
@@ -3756,7 +3764,11 @@ def get_activity_detail_records(category=None, category_group=None, from_date=No
     base_filter = " WHERE ea.docstatus < 2 AND ea.status = 'Completed' "
     if effective_user:
         base_filter += " AND ea.assigned_to = %(usr)s "
-    if reference_type and reference_type != "All":
+    if reference_type == "Lead & Contact":
+        # Leads and Business Contacts only: leaves out activities on a Customer or with
+        # no reference, matching the dashboard's Lead / Contact activity counts
+        base_filter += " AND ea.reference_type IN ('Lead', 'Business Contacts') "
+    elif reference_type and reference_type != "All":
         params["ref_type"] = reference_type
         base_filter += " AND ea.reference_type = %(ref_type)s "
 
@@ -3772,7 +3784,7 @@ def get_activity_detail_records(category=None, category_group=None, from_date=No
     if kind == "visit":
         base_filter += f" AND {ACTIVITY_VISIT_COND_SQL} "
     elif kind == "followup":
-        base_filter += f" AND NOT {ACTIVITY_VISIT_COND_SQL} "
+        base_filter += f" AND {ACTIVITY_FOLLOWUP_COND_SQL} "
     client = kwargs.get("client")
     if client == "existing":
         base_filter += f" AND {ACTIVITY_EXISTING_COND_SQL} "
