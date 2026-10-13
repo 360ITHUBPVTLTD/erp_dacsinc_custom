@@ -23,8 +23,8 @@
    "Business Contacts": [
     "",
     "",
-    "VNEO",
-    "VNE",
+    "VNEDO",
+    "VNED",
     "V",
     "V",
     "",
@@ -118,8 +118,8 @@
    "Event Activity": [
     "",
     "",
-    "VNEO",
-    "VNE",
+    "VNEDO",
+    "VNED",
     "",
     "",
     "",
@@ -194,7 +194,7 @@
    "Lead": [
     "",
     "",
-    "VNEO",
+    "VNEDO",
     "VNED",
     "",
     "",
@@ -219,9 +219,9 @@
     "",
     "VNES",
     "VNES",
+    "VNE",
     "VNES",
-    "VNES",
-    "VNES",
+    "VNESC",
     "VNES",
     "VNES",
     "",
@@ -354,7 +354,7 @@
     "",
     "",
     "",
-    "",
+    "VC",
     "VNES",
     "VNES",
     "",
@@ -373,7 +373,7 @@
     "",
     "",
     "VNESC",
-    "VNES",
+    "VNESC",
     "VNES",
     "VNES",
     "V",
@@ -392,7 +392,7 @@
     "",
     "",
     "V",
-    "VNE",
+    "VNEC",
     "VNES",
     "VNES",
     "VNES",
@@ -611,7 +611,6 @@
    ]
   },
   "letters": "VNESCDO",
-  "note": "Role Permission Manager \u00b7 Administrator: Production Assistant \u00b7 Stock Entry: VNES \u2192 VNESC",
   "roles": [
    "Accounts Executive",
    "Accounts Manager",
@@ -633,10 +632,10 @@
   ],
   "saved_by": "Administrator",
   "saved_by_name": "Administrator",
-  "saved_on": "2026-10-08 12:35:41.915839",
-  "version": 29
+  "saved_on": "2026-10-13 12:48:46.076481",
+  "version": 32
  },
- "fingerprint": "fa78995aba4e7c216b86c7856acbdf99eb519e08",
+ "fingerprint": "ead6f05f33a14d07d65edbb9bf6a721182fb687f",
  "tab_access": {
   "cells": {
    "Embroidery Transfers": [
