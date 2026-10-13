@@ -335,7 +335,7 @@
     "",
     "",
     "",
-    "",
+    "VNESC",
     "",
     "",
     "VNES",
@@ -372,7 +372,7 @@
     "VNES",
     "",
     "",
-    "",
+    "VNESC",
     "VNES",
     "VNES",
     "VNES",
@@ -467,7 +467,7 @@
     "VNES",
     "VNES",
     "VNES",
-    "",
+    "VNESC",
     "VNES",
     "",
     "",
@@ -611,7 +611,7 @@
    ]
   },
   "letters": "VNESCDO",
-  "note": "Role Permission Manager \u00b7 Administrator: DAC CRM \u00b7 Contact & Address: VNEO \u2192 VNE",
+  "note": "Role Permission Manager \u00b7 Administrator: Production Assistant \u00b7 Stock Entry: VNES \u2192 VNESC",
   "roles": [
    "Accounts Executive",
    "Accounts Manager",
@@ -633,10 +633,10 @@
   ],
   "saved_by": "Administrator",
   "saved_by_name": "Administrator",
-  "saved_on": "2026-10-07 10:54:55.644367",
-  "version": 21
+  "saved_on": "2026-10-08 12:35:41.915839",
+  "version": 29
  },
- "fingerprint": "43ce0e3d5360ebb683571292a1b9cdbe98e74547",
+ "fingerprint": "fa78995aba4e7c216b86c7856acbdf99eb519e08",
  "tab_access": {
   "cells": {
    "Embroidery Transfers": [
@@ -646,10 +646,10 @@
     "",
     "",
     "",
+    "A",
     "",
     "",
-    "",
-    "",
+    "A",
     "A",
     "",
     "",
@@ -1178,10 +1178,10 @@
     "",
     "",
     "",
+    "A",
     "",
     "",
-    "",
-    "",
+    "A",
     "A",
     "",
     "",
@@ -1191,7 +1191,7 @@
     ""
    ]
   },
-  "note": "from the app code",
+  "note": "Admin Settings \u00b7 Administrator: Merchandiser User \u00b7 Stock Tracker: hidden \u2192 view + act; Production Assistant \u00b7 Stock Tracker: hidden \u2192 view + act",
   "roles": [
    "Accounts Executive",
    "Accounts Manager",
@@ -1213,7 +1213,7 @@
   ],
   "saved_by": "Administrator",
   "saved_by_name": "Administrator",
-  "saved_on": "2026-10-01 18:03:48.624722",
-  "version": 7
+  "saved_on": "2026-10-08 13:58:04.542323",
+  "version": 10
  }
 }
