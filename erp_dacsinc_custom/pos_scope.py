@@ -26,6 +26,8 @@ grant anything (Frappe's has_permission hooks can only deny).
 """
 
 import frappe
+from frappe import _
+from frappe.utils import cint
 
 POS_ROLES = ("POS Admin", "POS Store Manager")
 STORE_FIELD = "custom_pos_store"
@@ -365,7 +367,85 @@ def get_my_pos_defaults():
 		return {}
 	stores = _user_stores(user)
 	wh = store_warehouses(stores[:1])
-	return {"warehouse": wh[0] if wh else None, "stores": stores, "source_warehouse": pos_source_warehouse()}
+	mine = store_manager_warehouses(user)
+	return {"warehouse": wh[0] if wh else None, "stores": stores, "source_warehouse": pos_source_warehouse(),
+			# POS Store Manager: warehouses fixed to their own store(s) (enforce_* below)
+			"locked": mine is not None, "store_warehouses": mine or [],
+			"targets": transfer_targets(mine or [])}
+
+
+# ------------------------------------------------------------------ a store's warehouses, fixed
+# A POS Store Manager (not POS Admin, not an admin) works only from their own store:
+# - Material Request: source = the supply warehouse (Admin Settings, VV Puram - IND), target =
+#   their store — header and every row. On several stores they pick among their own.
+# - Their own Stock Entry transfer: source = their store; the target is theirs to choose,
+#   among the other POS stores and the supply warehouse.
+# Stock Settings › Default Warehouse (VV Puram) is pre-filled by ERPNext on new documents, so
+# these are set, not only filled when empty. Transfers made by someone else (HO's transfer for
+# a POS request, another store's transfer to them) are never rewritten here.
+def store_manager_warehouses(user=None):
+	"""Their stores' warehouses for a POS Store Manager; None for anyone else."""
+	from erp_dacsinc_custom.order_flow_permissions import is_admin
+
+	user = user or frappe.session.user
+	if user in ("Administrator", "Guest") or is_admin(user):
+		return None
+	roles = set(frappe.get_roles(user))
+	if "POS Store Manager" not in roles or "POS Admin" in roles:
+		return None
+	return store_warehouses(_user_stores(user))
+
+
+def transfer_targets(own):
+	"""Where a store may send stock: the other POS stores and the supply warehouse."""
+	return sorted((set(all_store_warehouses()) | {pos_source_warehouse()}) - set(own or []) - {None})
+
+
+def enforce_mr_warehouses(doc, method=None):
+	"""Material Request before_validate."""
+	mine = store_manager_warehouses()
+	if mine is None or doc.docstatus != 0 or not (doc.is_new() or cint(doc.get("custom_is_pos_request"))):
+		return
+	if not mine:
+		frappe.throw(_("You aren't listed on any POS Profile, so there is no store to request stock for."))
+	source = pos_source_warehouse()
+	target = doc.set_warehouse if doc.set_warehouse in mine else mine[0]
+	doc.material_request_type = "Material Transfer"
+	doc.set_warehouse, doc.set_from_warehouse = target, source
+	for d in doc.get("items") or []:
+		d.warehouse, d.from_warehouse = target, source
+
+
+def enforce_se_warehouses(doc, method=None):
+	"""Stock Entry before_validate: a store's own transfer goes out from its store."""
+	mine = store_manager_warehouses()
+	if mine is None or doc.docstatus != 0 or not (doc.is_new() or doc.owner == frappe.session.user):
+		return
+	rows = doc.get("items") or []
+	if doc.purpose != "Material Transfer" or any(d.get("material_request") for d in rows):
+		return
+	if not mine:
+		frappe.throw(_("You aren't listed on any POS Profile, so there is no store to send stock from."))
+	source = doc.from_warehouse if doc.from_warehouse in mine else \
+		next((d.s_warehouse for d in rows if d.s_warehouse in mine), mine[0])
+	allowed = set(transfer_targets([source]))
+	doc.from_warehouse = source
+	if doc.to_warehouse and doc.to_warehouse not in allowed:
+		doc.to_warehouse = None  # ERPNext's default (Stock Settings) — not a store's choice
+	for d in rows:
+		d.s_warehouse = source
+		d.t_warehouse = d.t_warehouse or doc.to_warehouse
+		if not d.t_warehouse:
+			frappe.throw(_("Row {0}: choose the store (or {1}) to send it to.").format(d.idx, pos_source_warehouse()),
+						 title=_("Target warehouse"))
+		if d.t_warehouse not in allowed:
+			frappe.throw(_("Row {0}: {1} can't be the target. Send to another POS store or {2}.").format(
+				d.idx, frappe.bold(d.t_warehouse), pos_source_warehouse()), title=_("Target warehouse"))
+	targets = {d.t_warehouse for d in rows}
+	if len(targets) > 1:
+		frappe.throw(_("Send to one store per transfer (this one has {0}), so each store accepts its own.").format(
+			", ".join(sorted(targets))), title=_("One store per transfer"))
+	doc.to_warehouse = targets.pop()
 
 
 @frappe.whitelist()

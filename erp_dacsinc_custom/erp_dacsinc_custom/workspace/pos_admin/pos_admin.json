@@ -1,8 +1,13 @@
 {
  "charts": [],
- "content": "[{\"id\":\"wtW_ZXvs3H\",\"type\":\"header\",\"data\":{\"text\":\"<span class=\\\"h4\\\">POS Admin</span>\",\"col\":12}},{\"id\":\"Yj4kbIbi1L\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"POS Profile\",\"col\":3}},{\"id\":\"CSaDOV6xFg\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Open POS\",\"col\":3}},{\"id\":\"phYRHBz6wJ\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"POS Closing Entry\",\"col\":3}},{\"id\":\"LvNFecSjOO\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"POS Opening Entry\",\"col\":3}},{\"id\":\"Lb1emiVZnv\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"POS Invoice\",\"col\":3}},{\"id\":\"KI474gPq8F\",\"type\":\"header\",\"data\":{\"text\":\"<span class=\\\"h4\\\"><b>Report</b></span>\",\"col\":12}},{\"id\":\"VQSZj0l5QF\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"POS Register\",\"col\":3}}]",
+ "content": "[{\"id\": \"posReqBoard\", \"type\": \"custom_block\", \"data\": {\"custom_block_name\": \"POS Requests Board\", \"col\": 12}}, {\"id\": \"posReqSpace\", \"type\": \"spacer\", \"data\": {\"col\": 12}}, {\"id\": \"wtW_ZXvs3H\", \"type\": \"header\", \"data\": {\"text\": \"<span class=\\\"h4\\\">POS Admin</span>\", \"col\": 12}}, {\"id\": \"Yj4kbIbi1L\", \"type\": \"shortcut\", \"data\": {\"shortcut_name\": \"POS Profile\", \"col\": 3}}, {\"id\": \"CSaDOV6xFg\", \"type\": \"shortcut\", \"data\": {\"shortcut_name\": \"Open POS\", \"col\": 3}}, {\"id\": \"phYRHBz6wJ\", \"type\": \"shortcut\", \"data\": {\"shortcut_name\": \"POS Closing Entry\", \"col\": 3}}, {\"id\": \"LvNFecSjOO\", \"type\": \"shortcut\", \"data\": {\"shortcut_name\": \"POS Opening Entry\", \"col\": 3}}, {\"id\": \"Lb1emiVZnv\", \"type\": \"shortcut\", \"data\": {\"shortcut_name\": \"POS Invoice\", \"col\": 3}}, {\"id\": \"KI474gPq8F\", \"type\": \"header\", \"data\": {\"text\": \"<span class=\\\"h4\\\"><b>Report</b></span>\", \"col\": 12}}, {\"id\": \"VQSZj0l5QF\", \"type\": \"shortcut\", \"data\": {\"shortcut_name\": \"POS Register\", \"col\": 3}}]",
  "creation": "2026-02-15 16:44:44.350736",
- "custom_blocks": [],
+ "custom_blocks": [
+  {
+   "custom_block_name": "POS Requests Board",
+   "label": "POS Requests Board"
+  }
+ ],
  "docstatus": 0,
  "doctype": "Workspace",
  "for_user": "",
@@ -12,7 +17,7 @@
  "is_hidden": 0,
  "label": "POS Admin",
  "links": [],
- "modified": "2026-08-28 20:21:52.301862",
+ "modified": "2026-10-13 12:00:00.000000",
  "modified_by": "Administrator",
  "module": "Erp Dacsinc Custom",
  "name": "POS Admin",

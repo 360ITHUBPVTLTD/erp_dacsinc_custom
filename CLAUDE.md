@@ -27,6 +27,8 @@ previously-buggy edge cases — are documented in `docs/`:
   subcontracted POs; Stock Entries only for their orders' jobber transfers.
 - `docs/crm-admin-review-dashboard.md` — CRM Admin Review dashboard (a DB-stored HTML
   block): Draft Pipeline, Visits & Follow-ups (new vs existing), unique Lead / Contact counts.
+- `docs/rate-read-only.md` — item Rate is read-only on SO / SI / PO / PI; users change
+  the Price List Rate and the discount.
 - `docs/stock-hold.md` — stock held for Sales Orders (Pick Lists, jobber, earmarks)
   can't be delivered, moved, reconciled or cancelled away by anything else.
 

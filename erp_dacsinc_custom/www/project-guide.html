@@ -259,7 +259,7 @@
         requirements, how to build and deploy, and the task list — delivered, open from the 8 Oct meeting, and Phase 2.</p>
     </div>
     <div class="actions no-print">
-      <a class="btn" href="/assets/erp_dacsinc_custom/docs/project-guide.pdf?v=9" download="Dacsinc ERP - Project Guide.pdf" data-dl-name="Dacsinc ERP - Project Guide">⤓ Download PDF</a>
+      <a class="btn" href="/assets/erp_dacsinc_custom/docs/project-guide.pdf?v=13" download="Dacsinc ERP - Project Guide.pdf" data-dl-name="Dacsinc ERP - Project Guide">⤓ Download PDF</a>
       <button class="btn outline" type="button" id="btn-pdf">⎙ Print all</button>
       <button class="btn outline" type="button" id="btn-tab">⎙ Print this tab</button>
       <button class="btn outline" type="button" id="btn-html">⤓ HTML copy</button>
@@ -524,9 +524,6 @@
       </tr></thead>
       <tbody id="task-body"></tbody>
     </table></div>
-    <div class="note warn"><b>Needs a decision before building:</b> MOM 1(a)(ii) "rate read-only" — the price lists hold placeholder prices (₹10) for most items
-      (Standard Buying 17,376 of 17,411; Standard Selling 6,987 of 17,472). Locking the rate to the price list now would lock orders at ₹10.
-      Clean the price lists first, or treat placeholder prices as "no price".</div>
   </section>
 
   <!-- 07 DEV -->
@@ -721,7 +718,7 @@ const FLOW = [
   ["POS", "Open the shift", "POS Store Manager · POS user", "POS › Create POS Opening Entry", "Starts a store shift.", ["Store filled in for single-store users.", "Only cash is entered; it starts from the cash left at the last closing — a different amount needs a reason.", "One open shift per store."], ""],
   ["POS", "Bill customers", "POS user", "Point of Sale", "Sells over the counter.", ["Only the store's brands are visible.", "Walk-in name and mobile on the bill.", "Receipt emailed from the store's own account."], "MOM 8 Oct: POS return entries (open)."],
   ["POS", "Close the shift", "POS Store Manager", "POS Closing Entry", "1. Cash counted · 2. Why short / extra · 3. Cash taken out.", ["Any difference needs a reason.", "Cash left is carried to the next shift.", "A closing report with Excel is emailed."], ""],
-  ["POS", "Store stock", "POS Store Manager · POS Admin · Warehouse", "Material Request (transfer) → Stock Entry", "Requests stock from VV Puram; transfers between stores.", ["Supply transfers approved by Warehouse Incharge / Warehouse Executive / POS Admin.", "Store-to-store: only the receiving store submits."], ""],
+  ["POS", "Store stock request", "POS Store Manager → HO (Admin Settings › POS › Approver Roles) → store", "POS workspace › Stock Requests board · Material Request", "Store raises a request and sends it for HO approval; HO approves and makes a draft transfer from VV Puram; the store's POS user checks what arrived and submits it.", ["Store can't submit; HO approving = submit (HO may change qty).", "Mail to HO on send; to the store on approve / reject / dispatch.", "Only free VV Puram stock is sent; short → Purchase shortfall (PO into VV Puram).", "Only a POS user of that store (not the sender) — or POS Admin — submits the transfer.", "Store-to-store transfers: the receiving store accepts it (Store Transfers tile, + New Transfer); one store per transfer.", "POS Admin can do everything: send, approve, transfer, accept — any store."], "POS Admin's own requests and every other Material Request are unchanged."],
   ["POS", "Review", "POS Admin · Finance", "Store Cash Book · POS Register", "One line per shift: carried, opening, sales by mode, expected, counted, short/extra, taken out, left.", ["Mismatches shown in red."], ""],
 ];
 
@@ -732,13 +729,13 @@ const ROLES = [
   {r: "Sales Order Final Approver", job: "Management", does: ["Final approval / rejection"], tabs: ["SO Approvals › Pending Final SO Approval", "Rejected"], ctl: ["Set user-wise in Admin Settings", "Never approves own order"]},
   {r: "Purchase Executive / Manager", job: "Purchase", does: ["Material Requests, plain POs", "Receipts, purchase invoices"], tabs: ["Purchase Flow", "Sales Tracker › Material Requests"], ctl: ["PO price check if listed in Admin Settings"]},
   {r: "Production Manager / Assistant", job: "Production", does: ["BOMs, subcontracting, embroidery"], tabs: ["Job Work", "Embroidery Transfers", "Stock (requested — MOM 8 Oct)"], ctl: ["Subcontracting PO analysis report (requested — MOM 8 Oct)"]},
-  {r: "Warehouse Incharge / Executive", job: "Warehouse / Inward", does: ["Receipts, stock entries, picking", "Approves POS supply transfers"], tabs: ["Pick Lists", "Stock Tracker"], ctl: ["Held stock protected unless listed in Admin Settings › Stock Hold"]},
+  {r: "Warehouse Incharge / Executive", job: "Warehouse / Inward", does: ["Receipts, stock entries, picking", "Approves POS supply transfers", "Approves POS store requests and makes the transfer (POS HO workspace)"], tabs: ["Pick Lists", "Stock Tracker"], ctl: ["Held stock protected unless listed in Admin Settings › Stock Hold"]},
   {r: "Packing Team", job: "Packing", does: ["Pick Lists"], tabs: ["Pick Lists"], ctl: []},
   {r: "Accounts Executive / Manager", job: "Accounts", does: ["Delivery Notes, Sales Invoices", "Purchase invoices"], tabs: ["Pending DN/SI", "Finance"], ctl: ["Only roles that may print / export customer, supplier and price data"]},
   {r: "Finance Executive / Collection", job: "Finance", does: ["Receivables, collections"], tabs: ["Finance"], ctl: []},
   {r: "Logistics", job: "Logistics", does: ["Transporter, LR No, signed copy"], tabs: ["Logistics"], ctl: []},
   {r: "POS Admin", job: "Operations store manager", does: ["All stores, transfers, POS reports"], tabs: ["None — works in POS"], ctl: ["All stores", "Approves supply transfers"]},
-  {r: "POS Store Manager", job: "Store manager", does: ["Own store's shifts, bills, stock requests", "Store Cash Book"], tabs: ["None — works in POS"], ctl: ["Own store and its brands only"]},
+  {r: "POS Store Manager", job: "Store manager", does: ["Own store's shifts, bills, stock requests (sent for HO approval; submit HO's transfer on arrival)", "Store Cash Book"], tabs: ["None — works in POS"], ctl: ["Own store and its brands only"]},
   {r: "HR Manager", job: "HR", does: ["Creates users, gives sheet profiles"], tabs: [], ctl: ["Never gives admin roles, never edits admins or self, never deletes"]},
   {r: "Admin", job: "Business admin", does: ["Edits the access sheet", "Admin Settings"], tabs: ["All"], ctl: ["Sees everything"]},
   {r: "System Manager", job: "IT / 360 IT Hub", does: ["Resets, sync, apply", "Bulk Add Stock"], tabs: ["All"], ctl: ["Sees everything"]},
@@ -772,7 +769,7 @@ const FRD = [
   ["FR-A2", "Sales & approvals", "Final approvers", "Admin", "Admin Settings › Sales Order final approvers", "Listed users get the Sales Order Final Approver role automatically.", [], "Add a user → they see Pending Final SO Approval.", "order_flow_permissions", "Done"],
   ["FR-A3", "Sales & approvals", "Order shared with lead owner", "System", "Sales Order", "The lead owner can read and edit the order.", [], "Open the order as the lead owner.", "so_share", "Done"],
   ["FR-A4", "Sales & approvals", "Rate locked downstream", "System", "Delivery Note · Sales Invoice", "DN / SI rate equals the Sales Order rate.", ["Rate 0 refused on SO, quotation, PO, PI."], "Change a rate on an SI → reset to the order rate.", "lock_item_rate_to_sales_order", "Done"],
-  ["FR-A5", "Sales & approvals", "Rate read-only on SO and PO", "All users", "Sales Order · Purchase Order", "Rate field cannot be edited (MOM 8 Oct).", [], "Try to change the rate → not editable.", "—", "Open"],
+  ["FR-A5", "Sales & approvals", "Rate read-only", "All users", "Sales Order · Sales Invoice · Purchase Order · Purchase Invoice", "Rate cannot be typed; users change the Price List Rate and the discount and Rate is worked out from them (MOM 8 Oct).", ["Price List Rate is editable on all four.", "Form rule only — mapping, Pricing Rules, dialogs and the API still set Rate."], "Click Rate → not editable; change Price List Rate to 1,000 and Discount to 10% → Rate 900.", "Property Setters (custom/*_item.json) · sales_invoice.js · purchase_invoice.js", "Done"],
   ["FR-A6", "Sales & approvals", "Customer pick for all merchandisers", "Merchandiser", "Sales Order › Customer field", "Any enabled customer can be chosen while creating or editing a draft order (MOM 8 Oct); the Customer list and dashboards stay limited.", ["Only the field's search, the customer's details and saving the draft are opened up."], "A merchandiser finds another merchandiser's customer in the field and saves the order; the Customer list still hides it.", "custom_script.picking_customer_for_sales_order", "Done"],
   ["FR-B1", "Planning", "Item Stock & Action Plan", "Merchandiser · Purchase", "Sales Order (Order Details tab) · Sales Tracker row", "Per line: Ordered · Delivered · Still to Cover · Free Finished Stock · To Make · Next Action.", ["To Make = Still to Cover − Free Finished Stock."], "Open an order; each line shows its next action.", "get_item_stock_details_bulk", "Done"],
   ["FR-B2", "Planning", "Raw material table", "Merchandiser · Production", "Sales Order › under each BOM line", "Needed · In Stock for this Order (bought for this order + free stock) · Requested / On the Way · To Request · Status.", ["Statuses: In Stock · Requested · Short N — Request RM · Not Needed.", "Lines share material in line order (\"used by <line> of this order\").", "Other orders' stock shown in grey — \"stays with them\"."], "Two lines needing the same fabric → the second shows what the first used.", "sales_order.js · rm_alloc_used", "Done"],
@@ -793,7 +790,7 @@ const FRD = [
   ["FR-E1", "POS", "Shift opening", "Store manager", "POS › Create POS Opening Entry", "Store auto-filled; cash only; carried from last closing; reason if different; one open shift per store.", [], "Open with a different cash amount → reason asked.", "pos_cash.opening_validate", "Done"],
   ["FR-E2", "POS", "Shift closing", "Store manager", "POS Closing Entry", "Built on the server; steps cash counted / why / taken out; left carried; closing email with Excel.", ["Every difference needs a reason."], "Count less than expected → reason required.", "pos_closing · pos_cash · pos_notify", "Done"],
   ["FR-E3", "POS", "Store & brand scope", "POS users", "Lists, barcode scan, reports", "Store users see their stores' records and brands everywhere.", [], "A store login sees only its store's bills.", "pos_scope · pos_report_scope · pos_brand_filter", "Done"],
-  ["FR-E4", "POS", "Store stock requests & transfers", "Store manager · Warehouse", "Material Request · Stock Entry", "Store MR = transfer from VV Puram; supply transfers approved by warehouse roles / POS Admin.", [], "Store manager submits a supply transfer → asks approval.", "pos_notify", "Done"],
+  ["FR-E4", "POS", "Store stock requests: HO approval, dispatch, receipt", "Store manager · HO approvers", "Material Request · Stock Entry · Stock Requests board", "Store MR (transfer from VV Puram) → Send for HO approval → HO approves / rejects → HO's draft transfer (In Transit) → the store checks and submits it. Status on the MR; board on POS / POS Admin / POS HO workspaces.", ["Approver roles in Admin Settings › POS.", "Free stock only (held stock excluded)."], "Store submits its own request → refused; HO / POS Admin submits the store's transfer → refused.", "pos_request.py · pos_requests_board.js", "Done"],
   ["FR-E5", "POS", "Store Cash Book", "Store manager · POS Admin", "Report", "One line per shift; mismatches in red.", [], "Run for a store and a date range.", "report/store_cash_book", "Done"],
   ["FR-E6", "POS", "POS return entries", "Store manager", "Point of Sale", "Create return entries against POS bills (MOM 8 Oct).", [], "Return an item → stock and payment reversed.", "—", "Open"],
   ["FR-F1", "Access", "Access sheet", "Admin · System Manager", "Roles & permissions page", "Document rights (V N E S C D O) and Order Flow tabs (✓ / A) per role; Sheet / By document / By role views; saving applies.", ["Typed confirmations for resets.", "Create (N) and Edit (E) are separate — e.g. create a customer but not edit it after saving."], "Untick E for a role → it can create but not edit.", "access_sync · access_worksheet · access_reverse", "Done"],
@@ -804,6 +801,7 @@ const FRD = [
 
 // [status, module, task, source, phase, priority, date, owner, remarks]
 const TASKS = [
+  ["Done", "POS", "Store stock requests: HO approval, HO's transfer, the store checks and submits it; Stock Requests board on POS / POS Admin / POS HO workspaces", "Delivered", "1", "", "2026-10-13", "360ithub", ""],
   ["Done", "Order Flow", "POS documents hidden by default; \"Show POS documents\" toggle on Finance › Receivables, Logistics and Tracker › MRs", "Delivered", "1", "", "2026-10-02", "360ithub", ""],
   ["Done", "Order Flow", "Merchandiser sees own Sales Orders; \"Show my customers' orders\" toggle on every tab", "Delivered", "1", "", "2026-10-02", "360ithub", ""],
   ["Done", "Order Flow", "Unassigned orders always shown for approval; \"Waiting for Final Approval\" view-only sub-tab", "Delivered", "1", "", "2026-10-02", "360ithub", ""],
@@ -840,7 +838,7 @@ const TASKS = [
   ["Done", "Roles & permissions", "Roles & Permissions desk page — /app/roles-and-permissions (profiles per user) and access sheet — /roles-and-permissions", "Delivered", "1", "", "", "360ithub", "Address in Overview › Pages & links"],
   ["Done", "Documentation", "Project guide page — /project-guide: flow, roles, BRD, FRD, task status, page links, PDF download", "Delivered", "1", "", "2026-10-09", "360ithub", ""],
   ["Done", "Sales Order", "All customers visible to all merchandisers while creating a Sales Order", "MOM 08-Oct", "1", "High", "2026-10-10", "360ithub", "Any enabled customer can be picked on a Sales Order; Customer list and dashboards stay limited"],
-  ["Need to Discuss", "Sales Order", "Rate field read-only on Sales Order and Purchase Order", "MOM 08-Oct", "1", "High", "2026-10-08", "360ithub", "Price lists hold placeholder prices (₹10): Buying 17,376 of 17,411, Selling 6,987 of 17,472 — clean prices first or treat placeholders as no price"],
+  ["Done", "Sales Order", "Rate field read-only on Sales Order, Sales Invoice, Purchase Order and Purchase Invoice", "MOM 08-Oct", "1", "High", "2026-10-13", "360ithub", "Users change the Price List Rate and the discount; Rate follows"],
   ["Done", "Print", "Direct print once created: Sales Invoice, Purchase Order, Subcontracting PO, Embroidery Transfer", "MOM 08-Oct", "1", "Medium", "2026-10-10", "360ithub", "\"Print it now?\" after creating; embroidery notes and Print buttons on dashboard lists"],
   ["Open", "Embroidery", "Multiple Sales Orders to a single embroidery order", "MOM 08-Oct", "1", "High", "2026-10-08", "360ithub", ""],
   ["Open", "Embroidery", "Multiple Purchase Orders to a single Purchase Receipt", "MOM 08-Oct", "1", "High", "2026-10-08", "360ithub", ""],
@@ -1178,7 +1176,7 @@ const FEATURE_MAP = [
   ["Admin Settings readable by the app", "API / mobile app", "—", "doctype/admin_settings/admin_settings.has_permission", "master-data-protection.md", "—"],
   ["POS opening / closing / cash drawer", "Point of Sale · POS Closing Entry", "pos_page_extend.js · pos_closing_entry.js", "pos_cash.py · pos_closing.make_closing_entry", "pos-store-scope.md", "pos_cash_test.py"],
   ["POS store & brand scope", "All POS screens and reports", "pos_page_extend.js", "pos_scope.py · pos_report_scope.py · pos_brand_filter.py", "pos-store-scope.md", "pos_scope_test.py"],
-  ["POS stock requests & transfers", "Material Request · Stock Entry", "pos_stock.js", "pos_notify.py (mark_pos_*, guard_pos_approval) · pos_scope.guard_pos_transfer_submit", "pos-store-scope.md", "pos_stock_test.py"],
+  ["POS stock requests & transfers", "Material Request · Stock Entry · workspace block \"POS Requests Board\"", "pos_stock.js · pos_requests_board.js", "pos_request.py (approval, dispatch, receive, status, board) · pos_notify.py (mark_pos_*, guard_pos_approval) · pos_scope.guard_pos_transfer_submit", "pos-store-scope.md", "pos_request_test.py · pos_stock_test.py"],
   ["POS emails (closing report, MR, receipt)", "On submit / Email Receipt", "pos_page_extend.js", "pos_notify.py (closing_mail_html) · pos_receipt_email.py", "pos-store-scope.md", "pos_notify_test.py"],
   ["Store Cash Book report", "/app/query-report/Store Cash Book", "report/store_cash_book/*.js", "report/store_cash_book/store_cash_book.py", "pos-store-scope.md", "pos_cash_test.py"],
   ["Warehouse › Add Stock", "Warehouse list", "warehouse_list.js", "warehouse_add_stock.py", "warehouse-add-stock.md", "addstock_test.py"],
@@ -1273,6 +1271,7 @@ const TEST_SUITES = [
   ["stock_hold_test.py", "Held stock, Pick List fit, embroidery holds", "stock_hold.py, so_embroidery.py, Pick List"],
   ["pos_scope_test.py", "Store / brand scope on POS documents, items, customers", "pos_scope.py"],
   ["pos_stock_test.py", "Store stock requests, transfer approvals, defaults", "pos_notify.py, pos_stock.js"],
+  ["pos_request_test.py", "Store request: send, HO approve / reject, transfer, only the store submits, purchase shortfall, board", "pos_request.py"],
   ["pos_notify_test.py", "POS MR mail, closing report mail and Excel", "pos_notify.py"],
   ["pos_cash_test.py", "Opening carry-forward, counted closing, reasons, Store Cash Book", "pos_cash.py, pos_closing.py, report"],
   ["addstock_test.py", "Warehouse › Add Stock", "warehouse_add_stock.py"],

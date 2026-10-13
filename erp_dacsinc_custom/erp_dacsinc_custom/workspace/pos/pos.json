@@ -1,8 +1,13 @@
 {
  "charts": [],
- "content": "[{\"id\":\"WA9yeZtZC8\",\"type\":\"header\",\"data\":{\"text\":\"<span class=\\\"h4\\\">POS</span>\",\"col\":12}},{\"id\":\"HnIq88G3O3\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Open POS\",\"col\":3}},{\"id\":\"EIEA3uOVn3\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"POS Closing Entry\",\"col\":3}},{\"id\":\"jDQzllB6hp\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"POS Opening Entry\",\"col\":3}},{\"id\":\"hhvw02RH2f\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"POS Invoice\",\"col\":3}},{\"id\":\"Sx03RsPCi1\",\"type\":\"spacer\",\"data\":{\"col\":12}},{\"id\":\"uDhs8VF0Rq\",\"type\":\"header\",\"data\":{\"text\":\"<span class=\\\"h4\\\"><b>Stock and Inventory</b></span>\",\"col\":12}},{\"id\":\"BC672Pk3fe\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Material Request\",\"col\":3}},{\"id\":\"XzPTAkq0NN\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Material Transfer\",\"col\":3}},{\"id\":\"38jrF9er_C\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Stock Balance Summary\",\"col\":3}}]",
+ "content": "[{\"id\": \"posReqBoard\", \"type\": \"custom_block\", \"data\": {\"custom_block_name\": \"POS Requests Board\", \"col\": 12}}, {\"id\": \"posReqSpace\", \"type\": \"spacer\", \"data\": {\"col\": 12}}, {\"id\": \"WA9yeZtZC8\", \"type\": \"header\", \"data\": {\"text\": \"<span class=\\\"h4\\\">POS</span>\", \"col\": 12}}, {\"id\": \"HnIq88G3O3\", \"type\": \"shortcut\", \"data\": {\"shortcut_name\": \"Open POS\", \"col\": 3}}, {\"id\": \"EIEA3uOVn3\", \"type\": \"shortcut\", \"data\": {\"shortcut_name\": \"POS Closing Entry\", \"col\": 3}}, {\"id\": \"jDQzllB6hp\", \"type\": \"shortcut\", \"data\": {\"shortcut_name\": \"POS Opening Entry\", \"col\": 3}}, {\"id\": \"hhvw02RH2f\", \"type\": \"shortcut\", \"data\": {\"shortcut_name\": \"POS Invoice\", \"col\": 3}}, {\"id\": \"Sx03RsPCi1\", \"type\": \"spacer\", \"data\": {\"col\": 12}}, {\"id\": \"uDhs8VF0Rq\", \"type\": \"header\", \"data\": {\"text\": \"<span class=\\\"h4\\\"><b>Stock and Inventory</b></span>\", \"col\": 12}}, {\"id\": \"BC672Pk3fe\", \"type\": \"shortcut\", \"data\": {\"shortcut_name\": \"Material Request\", \"col\": 3}}, {\"id\": \"XzPTAkq0NN\", \"type\": \"shortcut\", \"data\": {\"shortcut_name\": \"Material Transfer\", \"col\": 3}}, {\"id\": \"38jrF9er_C\", \"type\": \"shortcut\", \"data\": {\"shortcut_name\": \"Stock Balance Summary\", \"col\": 3}}]",
  "creation": "2026-02-15 16:44:58.866781",
- "custom_blocks": [],
+ "custom_blocks": [
+  {
+   "custom_block_name": "POS Requests Board",
+   "label": "POS Requests Board"
+  }
+ ],
  "docstatus": 0,
  "doctype": "Workspace",
  "for_user": "",
@@ -12,7 +17,7 @@
  "is_hidden": 0,
  "label": "POS",
  "links": [],
- "modified": "2026-08-28 20:21:52.244104",
+ "modified": "2026-10-13 12:00:00.000000",
  "modified_by": "Administrator",
  "module": "Erp Dacsinc Custom",
  "name": "POS",

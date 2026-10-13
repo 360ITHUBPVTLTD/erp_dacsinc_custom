@@ -15,8 +15,11 @@
 // on the row.
 const SI_LINK_FIELDS = ['so_detail', 'sales_order', 'dn_detail', 'delivery_note'];
 
+// 'rate' is not listed: it is read-only on every row (Property Setter — users change the
+// Price List Rate and the discount instead), and toggling it here would make it editable
+// again on rows that are not linked.
 const SI_LOCKED_FIELDS = [
-	'qty', 'rate', 'price_list_rate', 'amount', 'item_code', 'warehouse',
+	'qty', 'price_list_rate', 'amount', 'item_code', 'warehouse',
 	'uom', 'conversion_factor', 'discount_percentage', 'discount_amount'
 ];
 
