@@ -123,6 +123,8 @@
   "pos_closing_email_recipients",
   "pos_email_colbreak",
   "pos_mr_email_recipients",
+  "pos_request_section",
+  "pos_request_approver_roles",
   "stock_hold_tab",
   "stock_hold_section",
   "stock_hold_override_users",
@@ -609,10 +611,23 @@
    "fieldtype": "Column Break"
   },
   {
-   "description": "When a POS store submits a Material Request (POS Request ticked), its details are emailed here. Other Material Requests send nothing.",
+   "description": "A store's Material Request (raised by a POS Store Manager) is emailed here when the store sends it for HO approval. Other Material Requests send nothing.",
    "fieldname": "pos_mr_email_recipients",
    "fieldtype": "Small Text",
-   "label": "POS Material Request \u2014 Send To"
+   "label": "POS Material Request \u2014 Send To (HO)"
+  },
+  {
+   "description": "Approval of POS store Material Requests (raised by a POS Store Manager): users with any of these roles approve or reject them and make the transfer to the store; the store's POS user submits it when the stock arrives.",
+   "fieldname": "pos_request_section",
+   "fieldtype": "Section Break",
+   "label": "POS Request Approval (HO)"
+  },
+  {
+   "description": "Only Access Sheet roles (and Admin) can be picked. They also need View on Material Request in the access sheet.",
+   "fieldname": "pos_request_approver_roles",
+   "fieldtype": "Table MultiSelect",
+   "label": "Approver Roles",
+   "options": "Order Flow Tab Role"
   },
   {
    "description": "Which roles may act from each tab: create, submit or approve with its buttons. A role here also sees the tab. Everyone else who sees the tab can only view it. Leave a tab empty to let everyone who sees it act. System Manager, Admin and Administrator can always act. Kept in step with the /roles-and-permissions sheet (A = can view and act).",
@@ -905,7 +920,7 @@
  "index_web_pages_for_search": 1,
  "issingle": 1,
  "links": [],
- "modified": "2026-10-07 11:12:13.766649",
+ "modified": "2026-10-13 12:00:00.000000",
  "modified_by": "Administrator",
  "module": "Erp Dacsinc Custom",
  "name": "Admin Settings",

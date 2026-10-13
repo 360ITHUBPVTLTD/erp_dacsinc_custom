@@ -7,15 +7,14 @@ Request / Stock Entry is left exactly as it is.
 - **Created by POS User** — Material Request `custom_is_pos_request`, Stock Entry
   `custom_is_pos_transfer`: set automatically when a POS Admin or POS Store Manager
   creates the document (admins excluded); `backfill_flags()` ticks older ones.
-- **Material Request:** only those created by a **POS Store Manager** are emailed on
-  submit, to Admin Settings › POS Emails › POS Material Request — Send To. Any other
-  MR (POS Admin included) sends nothing.
-- **Stock Entry** created by a POS user: one that moves stock to
-  or from the stores' supply warehouse (Admin Settings › Source Warehouse, VV Puram -
-  IND) needs warehouse approval: only Warehouse Incharge, Warehouse Executive, POS
-  Admin (or an admin) may submit it. Whoever submits is recorded in Approved By
-  (`custom_approved_by`). Store-to-store transfers keep the receiving-store rule
-  (pos_scope.guard_pos_transfer_submit).
+- **Material Request:** those created by a **POS Store Manager** go through HO approval,
+  dispatch and store receipt, with their mails — see pos_request.py. Any other MR
+  (POS Admin included) sends nothing.
+- **Stock Entry** created by a POS user that sends stock back INTO the stores' supply
+  warehouse (Admin Settings › Source Warehouse, VV Puram - IND) needs warehouse approval:
+  only Warehouse Incharge, Warehouse Executive, POS Admin (or an admin) may submit it.
+  Whoever submits is recorded in Approved By (`custom_approved_by`). A transfer INTO a
+  POS store is accepted by that store instead (pos_request.guard_transfer_submit).
 - **POS Closing Entry** submitted → a sales report is emailed to Admin Settings ›
   POS Closing Report — Send To. It covers the opening entry, the cash drawer
   statement and card / UPI check (cash_statement), invoices, returns, discounts, taxes and top
@@ -111,6 +110,9 @@ def backfill_flags():
 
 # ------------------------------------------------------------------ Stock Entry approval
 def needs_warehouse_approval(doc):
+	"""A POS user's transfer that sends stock INTO the supply warehouse (VV Puram) — a store
+	returning stock — needs warehouse approval. Stock coming out of VV Puram into a store is
+	accepted by that store instead (pos_request.guard_transfer_submit)."""
 	if not cint(doc.get("custom_is_pos_transfer")):
 		return False
 	from erp_dacsinc_custom.pos_scope import pos_source_warehouse
@@ -120,10 +122,7 @@ def needs_warehouse_approval(doc):
 		return False
 	# The rows are what moves stock. The header warehouses are only defaults
 	# (ERPNext fills the header target from Stock Settings even for store → store).
-	whs = set()
-	for d in doc.get("items") or []:
-		whs |= {d.get("s_warehouse"), d.get("t_warehouse")}
-	return supply in whs
+	return supply in {d.get("t_warehouse") for d in doc.get("items") or []}
 
 
 def can_approve(user=None):
@@ -139,10 +138,12 @@ def guard_pos_approval(doc, method=None):
 	if not needs_warehouse_approval(doc):
 		return
 	if not can_approve():
+		from erp_dacsinc_custom.pos_scope import pos_source_warehouse
+
 		frappe.throw(
-			frappe._("This POS transfer moves stock to or from {0}, so it needs warehouse approval: "
+			frappe._("This POS transfer sends stock back to {0}, so it needs warehouse approval: "
 					 "Warehouse Incharge, Warehouse Executive or POS Admin submits it.").format(
-				frappe.bold(frappe.utils.escape_html(doc.from_warehouse or doc.to_warehouse or ""))),
+				frappe.bold(frappe.utils.escape_html(pos_source_warehouse() or ""))),
 			title=frappe._("Waiting for warehouse approval"))
 	doc.custom_approved_by = frappe.session.user
 
@@ -153,51 +154,6 @@ def get_pos_transfer_state(name):
 	doc = frappe.get_doc("Stock Entry", name)
 	doc.check_permission("read")
 	return {"needs_approval": needs_warehouse_approval(doc), "can_approve": can_approve()}
-
-
-# ------------------------------------------------------------------ Material Request mail
-def send_pos_mr_email(doc, method=None):
-	"""Material Request on_submit: only POS Requests created by a POS Store Manager."""
-	if not cint(doc.get("custom_is_pos_request")) or not _is_store_manager(doc.owner):
-		return
-	recipients = _recipients("pos_mr_email_recipients")
-	if not recipients:
-		return
-	frappe.enqueue("erp_dacsinc_custom.pos_notify._mail_mr", queue="short", enqueue_after_commit=True,
-				   name=doc.name, recipients=recipients)
-
-
-def _mail_mr(name, recipients):
-	doc = frappe.get_doc("Material Request", name)
-	from erp_dacsinc_custom.pos_scope import get_stock_for_rows
-
-	rows = [{"item_code": d.item_code, "warehouse": d.warehouse or doc.set_warehouse,
-			 "from_warehouse": d.from_warehouse or doc.set_from_warehouse} for d in doc.items]
-	stock = get_stock_for_rows(frappe.as_json(rows))
-	store = doc.set_warehouse or (doc.items[0].warehouse if doc.items else "")
-	source = doc.set_from_warehouse or (doc.items[0].from_warehouse if doc.items else "")
-
-	def st(item, wh):
-		v = stock.get(f"{item}||{wh}") if wh else None
-		return f"{flt(v['actual']):g}" if v else "0"
-
-	lines = "".join(f"""<tr>
-		<td style="{TD}">{frappe.utils.escape_html(d.item_code)}<div style="color:#6b7280;font-size:12px;">{frappe.utils.escape_html(d.item_name or "")}</div></td>
-		<td style="{TD}text-align:right;"><b>{flt(d.qty):g}</b> {frappe.utils.escape_html(d.uom or d.stock_uom or "")}</td>
-		<td style="{TD}text-align:right;">{st(d.item_code, d.from_warehouse or doc.set_from_warehouse)}</td>
-		<td style="{TD}text-align:right;">{st(d.item_code, d.warehouse or doc.set_warehouse)}</td></tr>""" for d in doc.items)
-	body = _shell(
-		f"Material Request from {frappe.utils.escape_html(store)}",
-		f"{doc.name} · {formatdate(doc.transaction_date)}",
-		_facts([("Store (target)", store), ("Requested from (source)", source), ("Type", doc.material_request_type),
-				("Required by", formatdate(doc.schedule_date)), ("Raised by", frappe.utils.get_fullname(doc.owner)),
-				("Items / total qty", f"{len(doc.items)} / {sum(flt(d.qty) for d in doc.items):g}")])
-		+ f"""<h3 style="{H3}">Items</h3>
-		<table style="{TABLE}"><tr><th style="{TH}text-align:left;">Item</th><th style="{TH}text-align:right;">Requested</th>
-		<th style="{TH}text-align:right;">Stock at source</th><th style="{TH}text-align:right;">Stock at store</th></tr>{lines}</table>"""
-		+ _button(get_url_to_form("Material Request", doc.name), "Open the Material Request"))
-	frappe.sendmail(recipients=recipients, subject=f"POS Material Request {doc.name} — {store}", message=body,
-					reference_doctype="Material Request", reference_name=doc.name)
 
 
 # ------------------------------------------------------------------ Closing report mail

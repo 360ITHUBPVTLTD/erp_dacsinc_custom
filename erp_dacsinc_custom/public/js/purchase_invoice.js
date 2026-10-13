@@ -1,4 +1,18 @@
 frappe.ui.form.on('Purchase Invoice', {
+    // Rate is read-only on every row (Property Setter): users change the Price List Rate and
+    // the discount instead. ERPNext's own refresh flips it back to editable on rows without a
+    // Purchase Receipt when Buying Settings > Maintain Same Rate is on, so keep it locked here.
+    setup: function(frm) {
+        const grid = frm.fields_dict.items && frm.fields_dict.items.grid;
+        if (!grid || grid.__dacs_rate_locked) return;
+        grid.__dacs_rate_locked = true;
+        const orig = grid.update_docfield_property.bind(grid);
+        grid.update_docfield_property = function(fieldname, property, value) {
+            if (fieldname === 'rate' && property === 'read_only') value = 1;
+            return orig(fieldname, property, value);
+        };
+    },
+
     onload_post_render: function(frm) {
         clean_up_get_items_buttons(frm);
     },

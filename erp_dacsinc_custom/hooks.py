@@ -33,7 +33,9 @@ app_include_js = [
     "/assets/erp_dacsinc_custom/js/workflow.js?v=1.0.7",
     "/assets/erp_dacsinc_custom/js/toogle.js?v=1.0.5",
     # "Print it now?" after creating SI / PO / embroidery documents (MOM 8 Oct 2026)
-    "/assets/erp_dacsinc_custom/js/print_prompt.js?v=1.0.0"
+    "/assets/erp_dacsinc_custom/js/print_prompt.js?v=1.0.0",
+    # POS store requests board + dialogs (workspace block and Material Request form) — bump ?v= on change
+    "/assets/erp_dacsinc_custom/js/pos_requests_board.js?v=1.0.6"
 ]
 
 app_include_css = [
@@ -169,6 +171,8 @@ permission_query_conditions = {
     "Material Request": [
         "erp_dacsinc_custom.custom_script.get_material_request_permission_query_conditions",
         "erp_dacsinc_custom.pos_scope.material_request_query",
+        # View-only HO approvers (e.g. Warehouse Incharge) see POS store requests only.
+        "erp_dacsinc_custom.pos_request.material_request_query",
     ],
     "Stock Entry": [
         "erp_dacsinc_custom.pos_scope.stock_entry_query",
@@ -207,6 +211,7 @@ has_permission = {
     "Material Request": [
         "erp_dacsinc_custom.custom_script.has_material_request_permission",
         "erp_dacsinc_custom.pos_scope.has_material_request_permission",
+        "erp_dacsinc_custom.pos_request.has_material_request_permission",
     ],
     "Stock Entry": [
         "erp_dacsinc_custom.pos_scope.has_stock_entry_permission",
@@ -450,7 +455,15 @@ doc_events = {
         # stock reserved for another Sales Order, never go to a jobber.
         # POS: "POS Transfer" tick on Stock Entries made from a POS login (pos_notify.py).
         "before_insert": "erp_dacsinc_custom.pos_notify.mark_pos_transfer",
+        # POS Store Manager's own transfer: from their store; target another store / VV Puram (pos_scope).
+        "before_validate": "erp_dacsinc_custom.pos_scope.enforce_se_warehouses",
+        # POS store requests: HO's transfer tells the store; the status follows drafts too (pos_request.py).
+        "after_insert": "erp_dacsinc_custom.pos_request.mail_store_on_transfer",
+        "on_update": "erp_dacsinc_custom.pos_request.update_from_stock_entry",
+        "on_trash": "erp_dacsinc_custom.pos_request.update_from_stock_entry",
         "before_submit": [
+            # A transfer against a POS store request: only that store's POS user submits it (pos_request.py).
+            "erp_dacsinc_custom.pos_request.guard_transfer_submit",
             # POS transfers to / from the supply warehouse need warehouse approval (pos_notify).
             "erp_dacsinc_custom.pos_notify.guard_pos_approval",
             # POS: a transfer into a store is submitted by that store (pos_scope).
@@ -468,9 +481,14 @@ doc_events = {
             # Stock moved (RM to a jobber, a receipt, a transfer) — open
             # Sales Orders / the Order Flow page refresh without a reload.
             "erp_dacsinc_custom.order_flow_api.broadcast_order_flow_change",
+            # POS store requests follow their dispatch / receipt entries (pos_request.py).
+            "erp_dacsinc_custom.pos_request.update_from_stock_entry",
         ],
         "before_cancel": "erp_dacsinc_custom.stock_hold.guard_cancel",
-        "on_cancel": "erp_dacsinc_custom.order_flow_api.broadcast_order_flow_change",
+        "on_cancel": [
+            "erp_dacsinc_custom.order_flow_api.broadcast_order_flow_change",
+            "erp_dacsinc_custom.pos_request.update_from_stock_entry",
+        ],
     },
     "Stock Reconciliation": {
         "before_submit": "erp_dacsinc_custom.stock_hold.guard_stock_reconciliation",
@@ -498,17 +516,24 @@ doc_events = {
         # POS: "POS Request" tick on MRs made from a POS login (pos_notify.py).
         "before_insert": [
             "erp_dacsinc_custom.pos_notify.mark_pos_request",
+            # a POS Store Manager's request starts as Draft for HO approval (pos_request.py)
+            "erp_dacsinc_custom.pos_request.mark_request",
             # no second draft for the same source line (draft_guard.py)
             "erp_dacsinc_custom.draft_guard.guard_duplicate_draft",
         ],
-        # POS Requests only: email the request on submit (Admin Settings › POS Emails).
-        "on_submit": "erp_dacsinc_custom.pos_notify.send_pos_mr_email",
+        # POS store requests: submitting one is HO's approval (pos_request.py).
+        "before_submit": "erp_dacsinc_custom.pos_request.guard_submit",
+        "on_submit": "erp_dacsinc_custom.pos_request.on_submit",
         "before_validate": [
             # POS users' MRs are always Material Transfer (pos_notify) — before the next line.
             "erp_dacsinc_custom.pos_notify.force_pos_transfer_type",
+            # POS Store Manager: source VV Puram, target their store, header and rows (pos_scope).
+            "erp_dacsinc_custom.pos_scope.enforce_mr_warehouses",
             "erp_dacsinc_custom.custom_script.clear_mr_from_warehouse_unless_transfer",
         ],
         "validate": [
+            # POS request status is set only by pos_request.py; frozen while HO reviews it.
+            "erp_dacsinc_custom.pos_request.guard_edit",
             "erp_dacsinc_custom.custom_script.validate_material_request_no_bom_items",
             # Mirrors guard_po_item_not_over_so_need — without it the
             # over-order cap could be walked around by requesting the excess
@@ -523,7 +548,10 @@ doc_events = {
             "erp_dacsinc_custom.custom_script.guard_mr_rm_not_over_so_shortfall",
         ],
         "on_update": "erp_dacsinc_custom.order_flow_api.broadcast_order_flow_change",
-        "on_cancel": "erp_dacsinc_custom.order_flow_api.broadcast_order_flow_change",
+        "on_cancel": [
+            "erp_dacsinc_custom.order_flow_api.broadcast_order_flow_change",
+            "erp_dacsinc_custom.pos_request.on_cancel",
+        ],
     },
     "Pick List": {
         # A Pick List can't be finalised while some of its qty is still out
@@ -591,6 +619,8 @@ doc_events = {
 # of relying on a one-shot patch that could drift from the real config over
 # time.
 after_migrate = [
+    # POS store requests: fields, Goods In Transit warehouse, workspace board block (pos_request.py). Idempotent.
+    "erp_dacsinc_custom.pos_request.setup",
     # Cash-in-the-drawer fields on POS Opening / Closing Entry (pos_cash.py). Idempotent.
     "erp_dacsinc_custom.pos_cash.create_fields",
     # Sheets changed locally and pushed with the code are taken once (access_sync).
