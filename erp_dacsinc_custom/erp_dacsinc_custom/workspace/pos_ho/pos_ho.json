@@ -1,0 +1,85 @@
+{
+ "charts": [],
+ "content": "[{\"id\": \"posHoBoard\", \"type\": \"custom_block\", \"data\": {\"custom_block_name\": \"POS Requests Board\", \"col\": 12}}, {\"id\": \"posHoSpace\", \"type\": \"spacer\", \"data\": {\"col\": 12}}, {\"id\": \"posHoLinks\", \"type\": \"header\", \"data\": {\"text\": \"<span class=\\\"h4\\\"><b>Documents</b></span>\", \"col\": 12}}, {\"id\": \"posHoSc0\", \"type\": \"shortcut\", \"data\": {\"shortcut_name\": \"POS Requests\", \"col\": 3}}, {\"id\": \"posHoSc1\", \"type\": \"shortcut\", \"data\": {\"shortcut_name\": \"Stock Entry\", \"col\": 3}}, {\"id\": \"posHoSc2\", \"type\": \"shortcut\", \"data\": {\"shortcut_name\": \"Purchase Order\", \"col\": 3}}, {\"id\": \"posHoSc3\", \"type\": \"shortcut\", \"data\": {\"shortcut_name\": \"Stock Balance\", \"col\": 3}}]",
+ "creation": "2026-10-13 12:00:00.000000",
+ "custom_blocks": [
+  {
+   "custom_block_name": "POS Requests Board",
+   "label": "POS Requests Board"
+  }
+ ],
+ "docstatus": 0,
+ "doctype": "Workspace",
+ "for_user": "",
+ "hide_custom": 0,
+ "idx": 0,
+ "indicator_color": "orange",
+ "is_hidden": 0,
+ "label": "POS HO",
+ "links": [],
+ "modified": "2026-10-13 12:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "Erp Dacsinc Custom",
+ "name": "POS HO",
+ "number_cards": [],
+ "owner": "Administrator",
+ "parent_page": "",
+ "public": 1,
+ "quick_lists": [],
+ "roles": [
+  {
+   "role": "Production Manager"
+  },
+  {
+   "role": "Warehouse Incharge"
+  },
+  {
+   "role": "POS Admin"
+  },
+  {
+   "role": "System Manager"
+  },
+  {
+   "role": "Super Admin"
+  },
+  {
+   "role": "Admin"
+  }
+ ],
+ "sequence_id": 40.0,
+ "shortcuts": [
+  {
+   "color": "Grey",
+   "doc_view": "List",
+   "label": "POS Requests",
+   "link_to": "Material Request",
+   "stats_filter": "[[\"Material Request\",\"custom_pos_request_status\",\"is\",\"set\",false]]",
+   "type": "DocType"
+  },
+  {
+   "color": "Grey",
+   "doc_view": "List",
+   "label": "Stock Entry",
+   "link_to": "Stock Entry",
+   "stats_filter": "[]",
+   "type": "DocType"
+  },
+  {
+   "color": "Grey",
+   "doc_view": "List",
+   "label": "Purchase Order",
+   "link_to": "Purchase Order",
+   "stats_filter": "[[\"Purchase Order\",\"custom_pos_material_request\",\"is\",\"set\",false]]",
+   "type": "DocType"
+  },
+  {
+   "color": "Grey",
+   "doc_view": "",
+   "label": "Stock Balance",
+   "link_to": "Stock Balance",
+   "report_ref_doctype": "Stock Ledger Entry",
+   "type": "Report"
+  }
+ ],
+ "title": "POS HO"
+}

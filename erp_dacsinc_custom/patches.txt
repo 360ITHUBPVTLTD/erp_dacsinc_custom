@@ -28,3 +28,4 @@ erp_dacsinc_custom.patches.assign_user_roles_from_sheet #client sheet 2026-10-02
 erp_dacsinc_custom.patches.hr_profile_without_admin
 erp_dacsinc_custom.patches.party_defaults_and_primary_address
 erp_dacsinc_custom.patches.close_stale_pos_shifts
+erp_dacsinc_custom.patches.setup_pos_requests

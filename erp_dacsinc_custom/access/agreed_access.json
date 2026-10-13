@@ -224,7 +224,7 @@
     "VNESC",
     "VNES",
     "VNES",
-    "",
+    "V",
     "",
     "",
     ""
@@ -632,10 +632,10 @@
   ],
   "saved_by": "Administrator",
   "saved_by_name": "Administrator",
-  "saved_on": "2026-10-13 12:48:46.076481",
-  "version": 32
+  "saved_on": "2026-10-13 13:13:31.223130",
+  "version": 23
  },
- "fingerprint": "ead6f05f33a14d07d65edbb9bf6a721182fb687f",
+ "fingerprint": "55c84c3be7aa019c5f0c87fbae9b5a2811e4f323",
  "tab_access": {
   "cells": {
    "Embroidery Transfers": [
@@ -1190,7 +1190,7 @@
     ""
    ]
   },
-  "note": "Admin Settings \u00b7 Administrator: Merchandiser User \u00b7 Stock Tracker: hidden \u2192 view + act; Production Assistant \u00b7 Stock Tracker: hidden \u2192 view + act",
+  "note": "from the app code",
   "roles": [
    "Accounts Executive",
    "Accounts Manager",
@@ -1212,7 +1212,7 @@
   ],
   "saved_by": "Administrator",
   "saved_by_name": "Administrator",
-  "saved_on": "2026-10-08 13:58:04.542323",
-  "version": 10
+  "saved_on": "2026-10-13 12:25:59.703072",
+  "version": 8
  }
 }

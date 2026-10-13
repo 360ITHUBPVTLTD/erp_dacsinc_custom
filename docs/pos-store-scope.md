@@ -57,19 +57,48 @@ and the rows' warehouses.
 
 ## Stores' stock requests and transfers
 
-- **Defaults** for a new document made from a POS login (POS Admin / POS Store
-  Manager, admins excluded; `public/js/pos_stock.js`, `get_my_pos_defaults`), always
-  as a Material Transfer:
-  - **Material Request:** target `set_warehouse` = the user's store warehouse;
-    source `set_from_warehouse` = Admin Settings › POS Stock Requests › Source
-    Warehouse (`pos_stock_source_warehouse`, set to VV Puram - IND by patch
-    `set_pos_stock_source_warehouse`).
-  - **Stock Entry:** source `from_warehouse` = the user's store warehouse. The user
-    picks the receiving store.
-- **Submitting a transfer:** a POS Store Manager may submit a Stock Entry only when
-  every target warehouse is their store's. The receiving store confirms. POS Admin
-  may submit any. Enforced by Stock Entry `before_submit`
-  (`guard_pos_transfer_submit`).
+- **Warehouses** (`public/js/pos_stock.js`, `get_my_pos_defaults`; enforced on save by
+  `pos_scope.enforce_mr_warehouses` / `enforce_se_warehouses`, before_validate):
+  - **POS Store Manager** (not POS Admin, not an admin), Material Request: source
+    `set_from_warehouse` = Admin Settings › POS Stock Requests › Source Warehouse (VV Puram
+    - IND); target `set_warehouse` = their store's warehouse. This holds on the header
+    and on every row, always as a Material Transfer, and is locked. A store manager
+    listed on several POS Profiles picks among their own stores' warehouses.
+  - **POS Store Manager**, their own Stock Entry transfer: source = their store, locked
+    (header and rows). The **target** is theirs to choose, only among the other POS
+    stores' warehouses and VV Puram. Their own store, or any other warehouse, is
+    refused. A new transfer starts with the target empty.
+  - These are set every time, not only when empty: ERPNext pre-fills new documents with
+    Stock Settings › Default Warehouse (VV Puram), which used to leave a store's request
+    pointing at VV Puram.
+  - Not rewritten: transfers made by someone else, i.e. HO's transfer for a POS request
+    or another store's transfer to them, which the receiving store saves or submits as
+    they are.
+  - **POS Admin**: the store and VV Puram are filled in on a new document only; nothing
+    is locked.
+- **Transfers into a store are accepted by that store** (`pos_request.guard_transfer_submit`,
+  Stock Entry before_submit). This covers any Material Transfer whose target is a POS store
+  warehouse: store to store, HO's transfer for a POS request, or HO sending stock without
+  one.
+  - It stays a draft (**In Transit**) until a POS Store Manager of the receiving store, who
+    didn't make it, checks what arrived (lowering a qty if less came) and submits it.
+  - **POS Admin can do everything**: they may accept any transfer, their own included. The
+    rule is keyed on the POS Admin role, so Administrator, who holds every role, counts too.
+  - The sender, HO, and admins without POS Admin are refused, on the server.
+  - **One store per transfer**: a transfer to two stores is refused, so each store accepts
+    its own.
+  - Saving one emails the receiving store's POS Store Managers, not the sender
+    (`mail_store_on_transfer` → `_mail_incoming`). A transfer for a POS request instead
+    emails that request's creator.
+  - The board's **Store Transfers** tile lists drafts waiting for a store, those not made
+    for a request: incoming (with **Check & accept**) and sent for a store, all of them
+    for POS Admin / HO. Each shows age, with the same "Waiting N days" flag. A store
+    board also has **+ New Transfer**.
+  - The Stock Entry form says whose turn it is ("Sent to <store>…", "In transit to
+    <store>…", or "Transfer from <store> to your store — check, then Submit"), and hides
+    Submit from everyone who can't accept it (`get_transfer_state`).
+  - `pos_scope.guard_pos_transfer_submit` (a store manager submits only into their own
+    store) still runs too.
 - On Material Request, POS Admin / POS Store Manager don't get **"Get Item From SO"**
   (the MR planner button) or ERPNext's **Create** menu (Pick List, Material Transfer,
   Purchase Order, …). Stores request stock for the store; the warehouse does the
@@ -78,6 +107,83 @@ and the rows' warehouses.
   `custom_stock_panel`, exported in `custom/material_request.json`): per item row, the
   actual stock at its target and source warehouse, and "Available" or "Short by N"
   against the requested qty (`get_stock_for_rows`, from Bin).
+
+## Store requests: HO approval, transfer, store receipt (`pos_request.py`)
+
+A Material Request raised by a **POS Store Manager** (Created by POS User ticked, the
+creator a POS Store Manager, admins excluded) gets a **POS Request Status**
+(`custom_pos_request_status`) and follows the steps below. Every other Material Request
+has no status and is unaffected, including a POS Admin's own requests.
+
+| Status | Who acts | What happens | Mail |
+|---|---|---|---|
+| Draft | Store | **Send for HO Approval**: its creator, a manager of that store, or POS Admin; the store can't submit | to *POS Material Request — Send To (HO)*: items, free at VV Puram, at store |
+| Pending HO Approval | HO | **Review & approve**: may change qty (0 drops the item; recorded as a comment), or **Reject** with a reason. The store can't edit it meanwhile. | — |
+| Rejected | Store | Edits it and sends again | to the store (the creator), with the reason |
+| Approved | HO | Approving **submits** the request (Approved By / On). **Send to store** makes a **draft** Stock Entry VV Puram → the store. ERPNext's own Create › Material Transfer counts the same. | approve: to the store |
+| In Transit | Store (or POS Admin) | A draft transfer exists. The store's POS user opens it (**Check & receive**), lowers a qty if less arrived, and **submits** it. | HO's transfer (after_insert): to the store |
+| Partly Received / Received | HO / — | Partly Received = some submitted, more still to send (HO sends again). | — |
+
+- **HO** = Admin Settings › POS › **Approver Roles** (default POS Admin, Production
+  Manager, Warehouse Incharge; set by patch `setup_pos_requests` only when empty).
+  - The same patch marks POS Store Manager requests still in draft as Draft. Requests
+    submitted before this flow keep no status and stay out of the board.
+  - Admins always count as HO.
+  - Every action is checked on the server (`send_for_approval`, `approve`, `reject`,
+    `dispatch`). before_submit refuses a POS request that isn't Pending, or a submitter
+    who isn't HO (`guard_submit`).
+  - HO may hold only View on Material Request: approve / reject run with
+    ignore_permissions after the role check.
+- **The store accepts the transfer**, under the same rule as every transfer into a store
+  (see *Transfers into a store are accepted by that store* above):
+  - a POS Store Manager of that store who didn't make it, or POS Admin;
+  - HO and admins without POS Admin are refused, so ERPNext's Submit can't get around it
+    either;
+  - the rows can't take the request past its qty.
+- **Warehouse Incharge** has **View** on Material Request in the access sheet, for this.
+  A user whose Material Request access is View only, through an approver role, sees
+  only POS store requests (`pos_request.material_request_query` /
+  `has_material_request_permission`).
+- **Send to store** sends only **free** VV Puram stock: on hand, less what stock_hold.py
+  gives to Sales Orders, less what HO's draft transfers for POS requests already take from
+  it (`_in_draft_transfers`). The same stock can't be sent to two stores. stock_hold
+  checks it again when the store submits.
+- **Waiting too long**: the board shows when each In Transit request was sent to the store.
+  One waiting over `LATE_DAYS` (2) gets an orange edge and a "Waiting N days" badge, and
+  the In Transit tile counts them. This is display only; nothing is blocked. The dialog
+  proposes min(left to send, free); left to send = requested − submitted − already in
+  drafts. The server refuses more.
+- **Purchase shortfall** (HO with Purchase Order create, e.g. Production Manager): opens
+  a new Purchase Order **into VV Puram** for left-to-send − free. Its items are fetched
+  as if picked, and *Purchase Order › POS Request* (`custom_pos_material_request`) links
+  it back. Once it is received, HO sends as usual.
+- **Status after approval** is computed from the Stock Entries made against the request
+  (`update_from_stock_entry`):
+  - It runs on draft save, delete, submit and cancel. Submitted rows count as received,
+    draft rows as on the way.
+  - Deleting a draft or cancelling a transfer moves the status back.
+  - A cancelled request is Cancelled.
+  - The status field can't be changed from the form (`guard_edit`).
+- **Stock Requests board**: the Custom HTML Block *POS Requests Board* on the **POS**,
+  **POS Admin** and **POS HO** (Production Manager, Warehouse Incharge) workspaces.
+  - The block only calls `erp_pos_requests.mount()`. The code is
+    `public/js/pos_requests_board.js`, loaded on every desk page through hooks
+    `app_include_js` (bump its `?v=` when it changes; `frappe.require` can't take a
+    `?v=`). `setup` (after_migrate) creates the block or puts it back.
+  - Tiles with counts: Pending Approval · Draft & Rejected · To Send · In Transit · Store
+    Transfers · Received.
+  - **Received** shows the last 30 days (`RECEIVED_DAYS`): received requests **and**
+    accepted store transfers ("Store transfer · accepted by <name>"), newest first. The
+    sender sees them too.
+  - Under them, the requests of the chosen tile, each with its next action. A row shows
+    its open transfer.
+  - It reads through the user's own permissions (`get_board`): a store sees its store,
+    and POS Admin / HO see every store with a store picker.
+  - It refreshes when a Material Request / Stock Entry changes.
+  - The Material Request form shows the same status line and buttons.
+  - The Stock Entry form says whose turn it is ("In transit to <store>…") and hides
+    Submit from everyone but that store (`get_transfer_state`).
+- Test: `.scratch/order-flow-strict-rules/pos_request_test.py` (rolled back, data checksum).
 
 ## Items by the stores' brands
 
@@ -404,7 +510,7 @@ On the order summary's **Email Receipt** (`PastOrderSummary` patched in
   "address — dd-mm-yyyy hh:mm", one line per send, latest first. A comment on the
   invoice says who it went to and from which account.
 
-## POS paperwork: MR mail, transfer approval, closing report (`pos_notify.py`)
+## POS paperwork: POS flags, transfer approval, closing report (`pos_notify.py`)
 
 **Created by POS User** (read-only check, exported in `custom/material_request.json` /
 `custom/stock_entry.json`, also a list filter): Material Request
@@ -419,14 +525,14 @@ Recipients are set in **Admin Settings › POS Emails** (comma-separated, invali
 addresses skipped; empty = no mail). A mail also needs a default outgoing Email
 Account on the site.
 
-- **Material Request:** the store creates and submits it; no approval step. On
-  submit, one that is Created by POS User **and** whose creator is a **POS Store
-  Manager** (checked at send time) is mailed to *POS Material Request — Send To*:
-  store, source, type, required-by, raised-by, and the items with requested qty and
-  the current stock at source and store. A POS Admin's MR is flagged but not mailed.
+- **Material Request:** a POS Store Manager's request goes through HO approval, and
+  its mails go out on the way. See *Store requests: HO approval, dispatch, receipt* below.
+  A POS Admin's MR is flagged but takes no approval path and sends no mail.
 - **Stock Entry** (Created by POS User) and **Approved By** (`custom_approved_by`):
-  - A POS transfer whose **rows** move stock to or from the supply warehouse
-    (Admin Settings › Source Warehouse, VV Puram - IND) needs warehouse approval.
+  - A POS transfer whose **rows** send stock back **into** the supply warehouse
+    (Admin Settings › Source Warehouse, VV Puram - IND), i.e. a store returning stock,
+    needs warehouse approval. Stock coming out of VV Puram into a store is accepted by
+    that store instead.
     Only Warehouse Incharge / Warehouse Executive / POS Admin (or an admin) may submit
     it, and the submitter is recorded in Approved By (`guard_pos_approval`,
     `before_submit`).
@@ -434,7 +540,7 @@ Account on the site.
     Settings even for store → store.
   - The form shows "Waiting for warehouse approval". Approvers get an **Approve**
     button (= submit); for others Submit is hidden (`public/js/pos_stock.js`).
-  - Store-to-store transfers keep the receiving-store rule.
+  - Transfers into a store follow the receiving-store rule (above).
   - No Frappe Workflow is used, so subcontracting / embroidery / other Stock Entries
     are unaffected.
 - **POS Closing Entry** submitted → a report to *POS Closing Report — Send To*:
