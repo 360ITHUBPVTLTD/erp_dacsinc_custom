@@ -276,8 +276,188 @@ _NOT_DISABLED_SO = "(so.name IS NULL OR IFNULL(so.custom_old_record_item_is_disa
 _NOT_DISABLED_SO2 = "(so2.name IS NULL OR IFNULL(so2.custom_old_record_item_is_disabled, 0) = 0)"
 
 
+def _date_range(days):
+    """The page's date filter: "Last N days" (a number) or a custom range sent as
+    "YYYY-MM-DD~YYYY-MM-DD". Returns (from_date, to_date); to_date is None for "Last N days"."""
+    text = cstr(days).strip()
+    if "~" in text:
+        start, end = (part.strip() for part in text.split("~", 1))
+        start = getdate(start) if start else getdate("2000-01-01")
+        end = getdate(end) if end else None
+        if end and end < start:
+            start, end = end, start
+        return start, end
+    return getdate(add_days(nowdate(), -abs(int(flt(days) or 120)))), None
+
+
 def _from_date(days):
-    return add_days(nowdate(), -abs(int(days or 120)))
+    return _date_range(days)[0]
+
+
+def _to_next(days):
+    """Exclusive upper bound for the custom range's last day ("x < to_next" works for date
+    and datetime columns alike); far in the future for "Last N days"."""
+    end = _date_range(days)[1]
+    return add_days(end, 1) if end else "9999-12-31"
+
+def _tf(list_key):
+    """This table's own filters from the page: of_tf = {"<tab>.<table>": {field: value}} —
+    the controls beside each table's All / Draft / Submitted pills (order_flow.js,
+    OF_TABLE_FILTERS). A table not in it has no filters."""
+    if not list_key:
+        return {}
+    cache = getattr(frappe.local, "_of_tf", None)
+    if cache is None:
+        raw = (frappe.form_dict or {}).get("of_tf")
+        try:
+            cache = (frappe.parse_json(raw) if isinstance(raw, str) else raw) or {}
+        except Exception:
+            cache = {}
+        if not isinstance(cache, dict):
+            cache = {}
+        frappe.local._of_tf = cache
+    return cache.get(list_key) or {}
+
+
+def _tf_name(list_key, field):
+    return "tf_" + "".join(c if c.isalnum() else "_" for c in f"{list_key}_{field}")
+
+
+def _tf_param(params, list_key, field, value):
+    """A bind-parameter name unique to this table and field (two tables in one request can
+    filter the same field to different values)."""
+    name = _tf_name(list_key, field)
+    params[name] = value
+    return name
+
+
+_TF_LABEL = {"Customer": "customer_name", "Supplier": "supplier_name", "Warehouse": "warehouse_name"}
+
+
+def _filter_options(list_key, pieces, params, fields):
+    """The values a table's Customer / Supplier / Warehouse dropdowns offer: the distinct
+    parties in that table under all its other filters — its own choice for that field left
+    out, so the dropdown keeps listing everyone. `pieces` = [(from_join, conditions)] (more
+    than one for a combined list like Receipts); `fields` = {field: (column, doctype)}.
+    Returned as {"list": list_key, field: [[value, label], ...]} on the table's data; the page
+    collects them (OF_TABLE_FILTERS type 'link' renders a select from them)."""
+    out = {"list": list_key}
+    for field, (col, doctype) in fields.items():
+        mark = _tf_name(list_key, field)
+        values = set()
+        for from_join, conditions in pieces:
+            conds = [c for c in conditions if mark not in c] or ["1 = 1"]
+            for (v,) in frappe.db.sql(f"""
+                SELECT DISTINCT {col} FROM {from_join}
+                WHERE {' AND '.join(conds)} AND IFNULL({col}, '') != '' LIMIT 1000""", params):
+                values.add(v)
+        label_field = _TF_LABEL.get(doctype)
+        labels = dict(frappe.get_all(doctype, filters={"name": ["in", list(values)]},
+                                     fields=["name", label_field], as_list=True)) if values and label_field else {}
+        chosen = cstr(_tf(list_key).get(field))
+        if chosen:
+            values.add(chosen)
+        out[field] = sorted(([v, labels.get(v) or v] for v in values), key=lambda x: cstr(x[1]).lower())
+    return out
+
+
+def _add_party_filter(conditions, params, customer=None, supplier=None, list_key=None):
+    """The table's Customer / Supplier filter. `customer` / `supplier` is the column it
+    matches, or a full condition with {p} where the bound value goes. A table that names no
+    column for a filter, or has no list_key, ignores it."""
+    tf = _tf(list_key)
+    for field, sql in (("customer", customer), ("supplier", supplier)):
+        value = cstr(tf.get(field)).strip()
+        if not value or not sql:
+            continue
+        p = _tf_param(params, list_key, field, value)
+        conditions.append(sql.replace("{p}", f"%({p})s") if "{p}" in sql else f"{sql} = %({p})s")
+
+
+def _add_choice_filter(conditions, list_key, field, choices):
+    """A fixed-option table filter: `choices` maps the option key to its SQL condition."""
+    sql = choices.get(cstr(_tf(list_key).get(field)))
+    if sql:
+        conditions.append(sql)
+
+
+def _add_value_filter(conditions, params, list_key, field, column, allowed=None):
+    """A table filter that matches one column to the chosen value (warehouse, stage…)."""
+    value = cstr(_tf(list_key).get(field)).strip()
+    if not value or (allowed is not None and value not in allowed):
+        return
+    conditions.append(f"{column} = %({_tf_param(params, list_key, field, value)})s")
+
+
+
+# Per-table Status filter options (field "status" of the table's filters, _tf). Labels on the
+# page: OF_STATUS_OPTIONS in order_flow.js.
+_LPR_TO_BILL = ("EXISTS (SELECT 1 FROM `tabPurchase Receipt` lpr WHERE lpr.subcontracting_receipt = scr.name "
+                "AND lpr.docstatus = 1 AND lpr.status = 'To Bill')")
+_STATUS_SQL = {
+    "po": {
+        "not_received": "po.docstatus = 1 AND IFNULL(po.per_received, 0) <= 0",
+        "partly_received": "po.per_received > 0 AND po.per_received < 100",
+        "fully_received": "po.per_received >= 100",
+        "not_billed": "po.docstatus = 1 AND IFNULL(po.per_billed, 0) <= 0",
+        "partly_billed": "po.per_billed > 0 AND po.per_billed < 100",
+        "fully_billed": "po.per_billed >= 100",
+        "overdue": ("po.docstatus = 1 AND IFNULL(po.per_received, 0) < 100 AND po.schedule_date < CURDATE() "
+                    "AND po.status NOT IN ('Closed', 'Completed')"),
+    },
+    "pr": {"to_bill": "pr.status = 'To Bill'", "completed": "pr.status = 'Completed'",
+           "returns": "IFNULL(pr.is_return, 0) = 1"},
+    "scr": {"to_bill": _LPR_TO_BILL, "completed": f"scr.docstatus = 1 AND NOT {_LPR_TO_BILL}",
+            "returns": "IFNULL(scr.is_return, 0) = 1"},
+    "mr": {
+        "pending": "mr.docstatus = 1 AND IFNULL(mr.per_ordered, 0) <= 0 AND mr.status NOT IN ('Stopped', 'Cancelled')",
+        "partly_ordered": "mr.per_ordered > 0 AND mr.per_ordered < 100",
+        "ordered": "mr.per_ordered >= 100",
+        "partly_received": "mr.per_received > 0 AND mr.per_received < 100",
+        "received": "mr.per_received >= 100",
+    },
+    "ewo": {"not_received": "IFNULL(ewo.per_received, 0) <= 0",
+            "partly_received": "ewo.per_received > 0 AND ewo.per_received < 100",
+            "fully_received": "ewo.per_received >= 100"},
+    "si": {"unpaid": "si.docstatus = 1 AND si.status IN ('Unpaid', 'Unpaid and Discounted')",
+           "partly_paid": "si.status IN ('Partly Paid', 'Partly Paid and Discounted')",
+           "overdue": "si.status IN ('Overdue', 'Overdue and Discounted')",
+           "paid": "si.status = 'Paid'",
+           "returns": "(IFNULL(si.is_return, 0) = 1 OR si.status IN ('Return', 'Credit Note Issued'))"},
+    "pi": {"unpaid": "pi.docstatus = 1 AND pi.status = 'Unpaid'",
+           "partly_paid": "pi.status = 'Partly Paid'",
+           "overdue": "pi.status = 'Overdue'",
+           "paid": "pi.status = 'Paid'",
+           "returns": "(IFNULL(pi.is_return, 0) = 1 OR pi.status IN ('Return', 'Debit Note Issued'))"},
+    "pl": {"draft": "pl.status = 'Draft'", "open": "pl.status = 'Open'",
+           "partly_delivered": "pl.status = 'Partly Delivered'", "completed": "pl.status = 'Completed'"},
+    "logi": {"lr_missing": "IFNULL(si.lr_no, '') = ''",
+             "signed_missing": "IFNULL(si.custom_signed_copy, '') = ''",
+             "lr_done_signed_missing": "IFNULL(si.lr_no, '') != '' AND IFNULL(si.custom_signed_copy, '') = ''"},
+}
+
+
+def _tri(col, submitted=None):
+    """Not / Partly / Fully for a 0–100 percentage column (per_received, per_billed…). "Not"
+    includes drafts — nothing has been received / billed against a draft either (the
+    All / Draft / Submitted pills narrow it further). `submitted` is kept for callers only."""
+    return {"not": f"IFNULL({col}, 0) <= 0", "partly": f"{col} > 0 AND {col} < 100", "fully": f"{col} >= 100"}
+
+
+def _add_po_filters(conditions, list_key):
+    """Purchase / Sub PO table: Received, Billed, Overdue (one dropdown per question)."""
+    _add_choice_filter(conditions, list_key, "received", _tri("po.per_received", "po.docstatus"))
+    _add_choice_filter(conditions, list_key, "billed", _tri("po.per_billed", "po.docstatus"))
+    _add_choice_filter(conditions, list_key, "overdue", {"yes": _STATUS_SQL["po"]["overdue"]})
+
+
+def _add_status_filter(conditions, list_key, kind):
+    """This table's Status filter (_STATUS_SQL[kind])."""
+    sql = _STATUS_SQL.get(kind, {}).get(cstr(_tf(list_key).get("status")))
+    if sql:
+        conditions.append(sql)
+
+
 
 
 def _paged_query(sql, params, page, page_size):
@@ -310,7 +490,7 @@ def _with_docstatus(conditions, column, value):
         return conditions + [f"{column} = 0"]
     if value == "submitted":
         return conditions + [f"{column} = 1"]
-    return conditions
+    return list(conditions)  # always a copy: callers append list-only conditions to it
 
 
 def _docstatus_pill_counts(pieces, params):
@@ -774,7 +954,8 @@ def _event_relevance(ev, ctx):
 _TRACKER_ROW_CEILING = 5000
 
 
-def _get_tracker_rows(days=120, search=None, scope="open", merchandiser=None, approval_stage=None, tab="tracker", industry=None):
+def _get_tracker_rows(days=120, search=None, scope="open", merchandiser=None, approval_stage=None, tab="tracker", industry=None,
+                      with_filter_options=False):
     """
     Sales Orders ordered by most recent downstream activity, each enriched
     with doc-flow counts and `stage` (via _compute_stage_info) — the full
@@ -797,15 +978,22 @@ def _get_tracker_rows(days=120, search=None, scope="open", merchandiser=None, ap
     from_date = _from_date(days)
 
     if approval_stage in ("Draft", "Pending Merchandiser Approval", "Pending Final Approval", "Rejected"):
-        conditions = ["so.docstatus = 0", "so.transaction_date >= %(from_date)s"]
+        conditions = ["so.docstatus = 0", "so.transaction_date >= %(from_date)s AND so.transaction_date < %(to_next)s"]
     elif approval_stage:
-        conditions = ["so.docstatus = 1", "so.transaction_date >= %(from_date)s"]
+        conditions = ["so.docstatus = 1", "so.transaction_date >= %(from_date)s AND so.transaction_date < %(to_next)s"]
     else:
         # Sales Tracker shows only approved/submitted Sales Orders — drafts and
         # pending-approval orders belong in the SO Approvals tab.
-        conditions = ["so.docstatus = 1", "so.transaction_date >= %(from_date)s"]
+        conditions = ["so.docstatus = 1", "so.transaction_date >= %(from_date)s AND so.transaction_date < %(to_next)s"]
     conditions.append(_NOT_DISABLED_SO)
-    params = {"from_date": from_date}
+    params = {"from_date": from_date, "to_next": _to_next(days)}
+    list_key = "tracker.so" if tab == "tracker" else tab   # the table's own filters (_tf)
+    _add_party_filter(conditions, params, customer="so.customer", list_key=list_key)
+    _add_choice_filter(conditions, list_key, "delivery", {
+        "not": "IFNULL(so.per_delivered, 0) <= 0",
+        "partly": "so.per_delivered > 0 AND so.per_delivered < 100",
+        "fully": "so.per_delivered >= 100",
+    })
 
     if approval_stage:
         if approval_stage == "Draft":
@@ -857,6 +1045,10 @@ def _get_tracker_rows(days=120, search=None, scope="open", merchandiser=None, ap
         conditions.append(_merch_scope_so())
         params["merch_scope"] = frappe.session.user
 
+    filter_options = _filter_options(
+        list_key, [("`tabSales Order` so LEFT JOIN `tabCustomer` cust ON cust.name = so.customer", conditions)],
+        params, {"customer": ("so.customer", "Customer")}) if with_filter_options else None
+
     total_matching = frappe.db.sql(f"""
         SELECT COUNT(*) FROM `tabSales Order` so
         LEFT JOIN `tabCustomer` cust ON cust.name = so.customer
@@ -886,7 +1078,7 @@ def _get_tracker_rows(days=120, search=None, scope="open", merchandiser=None, ap
     """, {**params, "ceiling": _TRACKER_ROW_CEILING}, as_dict=1)
 
     if not orders:
-        return {"rows": [], "truncated": truncated}
+        return {"rows": [], "truncated": truncated, "filter_options": filter_options}
 
     names = [o.name for o in orders]
     by_name = {o.name: o for o in orders}
@@ -1236,7 +1428,7 @@ def _get_tracker_rows(days=120, search=None, scope="open", merchandiser=None, ap
     for o in orders:
         o["stage"] = _compute_stage_info(o)
 
-    return {"rows": orders, "truncated": truncated}
+    return {"rows": orders, "truncated": truncated, "filter_options": filter_options}
 
 
 @frappe.whitelist()
@@ -1274,7 +1466,7 @@ def get_sales_tracker(days=120, search=None, scope="open", stage_filter=None, me
     effective_scope = "all" if stage_filter == "completed" else scope
     full = _get_tracker_rows(days=days, search=search, scope=effective_scope,
                               merchandiser=merchandiser, approval_stage=approval_stage,
-                              industry=industry) if reads_so else {"rows": [], "truncated": False}
+                              industry=industry, with_filter_options=True) if reads_so else {"rows": [], "truncated": False}
     rows = full["rows"]
     if not billing_visible:
         rows = [o for o in rows if o.get("stage", {}).get("stage_key") not in ("need_to_bill", "ready_to_deliver")]
@@ -1303,8 +1495,15 @@ def get_sales_tracker(days=120, search=None, scope="open", stage_filter=None, me
         o["contact_person_name"] = contact_map.get(o.get("customer"), "")
     _attach_tracker_insights(page_rows)
 
-    mr_conditions = ["mr.docstatus < 2", "mr.transaction_date >= %(from_date)s", _NOT_DISABLED_SO]
-    mr_params = {"from_date": _from_date(days)}
+    mr_conditions = ["mr.docstatus < 2", "mr.transaction_date >= %(from_date)s AND mr.transaction_date < %(to_next)s", _NOT_DISABLED_SO]
+    mr_params = {"from_date": _from_date(days), "to_next": _to_next(days)}
+    _add_party_filter(mr_conditions, mr_params, customer="so.customer", list_key="tracker.mr")
+    _add_choice_filter(mr_conditions, "tracker.mr", "type", {
+        "purchase": "mr.material_request_type = 'Purchase'",
+        "transfer": "mr.material_request_type = 'Material Transfer'",
+    })
+    _add_choice_filter(mr_conditions, "tracker.mr", "ordered", _tri("mr.per_ordered", "mr.docstatus"))
+    _add_choice_filter(mr_conditions, "tracker.mr", "received", _tri("mr.per_received", "mr.docstatus"))
     if scope == "open":
         mr_conditions.append("mr.status NOT IN ('Received', 'Stopped', 'Cancelled')")
         mr_conditions.append("(mri.sales_order IS NULL OR mri.sales_order = '' OR so.status NOT IN ('Closed', 'Completed', 'Cancelled'))")
@@ -1353,6 +1552,8 @@ def get_sales_tracker(days=120, search=None, scope="open", stage_filter=None, me
         ORDER BY mr.transaction_date DESC
     """, mr_params, mr_page, mr_page_size)
     material_requests["docstatus_counts"] = mr_docstatus_counts
+    material_requests["filter_options"] = _filter_options(
+        "tracker.mr", [(_mr_from_join, mr_conditions)], mr_params, {"customer": ("so.customer", "Customer")})
 
     ewo = _ewo_lists(days=days, search=search, scope=scope, scope_tab="tracker",
                      fp_page=ewo_fp_page, fp_page_size=ewo_fp_page_size,
@@ -1367,6 +1568,7 @@ def get_sales_tracker(days=120, search=None, scope="open", stage_filter=None, me
         "page": effective_page,
         "page_size": effective_page_size,
         "truncated": full["truncated"],
+        "filter_options": full.get("filter_options"),
         "material_requests": material_requests,
         "ewo_fp": ewo["ewo_fp"],
         "ewo_pn": ewo["ewo_pn"],
@@ -2855,13 +3057,13 @@ def get_activity(days=21, limit=80, merchandiser=None, scope="open", search=None
         return []  # built on Sales Orders: nothing to show, not an error
     limit = int(limit)
     fetch_limit = min(max(limit * 20, 400), 3000)
-    conditions = ["ev.ts >= %(from_date)s"]
-    params = {"from_date": _from_date(days), "limit": fetch_limit}
+    conditions = ["ev.ts >= %(from_date)s AND ev.ts < %(to_next)s"]
+    params = {"from_date": _from_date(days), "to_next": _to_next(days), "limit": fetch_limit}
 
     # Hold the feed to the orders the tables are showing. Events with no Sales
     # Order of their own (embroidery stock transfers) are exempt — they are
     # matched by their tab's doctype list instead.
-    so_conditions = ["so2.transaction_date >= %(from_date)s", _NOT_DISABLED_SO2]
+    so_conditions = ["so2.transaction_date >= %(from_date)s AND so2.transaction_date < %(to_next)s", _NOT_DISABLED_SO2]
     if scope == "open":
         so_conditions.append("so2.status NOT IN ('Closed', 'Completed', 'Cancelled')")
     if search:
@@ -2982,8 +3184,8 @@ def get_purchase_flow(days=120, search=None, scope="open", merchandiser=None,
     """
     _guard("purchase")
     _guard_tab("purchase")
-    conditions = ["po.docstatus < 2", "po.transaction_date >= %(from_date)s", "IFNULL(po.is_subcontracted, 0) = 0", _NOT_DISABLED_SO]
-    params = {"from_date": _from_date(days)}
+    conditions = ["po.docstatus < 2", "po.transaction_date >= %(from_date)s AND po.transaction_date < %(to_next)s", "IFNULL(po.is_subcontracted, 0) = 0", _NOT_DISABLED_SO]
+    params = {"from_date": _from_date(days), "to_next": _to_next(days)}
 
     if scope == "open":
         conditions.append("po.status NOT IN ('Closed', 'Completed', 'Cancelled')")
@@ -3026,6 +3228,9 @@ def get_purchase_flow(days=120, search=None, scope="open", merchandiser=None,
     po_docstatus_counts = _docstatus_pill_counts(
         [("po.name", "po.docstatus", _po_from_join, conditions)], params)
     po_list_conditions = _with_docstatus(conditions, "po.docstatus", po_docstatus)
+    # the PO table's own filters — not applied to `conditions`, which the To Bill list shares
+    _add_po_filters(po_list_conditions, "purchase.po")
+    _add_party_filter(po_list_conditions, params, supplier="po.supplier", customer="so.customer", list_key="purchase.po")
 
     purchase_orders = _paged_query(f"""
         SELECT po.name, po.transaction_date, po.schedule_date, po.status, po.docstatus,
@@ -3048,11 +3253,16 @@ def get_purchase_flow(days=120, search=None, scope="open", merchandiser=None,
         ORDER BY po.transaction_date DESC, po.name DESC
     """, params, po_page, po_page_size)
     purchase_orders["docstatus_counts"] = po_docstatus_counts
+    purchase_orders["filter_options"] = _filter_options("purchase.po", [(_po_from_join, po_list_conditions)], params, {"supplier": ("po.supplier", "Supplier"), "customer": ("so.customer", "Customer")})
 
     # "To Bill" sub-tab: fully-received POs still waiting on a Purchase
     # Invoice — same base filters as purchase_orders, plus the bill-status
     # condition, as its own independently-paginated list rather than a
     # client-side .filter() over whichever PO page happens to be loaded.
+    bill_conditions = conditions + ["po.per_received >= 100", "po.per_billed < 100"]
+    _add_party_filter(bill_conditions, params, supplier="po.supplier", list_key="purchase.bill")
+    bill_filter_options = _filter_options("purchase.bill", [(_po_from_join, bill_conditions)], params,
+                                          {"supplier": ("po.supplier", "Supplier")})
     bill_orders = _paged_query(f"""
         SELECT po.name, po.transaction_date, po.schedule_date, po.status, po.docstatus,
                po.supplier, sup.supplier_name, po.is_subcontracted, po.currency,
@@ -3069,7 +3279,7 @@ def get_purchase_flow(days=120, search=None, scope="open", merchandiser=None,
         LEFT JOIN `tabSupplier` sup ON sup.name = po.supplier
         LEFT JOIN `tabSales Order` so ON so.name = poi.sales_order
         LEFT JOIN `tabCustomer` cust ON cust.name = so.customer
-        WHERE {' AND '.join(conditions + ["po.per_received >= 100", "po.per_billed < 100"])}
+        WHERE {' AND '.join(bill_conditions)}
         GROUP BY po.name, po.transaction_date, po.schedule_date, po.status, po.docstatus,
                  po.supplier, sup.supplier_name, po.is_subcontracted, po.currency,
                  po.per_received, po.per_billed, po.grand_total,
@@ -3078,7 +3288,7 @@ def get_purchase_flow(days=120, search=None, scope="open", merchandiser=None,
         ORDER BY po.transaction_date DESC, po.name DESC
     """, params, bill_page, bill_page_size)
 
-    mr_conditions = ["mr.docstatus < 2", "mr.transaction_date >= %(from_date)s", _NOT_DISABLED_SO]
+    mr_conditions = ["mr.docstatus < 2", "mr.transaction_date >= %(from_date)s AND mr.transaction_date < %(to_next)s", _NOT_DISABLED_SO]
     if scope == "open":
         mr_conditions.append("mr.status NOT IN ('Received', 'Stopped', 'Cancelled')")
         mr_conditions.append("(mri.sales_order IS NULL OR mri.sales_order = '' OR so.status NOT IN ('Closed', 'Completed', 'Cancelled'))")
@@ -3092,8 +3302,12 @@ def get_purchase_flow(days=120, search=None, scope="open", merchandiser=None,
     if is_scoped_to_own_customers("purchase"):
         mr_conditions.append(_merch_scope_so())
 
-    pr_conditions = ["pr.docstatus < 2", "pr.posting_date >= %(from_date)s", "IFNULL(pr.is_subcontracted, 0) = 0", _NOT_DISABLED_SO]
-    scr_conditions = ["scr.docstatus < 2", "scr.posting_date >= %(from_date)s", _NOT_DISABLED_SO]
+    pr_conditions = ["pr.docstatus < 2", "pr.posting_date >= %(from_date)s AND pr.posting_date < %(to_next)s", "IFNULL(pr.is_subcontracted, 0) = 0", _NOT_DISABLED_SO]
+    scr_conditions = ["scr.docstatus < 2", "scr.posting_date >= %(from_date)s AND scr.posting_date < %(to_next)s", _NOT_DISABLED_SO]
+    _add_party_filter(pr_conditions, params, supplier="pr.supplier", list_key="purchase.receipt")
+    _add_party_filter(scr_conditions, params, supplier="scr.supplier", list_key="purchase.receipt")
+    _add_status_filter(pr_conditions, "purchase.receipt", "pr")
+    _add_status_filter(scr_conditions, "purchase.receipt", "scr")
     if scope == "open":
         pr_conditions.append("pr.status NOT IN ('Completed', 'Cancelled')")
         pr_conditions.append("(pri.sales_order IS NULL OR pri.sales_order = '' OR so.status NOT IN ('Closed', 'Completed', 'Cancelled'))")
@@ -3161,7 +3375,10 @@ def get_purchase_flow(days=120, search=None, scope="open", merchandiser=None,
         ORDER BY posting_date DESC
     """, params, receipt_page, receipt_page_size)
     receipts["docstatus_counts"] = receipt_docstatus_counts
+    receipts["filter_options"] = _filter_options("purchase.receipt", [(_pr_from_join, pr_conditions), (_scr_from_join, scr_conditions)],
+                                                 params, {"supplier": ("sup.name", "Supplier")})
 
+    bill_orders["filter_options"] = bill_filter_options
     _attach_creator_names(purchase_orders["rows"], bill_orders["rows"], receipts["rows"])
 
     draft_pis = frappe.db.sql("""
@@ -3238,6 +3455,13 @@ _EWO_OPEN_SQL = """(
 )"""
 
 
+_EWO_STAGES = {
+    "ewo_fp": ("Sent to Full Piece Jobber", "Received from Full Piece Jobber"),
+    "ewo_pn": ("Pending Process Start", "Received from Jobber (Internal)", "Sent to Panel Jobber",
+               "Received from Panel Jobber", "Returned to Jobber (Closed)"),
+}
+
+
 def _ewo_lists(days=180, search=None, scope="open", scope_tab="jobwork",
                fp_page=1, fp_page_size=100, pn_page=1, pn_page_size=100,
                fp_docstatus=None, pn_docstatus=None):
@@ -3252,8 +3476,8 @@ def _ewo_lists(days=180, search=None, scope="open", scope_tab="jobwork",
 
     Returns {"ewo_fp", "ewo_pn", "active_count"}.
     """
-    conditions = ["ewo.docstatus < 2", "ewo.date >= %(from_date)s", _NOT_DISABLED_SO]
-    params = {"from_date": _from_date(days)}
+    conditions = ["ewo.docstatus < 2", "ewo.date >= %(from_date)s AND ewo.date < %(to_next)s", _NOT_DISABLED_SO]
+    params = {"from_date": _from_date(days), "to_next": _to_next(days)}
 
     if scope == "open":
         conditions.append("ewo.status NOT IN ('Closed', 'Completed', 'Cancelled')")
@@ -3312,9 +3536,19 @@ def _ewo_lists(days=180, search=None, scope="open", scope_tab="jobwork",
             ("ewo_pn", "Panel Job Work", pn_page, pn_page_size, pn_docstatus)):
         wt_params = {**params, "work_type": work_type}
         wt_conditions = conditions + ["ewo.work_type = %(work_type)s"]
+        tkey = f"{scope_tab}.{key}"   # its own table's filters (_tf)
+        _add_choice_filter(wt_conditions, tkey, "received", _tri("ewo.per_received"))
+        _add_party_filter(wt_conditions, wt_params, customer="so.customer", list_key=tkey,
+                          supplier="(ewo.panel_jobber = {p} OR ewo.full_piece_jobber = {p} OR po.supplier = {p})")
+        stage_col = "ewo.full_piece_stage" if key == "ewo_fp" else "ewo.panel_stage"
+        _add_value_filter(wt_conditions, wt_params, tkey, "stage", stage_col, _EWO_STAGES[key])
         counts = _docstatus_pill_counts([("ewo.name", "ewo.docstatus", _EWO_FROM_JOIN, wt_conditions)], wt_params)
         env = _paged_query(_sql(_with_docstatus(wt_conditions, "ewo.docstatus", docstatus)), wt_params, page, page_size)
         env["docstatus_counts"] = counts
+        env["filter_options"] = _filter_options(tkey, [(_EWO_FROM_JOIN, wt_conditions)], wt_params, {
+            "supplier": ("COALESCE(NULLIF(ewo.full_piece_jobber, ''), NULLIF(ewo.panel_jobber, ''), po.supplier)", "Supplier"),
+            "customer": ("so.customer", "Customer"),
+        })
         # Attached images / files per work order — thumbnails in the row.
         from erp_dacsinc_custom.so_embroidery import ewo_attachments
         files = ewo_attachments([r["name"] for r in env.get("rows") or []])
@@ -3347,8 +3581,13 @@ def get_jobwork_flow(days=180, search=None, scope="open", merchandiser=None,
     """
     _guard("jobwork")
     _guard_tab("jobwork")
-    conditions = ["po.docstatus < 2", "po.transaction_date >= %(from_date)s", "po.is_subcontracted = 1", _NOT_DISABLED_SO]
-    params = {"from_date": _from_date(days)}
+    conditions = ["po.docstatus < 2", "po.transaction_date >= %(from_date)s AND po.transaction_date < %(to_next)s", "po.is_subcontracted = 1", _NOT_DISABLED_SO]
+    params = {"from_date": _from_date(days), "to_next": _to_next(days)}
+    _add_party_filter(conditions, params, supplier="po.supplier", list_key="jobwork.po")
+    _add_po_filters(conditions, "jobwork.po")
+    _sco_exists = ("EXISTS (SELECT 1 FROM `tabSubcontracting Order` sco_f "
+                   "WHERE sco_f.purchase_order = po.name AND sco_f.docstatus = 1)")
+    _add_choice_filter(conditions, "jobwork.po", "sco", {"has": _sco_exists, "missing": f"NOT {_sco_exists}"})
 
     if scope == "open":
         conditions.append("po.status NOT IN ('Closed', 'Completed', 'Cancelled')")
@@ -3362,7 +3601,7 @@ def get_jobwork_flow(days=180, search=None, scope="open", merchandiser=None,
             param_key = f"q_{idx}"
             conditions.append(f"""(po.name LIKE %({param_key})s OR po.supplier LIKE %({param_key})s
                                   OR sup.supplier_name LIKE %({param_key})s OR poi.sales_order LIKE %({param_key})s
-                                  OR poi.item_code LIKE %({param_key})s)""")
+                                  OR poi.item_code LIKE %({param_key})s OR po.order_confirmation_no LIKE %({param_key})s)""")
             params[param_key] = f"%{word}%"
     # Same is_scoped_to_own_customers guard as Tracker/Approval/Billing/
     # Purchase — see the detailed comment in get_purchase_flow. A plain
@@ -3387,6 +3626,7 @@ def get_jobwork_flow(days=180, search=None, scope="open", merchandiser=None,
         SELECT po.name, po.transaction_date, po.schedule_date, po.status, po.docstatus,
                po.supplier, sup.supplier_name, po.is_subcontracted, po.currency,
                po.per_received, po.per_billed, po.grand_total, po.owner,
+               po.order_confirmation_no, po.order_confirmation_date,
                (SELECT sco.name FROM `tabSubcontracting Order` sco
                 WHERE sco.purchase_order = po.name AND sco.docstatus = 1 LIMIT 1) AS sco_name,
                GROUP_CONCAT(DISTINCT poi.sales_order ORDER BY poi.sales_order SEPARATOR ', ') AS sales_orders,
@@ -3398,13 +3638,19 @@ def get_jobwork_flow(days=180, search=None, scope="open", merchandiser=None,
         WHERE {' AND '.join(po_list_conditions)}
         GROUP BY po.name, po.transaction_date, po.schedule_date, po.status, po.docstatus,
                  po.supplier, sup.supplier_name, po.is_subcontracted, po.currency,
-                 po.per_received, po.per_billed, po.grand_total, po.owner
+                 po.per_received, po.per_billed, po.grand_total, po.owner,
+                 po.order_confirmation_no, po.order_confirmation_date
         ORDER BY po.transaction_date DESC, po.name DESC
     """, params, po_page, po_page_size)
     purchase_orders["docstatus_counts"] = po_docstatus_counts
+    purchase_orders["filter_options"] = _filter_options("jobwork.po", [(_po_from_join, po_list_conditions)], params, {"supplier": ("po.supplier", "Supplier")})
 
-    pr_conditions = ["pr.docstatus < 2", "pr.posting_date >= %(from_date)s", "pr.is_subcontracted = 1", _NOT_DISABLED_SO]
-    scr_conditions = ["scr.docstatus < 2", "scr.posting_date >= %(from_date)s", _NOT_DISABLED_SO]
+    pr_conditions = ["pr.docstatus < 2", "pr.posting_date >= %(from_date)s AND pr.posting_date < %(to_next)s", "pr.is_subcontracted = 1", _NOT_DISABLED_SO]
+    scr_conditions = ["scr.docstatus < 2", "scr.posting_date >= %(from_date)s AND scr.posting_date < %(to_next)s", _NOT_DISABLED_SO]
+    _add_party_filter(pr_conditions, params, supplier="pr.supplier", list_key="jobwork.receipt")
+    _add_party_filter(scr_conditions, params, supplier="scr.supplier", list_key="jobwork.receipt")
+    _add_status_filter(pr_conditions, "jobwork.receipt", "pr")
+    _add_status_filter(scr_conditions, "jobwork.receipt", "scr")
 
     if scope == "open":
         pr_conditions.append("pr.status NOT IN ('Completed', 'Cancelled')")
@@ -3481,6 +3727,8 @@ def get_jobwork_flow(days=180, search=None, scope="open", merchandiser=None,
         ORDER BY posting_date DESC, name DESC
     """, params, receipt_page, receipt_page_size)
     receipts["docstatus_counts"] = receipt_docstatus_counts
+    receipts["filter_options"] = _filter_options("jobwork.receipt", [(_pr_from_join, pr_conditions), (_scr_from_join, scr_conditions)],
+                                                 params, {"supplier": ("sup.name", "Supplier")})
 
     ewo = _ewo_lists(days=days, search=search, scope=scope, scope_tab="jobwork",
                      fp_page=ewo_fp_page, fp_page_size=ewo_fp_page_size,
@@ -3625,9 +3873,11 @@ def get_summary(days=120, scope="open", search=None, merchandiser=None, approval
 @frappe.whitelist()
 def get_accounts_flow(days=120, search=None, scope="open", merchandiser=None,
                        sales_page=1, sales_page_size=100, supplier_page=1, supplier_page_size=100,
-                       jobber_page=1, jobber_page_size=100):
+                       jobber_page=1, jobber_page_size=100,
+                       sales_docstatus=None, supplier_docstatus=None, jobber_docstatus=None):
     """
-    Financial summary & invoices split into Receivables, Supplier Payables, and Jobber Payables (custom_is_jobber = 1).
+    Financial summary & invoices split into Receivables, Supplier Payables, and Jobber Payables
+    (supplier custom_is_jobber = 1, or the invoice is subcontracted).
 
     Supplier vs jobber payables used to be one query, split into two lists
     in Python after the fact — that meant they couldn't be paginated
@@ -3640,9 +3890,14 @@ def get_accounts_flow(days=120, search=None, scope="open", merchandiser=None,
     _guard("accounts")
     _guard_tab("accounts")
     from_date = _from_date(days)
-    params = {"from_date": from_date}
+    params = {"from_date": from_date, "to_next": _to_next(days)}
 
-    si_conditions = ["si.docstatus = 1", "si.posting_date >= %(from_date)s", _NOT_DISABLED_SO]
+    # Draft and submitted invoices both list (All / Draft / Submitted pills); the totals,
+    # tiles and collection bar count submitted invoices only — a draft is not owed yet.
+    si_conditions = ["si.docstatus < 2", "si.posting_date >= %(from_date)s AND si.posting_date < %(to_next)s", _NOT_DISABLED_SO]
+    _add_party_filter(si_conditions, params, customer="si.customer", list_key="accounts.receivables")
+    _add_choice_filter(si_conditions, "accounts.receivables", "goods", _done_choices(_SI_DONE_SQL))
+    _add_status_filter(si_conditions, "accounts.receivables", "si")
     if scope == "open":
         si_conditions.append("si.status != 'Paid'")
     elif scope == "mine":
@@ -3664,20 +3919,25 @@ def get_accounts_flow(days=120, search=None, scope="open", merchandiser=None,
     if (c := _hide_pos("IFNULL(si.is_pos, 0) = 0")):
         si_conditions.append(c)  # POS Sales Invoices only with "Show POS documents"
 
+    _si_from_join = """`tabSales Invoice Item` sii
+        JOIN `tabSales Invoice` si ON si.name = sii.parent
+        LEFT JOIN `tabCustomer` cust ON cust.name = si.customer
+        LEFT JOIN `tabSales Order` so ON so.name = sii.sales_order"""
+    sales_docstatus_counts = _docstatus_pill_counts(
+        [("si.name", "si.docstatus", _si_from_join, si_conditions)], params)
+
     sales_invoices = _paged_query(f"""
         SELECT si.name, si.posting_date, si.due_date, si.status, si.docstatus,
                si.customer, cust.customer_name, si.currency,
-               si.grand_total, si.outstanding_amount, si.owner,
-               (si.grand_total - si.outstanding_amount) AS paid_amount,
+               IF(IFNULL(si.rounded_total, 0) = 0, si.grand_total, si.rounded_total) AS grand_total,
+               si.outstanding_amount, si.owner,
+               ((IF(IFNULL(si.rounded_total, 0) = 0, si.grand_total, si.rounded_total) - si.outstanding_amount)) AS paid_amount,
                GROUP_CONCAT(DISTINCT sii.sales_order ORDER BY sii.sales_order SEPARATOR ', ') AS sales_orders,
                GROUP_CONCAT(DISTINCT so.customer_name ORDER BY so.customer_name SEPARATOR ', ') AS so_customer_names
-        FROM `tabSales Invoice Item` sii
-        JOIN `tabSales Invoice` si ON si.name = sii.parent
-        LEFT JOIN `tabCustomer` cust ON cust.name = si.customer
-        LEFT JOIN `tabSales Order` so ON so.name = sii.sales_order
-        WHERE {' AND '.join(si_conditions)}
+        FROM {_si_from_join}
+        WHERE {' AND '.join(_with_docstatus(si_conditions, "si.docstatus", sales_docstatus))}
         GROUP BY si.name, si.posting_date, si.due_date, si.status, si.docstatus,
-                 si.customer, cust.customer_name, si.currency, si.grand_total, si.outstanding_amount, si.owner
+                 si.customer, cust.customer_name, si.currency, si.grand_total, si.rounded_total, si.outstanding_amount, si.owner
         ORDER BY si.posting_date DESC, si.name DESC
     """, params, sales_page, sales_page_size)
 
@@ -3685,18 +3945,15 @@ def get_accounts_flow(days=120, search=None, scope="open", merchandiser=None,
         SELECT SUM(x.grand_total) AS total, SUM(x.grand_total - x.outstanding_amount) AS paid,
                SUM(x.outstanding_amount) AS outstanding
         FROM (
-            SELECT si.name, si.grand_total, si.outstanding_amount
-            FROM `tabSales Invoice Item` sii
-            JOIN `tabSales Invoice` si ON si.name = sii.parent
-            LEFT JOIN `tabCustomer` cust ON cust.name = si.customer
-            LEFT JOIN `tabSales Order` so ON so.name = sii.sales_order
-            WHERE {' AND '.join(si_conditions)}
-            GROUP BY si.name, si.grand_total, si.outstanding_amount
+            SELECT si.name, IF(IFNULL(si.rounded_total, 0) = 0, si.grand_total, si.rounded_total) AS grand_total, si.outstanding_amount
+            FROM {_si_from_join}
+            WHERE {' AND '.join(si_conditions + ["si.docstatus = 1"])}
+            GROUP BY si.name, si.grand_total, si.rounded_total, si.outstanding_amount
         ) x
     """, params, as_dict=1)[0]
 
-    pi_params = {"from_date": from_date}
-    pi_conditions = ["pi.docstatus = 1", "pi.posting_date >= %(from_date)s", _NOT_DISABLED_SO]
+    pi_params = {"from_date": from_date, "to_next": _to_next(days)}
+    pi_conditions = ["pi.docstatus < 2", "pi.posting_date >= %(from_date)s AND pi.posting_date < %(to_next)s", _NOT_DISABLED_SO]
     if scope == "open":
         pi_conditions.append("pi.status != 'Paid'")
     elif scope == "mine":
@@ -3717,24 +3974,42 @@ def get_accounts_flow(days=120, search=None, scope="open", merchandiser=None,
         pi_params["merch_scope"] = frappe.session.user
         pi_conditions.append(_merch_scope_so())
 
-    def _purchase_invoice_sql(jobber_flag):
-        return f"""
-            SELECT pi.name, pi.posting_date, pi.due_date, pi.status, pi.docstatus,
-                   pi.supplier, sup.supplier_name, pi.currency,
-                   IFNULL(sup.custom_is_jobber, 0) AS is_jobber,
-                   pi.grand_total, pi.outstanding_amount, pi.owner,
-                   (pi.grand_total - pi.outstanding_amount) AS paid_amount,
-                   GROUP_CONCAT(DISTINCT poi.sales_order ORDER BY poi.sales_order SEPARATOR ', ') AS sales_orders,
-                   GROUP_CONCAT(DISTINCT so.customer_name ORDER BY so.customer_name SEPARATOR ', ') AS so_customer_names
-            FROM `tabPurchase Invoice Item` pii
+    _pi_from_join = """`tabPurchase Invoice Item` pii
             JOIN `tabPurchase Invoice` pi ON pi.name = pii.parent
             LEFT JOIN `tabPurchase Order Item` poi ON poi.parent = pii.purchase_order
             LEFT JOIN `tabSupplier` sup ON sup.name = pi.supplier
             LEFT JOIN `tabSales Order` so ON so.name = poi.sales_order
-            LEFT JOIN `tabCustomer` cust ON cust.name = so.customer
-            WHERE {' AND '.join(pi_conditions)} AND IFNULL(sup.custom_is_jobber, 0) = {jobber_flag}
+            LEFT JOIN `tabCustomer` cust ON cust.name = so.customer"""
+
+    # Jobber Payables = job work: the supplier is a jobber OR the invoice is subcontracted
+    # (a subcontract bill whose supplier's Is Jobber was never ticked still belongs here).
+    # Supplier Payables = everything else.
+    _is_jobwork = "(IFNULL(sup.custom_is_jobber, 0) = 1 OR IFNULL(pi.is_subcontracted, 0) = 1)"
+
+    def _pi_conds(jobber_flag, docstatus=None, submitted_only=False):
+        conds = pi_conditions + [_is_jobwork if jobber_flag else f"NOT {_is_jobwork}"]
+        tkey = "accounts.jobber" if jobber_flag else "accounts.supplier"   # the table's own filters
+        _add_status_filter(conds, tkey, "pi")
+        _add_party_filter(conds, pi_params, supplier="pi.supplier", list_key=tkey)
+        _add_choice_filter(conds, tkey, "goods", _done_choices(_PI_DONE_SQL))
+        if submitted_only:
+            return conds + ["pi.docstatus = 1"]
+        return _with_docstatus(conds, "pi.docstatus", docstatus)
+
+    def _purchase_invoice_sql(jobber_flag, docstatus=None):
+        return f"""
+            SELECT pi.name, pi.posting_date, pi.due_date, pi.status, pi.docstatus,
+                   pi.supplier, sup.supplier_name, pi.currency,
+                   IFNULL(sup.custom_is_jobber, 0) AS is_jobber,
+                   IF(IFNULL(pi.rounded_total, 0) = 0, pi.grand_total, pi.rounded_total) AS grand_total,
+                   pi.outstanding_amount, pi.owner,
+                   ((IF(IFNULL(pi.rounded_total, 0) = 0, pi.grand_total, pi.rounded_total) - pi.outstanding_amount)) AS paid_amount,
+                   GROUP_CONCAT(DISTINCT poi.sales_order ORDER BY poi.sales_order SEPARATOR ', ') AS sales_orders,
+                   GROUP_CONCAT(DISTINCT so.customer_name ORDER BY so.customer_name SEPARATOR ', ') AS so_customer_names
+            FROM {_pi_from_join}
+            WHERE {' AND '.join(_pi_conds(jobber_flag, docstatus))}
             GROUP BY pi.name, pi.posting_date, pi.due_date, pi.status, pi.docstatus,
-                     pi.supplier, sup.supplier_name, sup.custom_is_jobber, pi.currency, pi.grand_total, pi.outstanding_amount, pi.owner
+                     pi.supplier, sup.supplier_name, sup.custom_is_jobber, pi.currency, pi.grand_total, pi.rounded_total, pi.outstanding_amount, pi.owner
             ORDER BY pi.posting_date DESC, pi.name DESC
         """
 
@@ -3743,20 +4018,26 @@ def get_accounts_flow(days=120, search=None, scope="open", merchandiser=None,
             SELECT SUM(x.grand_total) AS total, SUM(x.grand_total - x.outstanding_amount) AS paid,
                    SUM(x.outstanding_amount) AS outstanding
             FROM (
-                SELECT pi.name, pi.grand_total, pi.outstanding_amount
-                FROM `tabPurchase Invoice Item` pii
-                JOIN `tabPurchase Invoice` pi ON pi.name = pii.parent
-                LEFT JOIN `tabPurchase Order Item` poi ON poi.parent = pii.purchase_order
-                LEFT JOIN `tabSupplier` sup ON sup.name = pi.supplier
-                LEFT JOIN `tabSales Order` so ON so.name = poi.sales_order
-                LEFT JOIN `tabCustomer` cust ON cust.name = so.customer
-                WHERE {' AND '.join(pi_conditions)} AND IFNULL(sup.custom_is_jobber, 0) = {jobber_flag}
-                GROUP BY pi.name, pi.grand_total, pi.outstanding_amount
+                SELECT pi.name, IF(IFNULL(pi.rounded_total, 0) = 0, pi.grand_total, pi.rounded_total) AS grand_total, pi.outstanding_amount
+                FROM {_pi_from_join}
+                WHERE {' AND '.join(_pi_conds(jobber_flag, submitted_only=True))}
+                GROUP BY pi.name, pi.grand_total, pi.rounded_total, pi.outstanding_amount
             ) x
         """, pi_params, as_dict=1)[0]
 
-    supplier_invoices = _paged_query(_purchase_invoice_sql(0), pi_params, supplier_page, supplier_page_size)
-    jobber_invoices = _paged_query(_purchase_invoice_sql(1), pi_params, jobber_page, jobber_page_size)
+    supplier_invoices = _paged_query(_purchase_invoice_sql(0, supplier_docstatus), pi_params, supplier_page, supplier_page_size)
+    jobber_invoices = _paged_query(_purchase_invoice_sql(1, jobber_docstatus), pi_params, jobber_page, jobber_page_size)
+    sales_invoices["docstatus_counts"] = sales_docstatus_counts
+    sales_invoices["filter_options"] = _filter_options("accounts.receivables", [(_si_from_join, si_conditions)], params,
+                                                       {"customer": ("si.customer", "Customer")})
+    supplier_invoices["filter_options"] = _filter_options("accounts.supplier", [(_pi_from_join, _pi_conds(0))], pi_params,
+                                                          {"supplier": ("pi.supplier", "Supplier")})
+    jobber_invoices["filter_options"] = _filter_options("accounts.jobber", [(_pi_from_join, _pi_conds(1))], pi_params,
+                                                        {"supplier": ("pi.supplier", "Supplier")})
+    supplier_invoices["docstatus_counts"] = _docstatus_pill_counts(
+        [("pi.name", "pi.docstatus", _pi_from_join, _pi_conds(0))], pi_params)
+    jobber_invoices["docstatus_counts"] = _docstatus_pill_counts(
+        [("pi.name", "pi.docstatus", _pi_from_join, _pi_conds(1))], pi_params)
     supplier_agg = _purchase_invoice_agg(0)
     jobber_agg = _purchase_invoice_agg(1)
 
@@ -3770,7 +4051,10 @@ def get_accounts_flow(days=120, search=None, scope="open", merchandiser=None,
     _attach_si_delivery_status(sales_invoices["rows"])
     _attach_pi_receipt_status(supplier_invoices["rows"] + jobber_invoices["rows"])
 
+    from erp_dacsinc_custom.dashboard_payment import can_record_payment
+
     return {
+        "can_pay": can_record_payment(),
         "sales_invoices": sales_invoices,
         "supplier_invoices": supplier_invoices,
         "jobber_invoices": jobber_invoices,
@@ -3786,6 +4070,22 @@ def get_accounts_flow(days=120, search=None, scope="open", merchandiser=None,
             "jobber_outstanding": flt(jobber_agg.outstanding),
         }
     }
+
+
+# Share of an invoice's goods already delivered / received (same rule as _attach_*_status
+# below; -1 when it has no stock lines) — backs the Finance tables' Delivery / Receipt filter.
+_SI_DONE_SQL = """(SELECT IFNULL(SUM(CASE WHEN si.update_stock = 1 OR IFNULL(x.dn_detail, '') != '' THEN x.qty
+        ELSE LEAST(x.qty, GREATEST(x.delivered_qty, IFNULL(xs.delivered_qty, 0))) END) / NULLIF(SUM(x.qty), 0), -1)
+    FROM `tabSales Invoice Item` x JOIN `tabItem` xi ON xi.name = x.item_code AND xi.is_stock_item = 1
+    LEFT JOIN `tabSales Order Item` xs ON xs.name = x.so_detail WHERE x.parent = si.name)"""
+_PI_DONE_SQL = """(SELECT IFNULL(SUM(CASE WHEN pi.update_stock = 1 OR IFNULL(x.pr_detail, '') != '' THEN x.qty
+        ELSE x.qty * LEAST(100, IFNULL(xp.per_received, 0)) / 100 END) / NULLIF(SUM(x.qty), 0), -1)
+    FROM `tabPurchase Invoice Item` x LEFT JOIN `tabPurchase Order` xp ON xp.name = x.purchase_order
+    WHERE x.parent = pi.name AND (pi.update_stock = 1 OR IFNULL(x.pr_detail, '') != '' OR IFNULL(x.purchase_order, '') != ''))"""
+
+
+def _done_choices(expr):
+    return {"fully": f"{expr} >= 0.9999", "partly": f"{expr} > 0 AND {expr} < 0.9999", "not": f"{expr} = 0"}
 
 
 def _goods_status(done, total, words):
@@ -3886,10 +4186,15 @@ def get_logistics_flow(days=None, search=None, scope="open", page=1, page_size=1
         conditions.append("IFNULL(si.lr_no, '') = ''")
         conditions.append("IFNULL(si.custom_signed_copy, '') = ''")
     params = {}
+    _add_party_filter(conditions, params, customer="si.customer", supplier="si.transporter", list_key="logistics")
+    _add_choice_filter(conditions, "logistics", "lr", {"missing": "IFNULL(si.lr_no, '') = ''", "filled": "IFNULL(si.lr_no, '') != ''"})
+    _add_choice_filter(conditions, "logistics", "signed", {"missing": "IFNULL(si.custom_signed_copy, '') = ''",
+                                                           "uploaded": "IFNULL(si.custom_signed_copy, '') != ''"})
 
     if days:
-        conditions.append("si.posting_date >= %(from_date)s")
+        conditions.append("si.posting_date >= %(from_date)s AND si.posting_date < %(to_next)s")
         params["from_date"] = _from_date(days)
+        params["to_next"] = _to_next(days)
 
     if scope == "mine":
         conditions.append("si.owner = %(me)s")
@@ -3918,6 +4223,10 @@ def get_logistics_flow(days=None, search=None, scope="open", page=1, page_size=1
     if (c := _hide_pos("IFNULL(si.is_pos, 0) = 0")):
         conditions.append(c)  # POS Sales Invoices only with "Show POS documents"
 
+    logistics_filter_options = _filter_options("logistics", [(
+        "`tabSales Invoice` si LEFT JOIN `tabSales Invoice Item` sii ON sii.parent = si.name "
+        "LEFT JOIN `tabCustomer` cust ON cust.name = si.customer", conditions)], params,
+        {"customer": ("si.customer", "Customer"), "supplier": ("si.transporter", "Supplier")})
     result = _paged_query(f"""
         SELECT si.name, si.posting_date, si.customer, si.customer_name, si.currency,
                si.grand_total, si.owner,
@@ -3934,6 +4243,7 @@ def get_logistics_flow(days=None, search=None, scope="open", page=1, page_size=1
     """, params, page, page_size)
 
     _attach_creator_names(result["rows"])
+    result["filter_options"] = logistics_filter_options
     return result
 
 
@@ -4119,6 +4429,9 @@ def get_pick_list_flow(search=None, scope="open", page=1, page_size=100, days=No
 
     conditions = []
     params = {}
+    _add_party_filter(conditions, params, customer="pl.customer", list_key="picklist")
+    _add_value_filter(conditions, params, "picklist", "warehouse", "pl.parent_warehouse")
+    _add_status_filter(conditions, "picklist", "pl")
     # "All orders" = every live Pick List, finished ones included — never a
     # cancelled one (a Revert to Draft leaves the cancelled original behind,
     # and each revert would otherwise add another dead row).
@@ -4129,8 +4442,9 @@ def get_pick_list_flow(search=None, scope="open", page=1, page_size=100, days=No
         conditions.append("pl.docstatus < 2")
     # The page's "Last N days" — by when the Pick List was created.
     if days:
-        conditions.append("DATE(pl.creation) >= %(from_date)s")
+        conditions.append("DATE(pl.creation) >= %(from_date)s AND DATE(pl.creation) < %(to_next)s")
         params["from_date"] = _from_date(days)
+        params["to_next"] = _to_next(days)
 
     if search:
         for idx, word in enumerate(cstr(search).strip().split()):
@@ -4158,6 +4472,8 @@ def get_pick_list_flow(search=None, scope="open", page=1, page_size=100, days=No
             WHERE pli.parent = pl.name
               AND """ + _merch_scope_so() + "))")
 
+    picklist_filter_options = _filter_options("picklist", [("`tabPick List` pl", conditions)], params, {
+        "customer": ("pl.customer", "Customer"), "warehouse": ("pl.parent_warehouse", "Warehouse")})
     paged = _paged_query(f"""
         SELECT pl.name, pl.docstatus, pl.status, pl.purpose, pl.company,
                pl.customer, pl.customer_name, pl.parent_warehouse,
@@ -4171,7 +4487,7 @@ def get_pick_list_flow(search=None, scope="open", page=1, page_size=100, days=No
 
     rows = paged["rows"]
     if not rows:
-        return {**paged, "rows": [], "metrics": {"draft": 0, "open": 0, "partly": 0, "total": 0}}
+        return {**paged, "rows": [], "metrics": {"draft": 0, "open": 0, "partly": 0, "total": 0}, "filter_options": picklist_filter_options}
 
     names = [r.name for r in rows]
 
@@ -4250,7 +4566,7 @@ def get_pick_list_flow(search=None, scope="open", page=1, page_size=100, days=No
         "total": paged.get("total", len(rows)),
     }
     _attach_creator_names(rows)
-    return {**paged, "rows": rows, "metrics": metrics}
+    return {**paged, "rows": rows, "metrics": metrics, "filter_options": picklist_filter_options}
 
 
 @frappe.whitelist()
@@ -4272,7 +4588,7 @@ def get_billing_flow(days=120, search=None, scope="open", page=1, page_size=100)
     """
     _guard()
     _guard_tab("billing")
-    full = _get_tracker_rows(days=days, search=search, scope=scope, tab="billing")
+    full = _get_tracker_rows(days=days, search=search, scope=scope, tab="billing", with_filter_options=True)
     # Choosing "All" in the shared scope selector (#of-scope) already tells
     # _get_tracker_rows above to stop excluding Completed orders at the SQL
     # level — but this tab's own stage_key filter, unconditionally limited to
@@ -4298,6 +4614,20 @@ def get_billing_flow(days=120, search=None, scope="open", page=1, page_size=100)
         or o.get("stage", {}).get("secondary_action")
     ]
 
+    # The table's Stage filter: orders ready for a Delivery Note, or delivered and waiting
+    # for the invoice (billing as the primary stage or as the secondary action).
+    stage_pick = cstr(_tf("billing").get("stage"))
+    if stage_pick == "deliver":
+        rows = [o for o in rows if o.get("stage", {}).get("stage_key") == "ready_to_deliver"]
+    elif stage_pick == "bill":
+        rows = [o for o in rows if o.get("stage", {}).get("stage_key") == "need_to_bill"
+                or o.get("stage", {}).get("secondary_action")]
+    # Customer dropdown: the customers of the orders actually in this queue (when none is
+    # chosen; with one chosen the queue holds only that customer, so keep the wider list).
+    filter_options = full.get("filter_options")
+    if filter_options and not cstr(_tf("billing").get("customer")):
+        names = {o.get("customer"): o.get("customer_name") or o.get("customer") for o in rows if o.get("customer")}
+        filter_options = {"list": "billing", "customer": sorted(([k, v] for k, v in names.items()), key=lambda x: cstr(x[1]).lower())}
     total = len(rows)
     page = max(1, cint(page))
     page_size = cint(page_size) or 100
@@ -4320,6 +4650,7 @@ def get_billing_flow(days=120, search=None, scope="open", page=1, page_size=100)
             "total": total,
             "page": page,
             "page_size": page_size,
+            "filter_options": filter_options,
         },
         "metrics": {
             "count": total,
@@ -4510,7 +4841,10 @@ def get_stock_tracker(search=None, warehouse=None, page=1, page_size=100):
     # signal); the warehouse filter narrows each item's figures below, not
     # the item list itself.
     conditions = ["i.disabled = 0", "i.is_stock_item = 1"]
-    params = {}
+    _has_stock = ("EXISTS (SELECT 1 FROM `tabBin` bf WHERE bf.item_code = i.name AND bf.actual_qty > 0"
+                  + (" AND bf.warehouse = %(warehouse)s" if warehouse else "") + ")")
+    _add_choice_filter(conditions, "stock", "stock", {"in": _has_stock, "out": f"NOT {_has_stock}"})
+    params = {"warehouse": warehouse} if warehouse else {}
     if search:
         for idx, word in enumerate(search.strip().split()):
             param_key = f"q_{idx}"
@@ -4752,10 +5086,12 @@ def get_pending_approvals(search=None, merchandiser=None, approval_stage=None, p
     
     conditions = ["so.docstatus = 0", _NOT_DISABLED_SO]
     params = {}
+    _add_party_filter(conditions, params, customer="so.customer", list_key="approval")
     # The page's "Last N days" — by order date, like the Sales Tracker.
     if days:
-        conditions.append("so.transaction_date >= %(from_date)s")
+        conditions.append("so.transaction_date >= %(from_date)s AND so.transaction_date < %(to_next)s")
         params["from_date"] = _from_date(days)
+        params["to_next"] = _to_next(days)
 
     conditions.append("(so.workflow_state in ('Draft', 'Pending Merchandiser Approval', 'Pending Final Approval', 'Rejected') or so.workflow_state is null or so.workflow_state = '')")
     
@@ -4810,6 +5146,9 @@ def get_pending_approvals(search=None, merchandiser=None, approval_stage=None, p
             )""")
             params[param_key] = f"%{word}%"
         
+    approval_filter_options = _filter_options(
+        "approval", [("`tabSales Order` so LEFT JOIN `tabCustomer` cust ON cust.name = so.customer", conditions)], params,
+        {"customer": ("so.customer", "Customer")})
     paged = _paged_query(f"""
         SELECT so.name, so.customer, so.customer_name, so.transaction_date, so.delivery_date,
                so.workflow_state, so.grand_total, so.currency, so.owner, so.modified,
@@ -4873,6 +5212,7 @@ def get_pending_approvals(search=None, merchandiser=None, approval_stage=None, p
     # instead of the row showing no creator at all.
     _attach_creator_names(orders)
 
+    paged["filter_options"] = approval_filter_options
     return paged
 
 
@@ -5567,7 +5907,7 @@ def broadcast_order_flow_change(doc, method=None):
         sales_orders, item_codes = _broadcast_scope(doc)
         frappe.publish_realtime(
             "order_flow_changed",
-            {"doctype": doc.doctype, "name": doc.name,
+            {"doctype": doc.doctype, "name": doc.name, "user": frappe.session.user,
              "sales_orders": sales_orders, "item_codes": item_codes},
             after_commit=True,
         )

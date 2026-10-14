@@ -122,6 +122,70 @@ const OF_TABS = [
 // Tab display names, for messages that name the tab being acted on.
 const OF_TAB_LABELS = Object.fromEntries(OF_TABS.map(t => [t.key, t.label]));
 
+
+// Toolbar Status filter, per list (order_flow_api._STATUS_SQL has the conditions).
+// `closed`: the option finds documents "Open orders" hides, so choosing it switches to "All orders".
+const OF_STATUS_OPTIONS = {
+    po: [['not_received', 'Not received'], ['partly_received', 'Partly received'], ['fully_received', 'Fully received'],
+         ['not_billed', 'Not billed'], ['partly_billed', 'Partly billed'], ['fully_billed', 'Fully billed', 1],
+         ['overdue', 'Overdue (past expected date)']],
+    receipt: [['to_bill', 'To bill'], ['completed', 'Billed (completed)', 1], ['returns', 'Returns']],
+    mr: [['pending', 'Pending (not ordered)'], ['partly_ordered', 'Partly ordered'], ['ordered', 'Fully ordered'],
+         ['partly_received', 'Partly received'], ['received', 'Fully received', 1]],
+    ewo: [['not_received', 'Nothing received yet'], ['partly_received', 'Partly received'], ['fully_received', 'Fully received', 1]],
+    inv: [['unpaid', 'Unpaid'], ['partly_paid', 'Partly paid'], ['overdue', 'Overdue'], ['paid', 'Paid', 1], ['returns', 'Returns / notes']],
+    pl: [['draft', 'Draft'], ['open', 'Open'], ['partly_delivered', 'Partly delivered'], ['completed', 'Completed', 1]],
+    logi: [['lr_missing', 'LR No. missing'], ['signed_missing', 'Signed copy missing', 1], ['lr_done_signed_missing', 'LR done, signed copy missing', 1]],
+};
+
+// Each table's own filters, shown beside its All / Draft / Submitted pills (table_filters_html).
+// [field, type, arg, label]: 'status' → OF_STATUS_OPTIONS[arg]; 'select' → arg = [[value, label, closed?]];
+// 'link' → arg = doctype; 'mirror' → arg = a toolbar control kept as the state holder (hidden);
+// 'pos' → the "Show POS documents" switch. Sent as of_tf (order_flow_api._tf) except mirror / pos.
+const OF_EWO_STAGE = {
+    ewo_fp: [['Sent to Full Piece Jobber', 'Sent to jobber'], ['Received from Full Piece Jobber', 'Received from jobber']],
+    ewo_pn: [['Pending Process Start', 'Pending start'], ['Received from Jobber (Internal)', 'Received (internal)'],
+             ['Sent to Panel Jobber', 'Sent to panel jobber'], ['Received from Panel Jobber', 'Received from panel jobber'],
+             ['Returned to Jobber (Closed)', 'Returned (closed)']],
+};
+const OF_GOODS = (word) => [['fully', `Fully ${word}`], ['partly', `Partly ${word}`], ['not', `Not ${word}`]];
+// Not / Partly / Fully <word>; `closed_fully` when "fully" is something "Open orders" hides.
+const OF_TRI = (word, closed_fully) => [['not', `Not ${word}`], ['partly', `Partly ${word}`], ['fully', `Fully ${word}`, closed_fully ? 1 : 0]];
+const OF_PO_FILTERS = [['received', 'select', OF_TRI('received'), 'Received'], ['billed', 'select', OF_TRI('billed', true), 'Billed'],
+    ['overdue', 'select', [['yes', 'Overdue (past expected date)']], 'Overdue']];
+const OF_EWO_FILTERS = (key, jobber_label) => [['received', 'select', OF_TRI('received', true), 'Received'],
+    ['stage', 'select', OF_EWO_STAGE[key], 'Stage'], ['supplier', 'link', 'Supplier', jobber_label]];
+const OF_TABLE_FILTERS = {
+    'approval': [['approval_stage', 'mirror', '#of-approval-stage', 'Approval stage'], ['merchandiser', 'mirror', '#of-merchandiser', 'Merchandiser'], ['customer', 'link', 'Customer']],
+    'tracker.so': [['merchandiser', 'mirror', '#of-merchandiser', 'Merchandiser'], ['industry', 'mirror', '#of-tracker-industry', 'Industry'],
+        ['delivery', 'select', [['not', 'Not dispatched'], ['partly', 'Partly dispatched'], ['fully', 'Fully dispatched', 1]], 'Dispatch'],
+        ['customer', 'link', 'Customer']],
+    'tracker.mr': [['ordered', 'select', OF_TRI('ordered'), 'Ordered'], ['received', 'select', OF_TRI('received', true), 'Received'],
+        ['type', 'select', [['purchase', 'Purchase'], ['transfer', 'Material Transfer']], 'Type'],
+        ['customer', 'link', 'Customer'], ['pos', 'pos']],
+    'tracker.ewo_fp': OF_EWO_FILTERS('ewo_fp', 'Jobber').concat([['customer', 'link', 'Customer']]),
+    'tracker.ewo_pn': OF_EWO_FILTERS('ewo_pn', 'Jobber').concat([['customer', 'link', 'Customer']]),
+    'picklist': [['status', 'status', 'pl', 'Status'], ['customer', 'link', 'Customer'], ['warehouse', 'link', 'Warehouse']],
+    'purchase.po': OF_PO_FILTERS.concat([['supplier', 'link', 'Supplier'], ['customer', 'link', 'Customer']]),
+    'purchase.receipt': [['status', 'status', 'receipt', 'Billing'], ['supplier', 'link', 'Supplier']],
+    'purchase.bill': [['supplier', 'link', 'Supplier']],
+    'jobwork.po': OF_PO_FILTERS.concat([['sco', 'select', [['has', 'Made'], ['missing', 'Not made']], 'Subcontracting order'],
+        ['supplier', 'link', 'Supplier', 'Jobber']]),
+    'jobwork.receipt': [['status', 'status', 'receipt', 'Billing'], ['supplier', 'link', 'Supplier', 'Jobber']],
+    'jobwork.ewo_fp': OF_EWO_FILTERS('ewo_fp', 'Jobber'),
+    'jobwork.ewo_pn': OF_EWO_FILTERS('ewo_pn', 'Jobber'),
+    'stock': [['warehouse', 'mirror', '#of-stock-warehouse', 'Warehouse'], ['stock', 'select', [['in', 'In stock'], ['out', 'No stock']], 'Stock']],
+    'billing': [['stage', 'select', [['deliver', 'Ready for Delivery Note'], ['bill', 'Needs invoice']], 'Stage'], ['customer', 'link', 'Customer']],
+    'accounts.receivables': [['status', 'status', 'inv', 'Payment'], ['goods', 'select', OF_GOODS('delivered'), 'Delivery'],
+        ['customer', 'link', 'Customer'], ['pos', 'pos']],
+    'accounts.supplier': [['status', 'status', 'inv', 'Payment'], ['goods', 'select', OF_GOODS('received'), 'Receipt'], ['supplier', 'link', 'Supplier']],
+    'accounts.jobber': [['status', 'status', 'inv', 'Payment'], ['goods', 'select', OF_GOODS('received'), 'Receipt'], ['supplier', 'link', 'Supplier', 'Jobber']],
+    'uniform': [['status', 'mirror', '#of-uniform-status', 'Status']],
+    'logistics': [['lr', 'select', [['missing', 'LR No. missing'], ['filled', 'LR No. filled', 1]], 'LR No.'],
+        ['signed', 'select', [['missing', 'Signed copy missing'], ['uploaded', 'Signed copy uploaded', 1]], 'Signed copy'],
+        ['customer', 'link', 'Customer'], ['supplier', 'link', 'Supplier', 'Transporter'], ['pos', 'pos']],
+};
+
 // "Seen" is recorded per tab and per user, so it always has to be asked about a
 // specific tab: the same Purchase Order event can be cleared on Purchase while
 // still waiting for attention on the Tracker.
@@ -147,6 +211,8 @@ class OrderFlow {
         this.approval_subtab = 'merchandiser'; // 'merchandiser' | 'unassigned' | 'final'
         this.perms = null;   // filled from the server; gates the final-approval tab + tab visibility
         this.days = 120;
+        this.table_filters = {}; // each table's own filters: {"<tab>.<table>": {field: value}} — OF_TABLE_FILTERS
+        this.tf_options = {};    // each table's dropdown values from the server (filter_options)
         this.scope = 'open';
         this.stage_filter = 'all';
         this.search = '';
@@ -165,6 +231,7 @@ class OrderFlow {
             purchase: { po: '', receipt: '' },
             jobwork: { po: '', receipt: '', ewo_fp: '', ewo_pn: '' },
             tracker: { mr: '', ewo_fp: '', ewo_pn: '' },
+            accounts: { sales: '', supplier: '', jobber: '' },
         };
 
         // Per-tab pagination state. A tab whose data is one list (stock,
@@ -290,7 +357,7 @@ class OrderFlow {
             const now = Date.now();
             if (now - last_focus_refresh > 3000) {
                 last_focus_refresh = now;
-                this.refresh(true);
+                this.queue_background_refresh(null);
             }
         });
 
@@ -308,11 +375,31 @@ class OrderFlow {
         // several of these documents changing in quick succession (e.g.
         // creating a DN from a Pick List touches both), and those should
         // coalesce into one refresh, not one per document.
+        //
+        // Several people use this page at once, so another user's change must not
+        // redraw the screen under someone who is working: queue_background_refresh
+        // holds it while a row or prompt is open, the user is typing, or used the page
+        // in the last few seconds, and shows "Updates waiting — Refresh" instead.
         let realtime_refresh_timer = null;
-        frappe.realtime.on('order_flow_changed', () => {
+        let realtime_payloads = [];
+        frappe.realtime.on('order_flow_changed', (payload) => {
+            realtime_payloads.push(payload || null);
             clearTimeout(realtime_refresh_timer);
-            realtime_refresh_timer = setTimeout(() => this.refresh(true), 1200);
+            realtime_refresh_timer = setTimeout(() => {
+                const batch = realtime_payloads; realtime_payloads = [];
+                const relevant = batch.filter(p => this.is_relevant_change(p));
+                if (relevant.length) this.queue_background_refresh(relevant);
+            }, 1200);
         });
+
+        // Any use of the page counts as "working" for a few seconds (see is_busy).
+        this.last_interaction = 0;
+        this.$body.on('mousedown keydown input wheel touchstart', () => { this.last_interaction = Date.now(); });
+        this.$body.on('click', '#of-update-apply', () => this.refresh(true));
+        // Apply waiting updates by themselves once the user is no longer working.
+        setInterval(() => {
+            if (this.pending_updates && !this.is_busy() && !document.hidden) this.refresh(true);
+        }, 5000);
     }
 
     // Whether the session user may see `tab`, per the permissions fetched
@@ -326,6 +413,283 @@ class OrderFlow {
     // May the user ACT from this tab / sub-tab (create, submit, approve…), not just
     // view it? The access sheet's "A" vs "✓" — Admin Settings › Tab / Sub-tab Actions
     // (order_flow_permissions.can_act_tab; guard_act checks the same on the server).
+    // Draft rows get a "Submit" button (dashboard_submit.py): the row's toggle / row carries
+    // data-docstatus, and the document is the receipt / embroidery row's own (data-submit-*)
+    // or the toggle's. Only doctypes the user may submit; view-only users lose it in
+    // strip_view_only_tab_actions like every other action.
+    add_submit_buttons() {
+        const can = (dt) => (frappe.model.can_submit ? frappe.model.can_submit(dt)
+            : ((frappe.boot.user && frappe.boot.user.can_submit) || []).includes(dt));
+        this.$body.find('[data-docstatus="0"]').each((i, el) => {
+            const $el = $(el);
+            const doctype = $el.attr('data-submit-doctype') || $el.attr('data-doctype');
+            const name = $el.attr('data-submit-name') || $el.attr('data-docname');
+            if (!doctype || !name || !OF_DASHBOARD_SUBMITTABLE.includes(doctype) || !can(doctype)) return;
+            // Same act rule as strip_view_only_tab_actions (else the two would undo each other).
+            const $panel = $el.closest('[id^="of-panel-"]');
+            const tab = $panel.length ? $panel.attr('id').slice('of-panel-'.length) : null;
+            const prefix = { tracker: 'of-tracker-sec', purchase: 'of-pur-sec', jobwork: 'of-job-sec', accounts: 'of-acc-sec' }[tab];
+            const $sec = prefix ? $el.closest(`[id^="${prefix}-"]`) : $();
+            if (!tab || !this.can_act(tab, $sec.length ? $sec.attr('id').slice(prefix.length + 1) : undefined)) return;
+            const $tr = $el.is('tr') ? $el : $el.closest('tr');
+            const $cell = $tr.children('td').last();
+            if (!$cell.length || $cell.find('.of-submit-draft-btn').length) return;
+            const $btn = $(`<button class="of-btn of-btn--warning of-submit-draft-btn" title="${__('Submit this draft')}">
+                <i class="fa fa-check-square-o"></i> ${__('Submit')}</button>`)
+                .attr('data-doctype', doctype).attr('data-name', name);
+            const $wrap = $cell.find('.of-po-actions, .of-ewo-actions').first();
+            ($wrap.length ? $wrap : $cell).prepend($btn);
+        });
+    }
+
+    // ── Several users at once ─────────────────────────────────────
+    // Is the user in the middle of something the redraw would disturb?
+    is_busy() {
+        if (Date.now() - (this.last_interaction || 0) < 15000) return true;
+        if ($('.modal.show:visible, .modal.in:visible').length) return true;
+        const a = document.activeElement;
+        if (a && this.$body[0].contains(a) && /^(INPUT|TEXTAREA|SELECT)$/.test(a.tagName)) return true;
+        const $p = this.$body.find(`#of-panel-${this.active}`);
+        return $p.find('tr.of-so-details-row:visible, tr.of-doc-items-row:visible, tr.of-ewo-items-row:visible').length > 0;
+    }
+
+    // Does a broadcast change touch what this tab shows? Unknown → yes.
+    is_relevant_change(p) {
+        if (!p || !p.doctype) return true;
+        if (p.user && p.user === frappe.session.user && this.is_busy()) return false; // own action; its own screen refreshes itself
+        const doctypes = (OF_TAB_FILTERS[this.active] || {}).doctypes;
+        if (!doctypes || doctypes.includes(p.doctype)) return true;
+        const shown = new Set(this.$body.find(`#of-panel-${this.active} [data-so]`).map((i, el) => String($(el).data('so'))).get());
+        return (p.sales_orders || []).some(so => shown.has(so));
+    }
+
+    // Another user's change (or the browser tab regaining focus): refresh now when
+    // the user isn't working, otherwise hold it and show the bar.
+    queue_background_refresh(payloads) {
+        if (!this.active) return;
+        if (!this.is_busy()) { this.refresh(true); return; }
+        this.pending_updates = (this.pending_updates || 0) + ((payloads && payloads.length) || 1);
+        const n = this.pending_updates;
+        this.$body.find('#of-update-text').text(n === 1
+            ? __('1 update waiting (another user changed something).')
+            : __('{0} updates waiting (other users changed things).', [n]));
+        this.$body.find('#of-update-bar').removeClass('of-hidden');
+    }
+
+    clear_pending_updates() {
+        this.pending_updates = 0;
+        this.$body.find('#of-update-bar').addClass('of-hidden');
+    }
+
+    // paint() replaces the whole panel. Record what is open (and the scroll) right
+    // now, repaint, then reopen the same rows with fresh data — the old content is
+    // shown in the reopened row until the new arrives, so nothing collapses or jumps.
+    paint_keeping_view(data) {
+        const state = this.capture_view_state();
+        this.paint(data);
+        this.restore_view_state(state);
+    }
+
+    capture_view_state() {
+        const $p = this.$body.find(`#of-panel-${this.active}`);
+        const open = [];
+        const take = (main_sel, detail_sel, kind, key_of) => {
+            $p.find(main_sel).each((i, el) => {
+                const $row = $(el), $d = $row.next(detail_sel);
+                if ($d.length && $d.is(':visible')) open.push({ kind, key: key_of($row), html: $d.children('td').html() });
+            });
+        };
+        take('tr.of-row-main', '.of-so-details-row', 'so', $r => String($r.data('so')));
+        take('tr.of-doc-row', '.of-doc-items-row', 'doc', $r => { const b = $r.find('.of-doc-items-toggle'); return `${b.data('doctype')}::${b.data('docname')}`; });
+        take('tr.of-ewo-row', '.of-ewo-items-row', 'ewo', $r => String($r.find('.of-ewo-items-toggle').data('ewo')));
+        take('tr.of-transfer-row', '.of-doc-items-row', 'transfer', $r => String($r.find('.of-transfer-receipts-toggle').data('id')));
+        take('tr.of-stock-row', '.of-doc-items-row', 'stock', $r => String($r.find('.of-stock-wh-toggle').data('item')));
+        return { open, scroll: window.scrollY };
+    }
+
+    restore_view_state(state) {
+        if (!state) return;
+        const $p = this.$body.find(`#of-panel-${this.active}`);
+        const find = (main_sel, key_of, key) => $p.find(main_sel).filter((i, el) => key_of($(el)) === key).first();
+        state.open.forEach(o => {
+            let $row, detail_sel;
+            if (o.kind === 'so') {
+                $row = find('tr.of-row-main', $r => String($r.data('so')), o.key);
+                if (!$row.length) return;
+                this.toggle_so_details(o.key, $row.find('.of-so-toggle'));
+                detail_sel = '.of-so-details-row';
+            } else if (o.kind === 'doc') {
+                $row = find('tr.of-doc-row', $r => { const b = $r.find('.of-doc-items-toggle'); return `${b.data('doctype')}::${b.data('docname')}`; }, o.key);
+                if (!$row.length) return;
+                const $b = $row.find('.of-doc-items-toggle');
+                this.toggle_doc_items_row($row, $b.data('doctype'), $b.data('docname'), $b);
+                detail_sel = '.of-doc-items-row';
+            } else if (o.kind === 'ewo') {
+                $row = find('tr.of-ewo-row', $r => String($r.find('.of-ewo-items-toggle').data('ewo')), o.key);
+                if (!$row.length) return;
+                this.toggle_ewo_items_row($row, o.key, $row.find('.of-ewo-items-toggle'));
+                detail_sel = '.of-ewo-items-row';
+            } else if (o.kind === 'transfer') {
+                $row = find('tr.of-transfer-row', $r => String($r.find('.of-transfer-receipts-toggle').data('id')), o.key);
+                if (!$row.length) return;
+                this.toggle_transfer_receipts_row($row, o.key, $row.find('.of-transfer-receipts-toggle'));
+                detail_sel = '.of-doc-items-row';
+            } else if (o.kind === 'stock') {
+                $row = find('tr.of-stock-row', $r => String($r.find('.of-stock-wh-toggle').data('item')), o.key);
+                if (!$row.length) return;
+                this.toggle_stock_wh_row($row, o.key, $row.find('.of-stock-wh-toggle'));
+                return; // built from the fresh row data straight away
+            }
+            // Old content until the fresh fetch (already started by the toggle) replaces it.
+            const $d = $row.next(detail_sel);
+            const $holder = $d.find(o.kind === 'so' ? '.of-so-items-container' : '.of-doc-items-panel, .of-ewo-items-panel').first();
+            const $old = $('<div>').html(o.html).find(o.kind === 'so' ? '.of-so-items-container' : '.of-doc-items-panel, .of-ewo-items-panel').first();
+            if ($holder.length && $old.length && $holder.find('.of-empty .fa-spinner').length) $holder.html($old.html());
+        });
+        window.scrollTo(0, state.scroll);
+    }
+
+    // Custom range: both dates set → every tab gets days="from~to" (order_flow_api._date_range).
+    apply_date_range() {
+        const from = this.$body.find('#of-date-from').val(), to = this.$body.find('#of-date-to').val();
+        if (!from || !to) return;
+        this.days = `${from}~${to}`;
+        this.reset_all_pagination();
+        this.refresh(true);
+    }
+
+    // Every table's dropdown values arrive on its data as filter_options {"list": key, field: [[value, label]]}.
+    collect_filter_options(data) {
+        const walk = (x, depth) => {
+            if (!x || typeof x !== 'object' || depth > 4) return;
+            if (Array.isArray(x)) return;
+            if (x.filter_options && x.filter_options.list) this.tf_options[x.filter_options.list] = x.filter_options;
+            Object.keys(x).forEach(k => { if (k !== 'rows' && k !== 'filter_options') walk(x[k], depth + 1); });
+        };
+        walk(data, 0);
+    }
+
+    set_table_filter(key, field, value) {
+        const f = (this.table_filters[key] = this.table_filters[key] || {});
+        if ((f[field] || '') === (value || '')) return;
+        if (value) f[field] = value; else delete f[field];
+        this.reset_all_pagination();
+        this.refresh(true);
+    }
+
+    tf_def(key, field) {
+        return (OF_TABLE_FILTERS[key] || []).find(d => d[0] === field);
+    }
+
+    // The filter controls for one table: a full-width strip under the table's title (moved out
+    // of the title row by mount_table_filters). Each control is captioned — "Received │ All ▾" —
+    // so the filter's name is never mistaken for a chosen value.
+    table_filters_html(key) {
+        const defs = OF_TABLE_FILTERS[key] || [];
+        if (!defs.length) return '';
+        const vals = this.table_filters[key] || {};
+        let any = Object.keys(vals).length > 0;
+        const field_html = (cap, inner, set, extra) =>
+            `<label class="of-tf-field${set ? ' is-set' : ''}${extra ? ' ' + extra : ''}"><span class="of-tf-cap">${cap}</span>${inner}</label>`;
+        const parts = defs.map(([field, type, arg, label]) => {
+            if (type === 'status' || type === 'select') {
+                const opts = type === 'status' ? (OF_STATUS_OPTIONS[arg] || []) : arg;
+                const cur = vals[field] || '';
+                return field_html(__(label || 'Status'), `<select class="of-tf-select" data-list="${key}" data-f="${field}">
+                    <option value="">${__('All')}</option>
+                    ${opts.map(o => `<option value="${of_esc(o[0])}"${o[0] === cur ? ' selected' : ''}>${__(o[1])}</option>`).join('')}</select>`, !!cur);
+            }
+            if (type === 'link') {
+                const opts = (this.tf_options[key] || {})[field];
+                if (Array.isArray(opts)) {   // search box over the parties actually in this table
+                    const cur = vals[field] || '';
+                    const hit = opts.find(o => o[0] === cur);
+                    const shown = cur ? (hit ? (hit[1] || hit[0]) : cur) : '';
+                    return field_html(__(label || arg), `<span class="of-tf-combo" data-list="${key}" data-f="${field}">
+                        <input type="text" class="of-tf-combo-input" autocomplete="off" value="${of_esc(shown)}"
+                               placeholder="${of_esc(__('All ({0}) — type to search', [opts.length]))}">
+                        ${cur ? `<i class="fa fa-times of-tf-combo-x" title="${__('Clear')}"></i>` : '<i class="fa fa-search of-tf-combo-ic"></i>'}
+                    </span>`, !!cur, 'of-tf-field--link');
+                }
+                return field_html(__(label || arg), `<span class="of-tf-link" data-list="${key}" data-f="${field}" data-doctype="${arg}" data-label="${of_esc(__('Any'))}"></span>`, !!vals[field], 'of-tf-field--link');
+            }
+            if (type === 'mirror') {
+                const $t = this.$body.find(arg);
+                if (!$t.length) return '';
+                if (arg === '#of-merchandiser' && !this.merch_filter_allowed()) return '';
+                const cur = $t.val() || '';
+                if (cur) any = true;
+                return field_html(__(label || ''), `<select class="of-tf-mirror" data-target="${arg}">${of_mirror_options($t)}</select>`, !!cur);
+            }
+            if (type === 'pos') {
+                const on = !!(this.perms && this.perms.show_pos_docs);
+                return field_html(__('POS documents'), `<span class="of-tf-checkwrap"><input type="checkbox" class="of-tf-pos"${on ? ' checked' : ''}> ${__('Show')}</span>`, on);
+            }
+            return '';
+        }).join('');
+        return `<div class="of-tf-row" data-list="${key}">${parts}${any
+            ? `<a href="#" class="of-tf-clear" data-list="${key}" title="${__('Clear the filters of this table')}"><i class="fa fa-times"></i> ${__('Clear filters')}</a>` : ''}</div>`;
+    }
+
+    merch_filter_allowed() {
+        const can_final = !!(this.perms && this.perms.is_final_approver);
+        return can_final || frappe.user_roles.includes('System Manager') || frappe.session.user === 'Administrator';
+    }
+
+    // Mount the Link boxes (Customer / Supplier / Warehouse…) of the table filters, and keep
+    // mirrored selects in step with their toolbar control (its options load asynchronously).
+    mount_table_filters() {
+        // A strip rendered inside a title row goes right under it, full width.
+        this.$body.find('.of-card__head .of-tf-row').each((i, el) => {
+            const $row = $(el);
+            $row.closest('.of-card__head').after($row);
+        });
+        // Title row + filter strip in one wrapper, so (on Finance) they stay in view while scrolling.
+        this.$body.find('.of-tf-row').each((i, el) => {
+            const $row = $(el), $head = $row.prev('.of-card__head');
+            if ($head.length && !$head.parent().hasClass('of-card__sticky')) {
+                $head.add($row).wrapAll('<div class="of-card__sticky"></div>');
+            }
+        });
+        this.$body.find('.of-tf-link:not(.is-mounted)').each((i, el) => {
+            const $w = $(el).addClass('is-mounted');
+            const key = $w.data('list'), field = $w.data('f');
+            const ctrl = frappe.ui.form.make_control({
+                parent: $w,
+                df: {
+                    fieldtype: 'Link', options: $w.data('doctype'), fieldname: `tf_${field}`, placeholder: $w.data('label'),
+                    onchange: () => {
+                        const v = ctrl.get_value() || '';
+                        const f = (this.table_filters[key] = this.table_filters[key] || {});
+                        if (v === (f[field] || '')) return;
+                        if (v) f[field] = v; else delete f[field];
+                        this.reset_all_pagination();
+                        this.refresh(true);
+                    },
+                },
+                render_input: true, only_input: true,
+            });
+            const cur = (this.table_filters[key] || {})[field];
+            if (cur) { ctrl.value = cur; ctrl.$input && ctrl.$input.val(cur); }
+            ctrl.$input && ctrl.$input.attr('title', $w.data('label'));
+        });
+        this.$body.find('.of-tf-mirror').each((i, el) => {
+            const $m = $(el), $t = this.$body.find($m.data('target'));
+            if ($t.length && $m.children().length !== $t.children().length) {
+                const v = $t.val(); $m.html(of_mirror_options($t)).val(v);
+            }
+        });
+    }
+
+    party_args(tab) {
+        const a = {};
+        // each table's own filters on this tab (order_flow_api._tf)
+        const tf = Object.fromEntries(Object.entries(this.table_filters || {})
+            .filter(([k, v]) => k.split('.')[0] === tab && v && Object.keys(v).length));
+        if (Object.keys(tf).length) a.of_tf = JSON.stringify(tf);
+        return a;
+    }
+
     can_act(tab, sub) {
         const a = this.perms && this.perms.act;
         if (!a) return true;                      // older server: no action rule
@@ -341,7 +705,7 @@ class OrderFlow {
             '.of-action-btn:not([data-action="open_doc"])', '.of-approve-btn', '.of-reject-btn', '#of-new-so-btn',
             '#of-bulk-approve-btn', '#of-bulk-reject-btn', '.of-approval-select', '.of-sco-btn', '.of-pl-submit',
             '.of-pl-revert', '.of-ewo-send-btn', '.of-ewo-receive-panel-btn', '.of-ewo-close-btn', '.of-ewo-receive-fp-btn',
-            '.of-ewo-receive-btn', '.of-receive-btn', '#of-create-transfer-btn', '.of-logi-update-btn',
+            '.of-ewo-receive-btn', '.of-receive-btn', '#of-create-transfer-btn', '.of-logi-update-btn', '.of-pay-btn', '.of-submit-draft-btn',
             'a.of-btn[href$="/new"]', 'a.of-btn[href*="/new?"]',
             '.so-btn:not(.so-btn--view):not(#btn-refresh-stock-table)',
         ].join(', ');
@@ -377,6 +741,8 @@ class OrderFlow {
     // switch to the first allowed one. Runs after every panel redraw.
     watch_subtab_perms() {
         const apply = () => {
+            this.mount_table_filters();
+            this.add_submit_buttons();
             this.strip_view_only_tab_actions();
             Object.entries(this.allowed_subtabs || {}).forEach(([tab, ok]) => {
                 const $btns = this.$body.find(`#of-panel-${tab}`).find('.of-subtab[data-subtab], .of-acc-subtab[data-subtab]');
@@ -443,12 +809,17 @@ class OrderFlow {
 
                 <!-- Toolbar -->
                 <div class="of-toolbar">
+                    <!-- First in the toolbar so it is always in view (at the end, the filters
+                         pushed it off the line). Latest data; open rows stay open. -->
+                    <button class="of-btn of-btn--primary" id="of-btn-refresh" title="${__('Load the latest data (open rows stay open)')}">
+                        <i class="fa fa-refresh"></i> ${__('Refresh')}
+                    </button>
                     <span class="of-search">
                         <i class="fa fa-search text-muted"></i>
                         <input type="search" id="of-search" autocomplete="off"
                                placeholder="Search order #, customer, supplier, item…">
                     </span>
-                    <select class="of-select" id="of-merchandiser" style="display: none;">
+                    <select class="of-select of-moved" id="of-merchandiser" style="display: none;">
                         <option value="">All Merchandisers</option>
                     </select>
                     <!-- Merchandiser: own orders by default; this adds their customers' orders (every tab) -->
@@ -457,11 +828,11 @@ class OrderFlow {
                         <input type="checkbox"> <span>${__("Show my customers' orders")}</span>
                     </label>
                     <!-- POS Sales Invoices / stores' stock requests: hidden unless switched on -->
-                    <label class="of-my-customers" id="of-show-pos" style="display: none;"
+                    <label class="of-my-customers of-moved" id="of-show-pos" style="display: none;"
                            title="${__('Off: POS Sales Invoices and stores\' stock requests are hidden. On: they are shown too.')}">
                         <input type="checkbox"> <span>${__('Show POS documents')}</span>
                     </label>
-                    <select class="of-select" id="of-approval-stage" style="display: none;">
+                    <select class="of-select of-moved" id="of-approval-stage" style="display: none;">
                         <option value="">All Approval Stages</option>
                         <option value="Draft">Draft</option>
                         <option value="Pending Merchandiser Approval">Pending Merchandiser Approval</option>
@@ -469,17 +840,17 @@ class OrderFlow {
                         <option value="Approved">Approved</option>
                         <option value="Rejected">Rejected</option>
                     </select>
-                    <select class="of-select" id="of-uniform-status" style="display: none;" title="Filter by transfer status">
+                    <select class="of-select of-moved" id="of-uniform-status" style="display: none;" title="Filter by transfer status">
                         <option value="">All Statuses</option>
                         <option value="Sent">Sent</option>
                         <option value="Partially Received">Partially Received</option>
                         <option value="Received">Received</option>
                         <option value="Cancelled">Cancelled</option>
                     </select>
-                    <select class="of-select" id="of-stock-warehouse" style="display: none;" title="Filter by warehouse">
+                    <select class="of-select of-moved" id="of-stock-warehouse" style="display: none;" title="Filter by warehouse">
                         <option value="">All Warehouses</option>
                     </select>
-                    <select class="of-select" id="of-tracker-industry" style="display: none;" title="Filter by customer industry">
+                    <select class="of-select of-moved" id="of-tracker-industry" style="display: none;" title="Filter by customer industry">
                         <option value="">All Industries</option>
                     </select>
                     <select class="of-select" id="of-scope">
@@ -492,9 +863,20 @@ class OrderFlow {
                         <option value="120" selected>Last 120 days</option>
                         <option value="365">Last year</option>
                         <option value="3650">Everything</option>
+                        <option value="custom">Custom range…</option>
                     </select>
+                    <!-- "Custom range…": From / To dates, sent to every tab as days="from~to" -->
+                    <span class="of-daterange" id="of-daterange" style="display: none;">
+                        <input type="date" class="of-select" id="of-date-from" title="${__('From date')}">
+                        <span class="text-muted">–</span>
+                        <input type="date" class="of-select" id="of-date-to" title="${__('To date')}">
+                    </span>
                     <span class="of-spacer"></span>
                     <span class="of-count" id="of-count"></span>
+                    <!-- Live Order Activity: a bell with the unseen count; the stream opens as a side panel -->
+                    <button class="of-btn of-bell-btn" id="of-bell-btn" title="${__('Live Order Activity Notifications')}">
+                        <i class="fa fa-bell"></i> <span class="of-bell-count of-hidden" id="of-bell-count">0</span>
+                    </button>
 
                     <!-- One place to start any of the documents this dashboard
                          tracks, from any tab — instead of hunting down the
@@ -511,10 +893,6 @@ class OrderFlow {
                             <a href="/app/purchase-invoice/new" target="_blank"><i class="fa fa-credit-card"></i> Purchase Invoice</a>
                         </div>
                     </div>
-
-                    <button class="of-btn" id="of-btn-refresh" title="Force reload dashboard data" style="margin-left: 8px;">
-                        <i class="fa fa-refresh"></i> Refresh
-                    </button>
                 </div>
 
                 <!-- Stage Filter Sub-Bar (Sales Tracker view) -->
@@ -535,6 +913,11 @@ class OrderFlow {
                 <div id="of-panel-picklist" class="of-hidden"></div>
                 <div id="of-panel-billing" class="of-hidden"></div>
                 <div id="of-panel-accounts" class="of-hidden"></div>
+                <!-- Other users' changes waiting while this user works (queue_background_refresh) -->
+                <div class="of-update-bar of-hidden" id="of-update-bar">
+                    <i class="fa fa-refresh"></i> <span id="of-update-text"></span>
+                    <button class="of-btn of-btn--primary" id="of-update-apply">${__('Refresh')}</button>
+                </div>
                 <div id="of-panel-approval" class="of-hidden"></div>
                 <div id="of-panel-uniform" class="of-hidden"></div>
                 <div id="of-panel-logistics" class="of-hidden"></div>
@@ -705,8 +1088,71 @@ class OrderFlow {
             this.approval_rejected_stage_filter = $(e.currentTarget).data('stage') || '';
             this.refresh(true);
         });
+        this.$body.on('click', '.of-submit-draft-btn', (e) => {
+            e.preventDefault(); e.stopPropagation();
+            const $b = $(e.currentTarget);
+            of_submit_draft_prompt($b.data('doctype'), String($b.data('name')), () => this.refresh(true));
+        });
+        this.$body.on('click', '.of-pay-btn', (e) => {
+            const $b = $(e.currentTarget);
+            of_payment_prompt($b.data('doctype'), String($b.data('name')), () => this.refresh(true));
+        });
         this.$body.on('change', '#of-scope', (e) => { this.scope = e.target.value; this.reset_all_pagination(); this.refresh(true); });
-        this.$body.on('change', '#of-days',  (e) => { this.days  = e.target.value; this.reset_all_pagination(); this.refresh(true); });
+        this.$body.on('change', '#of-days',  (e) => {
+            const custom = e.target.value === 'custom';
+            this.$body.find('#of-daterange').toggle(custom);
+            if (custom) {
+                const $from = this.$body.find('#of-date-from'), $to = this.$body.find('#of-date-to');
+                if (!$from.val()) $from.val(frappe.datetime.add_days(frappe.datetime.get_today(), -30));
+                if (!$to.val()) $to.val(frappe.datetime.get_today());
+                this.apply_date_range();
+                return;
+            }
+            this.days = e.target.value; this.reset_all_pagination(); this.refresh(true);
+        });
+        this.$body.on('change', '#of-date-from, #of-date-to', () => this.apply_date_range());
+        // Table filters (OF_TABLE_FILTERS): selects, the mirrored toolbar controls, POS switch, clear.
+        this.$body.on('change', '.of-tf-select', (e) => {
+            const $s = $(e.currentTarget);
+            const key = $s.data('list'), field = $s.data('f'), value = e.target.value || '';
+            const f = (this.table_filters[key] = this.table_filters[key] || {});
+            if (value) f[field] = value; else delete f[field];
+            const def = this.tf_def(key, field) || [];
+            const opts = def[1] === 'status' ? (OF_STATUS_OPTIONS[def[2]] || []) : (Array.isArray(def[2]) ? def[2] : []);
+            const opt = opts.find(o => o[0] === value);
+            if (opt && opt[2] && this.scope === 'open') {   // finds what "Open orders" hides
+                this.scope = 'all';
+                this.$body.find('#of-scope').val('all');
+            }
+            this.reset_all_pagination();
+            this.refresh(true);
+        });
+        this.$body.on('change', '.of-tf-mirror', (e) => {
+            this.$body.find($(e.currentTarget).data('target')).val(e.target.value).trigger('change');
+        });
+        this.$body.on('change', '.of-tf-pos', (e) => {
+            this.$body.find('#of-show-pos input').prop('checked', e.target.checked).trigger('change');
+        });
+        // Search boxes for Customer / Supplier / Jobber / Transporter / Warehouse (of_tf_combo_*).
+        this.$body.on('focus input', '.of-tf-combo-input', (e) => of_tf_combo_open(this, $(e.currentTarget), e.type === 'focusin'));
+        this.$body.on('keydown', '.of-tf-combo-input', (e) => of_tf_combo_key(this, $(e.currentTarget), e));
+        this.$body.on('blur', '.of-tf-combo-input', (e) => setTimeout(() => of_tf_combo_close(this, $(e.currentTarget)), 150));
+        this.$body.on('mousedown', '.of-tf-combo-x', (e) => {
+            e.preventDefault();
+            const $c = $(e.currentTarget).closest('.of-tf-combo');
+            this.set_table_filter($c.data('list'), $c.data('f'), '');
+        });
+        this.$body.on('click', '.of-tf-clear', (e) => {
+            e.preventDefault();
+            const key = $(e.currentTarget).data('list');
+            delete this.table_filters[key];
+            (OF_TABLE_FILTERS[key] || []).filter(d => d[1] === 'mirror').forEach(d => {
+                const $t = this.$body.find(d[2]);
+                if ($t.val()) $t.val('').trigger('change');
+            });
+            this.reset_all_pagination();
+            this.refresh(true);
+        });
 
         // Pagination bar — one reusable control, shared by every tab's
         // (sub-)list. See render_pagination_bar/build_pagination_args.
@@ -934,7 +1380,21 @@ class OrderFlow {
         });
 
         // Activity Notification Full Row Clickable Toggle (Sync all tabs)
-        this.$body.on('click', '.of-toggle-stream-header', () => {
+        // The stream is a side panel opened from the toolbar bell (no collapse toggle any more).
+        this.$body.on('click', '#of-bell-btn', (e) => {
+            e.stopPropagation();
+            this.$body.toggleClass('of-stream-open');
+        });
+        this.$body.on('click', '.of-stream-close', (e) => {
+            e.stopPropagation();
+            this.$body.removeClass('of-stream-open');
+        });
+        $(document).on('click.of_stream', (e) => {
+            if (!this.$body.hasClass('of-stream-open')) return;
+            if ($(e.target).closest('.of-stream-card, #of-bell-btn, .modal, .awesomplete').length) return;
+            this.$body.removeClass('of-stream-open');
+        });
+        this.$body.on('click', '.of-toggle-stream-header-legacy', () => {
             this.stream_collapsed = !this.stream_collapsed;
             localStorage.setItem(OF_TOGGLE_KEY, this.stream_collapsed ? '1' : '0');
             
@@ -1862,6 +2322,8 @@ class OrderFlow {
         // what is pending approval, so "Open / All" has no meaning there —
         // its "Last N days" still applies.
         this.$body.find('#of-days').toggle(tab !== 'stock');
+        this.$body.find('#of-count').toggle(!['accounts', 'purchase', 'jobwork', 'tracker'].includes(tab));   // the summary cards carry the counts
+        this.$body.find('#of-daterange').toggle(tab !== 'stock' && this.$body.find('#of-days').val() === 'custom');
         this.$body.find('#of-scope').toggle(tab !== 'stock' && tab !== 'approval');
         this.update_merchandiser_visibility();
         this.update_show_pos_visibility();
@@ -1897,38 +2359,22 @@ class OrderFlow {
         // are known.
         if (!this.active) return;
 
-        // Preserve whichever Item Stock & Action Plan row(s) are currently
-        // expanded across this refresh. paint() below fully replaces the
-        // panel HTML (every row, collapsed back to its default state) — so
-        // a manual Refresh click, a realtime update, or a focus-regain
-        // refresh used to silently collapse whatever was open, with nothing
-        // visibly updating unless the user happened to notice the caret
-        // reset and re-clicked it themselves. Re-expanding here (which,
-        // per toggle_so_details, always re-fetches fresh data) makes the
-        // widget itself actually reflect the refresh instead of just
-        // vanishing.
-        const panel_id = `#of-panel-${this.active}`;
-        const expanded_so_names = this.$body
-            .find(`${panel_id} tr.of-so-details-row:not(.of-hidden) .of-so-items-container`)
-            .map((i, el) => $(el).data('so'))
-            .get();
-        const re_expand_open_rows = () => {
-            expanded_so_names.forEach(so_name => {
-                const $row = this.$body.find(`${panel_id} tr.of-row-main`).filter((i, el) => $(el).data('so') === so_name);
-                const $btn = $row.find('.of-so-toggle');
-                if ($row.length && $btn.length) this.toggle_so_details(so_name, $btn);
-            });
-        };
+        // Open rows (Item Stock & Action Plan widgets, item lists, embroidery /
+        // transfer / stock breakdowns) stay open across this refresh: paint_keeping_view
+        // records them at the moment of repainting — not when the refresh started, so
+        // a row opened while the data was loading is kept too — and reopens them with
+        // fresh data, showing the old content until the new arrives.
+        if (force) this.clear_pending_updates();
 
         this.load_summary();
         if (force) this.cache = {};
 
-        const key = `${this.active}:${this.days}:${this.scope}:${this.stage_filter}:${this.search}:${this.merchandiser_filter}:${this.approval_stage_filter}:${this.uniform_status_filter}:${this.stock_warehouse_filter}:${this.tracker_industry_filter}:${JSON.stringify(this.docstatus_filter[this.active] || {})}:${this.pagination_cache_part(this.active)}`;
+        const key = `${this.active}:${this.days}:${this.scope}:${this.stage_filter}:${this.search}:${this.merchandiser_filter}:${this.approval_stage_filter}:${this.uniform_status_filter}:${this.stock_warehouse_filter}:${this.tracker_industry_filter}:${JSON.stringify(this.docstatus_filter[this.active] || {})}:${this.pagination_cache_part(this.active)}:${JSON.stringify(this.party_args(this.active))}`;
         if (this.cache[key]) {
-            this.paint(this.cache[key]);
+            this.collect_filter_options(this.cache[key]);
+            this.paint_keeping_view(this.cache[key]);
             this.load_activity();
             this.load_summary();
-            re_expand_open_rows();
             return;
         }
 
@@ -1967,12 +2413,14 @@ class OrderFlow {
         }
         Object.assign(args, this.build_pagination_args(this.active));
         Object.assign(args, this.build_docstatus_args(this.active));
+        Object.assign(args, this.party_args(this.active));
 
         frappe.call({ method, args }).then(r => {
             const data = r.message;
             this.cache[key] = data;
             this.load_activity();
-            this.paint(data);
+            this.collect_filter_options(data);
+            this.paint_keeping_view(data);
             this.load_summary();
         });
     }
@@ -1985,13 +2433,13 @@ class OrderFlow {
                 method: 'erp_dacsinc_custom.order_flow_api.get_summary',
                 // Same filters as the rows below it — merchandiser included — so a
                 // stage card's count always equals what clicking it lists.
-                args: { days: this.days, scope: this.scope, search: this.search || null, merchandiser: this.merchandiser_filter || null, approval_stage: this.approval_stage_filter || null, industry: this.tracker_industry_filter || null }
+                args: Object.assign({ days: this.days, scope: this.scope, search: this.search || null, merchandiser: this.merchandiser_filter || null, approval_stage: this.approval_stage_filter || null, industry: this.tracker_industry_filter || null }, this.party_args('tracker'))
             }).then(r => {
                 const s = r.message || {};
                 this.render_tracker_summary(s);
             });
         } else {
-            const key = `${this.active}:${this.days}:${this.scope}:${this.stage_filter}:${this.search}:${this.merchandiser_filter}:${this.approval_stage_filter}:${this.uniform_status_filter}:${this.stock_warehouse_filter}:${this.tracker_industry_filter}:${JSON.stringify(this.docstatus_filter[this.active] || {})}:${this.pagination_cache_part(this.active)}`;
+            const key = `${this.active}:${this.days}:${this.scope}:${this.stage_filter}:${this.search}:${this.merchandiser_filter}:${this.approval_stage_filter}:${this.uniform_status_filter}:${this.stock_warehouse_filter}:${this.tracker_industry_filter}:${JSON.stringify(this.docstatus_filter[this.active] || {})}:${this.pagination_cache_part(this.active)}:${JSON.stringify(this.party_args(this.active))}`;
             const data = this.cache[key];
             if (data) {
                 if (this.active === 'purchase') this.render_purchase_summary(data);
@@ -2236,7 +2684,8 @@ class OrderFlow {
                 limit: 40,
                 merchandiser: this.merchandiser_filter,
                 scope: this.scope,
-                search: this.search || null
+                search: this.search || null,
+                ...this.party_args(this.active)
             }
         }).then(r => {
             const rows = r.message || [];
@@ -2370,6 +2819,9 @@ class OrderFlow {
             if ($stream_badge.length) $stream_badge.text(fresh).toggleClass('of-hidden', !fresh);
         });
 
+        const bell_fresh = this.filter_tab_rows(rows, this.active).filter(x => !of_is_seen(x, this.active)).length;
+        this.$body.find('#of-bell-count').text(bell_fresh).toggleClass('of-hidden', !bell_fresh);
+
         // Page title carries the sum of the tab badges, so it always agrees with
         // what the tabs are showing.
         this.page.set_title(total_fresh > 0 ? `Order Flow (${total_fresh})` : `Order Flow`);
@@ -2409,12 +2861,9 @@ class OrderFlow {
                             <i class="fa fa-check"></i> Mark all seen
                         </button>
                     </div>
-                    <span class="of-btn of-btn--sm" style="pointer-events:none;height:20px;padding:0 6px;font-size:10px;">
-                        <i class="fa ${this.stream_collapsed ? 'fa-chevron-down' : 'fa-chevron-up'}"></i>
-                        <span class="of-toggle-stream-label">${this.stream_collapsed ? 'Show Stream' : 'Hide Stream'}</span>
-                    </span>
+                    <button class="of-btn of-btn--sm of-stream-close" title="${__('Close')}"><i class="fa fa-times"></i></button>
                 </div>
-                <div class="of-feed ${this.stream_collapsed ? 'of-hidden' : ''}" id="of-activity-container-${tab_name}">
+                <div class="of-feed" id="of-activity-container-${tab_name}">
                     <div id="of-activity-${tab_name}">
                         <div class="of-empty"><i class="fa fa-spinner fa-spin"></i> Loading notifications…</div>
                     </div>
@@ -2478,6 +2927,7 @@ class OrderFlow {
                 return;
             }
 
+            const store = (this.so_open_rows = this.so_open_rows || {});
             const mock_frm = {
                 doc: doc,
                 custom_stock_data: {},
@@ -2489,6 +2939,11 @@ class OrderFlow {
                 }
             };
 
+            // The widget remembers which item rows have their raw materials open in
+            // frm._so_open_rows; keep that per order here, so a reload reopens them.
+            Object.defineProperty(mock_frm, '_so_open_rows', {
+                get: () => store[so_name] || [], set: (v) => { store[so_name] = v; }, configurable: true,
+            });
             $container.data('mock_frm', mock_frm);
             window.cur_frm = mock_frm;
 
@@ -2886,7 +3341,7 @@ class OrderFlow {
                 mr_status = 'Ordered';
             }
             return `<tr class="of-doc-row">
-                <td><i class="fa fa-caret-right of-doc-items-toggle" data-doctype="Material Request" data-docname="${of_esc(m.name)}" style="cursor:pointer;margin-right:4px;color:var(--text-light);"></i>
+                <td><i class="fa fa-caret-right of-doc-items-toggle" data-doctype="Material Request" data-docname="${of_esc(m.name)}" data-docstatus="${m.docstatus}" style="cursor:pointer;margin-right:4px;color:var(--text-light);"></i>
                     <a href="/app/material-request/${encodeURIComponent(m.name)}" target="_blank" style="font-weight:700;">${of_esc(m.name)}</a>
                     <div class="of-micro">${of_esc(m.material_request_type || '')}</div>
                     ${of_creator_html(m)}</td>
@@ -3114,19 +3569,15 @@ class OrderFlow {
             ${this.activity_stream_html('tracker')}
 
             <!-- Sales Tracker Sub-Tab Navigation Bar -->
-            <div class="of-subtabs" style="margin-bottom:12px;">
-                <button class="of-subtab ${subtab === 'so' ? 'is-active' : ''}" data-subtab="so">
-                    <i class="fa fa-list-ul" style="color:var(--of-blue);"></i> Sales Orders
-                </button>
-                <button class="of-subtab ${subtab === 'mr' ? 'is-active' : ''}" data-subtab="mr">
-                    <i class="fa fa-file-text-o" style="color:var(--of-purple);"></i> Material Requests
-                </button>
-                <button class="of-subtab ${subtab === 'fp' ? 'is-active' : ''}" data-subtab="fp">
-                    <i class="fa fa-magic" style="color:var(--of-orange);"></i> Embroidery - FP
-                </button>
-                <button class="of-subtab ${subtab === 'pn' ? 'is-active' : ''}" data-subtab="pn">
-                    <i class="fa fa-scissors" style="color:var(--of-red);"></i> Embroidery - Panel
-                </button>
+            <div class="of-kcards of-kcards--4">
+                ${of_tabcard({ sub: 'so', active: subtab === 'so', icon: 'list-ul', tone: 'blue', title: __('Sales Orders'),
+                    value: flt_of(data.total), value_label: __('orders'), meta: __('filter by stage above') })}
+                ${of_tabcard({ sub: 'mr', active: subtab === 'mr', icon: 'file-text-o', tone: 'purple', title: __('Material Requests'),
+                    value: flt_of(mrs_env.total), value_label: __('requests'), ds: mrs_env.docstatus_counts })}
+                ${of_tabcard({ sub: 'fp', active: subtab === 'fp', icon: 'magic', tone: 'orange', title: __('Embroidery - FP'),
+                    value: flt_of(ewo_fp_env.total), value_label: __('work orders'), ds: ewo_fp_env.docstatus_counts })}
+                ${of_tabcard({ sub: 'pn', active: subtab === 'pn', icon: 'scissors', tone: 'red', title: __('Embroidery - Panel'),
+                    value: flt_of(ewo_pn_env.total), value_label: __('work orders'), ds: ewo_pn_env.docstatus_counts })}
             </div>
 
             <!-- Subtab Sections -->
@@ -3137,9 +3588,10 @@ class OrderFlow {
 
                 <!-- Sales Order Action Tracker Table -->
                 <div class="of-card">
-                    <div class="of-card__head">
-                        <i class="fa fa-tasks"></i> Sales Order Stage &amp; Required Action Plan
-                        <small>Clear next action button for every order</small>
+                    <div class="of-card__head" style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;">
+                        <span><i class="fa fa-tasks"></i> Sales Order Stage &amp; Required Action Plan
+                        <small>Clear next action button for every order</small></span>
+                        ${this.table_filters_html('tracker.so')}
                     </div>
                     <div class="of-scroll-hint"><i class="fa fa-arrows-h"></i> ${__('Scroll sideways to see every column')}</div>
                     <div class="of-scroll">
@@ -3172,7 +3624,7 @@ class OrderFlow {
                     `<a class="of-btn of-btn--primary" href="/app/material-request/new" target="_blank">
                         <i class="fa fa-plus"></i> ${__('Create Material Request')}
                     </a>`, of_pagination_html('tracker', 'mr', mrs_env),
-                    of_docstatus_pills('tracker', 'mr', mrs_env.docstatus_counts, this.docstatus_filter.tracker.mr))}
+                    of_docstatus_pills('tracker', 'mr', mrs_env.docstatus_counts, this.docstatus_filter.tracker.mr) + this.table_filters_html('tracker.mr'))}
             </div>
 
             <!-- Same work orders as the Job Work tab's Embroidery subtabs, so
@@ -3559,7 +4011,7 @@ class OrderFlow {
 
         const po_rows = pos.map(p => `
             <tr class="of-doc-row">
-                <td><i class="fa fa-caret-right of-doc-items-toggle" data-doctype="Purchase Order" data-docname="${of_esc(p.name)}" style="cursor:pointer;margin-right:4px;color:var(--text-light);"></i>
+                <td><i class="fa fa-caret-right of-doc-items-toggle" data-doctype="Purchase Order" data-docname="${of_esc(p.name)}" data-docstatus="${p.docstatus}" style="cursor:pointer;margin-right:4px;color:var(--text-light);"></i>
                     <a href="/app/purchase-order/${encodeURIComponent(p.name)}" target="_blank" style="font-weight:700;">${of_esc(p.name)}</a>
                     ${flt_of(p.is_subcontracted) === 1 ? '<div><span class="of-chip">Subcontract</span></div>' : ''}
                     ${of_order_confirmation_html(p)}
@@ -3591,7 +4043,7 @@ class OrderFlow {
 
         const bill_rows = pos_need_bill.map(p => `
             <tr class="of-doc-row">
-                <td><i class="fa fa-caret-right of-doc-items-toggle" data-doctype="Purchase Order" data-docname="${of_esc(p.name)}" style="cursor:pointer;margin-right:4px;color:var(--text-light);"></i>
+                <td><i class="fa fa-caret-right of-doc-items-toggle" data-doctype="Purchase Order" data-docname="${of_esc(p.name)}" data-docstatus="${p.docstatus}" style="cursor:pointer;margin-right:4px;color:var(--text-light);"></i>
                     <a href="/app/purchase-order/${encodeURIComponent(p.name)}" target="_blank" style="font-weight:700;">${of_esc(p.name)}</a>
                     ${of_order_confirmation_html(p)}
                     ${of_creator_html(p)}</td>
@@ -3631,7 +4083,7 @@ class OrderFlow {
             const open_name = (r.doctype === 'Subcontracting Receipt' && r.linked_pr) ? r.linked_pr : r.name;
             return `
             <tr class="of-doc-row">
-                <td><i class="fa fa-caret-right of-doc-items-toggle" data-doctype="${of_esc(open_doctype)}" data-docname="${of_esc(open_name)}" style="cursor:pointer;margin-right:4px;color:var(--text-light);"></i>
+                <td><i class="fa fa-caret-right of-doc-items-toggle" data-doctype="${of_esc(open_doctype)}" data-docname="${of_esc(open_name)}" data-docstatus="${r.docstatus}" data-submit-doctype="${of_esc(r.doctype)}" data-submit-name="${of_esc(r.name)}" style="cursor:pointer;margin-right:4px;color:var(--text-light);"></i>
                     <a href="/app/${of_route(open_doctype)}/${encodeURIComponent(open_name)}" target="_blank" style="font-weight:700;">${of_esc(r.name)}</a>
                     <div class="of-micro">${of_esc(open_doctype)}${open_doctype !== r.doctype ? ` (via ${of_esc(r.doctype)})` : ''}</div>
                     ${of_creator_html(r)}</td>
@@ -3656,19 +4108,17 @@ class OrderFlow {
             ${this.activity_stream_html('purchase')}
 
             <!-- Top Summary Cards -->
-            <div class="of-summary" id="of-summary-purchase"></div>
 
             <!-- Purchase Flow Sub-Tab Navigation Bar -->
-            <div class="of-subtabs">
-                <button class="of-subtab ${subtab === 'po' ? 'is-active' : ''}" data-subtab="po">
-                    <i class="fa fa-shopping-cart" style="color:var(--of-blue);"></i> POs
-                </button>
-                <button class="of-subtab ${subtab === 'receipt' ? 'is-active' : ''}" data-subtab="receipt">
-                    <i class="fa fa-inbox" style="color:var(--of-green);"></i> Receipts
-                </button>
-                <button class="of-subtab ${subtab === 'bill' ? 'is-active' : ''}" data-subtab="bill">
-                    <i class="fa fa-calculator" style="color:var(--of-orange);"></i> To Bill
-                </button>
+            <div class="of-kcards">
+                ${of_tabcard({ sub: 'po', active: subtab === 'po', icon: 'shopping-cart', tone: 'blue', title: __('Purchase Orders'),
+                    value: flt_of(pos_env.total), value_label: __('POs'),
+                    meta: `${flt_of((data.metrics || {}).open_pos)} ${__('waiting for receipt')} · ${of_money((data.metrics || {}).total_ordered || 0)} ${__('ordered')}`,
+                    ds: pos_env.docstatus_counts })}
+                ${of_tabcard({ sub: 'receipt', active: subtab === 'receipt', icon: 'inbox', tone: 'green', title: __('Receipts'),
+                    value: flt_of(rcs_env.total), value_label: __('receipts'), ds: rcs_env.docstatus_counts })}
+                ${of_tabcard({ sub: 'bill', active: subtab === 'bill', icon: 'calculator', tone: 'orange', title: __('To Bill'),
+                    value: flt_of(bill_env.total), value_label: __('POs'), meta: __('fully received, supplier bill not entered') })}
             </div>
 
             <!-- Subtab Sections -->
@@ -3682,7 +4132,7 @@ class OrderFlow {
                     `<a class="of-btn of-btn--primary" href="/app/purchase-order/new" target="_blank">
                         <i class="fa fa-plus"></i> ${__('Create Purchase Order')}
                     </a>`, of_pagination_html('purchase', 'po', pos_env),
-                    of_docstatus_pills('purchase', 'po', pos_env.docstatus_counts, this.docstatus_filter.purchase.po))}
+                    of_docstatus_pills('purchase', 'po', pos_env.docstatus_counts, this.docstatus_filter.purchase.po) + this.table_filters_html('purchase.po'))}
             </div>
 
             <div id="of-pur-sec-receipt" class="${subtab !== 'receipt' ? 'of-hidden' : ''}">
@@ -3695,7 +4145,7 @@ class OrderFlow {
                     `<a class="of-btn of-btn--primary" href="/app/purchase-receipt/new" target="_blank">
                         <i class="fa fa-plus"></i> ${__('Create Purchase Receipt')}
                     </a>`, of_pagination_html('purchase', 'receipt', rcs_env),
-                    of_docstatus_pills('purchase', 'receipt', rcs_env.docstatus_counts, this.docstatus_filter.purchase.receipt))}
+                    of_docstatus_pills('purchase', 'receipt', rcs_env.docstatus_counts, this.docstatus_filter.purchase.receipt) + this.table_filters_html('purchase.receipt'))}
             </div>
 
             <div id="of-pur-sec-bill" class="${subtab !== 'bill' ? 'of-hidden' : ''}">
@@ -3704,7 +4154,7 @@ class OrderFlow {
                         <thead><tr><th style="min-width:170px;">Purchase Order</th><th style="min-width:150px;">Supplier</th>
                             <th>Sales Order</th><th>Dates</th><th>LR Number</th><th>Ordered</th><th>Received</th><th>Amount</th><th>Status</th><th>Action</th></tr></thead>
                         <tbody>${bill_rows || of_empty_row(10)}</tbody>
-                    </table>`, null, of_pagination_html('purchase', 'bill', bill_env))}
+                    </table>`, null, of_pagination_html('purchase', 'bill', bill_env), this.table_filters_html('purchase.bill'))}
             </div>`;
     }
 
@@ -3926,9 +4376,10 @@ class OrderFlow {
 
         const po_rows = pos.map(p => `
             <tr class="of-doc-row">
-                <td><i class="fa fa-caret-right of-doc-items-toggle" data-doctype="Purchase Order" data-docname="${of_esc(p.name)}" style="cursor:pointer;margin-right:4px;color:var(--text-light);"></i>
+                <td><i class="fa fa-caret-right of-doc-items-toggle" data-doctype="Purchase Order" data-docname="${of_esc(p.name)}" data-docstatus="${p.docstatus}" style="cursor:pointer;margin-right:4px;color:var(--text-light);"></i>
                     <a href="/app/purchase-order/${encodeURIComponent(p.name)}" target="_blank" style="font-weight:700;">${of_esc(p.name)}</a>
                     <div><span class="of-chip" style="background:var(--of-purple);color:#fff;">Job Work</span></div>
+                    ${of_order_confirmation_html(p)}
                     ${of_creator_html(p)}</td>
                 <td style="text-align:left;">
                     <a href="/app/supplier/${encodeURIComponent(p.supplier)}" target="_blank" style="font-weight:600;">${of_esc(p.supplier_name || p.supplier || '')}</a>
@@ -3966,7 +4417,7 @@ class OrderFlow {
             const open_name = (r.doctype === 'Subcontracting Receipt' && r.linked_pr) ? r.linked_pr : r.name;
             return `
             <tr class="of-doc-row">
-                <td><i class="fa fa-caret-right of-doc-items-toggle" data-doctype="${of_esc(open_doctype)}" data-docname="${of_esc(open_name)}" style="cursor:pointer;margin-right:4px;color:var(--text-light);"></i>
+                <td><i class="fa fa-caret-right of-doc-items-toggle" data-doctype="${of_esc(open_doctype)}" data-docname="${of_esc(open_name)}" data-docstatus="${r.docstatus}" data-submit-doctype="${of_esc(r.doctype)}" data-submit-name="${of_esc(r.name)}" style="cursor:pointer;margin-right:4px;color:var(--text-light);"></i>
                     <a href="/app/${of_route(open_doctype)}/${encodeURIComponent(open_name)}" target="_blank" style="font-weight:700;">${of_esc(r.name)}</a>
                     <div class="of-micro">${of_esc(open_doctype)}${open_doctype !== r.doctype ? ` (via ${of_esc(r.doctype)})` : ''}</div>
                     ${of_creator_html(r)}</td>
@@ -3991,22 +4442,19 @@ class OrderFlow {
             ${this.activity_stream_html('jobwork')}
 
             <!-- Top Summary Cards -->
-            <div class="of-summary" id="of-summary-jobwork"></div>
 
             <!-- Job Work Sub-Tab Navigation Bar -->
-            <div class="of-subtabs">
-                <button class="of-subtab ${subtab === 'po' ? 'is-active' : ''}" data-subtab="po">
-                    <i class="fa fa-shopping-cart" style="color:var(--of-blue);"></i> Sub POs
-                </button>
-                <button class="of-subtab ${subtab === 'receipt' ? 'is-active' : ''}" data-subtab="receipt">
-                    <i class="fa fa-inbox" style="color:var(--of-green);"></i> Sub Receipts
-                </button>
-                <button class="of-subtab ${subtab === 'fp' ? 'is-active' : ''}" data-subtab="fp">
-                    <i class="fa fa-magic" style="color:var(--of-orange);"></i> Embroidery - FP
-                </button>
-                <button class="of-subtab ${subtab === 'pn' ? 'is-active' : ''}" data-subtab="pn">
-                    <i class="fa fa-scissors" style="color:var(--of-red);"></i> Embroidery - Panel
-                </button>
+            <div class="of-kcards of-kcards--4">
+                ${of_tabcard({ sub: 'po', active: subtab === 'po', icon: 'shopping-cart', tone: 'blue', title: __('Sub POs'),
+                    value: flt_of(pos_env.total), value_label: __('POs'),
+                    meta: `${flt_of((data.metrics || {}).active_pos)} ${__('active')} · ${Math.floor(flt_of((data.metrics || {}).pending_po_qty))} ${__('qty to receive')}`,
+                    ds: pos_env.docstatus_counts })}
+                ${of_tabcard({ sub: 'receipt', active: subtab === 'receipt', icon: 'inbox', tone: 'green', title: __('Sub Receipts'),
+                    value: flt_of(rcs_env.total), value_label: __('receipts'), ds: rcs_env.docstatus_counts })}
+                ${of_tabcard({ sub: 'fp', active: subtab === 'fp', icon: 'magic', tone: 'orange', title: __('Embroidery - FP'),
+                    value: flt_of(ewo_fp_env.total), value_label: __('work orders'), ds: ewo_fp_env.docstatus_counts })}
+                ${of_tabcard({ sub: 'pn', active: subtab === 'pn', icon: 'scissors', tone: 'red', title: __('Embroidery - Panel'),
+                    value: flt_of(ewo_pn_env.total), value_label: __('work orders'), ds: ewo_pn_env.docstatus_counts })}
             </div>
 
             <!-- Subtab Sections -->
@@ -4020,7 +4468,7 @@ class OrderFlow {
                     `<a class="of-btn of-btn--primary" href="/app/purchase-order/new?is_subcontracted=1" target="_blank">
                         <i class="fa fa-plus"></i> ${__('Create Subcontracting PO')}
                     </a>`, of_pagination_html('jobwork', 'po', pos_env),
-                    of_docstatus_pills('jobwork', 'po', pos_env.docstatus_counts, this.docstatus_filter.jobwork.po))}
+                    of_docstatus_pills('jobwork', 'po', pos_env.docstatus_counts, this.docstatus_filter.jobwork.po) + this.table_filters_html('jobwork.po'))}
             </div>
 
             <div id="of-job-sec-receipt" class="${subtab !== 'receipt' ? 'of-hidden' : ''}">
@@ -4030,10 +4478,12 @@ class OrderFlow {
                             <th>Sales Order</th><th>Against PO</th><th>Date</th><th>Received</th><th>Amount</th><th>Status</th></tr></thead>
                         <tbody>${rc_rows || of_empty_row(8)}</tbody>
                     </table>`,
-                    `<a class="of-btn of-btn--primary" href="/app/subcontracting-receipt/new" target="_blank">
-                        <i class="fa fa-plus"></i> ${__('Create Subcontracting Receipt')}
-                    </a>`, of_pagination_html('jobwork', 'receipt', rcs_env),
-                    of_docstatus_pills('jobwork', 'receipt', rcs_env.docstatus_counts, this.docstatus_filter.jobwork.receipt))}
+                    // Job work is received from the Sub PO itself ("Receive Finished Goods" on the
+                    // PO / its row here), which makes the receipt documents — no standard
+                    // "Create Subcontracting Receipt" here, so there is one way to receive.
+                    `<span class="of-micro text-muted" title="${__('Receipts are made from the Sub PO')}"><i class="fa fa-info-circle"></i>
+                        ${__('Receive from the Sub PO: Receive Finished Goods')}</span>`, of_pagination_html('jobwork', 'receipt', rcs_env),
+                    of_docstatus_pills('jobwork', 'receipt', rcs_env.docstatus_counts, this.docstatus_filter.jobwork.receipt) + this.table_filters_html('jobwork.receipt'))}
             </div>
 
             <div id="of-job-sec-fp" class="${subtab !== 'fp' ? 'of-hidden' : ''}">
@@ -4083,7 +4533,7 @@ class OrderFlow {
                 action_html = ewo_track_link(e.name);
             }
 
-            return `<tr class="of-ewo-row" data-ewo="${of_esc(e.name)}">
+            return `<tr class="of-ewo-row" data-ewo="${of_esc(e.name)}" data-docstatus="${e.docstatus}" data-submit-doctype="Embroidery Work Order" data-submit-name="${of_esc(e.name)}">
                 <td><i class="fa fa-caret-right of-ewo-items-toggle" data-ewo="${of_esc(e.name)}" style="cursor:pointer;margin-right:4px;color:var(--text-light);"></i>
                     <b>${of_esc(e.name)}</b>
                     <div class="of-micro">${of_esc(e.work_type || '')}</div>
@@ -4141,7 +4591,8 @@ class OrderFlow {
                     <th>Sent</th><th>Received</th><th>Pending</th><th>Stage</th><th>Action</th></tr></thead>
                 <tbody>${this.ewo_rows_html(env.rows, view_only) || of_empty_row(11)}</tbody>
             </table>`, null, of_pagination_html(tab, key, env),
-            of_docstatus_pills(tab, key, env.docstatus_counts, (this.docstatus_filter[tab] || {})[key]));
+            of_docstatus_pills(tab, key, env.docstatus_counts, (this.docstatus_filter[tab] || {})[key])
+                + this.table_filters_html(`${tab}.${key}`));
     }
 
     // ── Tab 4: Accounts (Receivables, Supplier Payables & Jobber Payables) ──
@@ -4185,7 +4636,7 @@ class OrderFlow {
                     <thead><tr><th style="min-width:180px;">Item</th><th>Physical Stock</th>
                         <th>Picked (Draft)</th><th>Picked (Submitted)</th><th>Net Available</th></tr></thead>
                     <tbody>${rows || of_empty_row(5)}</tbody>
-                </table>`, null, of_pagination_html('stock', null, data))}
+                </table>`, null, of_pagination_html('stock', null, data), this.table_filters_html('stock'))}
         `;
     }
 
@@ -4421,7 +4872,8 @@ class OrderFlow {
                         <th>Delivered</th><th>Last Activity</th><th>Action</th>
                     </tr></thead>
                     <tbody>${rows || of_empty_row(11)}</tbody>
-                </table>`, counts, of_pagination_html('picklist', null, data))}
+                </table>`, counts, of_pagination_html('picklist', null, data),
+                this.table_filters_html('picklist'))}
         `;
     }
 
@@ -4507,7 +4959,7 @@ class OrderFlow {
                     <thead><tr><th style="min-width:160px;">Sales Order</th><th style="min-width:160px;">Customer</th>
                         <th>Order Date</th><th>Grand Total</th><th>Delivered %</th><th>Billed %</th><th>Stage</th><th>Action</th></tr></thead>
                     <tbody>${rows || of_empty_row(8)}</tbody>
-                </table>`, null, of_pagination_html('billing', null, orders_env))}
+                </table>`, null, of_pagination_html('billing', null, orders_env), this.table_filters_html('billing'))}
         `;
     }
 
@@ -4532,7 +4984,7 @@ class OrderFlow {
             const status_pill = of_invoice_status_html(s);
 
             return `<tr class="of-doc-row">
-                <td><i class="fa fa-caret-right of-doc-items-toggle" data-doctype="Sales Invoice" data-docname="${of_esc(s.name)}" style="cursor:pointer;margin-right:4px;color:var(--text-light);"></i>
+                <td><i class="fa fa-caret-right of-doc-items-toggle" data-doctype="Sales Invoice" data-docname="${of_esc(s.name)}" data-docstatus="${s.docstatus}" style="cursor:pointer;margin-right:4px;color:var(--text-light);"></i>
                     <a href="/app/sales-invoice/${encodeURIComponent(s.name)}" target="_blank" style="font-weight:700;">${of_esc(s.name)}</a>
                     ${of_creator_html(s)}</td>
                 <td style="text-align:left;">
@@ -4547,11 +4999,13 @@ class OrderFlow {
                 <td style="color:var(--of-green);">${of_money(s.paid_amount, s.currency)}</td>
                 <td style="color:${out > 0 ? 'var(--of-red)' : 'var(--text-muted)'};font-weight:700;">${of_money(out, s.currency)}</td>
                 <td>${status_pill}</td>
-                <td>
+                <td><div class="of-po-actions">
+                    ${out > 0 && data.can_pay && flt_of(s.docstatus) === 1 ? `<button class="of-btn of-btn--success of-pay-btn" data-doctype="Sales Invoice" data-name="${of_esc(s.name)}">
+                        <i class="fa fa-inr"></i> ${__('Receive')}</button>` : ''}
                     <a class="of-btn" href="/app/sales-invoice/${encodeURIComponent(s.name)}" target="_blank">
                         <i class="fa fa-external-link"></i> Open
                     </a>
-                </td>
+                </div></td>
             </tr>`;
         }).join('');
 
@@ -4561,7 +5015,7 @@ class OrderFlow {
             const status_pill = of_invoice_status_html(p);
 
             return `<tr class="of-doc-row">
-                <td><i class="fa fa-caret-right of-doc-items-toggle" data-doctype="Purchase Invoice" data-docname="${of_esc(p.name)}" style="cursor:pointer;margin-right:4px;color:var(--text-light);"></i>
+                <td><i class="fa fa-caret-right of-doc-items-toggle" data-doctype="Purchase Invoice" data-docname="${of_esc(p.name)}" data-docstatus="${p.docstatus}" style="cursor:pointer;margin-right:4px;color:var(--text-light);"></i>
                     <a href="/app/purchase-invoice/${encodeURIComponent(p.name)}" target="_blank" style="font-weight:700;">${of_esc(p.name)}</a>
                     ${of_creator_html(p)}</td>
                 <td style="text-align:left;">
@@ -4575,11 +5029,13 @@ class OrderFlow {
                 <td style="color:var(--of-info);">${of_money(p.paid_amount, p.currency)}</td>
                 <td style="color:${out > 0 ? 'var(--of-red)' : 'var(--text-muted)'};font-weight:700;">${of_money(out, p.currency)}</td>
                 <td>${status_pill}</td>
-                <td>
+                <td><div class="of-po-actions">
+                    ${out > 0 && data.can_pay && flt_of(p.docstatus) === 1 ? `<button class="of-btn of-btn--primary of-pay-btn" data-doctype="Purchase Invoice" data-name="${of_esc(p.name)}">
+                        <i class="fa fa-inr"></i> ${__('Pay')}</button>` : ''}
                     <a class="of-btn" href="/app/purchase-invoice/${encodeURIComponent(p.name)}" target="_blank">
                         <i class="fa fa-external-link"></i> Open
                     </a>
-                </td>
+                </div></td>
             </tr>`;
         }).join('');
 
@@ -4589,7 +5045,7 @@ class OrderFlow {
             const status_pill = of_invoice_status_html(p);
 
             return `<tr class="of-doc-row">
-                <td><i class="fa fa-caret-right of-doc-items-toggle" data-doctype="Purchase Invoice" data-docname="${of_esc(p.name)}" style="cursor:pointer;margin-right:4px;color:var(--text-light);"></i>
+                <td><i class="fa fa-caret-right of-doc-items-toggle" data-doctype="Purchase Invoice" data-docname="${of_esc(p.name)}" data-docstatus="${p.docstatus}" style="cursor:pointer;margin-right:4px;color:var(--text-light);"></i>
                     <a href="/app/purchase-invoice/${encodeURIComponent(p.name)}" target="_blank" style="font-weight:700;">${of_esc(p.name)}</a>
                     ${of_creator_html(p)}</td>
                 <td style="text-align:left;">
@@ -4604,11 +5060,13 @@ class OrderFlow {
                 <td style="color:var(--of-purple);">${of_money(p.paid_amount, p.currency)}</td>
                 <td style="color:${out > 0 ? 'var(--of-red)' : 'var(--text-muted)'};font-weight:700;">${of_money(out, p.currency)}</td>
                 <td>${status_pill}</td>
-                <td>
+                <td><div class="of-po-actions">
+                    ${out > 0 && data.can_pay && flt_of(p.docstatus) === 1 ? `<button class="of-btn of-btn--primary of-pay-btn" data-doctype="Purchase Invoice" data-name="${of_esc(p.name)}">
+                        <i class="fa fa-inr"></i> ${__('Pay')}</button>` : ''}
                     <a class="of-btn" href="/app/purchase-invoice/${encodeURIComponent(p.name)}" target="_blank">
                         <i class="fa fa-external-link"></i> Open
                     </a>
-                </td>
+                </div></td>
             </tr>`;
         }).join('');
 
@@ -4618,48 +5076,22 @@ class OrderFlow {
             <!-- Live Activity Notifications -->
             ${this.activity_stream_html('accounts')}
 
-            <!-- Top Summary Cards -->
-            <div class="of-summary" id="of-summary-accounts"></div>
-
-            <!-- Accounts Sub-Tab Navigation Bar -->
-            <div class="of-acc-subtabs">
-                <button class="of-acc-subtab ${subtab === 'receivables' ? 'is-active' : ''}" data-subtab="receivables">
-                    <i class="fa fa-arrow-circle-down" style="color:var(--of-green);"></i> Receivables
-                </button>
-                <button class="of-acc-subtab ${subtab === 'supplier' ? 'is-active' : ''}" data-subtab="supplier">
-                    <i class="fa fa-arrow-circle-up" style="color:var(--of-red);"></i> Supplier Payables
-                </button>
-                <button class="of-acc-subtab ${subtab === 'jobber' ? 'is-active' : ''}" data-subtab="jobber">
-                    <i class="fa fa-cogs" style="color:var(--of-purple);"></i> Jobber Payables
-                </button>
+            <!-- Sub-tabs as summary cards: what is open, how much is settled, how many invoices
+                 (replaces the six tiles, the plain sub-tab bar and the settlement bar). -->
+            <div class="of-kcards">
+                ${of_kcard({ sub: 'receivables', active: subtab === 'receivables', icon: 'arrow-circle-down', tone: 'green',
+                    title: __('Receivables'), open: m.sales_outstanding, open_label: __('to collect'),
+                    settled: m.sales_received, total: m.sales_total, settled_label: __('received'),
+                    docs: sis_env.total || 0, doc_label: __('customer invoice') })}
+                ${of_kcard({ sub: 'supplier', active: subtab === 'supplier', icon: 'arrow-circle-up', tone: 'red',
+                    title: __('Supplier Payables'), open: m.supplier_outstanding, open_label: __('to pay'),
+                    settled: m.supplier_paid, total: m.supplier_total, settled_label: __('paid'),
+                    docs: sups_env.total || 0, doc_label: __('supplier invoice') })}
+                ${of_kcard({ sub: 'jobber', active: subtab === 'jobber', icon: 'cogs', tone: 'purple',
+                    title: __('Jobber Payables'), open: m.jobber_outstanding, open_label: __('to pay'),
+                    settled: m.jobber_paid, total: m.jobber_total, settled_label: __('paid'),
+                    docs: jobs_env.total || 0, doc_label: __('jobber invoice') })}
             </div>
-
-            <!-- Settlement progress.
-                 The billed and outstanding figures already sit in the six tiles at the
-                 top of the tab, so repeating them as cards here said the same thing
-                 twice. This states the one number those tiles do not carry — how much
-                 has actually been settled — and shows it as a share of the total. -->
-            ${of_settlement_bar({
-                hidden: subtab !== 'receivables', id: 'of-acc-kpi-receivables', tone: 'receivable',
-                title: __('Customer collection'), icon: 'arrow-circle-down',
-                settled_label: __('Received'), settled: m.sales_received,
-                open_label: __('still to collect'), open: m.sales_outstanding,
-                total: m.sales_total, docs: sis_env.total || 0, doc_label: __('customer invoice')
-            })}
-            ${of_settlement_bar({
-                hidden: subtab !== 'supplier', id: 'of-acc-kpi-supplier', tone: 'payable',
-                title: __('Supplier settlement'), icon: 'arrow-circle-up',
-                settled_label: __('Paid'), settled: m.supplier_paid,
-                open_label: __('still to pay'), open: m.supplier_outstanding,
-                total: m.supplier_total, docs: sups_env.total || 0, doc_label: __('supplier invoice')
-            })}
-            ${of_settlement_bar({
-                hidden: subtab !== 'jobber', id: 'of-acc-kpi-jobber', tone: 'jobber',
-                title: __('Jobber settlement'), icon: 'cogs',
-                settled_label: __('Paid'), settled: m.jobber_paid,
-                open_label: __('still to pay'), open: m.jobber_outstanding,
-                total: m.jobber_total, docs: jobs_env.total || 0, doc_label: __('jobber invoice')
-            })}
 
             <!-- Tables -->
             <div id="of-acc-sec-receivables" class="${subtab !== 'receivables' ? 'of-hidden' : ''}">
@@ -4672,7 +5104,8 @@ class OrderFlow {
                     </table>`,
                     `<a class="of-btn of-btn--primary" href="/app/sales-invoice/new" target="_blank">
                         <i class="fa fa-plus"></i> ${__('Create Sales Invoice')}
-                    </a>`, of_pagination_html('accounts', 'sales', sis_env))}
+                    </a>`, of_pagination_html('accounts', 'sales', sis_env),
+                    of_docstatus_pills('accounts', 'sales', sis_env.docstatus_counts, this.docstatus_filter.accounts.sales) + this.table_filters_html('accounts.receivables'))}
             </div>
 
             <div id="of-acc-sec-supplier" class="${subtab !== 'supplier' ? 'of-hidden' : ''}">
@@ -4685,7 +5118,8 @@ class OrderFlow {
                     </table>`,
                     `<a class="of-btn of-btn--primary" href="/app/purchase-invoice/new" target="_blank">
                         <i class="fa fa-plus"></i> ${__('Create Purchase Invoice')}
-                    </a>`, of_pagination_html('accounts', 'supplier', sups_env))}
+                    </a>`, of_pagination_html('accounts', 'supplier', sups_env),
+                    of_docstatus_pills('accounts', 'supplier', sups_env.docstatus_counts, this.docstatus_filter.accounts.supplier) + this.table_filters_html('accounts.supplier'))}
             </div>
 
             <div id="of-acc-sec-jobber" class="${subtab !== 'jobber' ? 'of-hidden' : ''}">
@@ -4695,7 +5129,8 @@ class OrderFlow {
                             <th>Sales Order</th><th>Dates</th><th>Total Amount</th><th>Paid</th>
                             <th>Outstanding (Payable)</th><th>Status</th><th>Action</th></tr></thead>
                         <tbody>${job_rows || of_empty_row(9)}</tbody>
-                    </table>`, null, of_pagination_html('accounts', 'jobber', jobs_env))}
+                    </table>`, null, of_pagination_html('accounts', 'jobber', jobs_env),
+                    of_docstatus_pills('accounts', 'jobber', jobs_env.docstatus_counts, this.docstatus_filter.accounts.jobber) + this.table_filters_html('accounts.jobber'))}
             </div>`;
     }
 
@@ -4958,6 +5393,7 @@ class OrderFlow {
                         ${sub === 'rejected' ? of_rejection_stage_pills(
                             rejected_by_merchandiser.length, rejected_at_final.length, this.approval_rejected_stage_filter
                         ) : ''}
+                        ${this.table_filters_html('approval')}
                     </div>
                     <div style="display: flex; gap: 10px;">
                         <button class="of-btn of-btn--primary" id="of-new-so-btn" title="${__('A merchandiser sees only their own customers here; this is the same restriction Frappe already applies to the Customer field everywhere else.')}">
@@ -5329,7 +5765,7 @@ class OrderFlow {
 
             <div class="of-card">
                 <div class="of-card__head" style="padding:12px 16px; border-bottom:1px solid var(--border-color); display:flex; justify-content:space-between; align-items:center;">
-                    <div style="font-size:14px; font-weight:600;"><i class="fa fa-random"></i> Embroidery Stock Transfers</div>
+                    <div style="font-size:14px; font-weight:600; display:inline-flex; align-items:center; gap:10px; flex-wrap:wrap;"><span><i class="fa fa-random"></i> Embroidery Stock Transfers</span>${this.table_filters_html('uniform')}</div>
                     <button class="of-btn of-btn--primary" id="of-create-transfer-btn">
                         <i class="fa fa-plus"></i> Create Transfer
                     </button>
@@ -5433,7 +5869,8 @@ class OrderFlow {
                         </tr>
                     </thead>
                     <tbody>${rows_html || of_empty_row(10)}</tbody>
-                </table>`, null, of_pagination_html('logistics', null, data))}
+                </table>`, null, of_pagination_html('logistics', null, data),
+                this.table_filters_html('logistics'))}
         `;
     }
 
@@ -5838,6 +6275,17 @@ function of_round2(v) {
 // draft actually exists right now, or the viewer is already filtered to
 // Draft (so "All" stays one click away even if the last draft was just
 // submitted while this tab was open).
+// A mirrored toolbar select's options for a table filter: the caption names the filter, so
+// its first "All Merchandisers" / "All Warehouses" option just reads "All".
+function of_mirror_options($select) {
+    const cur = $select.val() || '';
+    return $select.find('option').map((i, o) => {
+        const v = o.value || '';
+        const label = i === 0 && !v ? __('All') : o.textContent;
+        return `<option value="${of_esc(v)}"${v === cur ? ' selected' : ''}>${of_esc(label)}</option>`;
+    }).get().join('');
+}
+
 function of_docstatus_pills(tab, sublist, counts, current) {
     counts = counts || {};
     const draft = flt_of(counts.draft);
@@ -6251,6 +6699,95 @@ function of_card(title, icon, inner, actions_html, footer_html, title_suffix_htm
  * at the top of the Accounts tab. The settled amount and the percentage are the
  * only figures not available above, so they lead.
  */
+// ── Table filter search box (Customer / Supplier / …): an input over the table's own
+// options (OrderFlow.tf_options[list][field]); the matches open in one popup on <body>.
+function of_tf_combo_pop() {
+    let $p = $('#of-tf-pop');
+    if (!$p.length) $p = $('<div id="of-tf-pop" class="of-tf-pop"></div>').appendTo(document.body);
+    return $p;
+}
+
+function of_tf_combo_open(of, $input, on_focus) {
+    const $c = $input.closest('.of-tf-combo');
+    const key = $c.data('list'), field = $c.data('f');
+    const opts = ((of.tf_options[key] || {})[field]) || [];
+    const q = on_focus ? '' : String($input.val() || '').trim().toLowerCase();
+    if (on_focus) $input.select();
+    const hits = opts.filter(o => !q || String(o[1] || '').toLowerCase().includes(q) || String(o[0]).toLowerCase().includes(q)).slice(0, 80);
+    const $p = of_tf_combo_pop();
+    const r = $input[0].getBoundingClientRect();
+    $p.css({ left: r.left - 8, top: r.bottom + 4, minWidth: Math.max(260, r.width + 60) }).data('combo', $c[0]).data('active', 0)
+      .html(hits.length ? hits.map((o, i) => `<div class="of-tf-pop__item${i === 0 ? ' is-active' : ''}" data-v="${of_esc(o[0])}">
+            <span>${of_esc(o[1] || o[0])}</span>${o[1] && o[1] !== o[0] ? `<small>${of_esc(o[0])}</small>` : ''}</div>`).join('')
+          : `<div class="of-tf-pop__empty">${__('No match in this table')}</div>`)
+      .show();
+    $p.off('mousedown').on('mousedown', '.of-tf-pop__item', (ev) => {
+        ev.preventDefault();
+        of.set_table_filter(key, field, $(ev.currentTarget).data('v'));
+        $p.hide();
+    });
+}
+
+function of_tf_combo_key(of, $input, e) {
+    const $p = of_tf_combo_pop();
+    const $items = $p.find('.of-tf-pop__item');
+    let a = $p.data('active') || 0;
+    if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+        e.preventDefault();
+        if (!$p.is(':visible')) return of_tf_combo_open(of, $input, false);
+        a = Math.max(0, Math.min($items.length - 1, a + (e.key === 'ArrowDown' ? 1 : -1)));
+        $items.removeClass('is-active').eq(a).addClass('is-active')[0]?.scrollIntoView({ block: 'nearest' });
+        $p.data('active', a);
+    } else if (e.key === 'Enter') {
+        e.preventDefault();
+        const $c = $input.closest('.of-tf-combo');
+        if (!String($input.val() || '').trim()) { of.set_table_filter($c.data('list'), $c.data('f'), ''); $p.hide(); return; }
+        const $pick = $items.eq(a);
+        if ($pick.length) { of.set_table_filter($c.data('list'), $c.data('f'), $pick.data('v')); $p.hide(); }
+    } else if (e.key === 'Escape') {
+        $p.hide(); $input.blur();
+    }
+}
+
+function of_tf_combo_close(of, $input) {
+    const $p = of_tf_combo_pop();
+    const $c = $input.closest('.of-tf-combo');
+    if ($p.data('combo') === $c[0]) $p.hide();
+    // typed text that was not picked: an emptied box clears the filter, anything else snaps back
+    const key = $c.data('list'), field = $c.data('f');
+    const cur = ((of.table_filters[key] || {})[field]) || '';
+    if (!String($input.val() || '').trim()) { if (cur) of.set_table_filter(key, field, ''); return; }
+    const hit = (((of.tf_options[key] || {})[field]) || []).find(o => o[0] === cur);
+    $input.val(cur ? (hit ? (hit[1] || hit[0]) : cur) : '');
+}
+
+// A plain sub-tab (Purchase Flow, Job Work, Sales Tracker) drawn as a summary card: the count
+// of that list, a short line under it, and optionally Draft / Submitted. Keeps class of-subtab /
+// data-subtab, so the sub-tab switcher and permission hiding work unchanged.
+function of_tabcard(o) {
+    const ds = o.ds || null;
+    const ds_line = ds && (flt_of(ds.draft) || flt_of(ds.submitted))
+        ? `${flt_of(ds.draft) ? `<span class="of-kcard__draft">${flt_of(ds.draft)} ${__('draft')}</span> · ` : ''}${flt_of(ds.submitted)} ${__('submitted')}` : '';
+    return `<button class="of-subtab of-kcard of-kcard--${o.tone || 'blue'}${o.active ? ' is-active' : ''}" data-subtab="${o.sub}">
+        <span class="of-kcard__title"><i class="fa fa-${o.icon}"></i> ${of_esc(o.title)}</span>
+        <span class="of-kcard__amt">${o.value} <small>${of_esc(o.value_label || '')}</small></span>
+        <span class="of-kcard__meta">${[o.meta, ds_line].filter(Boolean).join(' · ') || '&nbsp;'}</span>
+    </button>`;
+}
+
+// A sub-tab drawn as a summary card: what is still open, a progress bar of what is settled,
+// and how many documents. Keeps class of-acc-subtab / data-subtab, so the sub-tab switcher works.
+function of_kcard(o) {
+    const total = flt_of(o.total), settled = flt_of(o.settled), open = flt_of(o.open);
+    const pct = total > 0 ? Math.max(0, Math.min(100, (settled / total) * 100)) : 0;
+    return `<button class="of-acc-subtab of-kcard of-kcard--${o.tone}${o.active ? ' is-active' : ''}" data-subtab="${o.sub}">
+        <span class="of-kcard__title"><i class="fa fa-${o.icon}"></i> ${of_esc(o.title)}</span>
+        <span class="of-kcard__amt">${of_money(open)} <small>${of_esc(o.open_label)}</small></span>
+        <span class="of-bar"><span class="of-bar__fill${pct >= 100 ? '' : (pct > 0 ? ' of-bar__fill--part' : ' of-bar__fill--none')}" style="width:${pct}%;"></span></span>
+        <span class="of-kcard__meta">${pct.toFixed(0)}% ${of_esc(o.settled_label)} ${__('of')} ${of_money(total)} · ${o.docs} ${of_esc(o.doc_label)}${o.docs === 1 ? '' : 's'}</span>
+    </button>`;
+}
+
 function of_settlement_bar(o) {
     const total   = flt_of(o.total);
     const settled = flt_of(o.settled);
@@ -6294,7 +6831,7 @@ function of_ewo_notes_html(notes) {
 // Return, Credit Note Issued…) as a pill, and under it whether the goods it bills have
 // been delivered / received (goods_status from get_accounts_flow).
 const OF_INVOICE_STATUS_PILL = {
-    'Paid': 'ready', 'Partly Paid': 'wait', 'Partly Paid and Discounted': 'wait',
+    'Draft': 'draft', 'Paid': 'ready', 'Partly Paid': 'wait', 'Partly Paid and Discounted': 'wait',
     'Unpaid': 'warn', 'Unpaid and Discounted': 'warn',
     'Overdue': 'blocked', 'Overdue and Discounted': 'blocked',
     'Return': 'done', 'Credit Note Issued': 'done', 'Debit Note Issued': 'done',
@@ -6308,6 +6845,277 @@ function of_invoice_status_html(d) {
     const tone = /^(Delivered|Received)$/.test(g) ? 'var(--of-green)' : (/^Partly/.test(g) ? 'var(--of-orange)' : 'var(--text-muted)');
     const icon = /^(Delivered|Received)$/.test(g) ? 'check-circle' : (/^Partly/.test(g) ? 'adjust' : 'circle-o');
     return `${pill}<div class="of-micro" style="margin-top:4px;color:${tone};font-weight:600;white-space:nowrap;"><i class="fa fa-${icon}"></i> ${of_esc(__(g))}</div>`;
+}
+
+// Doctypes whose drafts can be submitted from their row (dashboard_submit.SUBMITTABLE).
+// Not Sales Orders (approval workflow) nor Pick Lists (their own "Submit Pick List" review).
+const OF_DASHBOARD_SUBMITTABLE = ['Material Request', 'Purchase Order', 'Purchase Receipt', 'Subcontracting Receipt',
+    'Embroidery Work Order', 'Sales Invoice', 'Purchase Invoice'];
+
+// Submit a draft from its row: show the document back, require a tick, then submit as the
+// user (full server validation). Offers the print prompt afterwards where the form would.
+function of_submit_draft_prompt(doctype, name, on_done) {
+    frappe.call({ method: 'erp_dacsinc_custom.dashboard_submit.get_submit_preview', args: { doctype, name } }).then(r => {
+        const d = r.message;
+        if (!d) return;
+        const money = (v) => (v == null ? '' : format_currency(flt(v, 2), d.currency || undefined));
+        const has_rate = d.items.some(i => i.rate != null);
+        const total_qty = d.items.reduce((a, i) => a + flt(i.qty), 0);
+        const total_amt = d.items.reduce((a, i) => a + flt(i.amount), 0);
+        const uoms = [...new Set(d.items.map(i => i.uom).filter(Boolean))];
+        const rows = d.items.map((i, n) => `<tr>
+            <td class="of-ct-num of-ct-muted">${n + 1}</td>
+            <td><div class="of-ct-item">${of_esc(i.item_code)}</div>${i.item_name && i.item_name !== i.item_code ? `<div class="of-ct-sub">${of_esc(i.item_name)}</div>` : ''}</td>
+            <td class="of-ct-num">${flt(i.qty, 3)} <span class="of-ct-muted">${of_esc(i.uom)}</span></td>
+            ${has_rate ? `<td class="of-ct-num">${money(i.rate)}</td><td class="of-ct-num of-ct-strong">${money(i.amount)}</td>` : ''}
+        </tr>`).join('');
+        const meta = (label, value) => value ? `<div class="of-cm-card"><div class="of-cm-label">${label}</div><div class="of-cm-value">${value}</div></div>` : '';
+
+        const dlg = new frappe.ui.Dialog({
+            title: __('Submit {0} {1}', [__(doctype), name]),
+            size: 'large',
+            fields: [
+                { fieldtype: 'HTML', fieldname: 'body' },
+                { fieldtype: 'Check', fieldname: 'checked', label: __('I have checked this {0} (items, quantities, rates and party)', [__(doctype)]) },
+            ],
+            primary_action_label: __('Submit'),
+            primary_action: (v) => {
+                if ((d.mr_over || []).length) return frappe.msgprint(__('Correct the highlighted quantities on the Purchase Order first.'));
+                if (!v.checked) return frappe.msgprint(__('Tick the confirmation to submit.'));
+                dlg.get_primary_btn().prop('disabled', true);
+                frappe.call({
+                    method: 'erp_dacsinc_custom.dashboard_submit.submit_from_dashboard',
+                    args: { doctype, name }, freeze: true, freeze_message: __('Submitting…'),
+                }).then(() => {
+                    dlg.hide();
+                    frappe.show_alert({ message: __('{0} {1} submitted', [__(doctype), name]), indicator: 'green' });
+                    on_done && on_done();
+                    if (window.dacs_print_prompt && ['Sales Invoice', 'Purchase Order', 'Embroidery Work Order'].includes(doctype)) {
+                        const label = doctype === 'Purchase Order' && d.is_subcontracted ? __('Subcontract PO') : __(doctype);
+                        window.dacs_print_prompt(doctype, name, label);
+                    }
+                }).catch(() => dlg.get_primary_btn().prop('disabled', false));
+            },
+        });
+        dlg.$wrapper.addClass('of-confirm-dialog');
+        const over = d.mr_over || [];
+        const over_html = over.length ? `<div class="of-cm-warn" style="background:#fff1f0;border-color:#f5c2c0;color:#8a1f17;">
+            <i class="fa fa-ban"></i><div><b>${__('{0} line(s) ask for more than their Material Request still has open — ERPNext will not submit this as it is.', [over.length])}</b>
+            <ul style="margin:6px 0 4px 16px;padding:0;">${over.map(o => `<li><b>${of_esc(o.item_code)}</b>: ${__('asks {0} {1}, only {2} {1} left on {3}', [flt(o.qty, 3), of_esc(o.uom || ''), flt(o.allowed_qty, 3), of_esc(o.material_request)])}</li>`).join('')}</ul>
+            <a href="/app/purchase-order/${encodeURIComponent(name)}" target="_blank">${__('Open the Purchase Order and click "Correct quantities"')}</a></div></div>` : '';
+        dlg.fields_dict.body.$wrapper.html(`${over_html}
+            <div class="of-cm-warn"><i class="fa fa-exclamation-triangle"></i>
+                ${__('Submitting is final. To change it afterwards, the {0} has to be cancelled and amended.', [__(doctype)])}</div>
+            <div class="of-cm-grid">
+                ${meta(__('Document'), `<a href="/app/${frappe.router.slug(doctype)}/${encodeURIComponent(name)}" target="_blank">${of_esc(name)}</a>`)}
+                ${meta(__('Party'), of_esc(d.party))}
+                ${meta(__('Date'), d.date ? frappe.datetime.str_to_user(d.date) : '')}
+                ${meta(__('Supplier Bill No'), of_esc(d.bill_no))}
+                ${meta(__('Total'), d.total != null ? `<span class="of-cm-total">${money(d.total)}</span>` : '')}
+            </div>
+            <div class="of-ct-wrap">
+                <table class="of-confirm-table">
+                    <thead><tr><th class="of-ct-num">#</th><th>${__('Item')}</th><th class="of-ct-num">${__('Qty')}</th>
+                        ${has_rate ? `<th class="of-ct-num">${__('Rate')}</th><th class="of-ct-num">${__('Amount')}</th>` : ''}</tr></thead>
+                    <tbody>${rows || `<tr><td colspan="5" class="of-ct-muted">${__('No items')}</td></tr>`}</tbody>
+                    ${d.items.length > 1 || (has_rate && d.total != null && Math.abs(flt(d.total) - total_amt) > 0.01) ? `<tfoot><tr><td></td><td>${__('{0} line(s)', [d.items.length])}${has_rate && d.total != null && Math.abs(flt(d.total) - total_amt) > 0.01 ? ` <span class="of-ct-muted">· ${__('items, before tax')}</span>` : ''}</td>
+                        <td class="of-ct-num">${uoms.length === 1 ? `${flt(total_qty, 3)} <span class="of-ct-muted">${of_esc(uoms[0])}</span>` : ''}</td>
+                        ${has_rate ? `<td></td><td class="of-ct-num">${money(total_amt)}</td>` : ''}</tr></tfoot>` : ''}
+                </table>
+            </div>`);
+        dlg.fields_dict.checked.$wrapper.addClass('of-cm-check');
+        dlg.show();
+    });
+}
+
+// Finance › Receive / Pay: record a payment against one invoice (dashboard_payment.py).
+// Step 1 asks what a Payment Entry needs; step 2 shows everything back with the ledger
+// effect and needs a tick before it submits.
+function of_payment_prompt(doctype, name, on_done) {
+    frappe.call({
+        method: 'erp_dacsinc_custom.dashboard_payment.get_payment_prompt',
+        args: { doctype, name },
+    }).then(r => {
+        const d = r.message;
+        if (!d) return;
+        const money = (v) => format_currency(flt(v, 2), d.currency);
+        const receive = d.receive;
+        const mode_by_name = Object.fromEntries((d.modes || []).map(m => [m.name, m]));
+        const acc_filter = () => ({ filters: { company: d.company, is_group: 0 } });
+
+        const dlg = new frappe.ui.Dialog({
+            title: receive ? __('Receive Payment — {0}', [d.name]) : __('Make Payment — {0}', [d.name]),
+            size: 'large',
+            fields: [
+                { fieldtype: 'HTML', fieldname: 'head' },
+                { fieldtype: 'Section Break', label: __('Payment') },
+                { fieldtype: 'Date', fieldname: 'posting_date', label: __('Payment Date'), reqd: 1, default: frappe.datetime.get_today() },
+                { fieldtype: 'Select', fieldname: 'mode_of_payment', label: __('Mode of Payment'), reqd: 1,
+                  options: [''].concat((d.modes || []).map(m => m.name)).join('\n') },
+                { fieldtype: 'HTML', fieldname: 'mode_info' },
+                { fieldtype: 'Column Break' },
+                { fieldtype: 'Float', precision: 2, fieldname: 'amount', reqd: 1, default: d.outstanding,
+                  label: receive ? __('Amount Received (in bank / cash)') : __('Amount Paid to Supplier') },
+                { fieldtype: 'Data', fieldname: 'reference_no', label: __('Reference No (UTR / Cheque No)') },
+                { fieldtype: 'Date', fieldname: 'reference_date', label: __('Reference Date') },
+                { fieldtype: 'Section Break', label: __('Deductions (only if any)'), collapsible: 0 },
+                { fieldtype: 'Float', precision: 2, fieldname: 'bank_charges',
+                  label: receive ? __('Bank Charges deducted by bank') : __('Bank Charges paid by us') },
+                { fieldtype: 'Float', precision: 2, fieldname: 'tds_amount',
+                  label: receive ? __('TDS deducted by customer') : __('TDS deducted now (not on the bill)') },
+                { fieldtype: 'Float', precision: 2, fieldname: 'write_off_amount', label: __('Small difference to write off (round off)') },
+                { fieldtype: 'Column Break' },
+                { fieldtype: 'Link', fieldname: 'bank_charges_account', label: __('Bank Charges Account'), options: 'Account',
+                  default: d.defaults.bank_charges_account, get_query: acc_filter },
+                { fieldtype: 'Link', fieldname: 'tds_account', label: __('TDS Account'), options: 'Account',
+                  default: d.defaults.tds_account, get_query: acc_filter },
+                { fieldtype: 'Link', fieldname: 'write_off_account', label: __('Write Off Account'), options: 'Account',
+                  default: d.defaults.write_off_account, get_query: acc_filter },
+                { fieldtype: 'Section Break' },
+                { fieldtype: 'Small Text', fieldname: 'remarks', label: __('Remarks') },
+                { fieldtype: 'HTML', fieldname: 'summary' },
+            ],
+            primary_action_label: __('Review'),
+            primary_action: (v) => review(v),
+        });
+
+        const calc = () => {
+            const v = dlg.get_values(true) || {};
+            const amount = flt(v.amount), charges = flt(v.bank_charges), tds = flt(v.tds_amount), wo = flt(v.write_off_amount);
+            const settled = receive ? amount + charges + tds + wo : amount + tds + wo;
+            const bank = receive ? amount : amount + charges;
+            return { v, amount, charges, tds, wo, settled, bank,
+                     allocated: Math.min(settled, d.outstanding),
+                     remaining: flt(d.outstanding - settled, 2), mode: mode_by_name[v.mode_of_payment] };
+        };
+
+        const paint = () => {
+            const c = calc();
+            const is_bank = c.mode && c.mode.account_type === 'Bank';
+            dlg.set_df_property('reference_no', 'reqd', is_bank ? 1 : 0);
+            dlg.set_df_property('reference_date', 'reqd', is_bank ? 1 : 0);
+            dlg.fields_dict.mode_info.$wrapper.html(c.mode
+                ? `<div class="text-muted small" style="margin:-6px 0 8px;">${receive ? __('Money goes into') : __('Money goes out of')}: <b>${of_esc(c.mode.account)}</b></div>` : '');
+            const rem = c.remaining > 0.004
+                ? `<span style="color:var(--of-orange);font-weight:600;">${money(c.remaining)} ${__('still outstanding (part payment)')}</span>`
+                : (c.remaining < -0.004
+                    ? `<span style="color:var(--of-info);font-weight:600;">${money(-c.remaining)} ${__('extra — kept as advance for {0}', [of_esc(d.party_name || d.party)])}</span>`
+                    : `<span style="color:var(--of-green);font-weight:600;">${__('Invoice fully settled')}</span>`);
+            dlg.fields_dict.summary.$wrapper.html(`
+                <div style="border:1px solid var(--border-color);border-radius:6px;padding:10px 12px;font-size:12.5px;display:grid;gap:4px;">
+                    <div>${__('Settles on invoice')}: <b>${money(c.allocated)}</b> ${__('of')} ${money(d.outstanding)}</div>
+                    <div>${receive ? __('Into bank / cash') : __('Out of bank / cash')}: <b>${money(c.bank)}</b></div>
+                    <div>${rem}</div>
+                </div>`);
+        };
+
+        dlg.fields_dict.head.$wrapper.html(`
+            <div style="display:flex;flex-wrap:wrap;gap:8px 24px;font-size:13px;padding:4px 0 2px;">
+                <div>${receive ? __('Customer') : __('Supplier')}: <b>${of_esc(d.party_name || d.party)}</b> <span class="text-muted">${of_esc(d.party)}</span></div>
+                <div>${__('Invoice Total')}: <b>${money(d.invoice_total)}</b></div>
+                <div>${__('Outstanding')}: <b style="color:var(--of-red);">${money(d.outstanding)}</b></div>
+                ${d.due_date ? `<div>${__('Due')}: <b>${frappe.datetime.str_to_user(d.due_date)}</b></div>` : ''}
+                ${d.bill_no ? `<div>${__('Supplier Bill No')}: <b>${of_esc(d.bill_no)}</b></div>` : ''}
+                ${d.tds_on_invoice ? `<div class="text-muted">${__('TDS already deducted on the bill')}: ${money(d.tds_on_invoice)}</div>` : ''}
+            </div>`);
+        ['amount', 'bank_charges', 'tds_amount', 'write_off_amount', 'mode_of_payment'].forEach(f => {
+            dlg.fields_dict[f].$input && dlg.fields_dict[f].$input.on('input change', () => setTimeout(paint, 0));
+            if (f !== 'mode_of_payment') dlg.fields_dict[f].df.onchange = () => paint();
+        });
+        dlg.fields_dict.mode_of_payment.df.onchange = () => {
+            const m = mode_by_name[dlg.get_value('mode_of_payment')];
+            if (m && /card/i.test(m.name) && d.defaults.card_charges_account) dlg.set_value('bank_charges_account', d.defaults.card_charges_account);
+            paint();
+        };
+        dlg.show();
+        paint();
+
+        function review(v) {
+            const c = calc();
+            const is_bank = c.mode && c.mode.account_type === 'Bank';
+            if (!c.mode) return frappe.msgprint(__('Choose the Mode of Payment.'));
+            if (c.amount <= 0) return frappe.msgprint(__('Enter the amount.'));
+            if (is_bank && (!v.reference_no || !v.reference_date)) return frappe.msgprint(__('Enter the Reference No (UTR / cheque no) and Reference Date.'));
+            if (c.charges && !v.bank_charges_account) return frappe.msgprint(__('Choose the Bank Charges Account.'));
+            if (c.tds && !v.tds_account) return frappe.msgprint(__('Choose the TDS Account.'));
+            if (c.wo && !v.write_off_account) return frappe.msgprint(__('Choose the Write Off Account.'));
+            if ((c.charges || c.tds || c.wo) && c.remaining < -0.004)
+                return frappe.msgprint(__('Amount plus deductions is more than the outstanding. Reduce the deductions.'));
+
+            const row = (k, val) => `<tr><td style="padding:4px 10px 4px 0;color:var(--text-muted);">${k}</td><td style="padding:4px 0;"><b>${val}</b></td></tr>`;
+            const party_acc = receive ? 'Debtors' : 'Creditors';
+            const lines = receive ? [
+                [`${of_esc(c.mode.account)}`, money(c.bank), ''],
+                c.charges ? [of_esc(v.bank_charges_account), money(c.charges), ''] : null,
+                c.tds ? [of_esc(v.tds_account), money(c.tds), ''] : null,
+                c.wo ? [of_esc(v.write_off_account), money(c.wo), ''] : null,
+                [`${party_acc} — ${of_esc(d.party_name || d.party)}`, '', money(c.settled)],
+            ] : [
+                [`${party_acc} — ${of_esc(d.party_name || d.party)}`, money(c.settled), ''],
+                c.charges ? [of_esc(v.bank_charges_account), money(c.charges), ''] : null,
+                [`${of_esc(c.mode.account)}`, '', money(c.bank)],
+                c.tds ? [of_esc(v.tds_account), '', money(c.tds)] : null,
+                c.wo ? [of_esc(v.write_off_account), '', money(c.wo)] : null,
+            ];
+            const gl = lines.filter(Boolean).map(l => `<tr><td style="padding:3px 8px;">${l[0]}</td><td style="padding:3px 8px;text-align:right;white-space:nowrap;">${l[1]}</td><td style="padding:3px 8px;text-align:right;white-space:nowrap;">${l[2]}</td></tr>`).join('');
+
+            const confirm = new frappe.ui.Dialog({
+                title: __('Confirm Payment'),
+                fields: [
+                    { fieldtype: 'HTML', fieldname: 'body' },
+                    { fieldtype: 'Check', fieldname: 'checked', label: __('I have checked the amount, mode of payment, reference and accounts') },
+                ],
+                primary_action_label: __('Submit Payment'),
+                primary_action: (cv) => {
+                    if (!cv.checked) return frappe.msgprint(__('Tick the confirmation to submit.'));
+                    confirm.get_primary_btn().prop('disabled', true);
+                    frappe.call({
+                        method: 'erp_dacsinc_custom.dashboard_payment.record_payment',
+                        args: {
+                            doctype, name, mode_of_payment: v.mode_of_payment, amount: c.amount,
+                            posting_date: v.posting_date, reference_no: v.reference_no || null, reference_date: v.reference_date || null,
+                            bank_charges: c.charges, bank_charges_account: c.charges ? v.bank_charges_account : null,
+                            tds_amount: c.tds, tds_account: c.tds ? v.tds_account : null,
+                            write_off_amount: c.wo, write_off_account: c.wo ? v.write_off_account : null,
+                            remarks: v.remarks || null,
+                        },
+                        freeze: true, freeze_message: __('Submitting payment…'),
+                    }).then(res => {
+                        const m = res.message || {};
+                        confirm.hide(); dlg.hide();
+                        frappe.msgprint({
+                            title: __('Payment submitted'), indicator: 'green',
+                            message: __('Payment Entry {0} is submitted. Outstanding on {1} is now {2}.',
+                                [`<a href="/app/payment-entry/${encodeURIComponent(m.name)}" target="_blank">${of_esc(m.name)}</a>`, of_esc(name), money(m.outstanding)]),
+                        });
+                        on_done && on_done();
+                    }).catch(() => confirm.get_primary_btn().prop('disabled', false));
+                },
+            });
+            confirm.fields_dict.body.$wrapper.html(`
+                <div class="alert alert-warning" style="font-size:12.5px;">${__('This submits the Payment Entry. To undo it later, the Payment Entry has to be cancelled.')}</div>
+                <table style="font-size:13px;margin-bottom:10px;">
+                    ${row(receive ? __('Received from') : __('Paid to'), `${of_esc(d.party_name || d.party)} (${of_esc(d.party)})`)}
+                    ${row(__('Against'), `${of_esc(doctype)} ${of_esc(name)}`)}
+                    ${row(__('Payment Date'), frappe.datetime.str_to_user(v.posting_date))}
+                    ${row(__('Mode of Payment'), of_esc(v.mode_of_payment))}
+                    ${v.reference_no ? row(__('Reference'), `${of_esc(v.reference_no)} · ${frappe.datetime.str_to_user(v.reference_date)}`) : ''}
+                    ${row(receive ? __('Amount Received') : __('Amount Paid to Supplier'), money(c.amount))}
+                    ${c.charges ? row(__('Bank Charges'), money(c.charges)) : ''}
+                    ${c.tds ? row(__('TDS'), money(c.tds)) : ''}
+                    ${c.wo ? row(__('Write Off'), money(c.wo)) : ''}
+                    ${row(__('Settles on invoice'), money(c.allocated))}
+                    ${row(__('Outstanding after this'), money(Math.max(c.remaining, 0)))}
+                    ${c.remaining < -0.004 ? row(__('Advance'), money(-c.remaining)) : ''}
+                </table>
+                <div class="text-muted small" style="margin-bottom:4px;">${__('Ledger entries')}</div>
+                <table style="width:100%;font-size:12.5px;border:1px solid var(--border-color);">
+                    <tr style="background:var(--subtle-fg);"><th style="padding:4px 8px;">${__('Account')}</th><th style="padding:4px 8px;text-align:right;">${__('Debit')}</th><th style="padding:4px 8px;text-align:right;">${__('Credit')}</th></tr>
+                    ${gl}
+                </table>`);
+            confirm.show();
+        }
+    });
 }
 
 function of_empty_row(cols) {

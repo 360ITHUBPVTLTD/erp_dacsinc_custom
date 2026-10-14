@@ -337,6 +337,32 @@ fields and submit (`pos_cash.create_opening` makes and submits the entry the sam
 
 See "Cash in the drawer" for the rules behind it.
 
+**One shared shift per store** (`pos_cash.check_opening_entry`, `create_opening`; `pos_closing.py`):
+- A store has one cash drawer, so one open shift, shared by everyone who works there. Anyone
+  may open it (a store user, POS Admin, an admin), and anyone may close it.
+- **Opening the POS continues the store's open shift, whoever opened it**, so there is no
+  "Shift already open" error:
+  - ERPNext's `check_opening_entry` (hooks `override_whitelisted_methods`) returns your own
+    open shift, or else, for a user on one store, that store's open shift.
+  - A user on several stores picks the store in the opening dialog. A store that already
+    has an open shift is continued there (`create_opening` returns it), never duplicated.
+  - The POS screen says "Continuing <store>'s shift, opened by <name> on <date>"
+    (`pos_page_extend.js`).
+- A second open shift for a store is still refused if someone creates one directly
+  (`opening_validate`).
+- **Closing counts every bill of the store made during the shift, by any user**:
+  - `pos_closing.shift_invoices` is used by the POS's Close and by the closing form, which
+    goes through ERPNext's `get_pos_invoices`, replaced by `pos_closing.get_pos_invoices`.
+  - ERPNext's closing check "POS Invoice isn't created by user" is dropped by
+    `StorePOSClosingEntry` (hooks `override_doctype_class`). Its other checks are unchanged.
+- No automatic closing: a shift stays open until someone closes it (user's choice,
+  2026-10-14).
+- Access sheet: POS Store Manager has **VNES** (not "only own") on POS Opening Entry, POS
+  Closing Entry and POS Invoice.
+  - They see, continue and close their store's shift, and their store's bills from any
+    cashier. Closing marks every bill consolidated, which needs write on them.
+  - Store scoping still limits all three to their own stores (by POS Profile).
+
 ## Cash in the drawer (`pos_cash.py`)
 
 One rule from shift to shift, enforced on the documents (validate / before_submit), so

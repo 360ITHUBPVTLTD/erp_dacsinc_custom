@@ -252,21 +252,31 @@ Required column, the widget's per-item Next Action cell, and the
 "Create Sales Invoice (Update Stock)" once locked, "Create DN / SI" only
 while genuinely still open.
 
-## A refresh preserves whichever row is expanded
+## A refresh keeps open rows open, and waits while someone is working
 
-`refresh()`'s `paint()` fully replaces the tracker panel's HTML — every row
-collapsed back to its default (unexpanded) state. Before this, a manual
-Refresh click, a realtime update, or a focus-regain refresh silently
-collapsed whatever Item Stock & Action Plan widget was open, with nothing
-about it visibly indicating a refresh had actually happened — it just
-looked like the click (or the realtime update) had done nothing at all.
+Several people use the dashboard at once, and every saved document broadcasts
+`order_flow_changed` to all of them. A repaint replaces the whole panel, so before this every
+other user's save collapsed whatever you had open — and a row opened while a refresh was
+loading closed again when the repaint landed.
 
-`refresh()` now records which Sales Order name(s) are currently expanded
-(reading `.of-so-items-container`'s own `data-so`, scoped to the active
-panel) before repainting, and re-expands each of them afterward via
-`toggle_so_details` — which, per its own always-refetch behavior, pulls
-fresh data rather than reusing anything stale. The widget the user was
-looking at now visibly updates in place instead of disappearing.
+- **`paint_keeping_view(data)`** (used by `refresh()`): records the open rows right before
+  repainting — Item Stock & Action Plan widgets (`.of-so-details-row`), item lists
+  (`.of-doc-items-row`), embroidery items, transfer receipts, stock breakdowns — plus the
+  scroll, repaints, reopens each with fresh data (showing the old content until the fetch
+  returns) and restores the scroll. Recording at paint time is what keeps a row opened during
+  the load.
+- **The widget's own raw-material rows** stay open too: `load_so_details` gives its mock frm a
+  `_so_open_rows` property backed by `this.so_open_rows[so]`, so the list survives the widget
+  being rebuilt (it used to live on a mock frm thrown away on every reload).
+- **Other users' changes** (`order_flow_changed`, debounced 1.2 s) and the browser tab regaining
+  focus go through `queue_background_refresh`: if `is_busy()` — a row or prompt open, focus in
+  an input, or any use of the page in the last 15 s — nothing is redrawn and the bar "N updates
+  waiting — Refresh" shows; otherwise it refreshes. Every 5 s, waiting updates apply by themselves
+  once the user is no longer busy. `is_relevant_change` ignores changes to doctypes the tab doesn't
+  list unless they touch an order on screen, and ignores the user's own changes while busy (the
+  broadcast now carries `user`).
+- **Refresh** (first button in the toolbar, or the bar's) always reloads the latest data and keeps
+  open rows open.
 
 ## Real-time updates — no manual reload
 
@@ -1476,13 +1486,22 @@ client sent, and the existing rate lock already guarantees `rate` itself
 can't drift — so `amount` was already fully protected server-side once
 `rate` was.
 
-## Sales Invoice has no "Get Items From" menu
+## Sales Order / Delivery Note / Sales Invoice: menus trimmed to the flow
 
-`public/js/sales_invoice.js` (`si_remove_get_items_buttons`) removes ERPNext's Get Items From
-buttons (Sales Order, Quotation, Delivery Note, Timesheet) on every refresh, repeating for 2 s
-because some are added after our handler runs. Invoices are made from the Delivery Note /
-Sales Order or from Pending DN/SI, where the billing caps and row locks apply. Purchase
-Invoice does the same (`clean_up_get_items_buttons` in `purchase_invoice.js`).
+`dacs_hide_create_buttons(frm, labels)` (defined in `sales_order.js`, and in `delivery_note.js` /
+`sales_invoice.js` when missing) removes standard "Create" buttons, repeating for 2.5 s because
+ERPNext adds some after its own async calls (a single pass at 500 ms left them all showing).
+
+- **Sales Order** keeps Material Request, our "Create Purchase Order" and **Payment** (advance
+  against the order); hides Pick List, Delivery Note, Sales Invoice (made from the widget and the
+  dashboard), Work Order, Request for Raw Materials, Purchase Order (standard), Project, Payment
+  Request, Maintenance Visit / Schedule.
+- **Delivery Note** keeps Sales Invoice, Sales Return, Credit Note; hides Shipment, Installation
+  Note, Delivery Trip, Packing Slip, Quality Inspection(s).
+- **Sales Invoice** keeps Payment and Return / Credit Note; hides Payment Request, Invoice
+  Discounting, Maintenance Schedule, Delivery Note, Dunning, Quality Inspection(s). Its "Get Items
+  From" menu (Sales Order, Quotation, Delivery Note, Timesheet) is removed too
+  (`si_remove_get_items_buttons`), as Purchase Invoice's is (`clean_up_get_items_buttons`).
 
 ## Print buttons on Purchase Flow / Job Work PO rows
 
@@ -1522,6 +1541,77 @@ value or a column. The search box matches it too
 (`po.custom_lr_number LIKE ...`, alongside name/supplier/Sales Order/item).
 The Job Work tab's own Sub POs list does not carry this column — it is a
 different query (`get_jobwork_flow`) that never selected the field.
+
+
+**Order confirmation.** Purchase Flow and Job Work PO rows show the supplier's Order Confirmation
+No / Date under the PO name when filled (`of_order_confirmation_html`), and the search box matches
+the confirmation number on both tabs.
+
+## Compact layout (Finance first): fewer rows above the table
+
+- **Live Order Activity** is a bell in the toolbar (`#of-bell-btn`, unseen count of the active tab);
+  the stream opens as a side panel (`.of-stream-open .of-stream-card`) with Unseen only / For me /
+  Mark all seen, and closes on ✕ or a click outside. It no longer takes a full-width row (all tabs).
+- **Finance:** the three sub-tabs are summary cards (`of_kcard`: amount open, settled progress bar,
+  document count). They replace the six tiles, the plain sub-tab bar and the settlement bar.
+- **Purchase Flow, Job Work, Sales Tracker:** the sub-tabs are summary cards too (`of_tabcard`: count,
+  a short line — waiting for receipt / ordered amount / qty to receive — and Draft · Submitted from
+  the list's docstatus counts). Purchase Flow / Job Work drop their tiles row; Sales Tracker keeps
+  its stage filter (it filters the Sales Orders table). The cards keep `of-subtab` / `of-acc-subtab` +
+  `data-subtab`, so switching and per-user sub-tab hiding are unchanged (no `!important` on their
+  display, so the inline `display:none` of a hidden sub-tab still wins).
+- On those four tabs the toolbar's counts text is hidden (the cards carry it).
+- **Every table:** its title row and filter strip are wrapped together (`.of-card__sticky`, done in
+  `mount_table_filters`) and stay pinned under the navbar while the table scrolls (not below 700 px
+  screen height). Single-table tabs (Approvals, Pick Lists, Stock, Pending DN/SI, Transfers,
+  Logistics) keep their summary tiles.
+
+## Finance tab: Supplier vs Jobber Payables
+
+A Purchase Invoice is in **Jobber Payables** when its supplier is a jobber (`custom_is_jobber`) **or**
+the invoice is subcontracted (`pi.is_subcontracted`); every other one is in **Supplier Payables**
+(`_is_jobwork` in `get_accounts_flow`; the Pay prompt's act check uses the same split). The second
+rule keeps a job-work bill out of Supplier Payables when the supplier's Is Jobber was never ticked.
+New subcontracted POs can no longer be raised on a non-jobber (`guard_subcontract_po_jobber`).
+
+## Finance tab: draft invoices listed, totals submitted-only
+
+Receivables / Supplier Payables / Jobber Payables list draft and submitted invoices (`docstatus < 2`)
+with All / Draft / Submitted pills. The tiles, the settlement bar and `metrics` add
+`docstatus = 1`: a draft is not owed yet. Draft rows show the Draft pill and no Receive / Pay button.
+
+## Finance tab: totals use the rounded total
+
+Total / Received / Outstanding on Finance (rows and the tiles) use the invoice's **rounded
+total** when rounding is on (`IF(rounded_total = 0, grand_total, rounded_total)`), because that
+is what the customer pays and what `outstanding_amount` counts down from. Using the grand
+total showed ₹52,783.50 billed and ₹9,999.50 received for a ₹10,000 payment on a ₹52,784
+invoice: the 50 paise round-off appeared as money received / missing.
+
+## Finance tab: Receive / Pay from the row (`dashboard_payment.py`)
+
+Rows with an outstanding amount get **Receive** (Receivables) or **Pay** (Payables) when the
+user may create and submit Payment Entries (`can_pay`) and may act on that sub-tab
+(`guard_act("accounts", receivables|supplier|jobber)`). The prompt asks: payment date, mode of
+payment (shows the account it posts to), amount, reference no / date (required when the mode's
+account is a Bank account), and optional deductions with their accounts — bank charges (Card
+modes default to Card Swipe Bank Charges), TDS (TDS Receivable / TDS Payable), and a small
+difference written off. A live box shows what settles on the invoice, what moves through bank /
+cash, and what stays outstanding or becomes an advance. **Review** opens a confirmation with
+every value and the ledger lines; it submits only after the tick box.
+
+`record_payment` builds the entry with ERPNext's `get_payment_entry` (as Create › Payment
+does), sets the amounts and deduction rows, and inserts + submits as the user. Deductions are
+always posted as debits, so: Receive — all positive (Dr Bank, Dr charges / TDS / write-off,
+Cr Debtors with the total); Pay — bank charges positive, TDS and write-off negative (Dr
+Creditors, Dr charges, Cr Bank amount + charges, Cr TDS Payable / write-off). Deductions may not
+take the settlement past the outstanding; only the amount itself may, and the excess stays on
+the entry as an advance. Numbers in the prompt are Float fields (see the `flt` note below).
+
+**`flt` note.** `public/js/sales_order.js` used to define a top-level `function flt` (plain
+`parseFloat`). Loaded as a script on the Sales Order form and on this page, it replaced
+Frappe's global `flt`, so every number field read "42,784.00" as 42. It was removed; the file
+uses Frappe's `flt` (same arguments).
 
 ## Finance tab: invoice status and delivery / receipt
 
@@ -1623,6 +1713,58 @@ deleted still shows under Open while its goods are out.
 
 ## The page filters work on every tab (Open / All, Last N days, search)
 
+**Custom range.** The days dropdown's "Custom range…" shows From / To dates; the page then
+sends `days="YYYY-MM-DD~YYYY-MM-DD"` instead of a number, so no endpoint signature changed.
+`order_flow_api._date_range(days)` reads either form, and every date condition is
+`col >= %(from_date)s AND col < %(to_next)s` (`_to_next` = the day after "To", far future for
+"Last N days" — works for date and datetime columns alike). Embroidery Transfers never applied
+"Last N days" and still doesn't; it applies a custom range (by date sent).
+
+**Table filters.** Every table's own filters sit in a full-width strip right under its title row
+(the title keeps the All / Draft / Submitted pills and the Create button). `OF_TABLE_FILTERS` →
+`table_filters_html` renders captioned boxes ("Received │ All ▾", "Supplier │ Any") so a filter's
+name is never read as a chosen value; `mount_table_filters` moves the strip under the title and
+mounts the Link boxes. The boxes stretch to fill the row (flex), and "Clear filters" sits at its end.
+Customer / Supplier / Jobber / Transporter / Warehouse are **search boxes over the parties actually
+in that table** (`of_tf_combo_*`: type part of a name or code, pick from the popup, arrow keys /
+Enter / Esc; an emptied box clears the filter): each list returns `filter_options` (`_filter_options` — the distinct
+values under all the table's other filters, its own choice for that field left out, so the list
+stays complete after picking one); the page collects them (`collect_filter_options`) and renders a
+select with "All (n)". Pending DN/SI offers the customers of the orders in its queue. A table that
+returns no options falls back to a Link box.
+"Not received / Not billed / Not ordered" include drafts — nothing is received against a draft
+either; the Draft / Submitted pills narrow it. The
+toolbar keeps only what applies to the whole tab: Refresh, Search, Open / All / Created by me, Last
+N days / Custom range, Create. Values live per table in `this.table_filters["<tab>.<table>"]` and go
+to the server as `of_tf` JSON; each query reads its own table's with `_tf(list_key)` through
+`_add_party_filter` (Customer / Supplier / Jobber / Transporter), `_add_choice_filter` (fixed options),
+`_add_value_filter` (warehouse, stage) and `_add_status_filter`. So the PO table's Supplier never
+filters Receipts or To Bill. One dropdown per question:
+
+| Table | Filters |
+|---|---|
+| SO Approvals | Approval stage · Merchandiser · Customer |
+| Sales Tracker › Sales Orders | Merchandiser · Industry · Dispatch (Not / Partly / Fully) · Customer |
+| Sales Tracker › Material Requests | Ordered · Received (Not / Partly / Fully) · Type · Customer · POS |
+| Embroidery FP / Panel (Tracker, Job Work) | Received · Stage · Jobber (· Customer on the Tracker) |
+| Pick Lists | Status · Customer · Warehouse |
+| Purchase Flow › POs | Received · Billed · Overdue · Supplier · Customer (of the Sales Order) |
+| Purchase Flow › Receipts / Job Work › Sub Receipts | Billing (To bill / Billed / Returns) · Supplier / Jobber |
+| Purchase Flow › To Bill | Supplier |
+| Job Work › Sub POs | Received · Billed · Overdue · Subcontracting order (Made / Not made) · Jobber |
+| Stock Tracker | Warehouse · Stock (In / No stock) |
+| Pending DN/SI | Stage (Ready for DN / Needs invoice) · Customer |
+| Finance › Receivables | Payment · Delivery (`_SI_DONE_SQL`) · Customer · POS |
+| Finance › Supplier / Jobber Payables | Payment · Receipt (`_PI_DONE_SQL`) · Supplier / Jobber |
+| Embroidery Transfers | Status |
+| Logistics | LR No. (Missing / Filled) · Signed copy (Missing / Uploaded) · Customer · Transporter · POS |
+
+The older toolbar controls (Merchandiser, Approval stage, Industry, Warehouse, Transfer status, Show
+POS) stay in the DOM as hidden state holders (`.of-moved`); the header shows a mirrored select
+(`.of-tf-mirror`) / POS switch that sets them, so their existing server arguments are unchanged.
+An option that finds what "Open orders" hides (Fully billed, Paid, Completed…) switches the scope to
+All orders. **Clear** resets one table. The activity stream ignores table filters.
+
 Every tab endpoint receives the page's `days`, `scope`, `search` (and
 merchandiser on Approvals / Tracker). Frappe silently drops an argument a
 whitelisted function doesn't declare, so a missing parameter means the
@@ -1644,13 +1786,29 @@ cancelled row under Open, no cancelled row under All, search finds the
 document, Draft/Submitted pills return only that docstatus, stage-card count
 = filtered rows. Repeat that sweep after changing any tab's query.
 
+## Submitting a draft from its row (`dashboard_submit.py`)
+
+Draft rows of Material Request, Purchase Order, Purchase / Subcontracting Receipt, Embroidery Work
+Order, Sales Invoice and Purchase Invoice get a **Submit** button (`add_submit_buttons`, run on every
+redraw). Rows carry `data-docstatus` (and, for receipts and embroidery rows, `data-submit-doctype` /
+`data-submit-name` — the receipt's own doctype, not the linked Purchase Receipt the row opens). The
+button shows only when the user may submit that doctype (`frappe.model.can_submit`) and act on the
+tab / sub-tab (`can_act`, the same rule `strip_view_only_tab_actions` applies — otherwise the two
+would keep undoing each other). The prompt (`of_submit_draft_prompt`) shows the document, party,
+date, total and every line, warns that submitting is final, and submits only after the tick. The
+server (`submit_from_dashboard`) re-checks the doctype, act rights, submit permission and that it is
+still a draft, then calls `doc.submit()`, so every server-side rule of a form submit applies. Sales
+Invoice / Purchase Order / Embroidery Work Order then get the usual "Print it now?" prompt.
+
+Not offered for Sales Orders (approval workflow) or Pick Lists ("Submit Pick List" review).
+
 ## Draft / Submitted filter pills
 
 Several sub-lists mix Draft (`docstatus = 0`) and Submitted (`docstatus =
 1`) documents together with no way to see just one or the other: Purchase
 Flow's POs and Receipts, Job Work's Sub POs / Sub Receipts / both
-Embroidery Work Order sub-tabs, and Sales Tracker's Material Requests
-sub-tab. Each of those now has an **All / Draft / Submitted** filter-pill
+Embroidery Work Order sub-tabs, Sales Tracker's Material Requests
+sub-tab, and Finance's Receivables / Supplier Payables / Jobber Payables. Each of those now has an **All / Draft / Submitted** filter-pill
 row (`of_docstatus_pills`) directly above its table.
 
 - **Counts, not guesses**: each pill's number comes from
@@ -1668,7 +1826,8 @@ row (`of_docstatus_pills`) directly above its table.
 - **Selection lives in `this.docstatus_filter[tab][sublist]`** (`''` /
   `'draft'` / `'submitted'`), sent to the server as a `<sublist>_docstatus`
   arg (`po_docstatus`, `receipt_docstatus`, `ewo_fp_docstatus`,
-  `ewo_pn_docstatus`, `mr_docstatus`) via `build_docstatus_args` and folded
+  `ewo_pn_docstatus`, `mr_docstatus`, and on Finance `sales_docstatus`, `supplier_docstatus`,
+  `jobber_docstatus`) via `build_docstatus_args` and folded
   into the refresh cache key so switching pills is treated as a distinct
   fetch. `_with_docstatus` turns a selection into the extra SQL condition;
   `''`/anything else leaves the query exactly as it was before this filter
