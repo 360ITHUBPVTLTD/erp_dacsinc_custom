@@ -331,7 +331,8 @@ def _tf_param(params, list_key, field, value):
     return name
 
 
-_TF_LABEL = {"Customer": "customer_name", "Supplier": "supplier_name", "Warehouse": "warehouse_name"}
+_TF_LABEL = {"Customer": "customer_name", "Supplier": "supplier_name", "Warehouse": "warehouse_name",
+             "Item": "item_name"}
 
 
 def _filter_options(list_key, pieces, params, fields):
@@ -354,11 +355,39 @@ def _filter_options(list_key, pieces, params, fields):
         label_field = _TF_LABEL.get(doctype)
         labels = dict(frappe.get_all(doctype, filters={"name": ["in", list(values)]},
                                      fields=["name", label_field], as_list=True)) if values and label_field else {}
-        chosen = cstr(_tf(list_key).get(field))
-        if chosen:
+        for chosen in _tf_values(_tf(list_key).get(field)):
             values.add(chosen)
         out[field] = sorted(([v, labels.get(v) or v] for v in values), key=lambda x: cstr(x[1]).lower())
     return out
+
+
+# One filter entry can stand for several records that share a name (five suppliers called
+# "DAC"): the page shows the name once and sends their ids joined by this.
+TF_MULTI_SEP = "||"
+
+
+def _tf_values(value):
+    return [v for v in (x.strip() for x in cstr(value).split(TF_MULTI_SEP)) if v]
+
+
+def _tf_condition(params, list_key, field, value, sql):
+    """`sql` = a column (matched with = / IN) or a full condition with {p} for the bound value
+    (OR-ed once per value). Every bind name starts with _tf_name, which _filter_options uses
+    to leave this table's own choice out."""
+    values = _tf_values(value)
+    if not values:
+        return None
+    names = []
+    for i, v in enumerate(values):
+        name = _tf_name(list_key, field) + (f"_{i}" if i else "")
+        params[name] = v
+        names.append(name)
+    if "{p}" in sql:
+        parts = [sql.replace("{p}", f"%({n})s") for n in names]
+        return parts[0] if len(parts) == 1 else "(" + " OR ".join(f"({x})" for x in parts) + ")"
+    if len(names) == 1:
+        return f"{sql} = %({names[0]})s"
+    return f"{sql} IN (" + ", ".join(f"%({n})s" for n in names) + ")"
 
 
 def _add_party_filter(conditions, params, customer=None, supplier=None, list_key=None):
@@ -367,11 +396,11 @@ def _add_party_filter(conditions, params, customer=None, supplier=None, list_key
     column for a filter, or has no list_key, ignores it."""
     tf = _tf(list_key)
     for field, sql in (("customer", customer), ("supplier", supplier)):
-        value = cstr(tf.get(field)).strip()
-        if not value or not sql:
+        if not sql:
             continue
-        p = _tf_param(params, list_key, field, value)
-        conditions.append(sql.replace("{p}", f"%({p})s") if "{p}" in sql else f"{sql} = %({p})s")
+        cond = _tf_condition(params, list_key, field, tf.get(field), sql)
+        if cond:
+            conditions.append(cond)
 
 
 def _add_choice_filter(conditions, list_key, field, choices):
@@ -386,7 +415,9 @@ def _add_value_filter(conditions, params, list_key, field, column, allowed=None)
     value = cstr(_tf(list_key).get(field)).strip()
     if not value or (allowed is not None and value not in allowed):
         return
-    conditions.append(f"{column} = %({_tf_param(params, list_key, field, value)})s")
+    cond = _tf_condition(params, list_key, field, value, column)
+    if cond:
+        conditions.append(cond)
 
 
 
@@ -4305,7 +4336,7 @@ def get_pick_lists_for_so(sales_order):
     _guard()
     rows = frappe.db.sql("""
         SELECT pl.name, pl.status, pl.docstatus, pli.name AS pick_list_item,
-               pli.item_code, pli.qty, pli.picked_qty, IFNULL(pli.delivered_qty, 0) AS delivered_qty,
+               pli.item_code, pli.item_name, pli.qty, pli.picked_qty, IFNULL(pli.delivered_qty, 0) AS delivered_qty,
                pli.warehouse,
                IFNULL(pl.custom_embroidery_hold_qty, 0) AS embroidery_hold_qty,
                pl.custom_embroidery_ewo AS embroidery_ewo
@@ -4376,6 +4407,7 @@ def get_draft_dn_si_for_so(sales_order):
         for r in rows:
             by_doc.setdefault(r.parent, []).append({
                 "item_code": r.item_code,
+                "item_name": r.item_name or "",
                 "qty": flt(r.qty, 3),
                 "uom": r.uom or "",
             })
@@ -4383,14 +4415,14 @@ def get_draft_dn_si_for_so(sales_order):
                 for name, items in by_doc.items()]
 
     dn_rows = frappe.db.sql("""
-        SELECT dn.name AS parent, dni.item_code, dni.qty, dni.uom
+        SELECT dn.name AS parent, dni.item_code, dni.item_name, dni.qty, dni.uom
         FROM `tabDelivery Note Item` dni
         JOIN `tabDelivery Note` dn ON dn.name = dni.parent
         WHERE dni.against_sales_order = %s AND dn.docstatus = 0
         ORDER BY dn.name, dni.idx
     """, sales_order, as_dict=True)
     si_rows = frappe.db.sql("""
-        SELECT si.name AS parent, sii.item_code, sii.qty, sii.uom
+        SELECT si.name AS parent, sii.item_code, sii.item_name, sii.qty, sii.uom
         FROM `tabSales Invoice Item` sii
         JOIN `tabSales Invoice` si ON si.name = sii.parent
         WHERE sii.sales_order = %s AND si.docstatus = 0 AND si.update_stock = 1
@@ -4430,7 +4462,12 @@ def get_pick_list_flow(search=None, scope="open", page=1, page_size=100, days=No
     conditions = []
     params = {}
     _add_party_filter(conditions, params, customer="pl.customer", list_key="picklist")
-    _add_value_filter(conditions, params, "picklist", "warehouse", "pl.parent_warehouse")
+    # Item: Pick Lists with a line for that item (all picking is from the one warehouse,
+    # so the table filters by item instead of warehouse).
+    cond = _tf_condition(params, "picklist", "item", _tf("picklist").get("item"),
+                         "EXISTS (SELECT 1 FROM `tabPick List Item` fi WHERE fi.parent = pl.name AND fi.item_code = {p})")
+    if cond:
+        conditions.append(cond)
     _add_status_filter(conditions, "picklist", "pl")
     # "All orders" = every live Pick List, finished ones included — never a
     # cancelled one (a Revert to Draft leaves the cancelled original behind,
@@ -4454,7 +4491,7 @@ def get_pick_list_flow(search=None, scope="open", page=1, page_size=100, days=No
                 f" OR pl.customer_name LIKE %({key})s OR pl.parent_warehouse LIKE %({key})s"
                 f" OR EXISTS (SELECT 1 FROM `tabPick List Item` s"
                 f"            WHERE s.parent = pl.name AND (s.sales_order LIKE %({key})s"
-                f"                  OR s.item_code LIKE %({key})s)))"
+                f"                  OR s.item_code LIKE %({key})s OR s.item_name LIKE %({key})s)))"
             )
             params[key] = f"%{word}%"
 
@@ -4473,7 +4510,10 @@ def get_pick_list_flow(search=None, scope="open", page=1, page_size=100, days=No
               AND """ + _merch_scope_so() + "))")
 
     picklist_filter_options = _filter_options("picklist", [("`tabPick List` pl", conditions)], params, {
-        "customer": ("pl.customer", "Customer"), "warehouse": ("pl.parent_warehouse", "Warehouse")})
+        "customer": ("pl.customer", "Customer")})
+    picklist_filter_options.update({k: v for k, v in _filter_options(
+        "picklist", [("`tabPick List` pl JOIN `tabPick List Item` fo ON fo.parent = pl.name", conditions)],
+        params, {"item": ("fo.item_code", "Item")}).items() if k == "item"})
     paged = _paged_query(f"""
         SELECT pl.name, pl.docstatus, pl.status, pl.purpose, pl.company,
                pl.customer, pl.customer_name, pl.parent_warehouse,
@@ -4510,9 +4550,21 @@ def get_pick_list_flow(search=None, scope="open", page=1, page_size=100, days=No
         GROUP BY parent
     """, {"names": tuple(names)}, as_dict=1)
     by_parent = {r.parent: r for r in item_rows}
+    # The lines themselves (item, name, qty, picked) so the row says WHAT is picked.
+    lines_by_parent = defaultdict(list)
+    for li in frappe.db.sql("""
+        SELECT parent, item_code, item_name, qty, IFNULL(picked_qty, 0) AS picked_qty, uom, stock_uom
+        FROM `tabPick List Item`
+        WHERE parent IN %(names)s
+        ORDER BY parent, idx
+    """, {"names": tuple(names)}, as_dict=1):
+        lines_by_parent[li.parent].append({
+            "item_code": li.item_code, "item_name": li.item_name or "",
+            "qty": flt(li.qty), "picked_qty": flt(li.picked_qty), "uom": li.uom or li.stock_uom or ""})
 
     for r in rows:
         agg = by_parent.get(r.name)
+        r["items"] = lines_by_parent.get(r.name, [])
         r["item_count"] = cint(agg.item_count) if agg else 0
         r["distinct_items"] = cint(agg.distinct_items) if agg else 0
         r["total_qty"] = flt(agg.total_qty) if agg else 0.0
@@ -4823,6 +4875,30 @@ def _get_global_pick_reservations(item_codes, warehouse=None):
     return out
 
 
+def _pick_holds_by_warehouse(item_codes, warehouse=None):
+    """{(item_code, warehouse): {"draft": x, "submitted": y}} — same rule as
+    _get_global_pick_reservations (draft rows count stock_qty, submitted rows picked − delivered,
+    Completed / Cancelled Pick Lists left out), per warehouse."""
+    if not item_codes:
+        return {}
+    params = {"items": tuple(item_codes)}
+    wh = ""
+    if warehouse:
+        wh, params["warehouse"] = "AND pli.warehouse = %(warehouse)s", warehouse
+    out = {}
+    for r in frappe.db.sql(f"""
+        SELECT pli.item_code, pli.warehouse, pl.docstatus,
+               SUM(CASE WHEN pl.docstatus = 1 THEN GREATEST(IFNULL(pli.picked_qty, 0) - IFNULL(pli.delivered_qty, 0), 0)
+                        ELSE pli.stock_qty END) AS qty
+        FROM `tabPick List Item` pli JOIN `tabPick List` pl ON pl.name = pli.parent
+        WHERE pli.item_code IN %(items)s AND pl.docstatus < 2 AND pl.status NOT IN ('Completed', 'Cancelled') {wh}
+        GROUP BY pli.item_code, pli.warehouse, pl.docstatus
+    """, params, as_dict=1):
+        e = out.setdefault((r.item_code, r.warehouse), {"draft": 0.0, "submitted": 0.0})
+        e["submitted" if r.docstatus == 1 else "draft"] += flt(r.qty)
+    return out
+
+
 @frappe.whitelist()
 def get_stock_tracker(search=None, warehouse=None, page=1, page_size=100):
     """
@@ -4863,38 +4939,79 @@ def get_stock_tracker(search=None, warehouse=None, page=1, page_size=100):
 
     item_codes = [i.item_code for i in items]
 
+    # What each number means (also on the page's header tooltips and legend):
+    #   held   = set aside for orders, not free: draft Pick Lists + submitted Pick Lists (picked,
+    #            not delivered) + goods at the embroidery jobber from an order's stock + raw
+    #            material bought for an order (the last two live in the hold warehouse only)
+    #   free   = on hand − held
+    #   booked = submitted Sales Orders still to deliver (ERPNext's Bin.reserved_qty; draft Sales
+    #            Orders never count); booked_not_picked = booked − what Pick Lists already cover
+    #   after_orders = free − booked_not_picked (negative = short)
+    from erp_dacsinc_custom import stock_hold
     bin_params = {"items": tuple(item_codes)}
-    bin_where = "item_code IN %(items)s AND actual_qty != 0"
+    bin_where = "item_code IN %(items)s AND (actual_qty != 0 OR reserved_qty != 0)"
     if warehouse:
         bin_where += " AND warehouse = %(warehouse)s"
         bin_params["warehouse"] = warehouse
     bins = frappe.db.sql(f"""
-        SELECT item_code, warehouse, actual_qty, reserved_qty,
-               reserved_qty_for_production, reserved_qty_for_sub_contract
+        SELECT item_code, warehouse, actual_qty, reserved_qty
         FROM `tabBin` WHERE {bin_where} ORDER BY actual_qty DESC
     """, bin_params, as_dict=1)
+    picks = _pick_holds_by_warehouse(item_codes, warehouse)
+    hold_wh = stock_hold.HOLD_WAREHOUSE
+    other_holds = {}
+    if not warehouse or warehouse == hold_wh:
+        for code, hs in stock_hold.holds_for(item_codes).items():
+            e = other_holds.setdefault(code, {"embroidery": 0.0, "earmark": 0.0})
+            for h in hs:
+                if h["kind"] in e:
+                    e[h["kind"]] += flt(h["qty"])
 
-    bins_by_item = {}
-    for b in bins:
-        bins_by_item.setdefault(b.item_code, []).append(b)
+    by_item = {}
+    for b_ in bins:
+        by_item.setdefault(b_.item_code, {})[b_.warehouse] = b_
+    for (code, wh) in picks:
+        by_item.setdefault(code, {}).setdefault(wh, frappe._dict(item_code=code, warehouse=wh, actual_qty=0, reserved_qty=0))
+    for code in other_holds:
+        by_item.setdefault(code, {}).setdefault(hold_wh, frappe._dict(item_code=code, warehouse=hold_wh, actual_qty=0, reserved_qty=0))
 
-    reservations = _get_global_pick_reservations(item_codes, warehouse)
+    def figures(code, wh, b_):
+        pk = picks.get((code, wh), {})
+        oh = other_holds.get(code, {}) if wh == hold_wh else {}
+        f = {"warehouse": wh, "actual_qty": flt(b_.actual_qty), "picked_draft_qty": flt(pk.get("draft")),
+             "picked_submitted_qty": flt(pk.get("submitted")), "embroidery_qty": flt(oh.get("embroidery")),
+             "earmark_qty": flt(oh.get("earmark")), "booked_qty": flt(b_.reserved_qty)}
+        f["held_qty"] = f["picked_draft_qty"] + f["picked_submitted_qty"] + f["embroidery_qty"] + f["earmark_qty"]
+        f["free_qty"] = max(0.0, f["actual_qty"] - f["held_qty"])
+        f["over_held"] = max(0.0, f["held_qty"] - f["actual_qty"])
+        f["booked_not_picked"] = max(0.0, f["booked_qty"] - f["picked_draft_qty"] - f["picked_submitted_qty"])
+        f["after_orders"] = f["free_qty"] - f["booked_not_picked"]
+        return f
 
     result = []
+    keys = ("actual_qty", "picked_draft_qty", "picked_submitted_qty", "embroidery_qty", "earmark_qty", "booked_qty",
+            "held_qty", "free_qty", "over_held", "booked_not_picked", "after_orders")
+    # With one warehouse chosen (VV Puram by default), the stock everywhere else — shown apart.
+    other = {}
+    if warehouse:
+        for r in frappe.db.sql("""
+            SELECT item_code, warehouse, actual_qty FROM `tabBin`
+            WHERE item_code IN %(items)s AND warehouse != %(wh)s AND actual_qty != 0
+            ORDER BY actual_qty DESC
+        """, {"items": tuple(item_codes), "wh": warehouse}, as_dict=1):
+            other.setdefault(r.item_code, []).append({"warehouse": r.warehouse, "actual_qty": flt(r.actual_qty)})
     for i in items:
-        wh_rows = bins_by_item.get(i.item_code, [])
-        total_available = sum(flt(w.actual_qty) for w in wh_rows)
-        res = reservations.get(i.item_code, {"draft_qty": 0.0, "submitted_qty": 0.0})
-        net_available = total_available - res["draft_qty"] - res["submitted_qty"]
+        whs = [figures(i.item_code, wh, b_) for wh, b_ in (by_item.get(i.item_code) or {}).items()]
+        whs.sort(key=lambda w: -w["actual_qty"])
+        tot = {k: flt(sum(w[k] for w in whs), 3) for k in keys}
         result.append({
             "item_code": i.item_code, "item_name": i.item_name, "stock_uom": i.stock_uom,
-            "total_available_stock": total_available,
-            "warehouse_stock": wh_rows,
-            "picked_draft_qty": res["draft_qty"], "picked_submitted_qty": res["submitted_qty"],
-            "net_available": net_available,
+            "total_available_stock": tot["actual_qty"], "warehouse_stock": whs, **tot,
+            "net_available": tot["free_qty"],
+            "other_warehouses": other.get(i.item_code, []),
+            "other_qty": flt(sum(o["actual_qty"] for o in other.get(i.item_code, [])), 3),
         })
-    return {**paged_items, "rows": result}
-
+    return {**paged_items, "rows": result, "hold_warehouse": hold_wh}
 
 @frappe.whitelist()
 def get_warehouses():
@@ -4919,6 +5036,25 @@ def get_stock_reservation_details(item_code, warehouse, kind):
     """
     _guard("*")
     params = {"item_code": item_code, "warehouse": warehouse}
+
+    if kind in ("embroidery", "earmark"):
+        from erp_dacsinc_custom import stock_hold
+        rows = [h for h in stock_hold.holds_for([item_code]).get(item_code, []) if h["kind"] == kind]
+        names = {h.get("sales_order") for h in rows if h.get("sales_order")}
+        cust = dict(frappe.get_all("Sales Order", filters={"name": ["in", list(names)]}, fields=["name", "customer_name"],
+                                   as_list=True)) if names else {}
+        return [{"name": h["doc"], "sales_order": h.get("sales_order"), "customer_name": cust.get(h.get("sales_order"), ""),
+                 "qty": h["qty"], "doctype": "Embroidery Work Order" if kind == "embroidery" else "Sales Order"} for h in rows]
+
+    if kind == "reserved" and not warehouse:
+        return frappe.db.sql("""
+            SELECT so.name, so.customer_name, soi.warehouse, soi.qty, soi.delivered_qty,
+                   (soi.qty - soi.delivered_qty) AS outstanding_qty
+            FROM `tabSales Order Item` soi JOIN `tabSales Order` so ON so.name = soi.parent
+            WHERE soi.item_code = %(item_code)s AND IFNULL(soi.delivered_by_supplier, 0) = 0
+              AND so.docstatus = 1 AND so.status NOT IN ('On Hold', 'Closed') AND soi.qty > soi.delivered_qty
+            ORDER BY so.transaction_date DESC
+        """, params, as_dict=1)
 
     if kind == "reserved":
         # Matches erpnext.stock.stock_balance.get_reserved_qty's own two

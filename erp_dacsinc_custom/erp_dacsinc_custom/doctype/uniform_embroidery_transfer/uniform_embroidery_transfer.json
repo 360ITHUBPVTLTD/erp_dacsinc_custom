@@ -5,6 +5,12 @@
  "doctype": "DocType",
  "engine": "InnoDB",
  "field_order": [
+  "items_section",
+  "items",
+  "total_qty",
+  "column_break_tot",
+  "total_received",
+  "details_section",
   "source_item",
   "target_item",
   "qty",
@@ -29,7 +35,10 @@
    "in_list_view": 1,
    "label": "Source Item (Plain)",
    "options": "Item",
-   "reqd": 1
+   "reqd": 0,
+   "hidden": 1,
+   "read_only": 1,
+   "description": "Single-item transfers made before the Items table \u2014 see Items."
   },
   {
    "fieldname": "target_item",
@@ -37,23 +46,31 @@
    "in_list_view": 1,
    "label": "Target Item (Embroidered)",
    "options": "Item",
-   "reqd": 1
+   "reqd": 0,
+   "hidden": 1,
+   "read_only": 1,
+   "description": "Single-item transfers made before the Items table \u2014 see Items."
   },
   {
    "fieldname": "qty",
    "fieldtype": "Float",
    "in_list_view": 1,
    "label": "Quantity",
-   "reqd": 1
+   "reqd": 0,
+   "hidden": 1,
+   "read_only": 1,
+   "description": "Single-item transfers made before the Items table \u2014 see Items."
   },
   {
    "default": "0",
-   "description": "Cumulative quantity received back so far, across one or more partial receipts.",
+   "description": "Single-item transfers made before the Items table \u2014 see Items.",
    "fieldname": "received_qty",
    "fieldtype": "Float",
    "in_list_view": 1,
    "label": "Received Qty",
-   "read_only": 1
+   "read_only": 1,
+   "reqd": 0,
+   "hidden": 1
   },
   {
    "fieldname": "from_warehouse",
@@ -70,7 +87,7 @@
    "reqd": 1
   },
   {
-   "description": "Most recent receipt's destination. See the Receipts table below if different warehouses were used across partial receipts.",
+   "description": "Where the last receipt went \u2014 each receipt line has its own warehouse.",
    "fieldname": "to_warehouse",
    "fieldtype": "Link",
    "label": "To Warehouse (Destination, Last)",
@@ -126,12 +143,45 @@
   {
    "fieldname": "section_break_oawn",
    "fieldtype": "Section Break"
+  },
+  {
+   "fieldname": "items_section",
+   "fieldtype": "Section Break",
+   "label": "Items"
+  },
+  {
+   "fieldname": "items",
+   "fieldtype": "Table",
+   "options": "Uniform Embroidery Transfer Item",
+   "label": "Items",
+   "reqd": 1
+  },
+  {
+   "fieldname": "total_qty",
+   "fieldtype": "Float",
+   "label": "Total Qty Sent",
+   "read_only": 1
+  },
+  {
+   "fieldname": "column_break_tot",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "total_received",
+   "fieldtype": "Float",
+   "label": "Total Qty Received",
+   "read_only": 1
+  },
+  {
+   "fieldname": "details_section",
+   "fieldtype": "Section Break",
+   "label": "Details"
   }
  ],
  "grid_page_length": 50,
  "index_web_pages_for_search": 1,
  "links": [],
- "modified": "2026-08-14 16:15:03.406967",
+ "modified": "2026-10-15 12:00:00.000000",
  "modified_by": "Administrator",
  "module": "Erp Dacsinc Custom",
  "name": "Uniform Embroidery Transfer",

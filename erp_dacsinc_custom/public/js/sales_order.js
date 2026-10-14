@@ -1783,7 +1783,7 @@ function show_so_picklists_modal(frm, pick_lists) {
             <td>${idx === 0 ? `<a href="/app/sales-order/${encodeURIComponent(so_name)}" target="_blank">${esc(so_name)}</a>` : ''}</td>
             <td>${idx === 0 ? esc(customer_name) : ''}</td>
             <td>${idx === 0 ? `<a href="/app/pick-list/${encodeURIComponent(pl_name)}" target="_blank">${esc(pl_name)}</a>` : ''}</td>
-            <td>${esc(row.item_code)}</td>
+            <td>${so_item_cell(row.item_code, row.item_name)}</td>
             <td>${qty_cell}</td>
             <td>${esc(row.warehouse || '')}</td>
             <td>${status_cell}</td>
@@ -3162,16 +3162,23 @@ function so_pick_source_docs(opts) {
  * List each line came from. Picking between documents by id and date alone
  * means guessing at their contents; this puts the contents on the row.
  */
+// "Item name" with the code under it (just the code when there is no separate name).
+function so_item_cell(code, name) {
+    return name && name !== code
+        ? `${esc(name)}<div class="so-micro text-muted">${esc(code)}</div>`
+        : esc(code || '');
+}
+
 function so_fill_source_lines($wrap, doctype, names) {
     const CHILD = {
         'Delivery Note': {
             doctype: 'Delivery Note Item',
-            fields: ['parent', 'item_code', 'qty', 'uom', 'against_pick_list'],
+            fields: ['parent', 'item_code', 'item_name', 'qty', 'uom', 'against_pick_list'],
             source_label: (r) => r.against_pick_list,
         },
         'Pick List': {
             doctype: 'Pick List Item',
-            fields: ['parent', 'item_code', 'qty', 'picked_qty', 'stock_uom'],
+            fields: ['parent', 'item_code', 'item_name', 'qty', 'picked_qty', 'stock_uom'],
             source_label: () => null,
         },
     }[doctype];
@@ -3207,7 +3214,7 @@ function so_fill_source_lines($wrap, doctype, names) {
                 const qty = flt(r.qty != null ? r.qty : r.picked_qty, 2);
                 const src = CHILD.source_label(r);
                 return `<div class="doc-preview-src__line">
-                    <span class="doc-preview-src__item">${esc(r.item_code)}</span>
+                    <span class="doc-preview-src__item">${r.item_name && r.item_name !== r.item_code ? `${esc(r.item_name)} <span class="text-muted">(${esc(r.item_code)})</span>` : esc(r.item_code)}</span>
                     <span class="doc-preview-src__qty">${qty} ${esc(r.uom || r.stock_uom || '')}</span>
                     ${src ? `<span class="doc-preview-src__from">${__('from')} ${esc(src)}</span>` : ''}
                 </div>`;
@@ -4507,8 +4514,27 @@ function so_confirm_submit_pick_list(pick_list) {
         frappe.msgprint(__('No draft Pick List found for this line.'));
         return;
     }
+    // Show what is on it before asking — the items and quantities, not only its id.
+    frappe.call({
+        method: 'erp_dacsinc_custom.order_flow_api.get_pick_list_rows',
+        args: { pick_list: pick_list },
+    }).then(r => so_confirm_submit_pick_list_ask(pick_list, (r && r.message) || []),
+            () => so_confirm_submit_pick_list_ask(pick_list, []));
+}
+
+function so_confirm_submit_pick_list_ask(pick_list, lines) {
+    const items_html = lines.length ? `
+        <table class="so-table" style="margin-top:8px;">
+            <thead><tr><th>${__('Item')}</th><th>${__('Qty')}</th><th>${__('Warehouse')}</th></tr></thead>
+            <tbody>${lines.map(l => `<tr>
+                <td>${so_item_cell(l.item_code, l.item_name)}</td>
+                <td>${flt(l.qty)} ${esc(l.uom || l.stock_uom || '')}</td>
+                <td>${esc(l.warehouse || '')}</td>
+            </tr>`).join('')}</tbody>
+        </table>` : '';
     frappe.confirm(
         __('Submit Pick List <b>{0}</b>?', [esc(pick_list)])
+        + items_html
         + `<br><small class="text-muted">${__('Submitting reserves the stock and cannot be undone without cancelling. Open the Pick List first if the quantity needs adjusting.')}</small>`,
         () => {
             frappe.call({
@@ -6029,6 +6055,7 @@ function show_bulk_dn_si_modal(frm, submitted_pls, doctype, already_processed_co
         if (!grouped[key]) {
             grouped[key] = {
                 item_code: p.item_code,
+                item_name: p.item_name || '',
                 warehouse: p.warehouse,
                 qty: 0,
                 pick_lists: new Set(),
@@ -6073,7 +6100,8 @@ function show_bulk_dn_si_modal(frm, submitted_pls, doctype, already_processed_co
 
     const rows_html = grouped_rows.map(g => `
         <tr>
-            <td><b>${esc(g.item_code)}</b>
+            <td><b>${esc(g.item_name && g.item_name !== g.item_code ? g.item_name : g.item_code)}</b>
+                ${g.item_name && g.item_name !== g.item_code ? `<div class="so-micro text-muted">${esc(g.item_code)}</div>` : ''}
                 ${on_draft_by_item[g.item_code] ? `
                     <div class="so-micro" style="color:var(--so-red);font-weight:600;margin-top:2px;"
                          title="${esc(__('Already mapped on an existing draft — creating this again would deliver the same stock twice. The server nets this off, and refuses outright when the draft already covers everything.'))}">
@@ -6128,7 +6156,7 @@ function show_bulk_dn_si_modal(frm, submitted_pls, doctype, already_processed_co
                                     <div style="margin-top:3px;">
                                         <b>${esc(dd.name)}</b>${__(' already has')}:
                                         ${(dd.items || []).map(it =>
-                                            `<span class="so-chip" style="background:var(--so-orange);color:#fff;margin-left:4px;">${esc(it.item_code)} ${flt(it.qty)} ${esc(it.uom || '')}</span>`
+                                            `<span class="so-chip" style="background:var(--so-orange);color:#fff;margin-left:4px;">${esc(it.item_name || it.item_code)} ${flt(it.qty)} ${esc(it.uom || '')}</span>`
                                         ).join('')}
                                     </div>`).join('')}
                             </div>` : ''}
