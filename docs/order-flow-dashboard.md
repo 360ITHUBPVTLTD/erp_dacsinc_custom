@@ -1476,6 +1476,14 @@ client sent, and the existing rate lock already guarantees `rate` itself
 can't drift — so `amount` was already fully protected server-side once
 `rate` was.
 
+## Sales Invoice has no "Get Items From" menu
+
+`public/js/sales_invoice.js` (`si_remove_get_items_buttons`) removes ERPNext's Get Items From
+buttons (Sales Order, Quotation, Delivery Note, Timesheet) on every refresh, repeating for 2 s
+because some are added after our handler runs. Invoices are made from the Delivery Note /
+Sales Order or from Pending DN/SI, where the billing caps and row locks apply. Purchase
+Invoice does the same (`clean_up_get_items_buttons` in `purchase_invoice.js`).
+
 ## Print buttons on Purchase Flow / Job Work PO rows
 
 Both tabs' PO rows carry a Print button (`fa-print`) next to Open PO,
@@ -1514,6 +1522,25 @@ value or a column. The search box matches it too
 (`po.custom_lr_number LIKE ...`, alongside name/supplier/Sales Order/item).
 The Job Work tab's own Sub POs list does not carry this column — it is a
 different query (`get_jobwork_flow`) that never selected the field.
+
+## Finance tab: invoice status and delivery / receipt
+
+Each row's **Status** is the invoice's own ERPNext status (`si.status` / `pi.status`):
+Unpaid, Partly Paid, Overdue, Paid, Return, Credit Note / Debit Note Issued.
+`of_invoice_status_html` colours it (`OF_INVOICE_STATUS_PILL`). Before, the tab only showed
+Paid or "Unpaid / Due", from the outstanding amount.
+
+A second line under the status says whether the goods were moved (`goods_status`, filled by
+`order_flow_api._attach_si_delivery_status` / `_attach_pi_receipt_status` for the page's rows):
+- **Receivables:** Delivered / Partly Delivered / Not Delivered. A line counts as delivered when
+  the invoice moved stock (Update Stock), was billed from a Delivery Note (`dn_detail`), or up to
+  what was delivered against it or its Sales Order line (`delivered_qty`). Only stock items count.
+- **Supplier / Jobber Payables:** Received / Partly Received / Not Received. A line counts as
+  received when the invoice moved stock or was made from a Purchase Receipt (`pr_detail`);
+  otherwise by its Purchase Order's `per_received`, which a Subcontracting Receipt also updates
+  through the receipt it makes.
+- No second line on returns, or on invoices with only non-stock / service lines (e.g.
+  "Stitching Charges").
 
 ## Logistics tab
 

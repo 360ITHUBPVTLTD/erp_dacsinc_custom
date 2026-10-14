@@ -3767,6 +3767,8 @@ def get_accounts_flow(days=120, search=None, scope="open", merchandiser=None,
         r["contact_person_name"] = contact_map.get(r.customer, "")
 
     _attach_creator_names(sales_invoices["rows"], supplier_invoices["rows"], jobber_invoices["rows"])
+    _attach_si_delivery_status(sales_invoices["rows"])
+    _attach_pi_receipt_status(supplier_invoices["rows"] + jobber_invoices["rows"])
 
     return {
         "sales_invoices": sales_invoices,
@@ -3784,6 +3786,68 @@ def get_accounts_flow(days=120, search=None, scope="open", merchandiser=None,
             "jobber_outstanding": flt(jobber_agg.outstanding),
         }
     }
+
+
+def _goods_status(done, total, words):
+    """"Delivered" / "Partly Delivered" / "Not Delivered" (or the Received set) from qty
+    done vs qty billed; None when the document has no stock lines to move."""
+    total, done = flt(total, 3), flt(done, 3)
+    if total <= 0:
+        return None
+    if done >= total:
+        return words[0]
+    return words[1] if done > 0 else words[2]
+
+
+def _attach_si_delivery_status(rows):
+    """Finance › Receivables: has the stock billed on each Sales Invoice left the
+    warehouse? A line counts as delivered when the invoice itself moved stock
+    (Update Stock), when it was billed from a Delivery Note, or up to what a Delivery
+    Note made from the invoice — or from its Sales Order line — has delivered.
+    Returns and non-stock lines are left out."""
+    names = [r.name for r in rows]
+    if not names:
+        return
+    got = {d.parent: d for d in frappe.db.sql("""
+        SELECT sii.parent, SUM(sii.qty) AS qty,
+               SUM(CASE WHEN si.update_stock = 1 OR IFNULL(sii.dn_detail, '') != '' THEN sii.qty
+                        ELSE LEAST(sii.qty, GREATEST(sii.delivered_qty, IFNULL(soi.delivered_qty, 0))) END) AS done
+        FROM `tabSales Invoice Item` sii
+        JOIN `tabSales Invoice` si ON si.name = sii.parent
+        JOIN `tabItem` it ON it.name = sii.item_code AND it.is_stock_item = 1
+        LEFT JOIN `tabSales Order Item` soi ON soi.name = sii.so_detail
+        WHERE sii.parent IN %(names)s AND IFNULL(si.is_return, 0) = 0
+        GROUP BY sii.parent
+    """, {"names": names}, as_dict=1)}
+    for r in rows:
+        d = got.get(r.name)
+        r["goods_status"] = _goods_status(d.done, d.qty, ("Delivered", "Partly Delivered", "Not Delivered")) if d else None
+
+
+def _attach_pi_receipt_status(rows):
+    """Finance › Supplier / Jobber Payables: has what each Purchase Invoice bills
+    actually arrived? A line counts as received when the invoice itself moved stock
+    (Update Stock) or was made from a Purchase Receipt; otherwise its Purchase Order
+    line's received share (per_received of the PO, which ERPNext also keeps current
+    for subcontracted POs through the receipt their Subcontracting Receipt makes).
+    Lines with neither a receipt nor a PO (plain service bills) are left out."""
+    names = [r.name for r in rows]
+    if not names:
+        return
+    got = {d.parent: d for d in frappe.db.sql("""
+        SELECT pii.parent, SUM(pii.qty) AS qty,
+               SUM(CASE WHEN pi.update_stock = 1 OR IFNULL(pii.pr_detail, '') != '' THEN pii.qty
+                        ELSE pii.qty * LEAST(100, IFNULL(po.per_received, 0)) / 100 END) AS done
+        FROM `tabPurchase Invoice Item` pii
+        JOIN `tabPurchase Invoice` pi ON pi.name = pii.parent
+        LEFT JOIN `tabPurchase Order` po ON po.name = pii.purchase_order
+        WHERE pii.parent IN %(names)s AND IFNULL(pi.is_return, 0) = 0
+          AND (pi.update_stock = 1 OR IFNULL(pii.pr_detail, '') != '' OR IFNULL(pii.purchase_order, '') != '')
+        GROUP BY pii.parent
+    """, {"names": names}, as_dict=1)}
+    for r in rows:
+        d = got.get(r.name)
+        r["goods_status"] = _goods_status(d.done, d.qty, ("Received", "Partly Received", "Not Received")) if d else None
 
 
 # --------------------------------------------------------------------------
