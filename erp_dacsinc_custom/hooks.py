@@ -74,7 +74,9 @@ doctype_js = {
 	"Sales Invoice": "public/js/sales_invoice.js",
 	"Delivery Note": "public/js/delivery_note.js",
 	"Pick List": "public/js/pick_list.js",
-	"Customer": "public/js/customer.js"
+	"Customer": "public/js/customer.js",
+	# job work is received from the Sub PO ("Receive Finished Goods"), not from the SCO
+	"Subcontracting Order": "public/js/subcontracting_order.js"
 }
 doctype_list_js = {
 	"Lead": "public/js/lead_list.js",
@@ -438,6 +440,8 @@ doc_events = {
             "erp_dacsinc_custom.custom_script.guard_merchandiser_plain_po",
             "erp_dacsinc_custom.custom_script.guard_po_item_not_over_so_need",
             "erp_dacsinc_custom.procurement_purpose.set_procurement_purpose",
+            # Subcontracted PO only on a jobber (Supplier › Is Jobber)
+            "erp_dacsinc_custom.purchase_order.guard_subcontract_po_jobber",
         ],
         # Subcontract PO: raw material for all its rows together must be the PO's own.
         "before_submit": "erp_dacsinc_custom.purchase_order.guard_subcontract_po_rm",
@@ -726,7 +730,16 @@ scheduler_events = {
 # }
 
 # Map Purchase Receipt to Purchase Invoice
+# A store's shift is shared: its closing may carry bills of any of the store's users (pos_closing.py).
+override_doctype_class = {
+    "POS Closing Entry": "erp_dacsinc_custom.pos_closing.StorePOSClosingEntry",
+}
+
 override_whitelisted_methods = {
+    # Point of Sale: continue the store's open shift, not only one you opened (pos_cash.py)
+    "erpnext.selling.page.point_of_sale.point_of_sale.check_opening_entry": "erp_dacsinc_custom.pos_cash.check_opening_entry",
+    # POS Closing Entry form: the store's bills in the shift, by any user (pos_closing.py)
+    "erpnext.accounts.doctype.pos_closing_entry.pos_closing_entry.get_pos_invoices": "erp_dacsinc_custom.pos_closing.get_pos_invoices",
     # Barcode scan in forms: POS logins only find their stores' brands (pos_scope.py)
     "erpnext.stock.utils.scan_barcode": "erp_dacsinc_custom.pos_scope.scan_barcode",
     # Global search without master records the user may not open (master_guard.py)

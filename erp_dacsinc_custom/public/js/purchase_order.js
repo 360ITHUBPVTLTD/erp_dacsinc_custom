@@ -536,9 +536,26 @@ function hide_get_items_from_entries(frm) {
     }
 }
 
+// A subcontracted PO must be on a jobber (server: purchase_order.guard_subcontract_po_jobber).
+// Say so the moment the two don't match, instead of only when saving.
+function po_check_jobber(frm) {
+    if (!frm.doc.is_subcontracted || !frm.doc.supplier || frm.doc.docstatus !== 0) return;
+    frappe.db.get_value('Supplier', frm.doc.supplier, ['custom_is_jobber', 'supplier_name']).then(r => {
+        const v = (r && r.message) || {};
+        if (cint(v.custom_is_jobber)) return;
+        frappe.msgprint({
+            title: __('Not a Jobber'), indicator: 'red',
+            message: __('{0} is not a jobber. A subcontracted Purchase Order must be raised on a jobber — choose a jobber, or tick Is Jobber on the supplier if they do job work.',
+                [`<b>${frappe.utils.escape_html(v.supplier_name || frm.doc.supplier)}</b>`]),
+        });
+    });
+}
+
 frappe.ui.form.on('Purchase Order', {
+    supplier: function (frm) { po_check_jobber(frm); },
     is_subcontracted: function (frm) {
         apply_supplier_filter(frm);
+        po_check_jobber(frm);
         if (frm.doc.is_subcontracted) {
             frm.remove_custom_button(__('Get Items from MR'));
         } else {
@@ -3818,4 +3835,108 @@ frappe.ui.form.on('Purchase Order Item', {
     items_add: function (frm) { po_price_check_refresh(frm); },
     items_remove: function (frm) { po_price_check_refresh(frm); },
     item_code: function (frm) { po_price_check_refresh(frm); },
+});
+
+// ----------------------------------------------------------------------------------
+// --- Lines over their Material Request (purchase_order.check_po_against_mr) ---
+// ERPNext refuses these only at submit ("Limit Crossed … over limit by Stock Qty …"), typically
+// a draft made while the MR line was open that another PO has ordered since. Find them as soon
+// as the form shows them, highlight the rows, and offer to correct the quantities.
+// ----------------------------------------------------------------------------------
+(function () {
+    if (document.getElementById('dacs-mr-over-style')) return;
+    const st = document.createElement('style');
+    st.id = 'dacs-mr-over-style';
+    st.textContent = `
+        .dacs-over-mr > .data-row, .dacs-over-mr .grid-static-col { background: #fff1f0 !important; }
+        .dacs-over-mr .grid-static-col[data-fieldname="qty"] { color: #c0392b; font-weight: 700; }
+        .dacs-mr-over-alert { margin: 0 0 10px; padding: 10px 12px; border-radius: 8px; background: #fff1f0;
+            border: 1px solid #f5c2c0; color: #8a1f17; font-size: 12.5px; }
+        .dacs-mr-over-alert ul { margin: 6px 0 8px 18px; padding: 0; }`;
+    document.head.appendChild(st);
+})();
+
+function po_mr_rows(frm) {
+    return (frm.doc.items || []).filter(r => r.material_request_item).map(r => ({
+        row: r.name, material_request_item: r.material_request_item, qty: r.qty,
+        stock_qty: r.stock_qty, conversion_factor: r.conversion_factor, uom: r.uom,
+    }));
+}
+
+function po_check_mr_limits(frm) {
+    if (frm.doc.docstatus !== 0 || !po_mr_rows(frm).length) {
+        frm._mr_over = [];
+        po_paint_mr_over(frm);
+        return Promise.resolve([]);
+    }
+    return frappe.call({
+        method: 'erp_dacsinc_custom.purchase_order.check_po_against_mr',
+        args: { rows: po_mr_rows(frm), purchase_order: frm.is_new() ? null : frm.doc.name },
+    }).then(r => {
+        frm._mr_over = r.message || [];
+        po_paint_mr_over(frm);
+        return frm._mr_over;
+    });
+}
+
+function po_paint_mr_over(frm) {
+    const grid = frm.fields_dict.items && frm.fields_dict.items.grid;
+    if (!grid) return;
+    const over = frm._mr_over || [];
+    const ids = new Set(over.map(o => o.row));
+    (grid.grid_rows || []).forEach(gr => gr.wrapper && gr.wrapper.toggleClass('dacs-over-mr', ids.has(gr.doc.name)));
+    const $wrap = $(frm.fields_dict.items.wrapper);
+    $wrap.find('.dacs-mr-over-alert').remove();
+    if (!over.length) return;
+    const idx = Object.fromEntries((frm.doc.items || []).map(r => [r.name, r.idx]));
+    const lines = over.map(o => `<li>${__('Row {0}', [idx[o.row] || '?'])}: <b>${frappe.utils.escape_html(o.item_code)}</b> —
+        ${__('asks {0} {1}, only {2} {1} left on {3}', [flt(o.qty, 3), frappe.utils.escape_html(o.uom || ''), flt(o.allowed_qty, 3),
+        frappe.utils.escape_html(o.material_request)])}${flt(o.allowed_qty) <= 0 ? ` <i>(${__('already fully ordered — the line will be removed')})</i>` : ''}</li>`).join('');
+    const $a = $(`<div class="dacs-mr-over-alert">
+        <b><i class="fa fa-exclamation-triangle"></i> ${__('{0} line(s) ask for more than their Material Request still has open', [over.length])}</b>
+        <ul>${lines}</ul>
+        <button class="btn btn-xs btn-danger dacs-mr-fix">${__('Correct quantities')}</button>
+        <span class="text-muted" style="margin-left:8px;">${__('Another Purchase Order has already ordered part of it. ERPNext will not submit this one as it is.')}</span>
+    </div>`);
+    $a.find('.dacs-mr-fix').on('click', () => po_fix_mr_over(frm));
+    $wrap.prepend($a);
+}
+
+function po_fix_mr_over(frm) {
+    const over = frm._mr_over || [];
+    if (!over.length) return;
+    over.forEach(o => {
+        const row = (frm.doc.items || []).find(r => r.name === o.row);
+        if (!row) return;
+        if (flt(o.allowed_qty) <= 0.0005) {
+            frappe.model.clear_doc(row.doctype, row.name);
+        } else {
+            frappe.model.set_value(row.doctype, row.name, 'qty', flt(o.allowed_qty, precision('qty', row)));
+        }
+    });
+    frm.refresh_field('items');
+    if (frm.cscript && frm.cscript.calculate_taxes_and_totals) frm.cscript.calculate_taxes_and_totals();
+    frm.dirty();
+    frappe.show_alert({ message: __('Quantities corrected to what the Material Requests still have open. Save the Purchase Order.'), indicator: 'green' });
+    setTimeout(() => po_check_mr_limits(frm), 600);
+}
+
+frappe.ui.form.on('Purchase Order', {
+    refresh(frm) { setTimeout(() => po_check_mr_limits(frm), 800); },
+    after_save(frm) { po_check_mr_limits(frm); },
+    before_submit(frm) {
+        return po_check_mr_limits(frm).then(over => {
+            if (!over.length) return;
+            frappe.validated = false;
+            frappe.msgprint({
+                title: __('Quantities over the Material Request'), indicator: 'red',
+                message: __('{0} line(s) ask for more than their Material Request still has open (highlighted in red). Click "Correct quantities" above the items, save, then submit.', [over.length]),
+            });
+        });
+    },
+});
+
+frappe.ui.form.on('Purchase Order Item', {
+    qty(frm) { clearTimeout(frm._mr_over_t); frm._mr_over_t = setTimeout(() => po_check_mr_limits(frm), 700); },
+    items_remove(frm) { clearTimeout(frm._mr_over_t); frm._mr_over_t = setTimeout(() => po_check_mr_limits(frm), 700); },
 });

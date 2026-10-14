@@ -60,9 +60,10 @@ function render_custom_pr_selector(frm) {
             fields: [
                 {
                     fieldname: 'is_subcontracted_filter',
-                    label: __('Show Subcontracted Receipts'),
+                    label: __('Show Subcontracted (Job Work) Receipts'),
                     fieldtype: 'Check',
                     default: default_subcon_filter,
+                    description: '',
                     onchange: () => load_data()
                 },
                 { fieldname: 'html_area', fieldtype: 'HTML' }
@@ -72,40 +73,45 @@ function render_custom_pr_selector(frm) {
                 const selected = dialog.$wrapper.find('.pr-check-input:checked');
                 if (!selected.length) return frappe.msgprint("Please select items.");
 
-                const filter_val = dialog.get_value('is_subcontracted_filter') ? 1 : 0;
-                if (frm.doc.is_subcontracted !== filter_val) frm.set_value('is_subcontracted', filter_val);
+                // "Is Subcontracted" and the supplier warehouse are set from the receipt below.
 
-                frm.clear_table("items");
-
+                // Lines are built on the server with ERPNext's own Purchase Receipt →
+                // Purchase Invoice mapping (purchase_order.map_pr_items_for_invoice), so UOM,
+                // conversion factor, rate, warehouse and PO link match the receipt. Setting
+                // item_code on a blank row let ERPNext's item fetch overwrite the UOM afterwards
+                // ("UOM must be equal to 'Meter'").
+                const picks = [];
                 selected.each(function() {
-                    const d = JSON.parse($(this).closest('tr').attr('data-row-obj')); 
+                    // Row data is kept in dialog._pr_rows (an index on the row), not as JSON in an
+                    // HTML attribute: a name with an apostrophe ("Men's …") cut that JSON short.
+                    const d = (dialog._pr_rows || [])[cint($(this).closest('tr').attr('data-row-idx'))];
                     const qty = flt($(this).closest('tr').find('.qty-billing-input').val());
-
-                    if (qty > 0) {
-                        let row = frm.add_child('items');
-                        
-                        // FIX: Setting fields individually ensures Rate is not overwritten 
-                        // by Frappe's Price List fetching background triggers
-                        frappe.model.set_value(row.doctype, row.name, 'item_code', d.item_code);
-                        frappe.model.set_value(row.doctype, row.name, 'qty', qty);
-                        frappe.model.set_value(row.doctype, row.name, 'uom', d.uom);
-                        frappe.model.set_value(row.doctype, row.name, 'purchase_receipt', d.pr_name);
-                        frappe.model.set_value(row.doctype, row.name, 'pr_detail', d.pr_detail);
-                        frappe.model.set_value(row.doctype, row.name, 'cost_center', d.cost_center);
-                        frappe.model.set_value(row.doctype, row.name, 'expense_account', d.expense_account);
-                        
-                        if (filter_val === 1) {
-                            frappe.model.set_value(row.doctype, row.name, 'supplier_warehouse', "Jobbers Warehouse - IND");
-                        }
-
-                        // Set Rate last as the absolute override
-                        frappe.model.set_value(row.doctype, row.name, 'rate', flt(d.rate));
-                    }
+                    if (d && qty > 0) picks.push({ pr_detail: d.pr_detail, qty });
                 });
+                if (!picks.length) return frappe.msgprint(__("Enter a quantity to bill."));
 
-                frm.refresh_field('items');
-                dialog.hide();
-                frappe.show_alert({message: __("Lines and Rates populated."), indicator: 'green'});
+                frappe.call({
+                    method: "erp_dacsinc_custom.purchase_order.map_pr_items_for_invoice",
+                    args: { rows: picks },
+                    freeze: true,
+                }).then(r => {
+                    const res = r.message || {};
+                    const items = res.items || [];
+                    const header = res.header || {};
+                    // Header from the same receipt mapping: a subcontract (SCO) receipt makes a
+                    // subcontracted invoice with the receipt's supplier warehouse.
+                    if (cint(frm.doc.is_subcontracted) !== cint(header.is_subcontracted)) frm.doc.is_subcontracted = cint(header.is_subcontracted);
+                    if (header.supplier_warehouse) frm.doc.supplier_warehouse = header.supplier_warehouse;
+                    else if (cint(header.is_subcontracted) && !frm.doc.supplier_warehouse) frm.doc.supplier_warehouse = "Jobbers Warehouse - IND";
+                    frm.refresh_fields(['is_subcontracted', 'supplier_warehouse']);
+                    frm.clear_table("items");
+                    items.forEach(it => frm.add_child('items', it));
+                    frm.refresh_field('items');
+                    if (frm.cscript && frm.cscript.calculate_taxes_and_totals) frm.cscript.calculate_taxes_and_totals();
+                    frm.dirty();
+                    dialog.hide();
+                    frappe.show_alert({message: __("Lines added from the receipt."), indicator: 'green'});
+                });
             }
         });
 
@@ -140,12 +146,14 @@ function render_custom_pr_selector(frm) {
         }
 
         function render_table(data, is_sub) {
-            let rows_html = data.map((d) => {
+            dialog._pr_rows = data;
+            const esc = (v) => frappe.utils.escape_html(v == null ? '' : String(v));
+            let rows_html = data.map((d, idx) => {
                 let searchVal = `${d.pr_name} ${d.item_code} ${d.item_name}`.toLowerCase();
                 let history_links = (d.history_links || []).map(h => `<a href="/app/purchase-invoice/${h.inv_id}" target="_blank" class="pill inv-pill">${h.inv_id}</a>`).join('');
 
                 return `
-                <tr class="pro-row" data-row-obj='${JSON.stringify(d)}' data-search-tag="${searchVal}">
+                <tr class="pro-row" data-row-idx="${idx}" data-search-tag="${esc(searchVal)}">
                     <td class="text-center"><input type="checkbox" class="pr-check-input"></td>
                     <td>
                         <a href="/app/purchase-receipt/${d.pr_name}" target="_blank" class="pill pr-pill" style="margin-bottom:4px;">${d.pr_name}</a>
@@ -153,7 +161,7 @@ function render_custom_pr_selector(frm) {
                     </td>
                     <td>
                         <a href="/app/item/${d.item_code}" target="_blank" class="item-title">${d.item_code}</a>
-                        <div style="font-size:11px; color:#64748b;">${d.item_name}</div>
+                        <div style="font-size:11px; color:#64748b;">${esc(d.item_name)}</div>
                         ${d.finished_good_item_code ? `<div class="pill" style="background:#f0fdf4; color:#166534; margin-top:4px;">FG: ${d.finished_good_item_code}</div>` : ''}
                     </td>
                     <td>
@@ -221,5 +229,21 @@ function render_custom_pr_selector(frm) {
 
         dialog.show();
         load_data();
+
+        // Open on the kind of receipt this supplier actually has waiting: the jobber flag on
+        // the supplier is not always set, and subcontract receipts stayed hidden behind the box.
+        frappe.call({
+            method: "erp_dacsinc_custom.purchase_order.pending_pr_line_counts",
+            args: { supplier: frm.doc.supplier },
+        }).then(r => {
+            const c = r.message || {};
+            const n = cint(c.normal), sc = cint(c.subcontracted);
+            const fld = dialog.fields_dict.is_subcontracted_filter;
+            fld.set_description(__('Waiting to bill: {0} normal receipt line(s), {1} subcontract (job work) receipt line(s).', [n, sc]));
+            const want = (sc && !n) ? 1 : ((n && !sc) ? 0 : null);
+            if (want !== null && cint(dialog.get_value('is_subcontracted_filter')) !== want && !is_jobber && !frm.doc.is_subcontracted) {
+                dialog.set_value('is_subcontracted_filter', want);
+            }
+        });
     });
 }

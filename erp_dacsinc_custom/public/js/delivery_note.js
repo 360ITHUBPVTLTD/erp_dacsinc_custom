@@ -59,6 +59,8 @@ frappe.ui.form.on('Delivery Note', {
 	},
 	refresh: function(frm) {
 		frm.trigger('make_linked_rows_read_only');
+		// Create menu: Sales Invoice, Sales Return and Credit Note stay (the billing / return flow).
+		dacs_hide_create_buttons(frm, ['Shipment', 'Installation Note', 'Delivery Trip', 'Packing Slip', 'Quality Inspection(s)']);
 	},
 	make_linked_rows_read_only: function(frm) {
 		if (frm.fields_dict.items && frm.fields_dict.items.grid) {
@@ -91,3 +93,12 @@ frappe.ui.form.on('Delivery Note Item', {
 	}
 });
 
+if (typeof window.dacs_hide_create_buttons !== 'function') {
+	// Same helper as in sales_order.js — remove standard "Create" menu buttons, repeating
+	// because ERPNext adds some of them after its own async calls.
+	window.dacs_hide_create_buttons = function (frm, labels) {
+		const remover = () => labels.forEach(l => frm.remove_custom_button(__(l), __('Create')));
+		remover();
+		[300, 800, 1500, 2500].forEach(delay => setTimeout(remover, delay));
+	};
+}

@@ -2270,3 +2270,59 @@ over-collected qty" next to the single PR link — there is no separate
   qty produces a phantom fractional shortage. Round once, where the number
   is first read, so every downstream comparison agrees with what's
   displayed.
+
+## Purchase Invoice: "Get Items from PR" (`purchase_invoice.js`, `purchase_order.py`)
+
+The dialog lists receipt lines still to bill for the supplier (`get_pending_pr_items`). On
+**Update Invoice Lines** the chosen lines and quantities go to `map_pr_items_for_invoice`, which
+builds them with ERPNext's own `make_purchase_invoice` (Purchase Receipt → Purchase Invoice), so
+UOM, conversion factor, rate, discount, warehouse, PO link and accounts are the receipt's. The
+dialog used to set `item_code` on a blank row and then the fields one by one; ERPNext's item fetch
+then overwrote the UOM with the item's purchase / stock UOM and saving failed with "UOM must be
+equal to 'Meter'". A quantity above what the line still has to bill (after earlier invoices and
+returns) is refused. Rows are referenced by index (`dialog._pr_rows`), not JSON in an HTML
+attribute, so item names with an apostrophe work.
+
+**Subcontract (job work) receipts.** A subcontract PO's receipt is a Purchase Receipt made from its
+Subcontracting Receipt (`is_subcontracted = 1`). The dialog's "Show Subcontracted (Job Work)
+Receipts" box decides which kind is listed (one invoice can't mix them; the server refuses it). It
+opens on the jobber flag / the invoice's own Is Subcontracted, and otherwise on whichever kind the
+supplier actually has waiting (`pending_pr_line_counts`; both counts are shown under the box) —
+jobbers without the flag used to see an empty list. The invoice header (Is Subcontracted, Supplier
+Warehouse) comes from the same mapping (`map_pr_items_for_invoice` returns `header`), so it is the
+receipt's warehouse ("Jobers Warehouse - IND" here), not a hard-coded name set on the lines.
+
+## A subcontracted Purchase Order must be on a jobber (`guard_subcontract_po_jobber`)
+
+`Supplier › Is Jobber` (`custom_is_jobber`) marks job-work suppliers. Once Is Subcontracted is ticked
+the PO's supplier list shows only jobbers (`apply_supplier_filter`), but choosing the supplier first
+and ticking the box afterwards — or creating the PO from code — got around it. Now the form says
+"Not a Jobber" as soon as the two don't match (`po_check_jobber`), and the server refuses to save or
+submit (Purchase Order `validate`). An already submitted PO is left alone (Update Items keeps
+working). Such POs, raised before this check, still bill correctly: the Purchase Invoice "Get Items
+from PR" dialog opens on the subcontract receipts the supplier has waiting, whatever the flag.
+
+## Purchase Order lines over their Material Request (`check_po_against_mr`)
+
+ERPNext checks a Purchase Order against its Material Request lines only at submit: all submitted POs'
+`stock_qty` for an MR line may not exceed the line's `stock_qty` plus the over-receipt allowance
+(Item › Over Delivery/Receipt Allowance, else Stock Settings) — "Limit Crossed … over limit by Stock
+Qty …". It bites a draft made while the MR line was open, after another PO ordered it (e.g. a 1.68 m
+line, 40 % allowance, 1.68 already ordered → 0.672 left, the draft is 1.008 over).
+
+`purchase_order.check_po_against_mr` runs the same arithmetic for the open form (other submitted POs
++ this PO's lines in grid order) and returns the lines to correct with the quantity each may keep.
+`purchase_order.js` runs it on refresh, after save and when a qty changes; over lines turn red and a
+note above the items lists them with **Correct quantities** (sets each to what is left, removes a
+line with nothing left). `before_submit` stops with the same list. The Order Flow Submit window
+(`dashboard_submit.get_submit_preview` → `mr_over`) shows them too and won't submit.
+
+## Job work is received from the Sub PO only
+
+Finished goods of a subcontract PO are received with the PO's **Receive Finished Goods** (the Sub PO
+row on Job Work has the same), which makes the Subcontracting Receipt and its Purchase Receipt
+together. So the other ways in are not offered: the Subcontracting Order form hides **Create ›
+Subcontracting Receipt** (`public/js/subcontracting_order.js`, with a note linking back to the PO), and
+the Job Work › Sub Receipts table shows "Receive from the Sub PO: Receive Finished Goods" instead of a
+Create Subcontracting Receipt button. The standard receipt buttons on the subcontract PO itself were
+already removed.

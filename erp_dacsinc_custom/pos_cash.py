@@ -244,10 +244,47 @@ def opening_defaults(pos_profile):
 			"last": dict(prev, period_end=format_datetime(prev.period_end_date, "dd-MM-yyyy HH:mm")) if prev else None}
 
 
+# ------------------------------------------------------------------ one shared shift per store
+# A store has one cash drawer, so one open shift, shared by everyone who works there: whoever
+# opens it (a store user, POS Admin, an admin), the store's POS users continue in it instead
+# of being asked to open another, and anyone may close it. Closing counts every bill of the
+# store made during the shift, whoever made it (pos_closing.py). Store users see only their
+# own stores' shifts (pos_scope, by POS Profile).
+def open_store_shift(pos_profile):
+	return frappe.db.get_value("POS Opening Entry", {"pos_profile": pos_profile, "docstatus": 1, "status": "Open"},
+							   ["name", "company", "pos_profile", "period_start_date", "user"], as_dict=True,
+							   order_by="period_start_date desc") if pos_profile else None
+
+
+@frappe.whitelist()
+def check_opening_entry(user=None):
+	"""Point of Sale's "is there an open shift for me?" (replaces ERPNext's, which looks only at
+	shifts this user opened). Own open shift first; otherwise, for a user who works at one store,
+	that store's open shift — they continue in it. A user on several stores picks the store in
+	the opening dialog, and an open shift there is continued (create_opening)."""
+	user = frappe.session.user
+	fields = ["name", "company", "pos_profile", "period_start_date", "user"]
+	own = frappe.get_all("POS Opening Entry", filters={"user": user, "pos_closing_entry": ["in", ["", None]], "docstatus": 1},
+						 fields=fields, order_by="period_start_date desc")
+	if own:
+		return own
+	from erp_dacsinc_custom.pos_scope import my_pos_profiles
+
+	stores = my_pos_profiles()
+	if len(stores) != 1:
+		return []
+	shift = open_store_shift(stores[0])
+	return [shift] if shift else []
+
+
 @frappe.whitelist(methods=["POST"])
 def create_opening(pos_profile, company, balance_details, reason=None):
-	"""The opening dialog's Submit: ERPNext's create_opening_voucher, plus the reason."""
+	"""The opening dialog's Submit: ERPNext's create_opening_voucher, plus the reason. When the
+	store already has an open shift, it is continued instead (one drawer, one shift)."""
 	_check_profile(pos_profile)
+	shift = open_store_shift(pos_profile)
+	if shift:
+		return frappe.get_doc("POS Opening Entry", shift.name).as_dict()
 	doc = frappe.get_doc({
 		"doctype": "POS Opening Entry", "period_start_date": frappe.utils.get_datetime(),
 		"posting_date": frappe.utils.getdate(), "user": frappe.session.user, "pos_profile": pos_profile,
@@ -324,7 +361,7 @@ def close_stale_shifts(dry_run=False):
 		select i.name, i.pos_profile, i.owner, i.posting_date from `tabPOS Invoice` i
 		where i.docstatus = 1 and ifnull(i.consolidated_invoice, '') = '' and i.posting_date >= %s
 		  and not exists (select 1 from `tabPOS Opening Entry` o where o.docstatus = 1 and o.status = 'Open'
-			and o.pos_profile = i.pos_profile and o.user = i.owner
+			and o.pos_profile = i.pos_profile
 			and o.period_start_date <= timestamp(i.posting_date, i.posting_time))
 		  and not exists (select 1 from `tabPOS Invoice Reference` r join `tabPOS Closing Entry` c
 			on c.name = r.parent and c.docstatus = 1 where r.pos_invoice = i.name)""", TEST_BILLS_BEFORE)]

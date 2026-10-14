@@ -259,7 +259,7 @@
         requirements, how to build and deploy, and the task list — delivered, open from the 8 Oct meeting, and Phase 2.</p>
     </div>
     <div class="actions no-print">
-      <a class="btn" href="/assets/erp_dacsinc_custom/docs/project-guide.pdf?v=13" download="Dacsinc ERP - Project Guide.pdf" data-dl-name="Dacsinc ERP - Project Guide">⤓ Download PDF</a>
+      <a class="btn" href="/assets/erp_dacsinc_custom/docs/project-guide.pdf?v=14" download="Dacsinc ERP - Project Guide.pdf" data-dl-name="Dacsinc ERP - Project Guide">⤓ Download PDF</a>
       <button class="btn outline" type="button" id="btn-pdf">⎙ Print all</button>
       <button class="btn outline" type="button" id="btn-tab">⎙ Print this tab</button>
       <button class="btn outline" type="button" id="btn-html">⤓ HTML copy</button>
@@ -714,7 +714,7 @@ const FLOW = [
   ["Fulfil", "Delivery Note", "Accounts · Warehouse", "Delivery Note from the Pick List", "Dispatches the goods.", ["One route: Pick List → DN → SI.", "Rows from the Pick List are locked."], ""],
   ["Fulfil", "Sales Invoice", "Accounts Executive · Accounts Manager", "Sales Invoice from the DN", "Bills the customer.", ["Rate locked to the order's rate.", "Update-Stock invoice against a Sales Order is refused."], ""],
   ["Fulfil", "Logistics", "Logistics", "Order Flow › Logistics", "Records transporter, LR No and signed copy.", ["Every submitted invoice without LR No and Signed Copy is listed."], "One Update dialog for all three."],
-  ["Fulfil", "Payment", "Finance · Accounts", "Payment Entry · Order Flow › Finance", "Collects and pays.", ["Receivables, supplier and jobber payables are followed on Finance."], ""],
+  ["Fulfil", "Payment", "Finance · Accounts", "Payment Entry · Order Flow › Finance", "Collects and pays.", ["Receivables, supplier and jobber payables are followed on Finance.", "Receive / Pay on the row: mode, amount, reference, bank charges, TDS, write-off; confirmed before submit."], ""],
   ["POS", "Open the shift", "POS Store Manager · POS user", "POS › Create POS Opening Entry", "Starts a store shift.", ["Store filled in for single-store users.", "Only cash is entered; it starts from the cash left at the last closing — a different amount needs a reason.", "One open shift per store."], ""],
   ["POS", "Bill customers", "POS user", "Point of Sale", "Sells over the counter.", ["Only the store's brands are visible.", "Walk-in name and mobile on the bill.", "Receipt emailed from the store's own account."], "MOM 8 Oct: POS return entries (open)."],
   ["POS", "Close the shift", "POS Store Manager", "POS Closing Entry", "1. Cash counted · 2. Why short / extra · 3. Cash taken out.", ["Any difference needs a reason.", "Cash left is carried to the next shift.", "A closing report with Excel is emailed."], ""],
@@ -802,6 +802,8 @@ const FRD = [
 // [status, module, task, source, phase, priority, date, owner, remarks]
 const TASKS = [
   ["Done", "POS", "Store stock requests: HO approval, HO's transfer, the store checks and submits it; Stock Requests board on POS / POS Admin / POS HO workspaces", "Delivered", "1", "", "2026-10-13", "360ithub", ""],
+  ["Done", "Order Flow", "Finance: Receive / Pay prompt (bank charges, TDS, write-off, confirmation); totals on rounded total; custom date range and Customer / Supplier filters on every tab", "Delivered", "1", "", "2026-10-14", "360ithub", ""],
+  ["Done", "Order Flow", "Finance shows the invoice's own status (Unpaid / Partly Paid / Overdue / Paid…) and Delivered / Received; Sales Invoice has no Get Items From menu", "Delivered", "1", "", "2026-10-14", "360ithub", ""],
   ["Done", "Order Flow", "POS documents hidden by default; \"Show POS documents\" toggle on Finance › Receivables, Logistics and Tracker › MRs", "Delivered", "1", "", "2026-10-02", "360ithub", ""],
   ["Done", "Order Flow", "Merchandiser sees own Sales Orders; \"Show my customers' orders\" toggle on every tab", "Delivered", "1", "", "2026-10-02", "360ithub", ""],
   ["Done", "Order Flow", "Unassigned orders always shown for approval; \"Waiting for Final Approval\" view-only sub-tab", "Delivered", "1", "", "2026-10-02", "360ithub", ""],

@@ -5219,6 +5219,81 @@ def get_pending_pr_items(supplier, is_subcontracted=0):
     return final_data
 
 
+@frappe.whitelist()
+def map_pr_items_for_invoice(rows):
+    """Purchase Invoice "Get Items from PR" dialog: build the invoice lines for the chosen
+    receipt lines with ERPNext's own Purchase Receipt → Purchase Invoice mapping
+    (make_purchase_invoice), so UOM, conversion factor, rate, discount, warehouse, PO link
+    and accounts come from the receipt exactly. The dialog used to set item_code on a blank
+    row, and ERPNext's item fetch then overwrote the UOM in the background — "UOM must be
+    equal to 'Meter'" on save.
+
+    rows: [{"pr_detail": ..., "qty": ...}]. Returns {"items": [...rows to add, in that order],
+    "header": {is_subcontracted, supplier_warehouse}} — the header values come from the same
+    mapping, so a subcontract (SCO) receipt makes a subcontracted invoice with the receipt's
+    supplier warehouse. A qty above what the receipt line still has to bill (after earlier
+    invoices and returns) is refused, and normal and subcontract receipts can't be mixed.
+    """
+    import json
+    from erpnext.stock.doctype.purchase_receipt.purchase_receipt import make_purchase_invoice
+
+    rows = json.loads(rows) if isinstance(rows, str) else (rows or [])
+    wanted = {}
+    for r in rows:
+        if r.get("pr_detail") and flt(r.get("qty")) > 0:
+            wanted[r["pr_detail"]] = flt(r["qty"])
+    if not wanted:
+        return []
+
+    by_pr = defaultdict(list)
+    for d in frappe.get_all("Purchase Receipt Item", filters={"name": ["in", list(wanted)]},
+                            fields=["name", "parent"]):
+        by_pr[d.parent].append(d.name)
+
+    skip = {"name", "parent", "parentfield", "parenttype", "idx", "doctype", "owner",
+            "creation", "modified", "modified_by", "docstatus", "__islocal", "__unsaved"}
+    mapped = {}
+    header = {}
+    kinds = set()
+    for pr_name, details in by_pr.items():
+        frappe.get_doc("Purchase Receipt", pr_name).check_permission("read")
+        pi = make_purchase_invoice(pr_name)
+        kinds.add(cint(pi.is_subcontracted))
+        header.setdefault("is_subcontracted", cint(pi.is_subcontracted))
+        if pi.get("supplier_warehouse") and not header.get("supplier_warehouse"):
+            header["supplier_warehouse"] = pi.supplier_warehouse
+        for item in pi.get("items"):
+            if item.pr_detail not in details:
+                continue
+            qty = wanted[item.pr_detail]
+            if qty - flt(item.qty) > 0.0001:
+                frappe.throw(frappe._("{0} ({1}): only {2} {3} is left to bill on {4}.").format(
+                    item.item_code, item.item_name, flt(item.qty), item.uom, pr_name))
+            item.qty = qty
+            item.received_qty = qty
+            item.stock_qty = flt(qty * flt(item.conversion_factor or 1), item.precision("stock_qty"))
+            item.amount = flt(qty * flt(item.rate), item.precision("amount"))
+            mapped[item.pr_detail] = {k: v for k, v in item.as_dict().items() if k not in skip}
+
+    if len(kinds) > 1:
+        frappe.throw(frappe._("Normal and subcontract (job work) receipts can't be billed on the same invoice. "
+                              "Select only one kind."))
+    missing = [d for d in wanted if d not in mapped]
+    if missing:
+        frappe.throw(frappe._("Some selected receipt lines have nothing left to bill (already billed, returned or closed). "
+                              "Refresh the list and select again."))
+    return {"items": [mapped[r["pr_detail"]] for r in rows if r.get("pr_detail") in mapped],
+            "header": header}
+
+
+@frappe.whitelist()
+def pending_pr_line_counts(supplier):
+    """How many receipt lines are waiting to be billed for this supplier: normal and
+    subcontract (job work). The PI dialog uses it to open on the kind that exists."""
+    return {"normal": len(get_pending_pr_items(supplier, 0)),
+            "subcontracted": len(get_pending_pr_items(supplier, 1))}
+
+
 
 
 # @frappe.whitelist()
@@ -7022,3 +7097,75 @@ def get_po_price_check(purchase_order=None, items=None, supplier=None, price_lis
         })
 
     return {"allowed": True, "supplier": supplier, "price_list": price_list, "rows": rows}
+
+
+def guard_subcontract_po_jobber(doc, method=None):
+    """A subcontracted Purchase Order (job work) must be raised on a jobber (Supplier ›
+    Is Jobber). The form's supplier list already shows only jobbers once Is Subcontracted is
+    ticked, but picking the supplier first and ticking the box afterwards, or creating the PO
+    from code, got around it — and a non-jobber subcontract PO lands under Supplier Payables
+    and the plain-PO lists instead of Job Work. Checked on save and on submit; an already
+    submitted PO (Update Items etc.) is left alone."""
+    if not cint(doc.get("is_subcontracted")) or not doc.get("supplier"):
+        return
+    if doc.docstatus == 1 and getattr(doc, "_action", None) != "submit":
+        return
+    if cint(frappe.db.get_value("Supplier", doc.supplier, "custom_is_jobber")):
+        return
+    frappe.throw(
+        frappe._("{0} ({1}) is not a jobber. A subcontracted Purchase Order must be raised on a jobber — "
+                 "choose a jobber, or tick Is Jobber on the supplier if they do job work.").format(
+            frappe.bold(doc.supplier_name or doc.supplier), doc.supplier),
+        title=frappe._("Not a Jobber"))
+
+
+@frappe.whitelist()
+def check_po_against_mr(rows, purchase_order=None):
+    """Purchase Order lines asking for more than their Material Request line still has open —
+    the check ERPNext runs only at submit ("Limit Crossed … over limit by Stock Qty …",
+    status_updater on Material Request Item.stock_qty), done up front so the form can highlight
+    and correct them. Same rule: what submitted POs (other than this one) already ordered, plus
+    this PO's lines, may not exceed the MR line's stock qty plus the over-receipt allowance
+    (Item › Over Delivery/Receipt Allowance, else Stock Settings). Typical cause: a draft made
+    while the MR line was open, then another PO ordered it.
+
+    rows: [{"row": <child name>, "material_request_item": ..., "qty": ..., "stock_qty": ...,
+    "conversion_factor": ..., "uom": ...}] in grid order. Returns the lines to correct with the
+    quantity they may keep (0 → remove the line)."""
+    import json
+    rows = json.loads(rows) if isinstance(rows, str) else (rows or [])
+    rows = [r for r in rows if r.get("material_request_item")]
+    if not rows:
+        return []
+    mri_names = list({r["material_request_item"] for r in rows})
+    mri = {d.name: d for d in frappe.get_all(
+        "Material Request Item", filters={"name": ["in", mri_names]},
+        fields=["name", "parent", "item_code", "stock_qty", "stock_uom"])}
+    ordered = dict(frappe.db.sql("""
+        SELECT poi.material_request_item, SUM(poi.stock_qty)
+        FROM `tabPurchase Order Item` poi JOIN `tabPurchase Order` po ON po.name = poi.parent
+        WHERE po.docstatus = 1 AND poi.material_request_item IN %(m)s AND po.name != %(me)s
+        GROUP BY poi.material_request_item
+    """, {"m": mri_names, "me": purchase_order or ""}))
+    global_allow = flt(frappe.db.get_single_value("Stock Settings", "over_delivery_receipt_allowance"))
+    left = {}
+    for name, m in mri.items():
+        allow = flt(frappe.get_cached_value("Item", m.item_code, "over_delivery_receipt_allowance")) or global_allow
+        left[name] = flt(m.stock_qty) * (1 + allow / 100.0) - flt(ordered.get(name))
+    out = []
+    for r in rows:
+        m = mri.get(r["material_request_item"])
+        if not m:
+            continue
+        cf = flt(r.get("conversion_factor")) or 1
+        want = flt(r.get("stock_qty")) or flt(r.get("qty")) * cf
+        keep_stock = max(0.0, min(want, left[m.name]))
+        left[m.name] -= keep_stock
+        if want - keep_stock > 0.0005:
+            out.append({
+                "row": r.get("row"), "item_code": m.item_code, "material_request": m.parent,
+                "qty": flt(r.get("qty")), "uom": r.get("uom") or m.stock_uom,
+                "allowed_qty": flt(keep_stock / cf, 6), "over_by_stock_qty": flt(want - keep_stock, 3),
+                "stock_uom": m.stock_uom,
+            })
+    return out
