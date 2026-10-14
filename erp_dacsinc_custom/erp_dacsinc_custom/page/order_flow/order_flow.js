@@ -4529,9 +4529,7 @@ class OrderFlow {
         // Render Sales Invoices Rows
         const si_rows = sis.map(s => {
             const out = flt_of(s.outstanding_amount);
-            const status_pill = out <= 0
-                ? '<span class="of-pill of-pill--ready">Paid</span>'
-                : '<span class="of-pill of-pill--need-bill">Unpaid / Due</span>';
+            const status_pill = of_invoice_status_html(s);
 
             return `<tr class="of-doc-row">
                 <td><i class="fa fa-caret-right of-doc-items-toggle" data-doctype="Sales Invoice" data-docname="${of_esc(s.name)}" style="cursor:pointer;margin-right:4px;color:var(--text-light);"></i>
@@ -4560,9 +4558,7 @@ class OrderFlow {
         // Render Supplier Invoices Rows
         const sup_rows = sups.map(p => {
             const out = flt_of(p.outstanding_amount);
-            const status_pill = out <= 0
-                ? '<span class="of-pill of-pill--ready">Paid</span>'
-                : '<span class="of-pill of-pill--blocked">Unpaid / Payable</span>';
+            const status_pill = of_invoice_status_html(p);
 
             return `<tr class="of-doc-row">
                 <td><i class="fa fa-caret-right of-doc-items-toggle" data-doctype="Purchase Invoice" data-docname="${of_esc(p.name)}" style="cursor:pointer;margin-right:4px;color:var(--text-light);"></i>
@@ -4590,9 +4586,7 @@ class OrderFlow {
         // Render Jobber Invoices Rows
         const job_rows = jobs.map(p => {
             const out = flt_of(p.outstanding_amount);
-            const status_pill = out <= 0
-                ? '<span class="of-pill of-pill--ready">Paid</span>'
-                : '<span class="of-pill of-pill--planned">Unpaid Jobber</span>';
+            const status_pill = of_invoice_status_html(p);
 
             return `<tr class="of-doc-row">
                 <td><i class="fa fa-caret-right of-doc-items-toggle" data-doctype="Purchase Invoice" data-docname="${of_esc(p.name)}" style="cursor:pointer;margin-right:4px;color:var(--text-light);"></i>
@@ -6294,6 +6288,26 @@ function of_ewo_notes_html(notes) {
             : `<div class="of-ewo-note">${of_esc(l)}</div>`;
     }).join('');
     return `<div class="of-ewo-notes">${html}</div>`;
+}
+
+// Finance tab: the invoice's own ERPNext status (Unpaid, Partly Paid, Overdue, Paid,
+// Return, Credit Note Issued…) as a pill, and under it whether the goods it bills have
+// been delivered / received (goods_status from get_accounts_flow).
+const OF_INVOICE_STATUS_PILL = {
+    'Paid': 'ready', 'Partly Paid': 'wait', 'Partly Paid and Discounted': 'wait',
+    'Unpaid': 'warn', 'Unpaid and Discounted': 'warn',
+    'Overdue': 'blocked', 'Overdue and Discounted': 'blocked',
+    'Return': 'done', 'Credit Note Issued': 'done', 'Debit Note Issued': 'done',
+    'Internal Transfer': 'dn',
+};
+function of_invoice_status_html(d) {
+    const st = d.status || (flt_of(d.outstanding_amount) <= 0 ? 'Paid' : 'Unpaid');
+    const pill = `<span class="of-pill of-pill--${OF_INVOICE_STATUS_PILL[st] || 'wait'}">${of_esc(__(st))}</span>`;
+    const g = d.goods_status;
+    if (!g) return pill;
+    const tone = /^(Delivered|Received)$/.test(g) ? 'var(--of-green)' : (/^Partly/.test(g) ? 'var(--of-orange)' : 'var(--text-muted)');
+    const icon = /^(Delivered|Received)$/.test(g) ? 'check-circle' : (/^Partly/.test(g) ? 'adjust' : 'circle-o');
+    return `${pill}<div class="of-micro" style="margin-top:4px;color:${tone};font-weight:600;white-space:nowrap;"><i class="fa fa-${icon}"></i> ${of_esc(__(g))}</div>`;
 }
 
 function of_empty_row(cols) {
