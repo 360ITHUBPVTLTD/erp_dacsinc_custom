@@ -173,8 +173,8 @@
     "V"
    ],
    "Journal Entry": [
-    "",
-    "",
+    "VNESC",
+    "VNESC",
     "",
     "",
     "",
@@ -306,8 +306,8 @@
     ""
    ],
    "Payment Entry": [
-    "",
-    "",
+    "VNESC",
+    "VNESC",
     "",
     "",
     "",
@@ -420,8 +420,8 @@
     ""
    ],
    "Sales Invoice": [
-    "",
-    "",
+    "VNESC",
+    "VNESC",
     "",
     "",
     "",
@@ -632,10 +632,10 @@
   ],
   "saved_by": "Administrator",
   "saved_by_name": "Administrator",
-  "saved_on": "2026-10-13 13:13:31.223130",
-  "version": 23
+  "saved_on": "2026-10-13 17:25:34.942446",
+  "version": 34
  },
- "fingerprint": "55c84c3be7aa019c5f0c87fbae9b5a2811e4f323",
+ "fingerprint": "15df80bd10f7f0c5cb699c38a8e9fc628be22619",
  "tab_access": {
   "cells": {
    "Embroidery Transfers": [
@@ -658,8 +658,8 @@
     ""
    ],
    "Finance": [
-    "",
-    "",
+    "A",
+    "A",
     "",
     "",
     "",
@@ -677,8 +677,8 @@
     ""
    ],
    "Finance \u203a Jobber Payables": [
-    "",
-    "",
+    "A",
+    "A",
     "",
     "",
     "",
@@ -696,8 +696,8 @@
     ""
    ],
    "Finance \u203a Receivables": [
-    "",
-    "",
+    "A",
+    "A",
     "",
     "",
     "",
@@ -715,8 +715,8 @@
     ""
    ],
    "Finance \u203a Supplier Payables": [
-    "",
-    "",
+    "A",
+    "A",
     "",
     "",
     "",
@@ -962,8 +962,8 @@
     ""
    ],
    "SO Approvals": [
-    "Y",
-    "Y",
+    "",
+    "",
     "A",
     "Y",
     "Y",
@@ -981,8 +981,8 @@
     ""
    ],
    "SO Approvals \u203a 1. Pending Approval (my orders)": [
-    "Y",
-    "Y",
+    "",
+    "",
     "A",
     "Y",
     "Y",
@@ -1000,8 +1000,8 @@
     ""
    ],
    "SO Approvals \u203a 2. Merchandiser Unassigned Orders": [
-    "Y",
-    "Y",
+    "",
+    "",
     "A",
     "Y",
     "Y",
@@ -1019,8 +1019,8 @@
     ""
    ],
    "SO Approvals \u203a 3. Other Merchandisers' Orders": [
-    "Y",
-    "Y",
+    "",
+    "",
     "A",
     "Y",
     "Y",
@@ -1038,8 +1038,8 @@
     ""
    ],
    "SO Approvals \u203a 4. Pending Final SO Approval": [
-    "Y",
-    "Y",
+    "",
+    "",
     "A",
     "Y",
     "Y",
@@ -1057,8 +1057,8 @@
     ""
    ],
    "SO Approvals \u203a 5. Rejected Orders": [
-    "Y",
-    "Y",
+    "",
+    "",
     "A",
     "Y",
     "Y",
@@ -1076,8 +1076,8 @@
     ""
    ],
    "Sales Tracker": [
-    "Y",
-    "Y",
+    "",
+    "",
     "A",
     "Y",
     "Y",
@@ -1152,8 +1152,8 @@
     ""
    ],
    "Sales Tracker \u203a Sales Orders": [
-    "Y",
-    "Y",
+    "",
+    "",
     "A",
     "Y",
     "Y",
@@ -1190,7 +1190,6 @@
     ""
    ]
   },
-  "note": "from the app code",
   "roles": [
    "Accounts Executive",
    "Accounts Manager",
@@ -1212,7 +1211,7 @@
   ],
   "saved_by": "Administrator",
   "saved_by_name": "Administrator",
-  "saved_on": "2026-10-13 12:25:59.703072",
-  "version": 8
+  "saved_on": "2026-10-14 10:59:20.331669",
+  "version": 12
  }
 }
