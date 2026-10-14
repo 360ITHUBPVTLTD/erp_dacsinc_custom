@@ -63,8 +63,15 @@ frappe.ui.form.on('Sales Invoice', {
 	onload: function(frm) {
 		frm.trigger('make_linked_rows_read_only');
 	},
+	onload_post_render: function(frm) {
+		si_remove_get_items_buttons(frm);
+	},
 	refresh: function(frm) {
 		frm.trigger('make_linked_rows_read_only');
+		si_remove_get_items_buttons(frm);
+		// Create menu: Payment and Return / Credit Note stay.
+		dacs_hide_create_buttons(frm, ['Payment Request', 'Invoice Discounting', 'Maintenance Schedule',
+			'Delivery Note', 'Dunning', 'Quality Inspection(s)']);
 	},
 	make_linked_rows_read_only: function(frm) {
 		if (frm.fields_dict.items && frm.fields_dict.items.grid) {
@@ -96,3 +103,24 @@ frappe.ui.form.on('Sales Invoice Item', {
 	}
 });
 
+// ERPNext's "Get Items From" menu (Sales Order, Quotation, Delivery Note, Timesheet) is
+// hidden: invoices are made from the Delivery Note / Sales Order or the Order Flow
+// dashboard (Pending DN/SI), so the billing caps and locks there always apply. Some of
+// these buttons are added after our refresh runs, hence the repeats.
+function si_remove_get_items_buttons(frm) {
+	const parent = __('Get Items From');
+	const labels = [__('Sales Order'), __('Quotation'), __('Delivery Note'), __('Timesheet')];
+	const remover = () => labels.forEach(l => frm.remove_custom_button(l, parent));
+	remover();
+	[200, 500, 1000, 2000].forEach(delay => setTimeout(remover, delay));
+}
+
+if (typeof window.dacs_hide_create_buttons !== 'function') {
+	// Same helper as in sales_order.js — remove standard "Create" menu buttons, repeating
+	// because ERPNext adds some of them after its own async calls.
+	window.dacs_hide_create_buttons = function (frm, labels) {
+		const remover = () => labels.forEach(l => frm.remove_custom_button(__(l), __('Create')));
+		remover();
+		[300, 800, 1500, 2500].forEach(delay => setTimeout(remover, delay));
+	};
+}

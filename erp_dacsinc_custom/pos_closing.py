@@ -13,6 +13,52 @@ from frappe import _
 from frappe.utils import flt, get_datetime, now_datetime, nowdate, nowtime
 
 
+def shift_invoices(pos_profile, start, end):
+	"""Every submitted, not yet consolidated bill of the store made during the shift — by any
+	user: the store's shift is shared (pos_cash.open_store_shift). ERPNext's get_pos_invoices
+	takes only the bills of the user who opened it."""
+	rows = frappe.db.sql("""select name, timestamp(posting_date, posting_time) as ts from `tabPOS Invoice`
+		where docstatus = 1 and pos_profile = %s and ifnull(consolidated_invoice, '') = '' order by ts""",
+		pos_profile, as_dict=True)
+	start, end = get_datetime(start), get_datetime(end)
+	return [frappe.get_doc("POS Invoice", r.name).as_dict() for r in rows if start <= get_datetime(r.ts) <= end]
+
+
+@frappe.whitelist()
+def get_pos_invoices(start, end, pos_profile, user=None):
+	"""Replaces ERPNext's (the closing form calls it when the opening entry is picked): the
+	store's bills in the shift, by any user."""
+	frappe.has_permission("POS Profile", "read", pos_profile, throw=True)
+	return shift_invoices(pos_profile, start, end)
+
+
+from erpnext.accounts.doctype.pos_closing_entry.pos_closing_entry import POSClosingEntry  # noqa: E402
+
+
+class StorePOSClosingEntry(POSClosingEntry):
+	"""hooks override_doctype_class: a store's shift is shared, so its closing may carry bills
+	made by any of the store's users. Same checks as ERPNext, without "created by the user
+	who opened the shift"."""
+
+	def validate_pos_invoices(self):
+		invalid_rows = []
+		for d in self.pos_transactions:
+			inv = frappe.db.get_value("POS Invoice", d.pos_invoice, ["consolidated_invoice", "pos_profile", "docstatus"],
+									  as_dict=True) or frappe._dict()
+			msg = []
+			if inv.consolidated_invoice:
+				msg.append(_("POS Invoice is already consolidated"))
+			else:
+				if inv.pos_profile != self.pos_profile:
+					msg.append(_("POS Profile doesn't match {}").format(frappe.bold(self.pos_profile)))
+				if inv.docstatus != 1:
+					msg.append(_("POS Invoice is not submitted"))
+			if msg:
+				invalid_rows.append(_("Row #{}: {}").format(d.idx, " ".join(msg)))
+		if invalid_rows:
+			frappe.throw(invalid_rows, title=_("Invalid POS Invoices"), as_list=True)
+
+
 @frappe.whitelist()
 def make_closing_entry(pos_opening_entry):
 	opening = frappe.get_doc("POS Opening Entry", pos_opening_entry)
@@ -21,8 +67,6 @@ def make_closing_entry(pos_opening_entry):
 		frappe.throw(_("POS Opening Entry {0} is not open.").format(frappe.bold(opening.name)))
 	if opening.user != frappe.session.user and not frappe.has_permission("POS Closing Entry", "create"):
 		frappe.throw(_("Not permitted."), frappe.PermissionError)
-
-	from erpnext.accounts.doctype.pos_closing_entry.pos_closing_entry import get_pos_invoices
 
 	doc = frappe.new_doc("POS Closing Entry")
 	doc.update({
@@ -36,7 +80,7 @@ def make_closing_entry(pos_opening_entry):
 		payments[b.mode_of_payment] = {"mode_of_payment": b.mode_of_payment, "opening_amount": flt(b.opening_amount),
 									   "expected_amount": flt(b.opening_amount)}
 	taxes = {}
-	for inv in get_pos_invoices(opening.period_start_date, get_datetime(doc.period_end_date), opening.pos_profile, opening.user):
+	for inv in shift_invoices(opening.pos_profile, opening.period_start_date, doc.period_end_date):
 		doc.append("pos_transactions", {"pos_invoice": inv.name, "posting_date": inv.posting_date,
 										"grand_total": inv.grand_total, "customer": inv.customer})
 		doc.grand_total += flt(inv.grand_total)

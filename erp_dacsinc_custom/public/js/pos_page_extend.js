@@ -171,6 +171,21 @@
 			}, done);
 		};
 
+		// ---------------- One shared shift per store (pos_cash.check_opening_entry / create_opening):
+		// a store user continues the store's open shift, whoever opened it — say so.
+		const orig_prepare = PS.Controller.prototype.prepare_app_defaults;
+		PS.Controller.prototype.prepare_app_defaults = function (data) {
+			if (data && data.user && data.user !== frappe.session.user) {
+				frappe.show_alert({
+					message: __("Continuing {0}'s shift, opened by {1} on {2}. Anyone at the store can close it.", [
+						data.pos_profile, frappe.user.full_name(data.user),
+						frappe.datetime.str_to_user(data.period_start_date)]),
+					indicator: "blue",
+				}, 10);
+			}
+			return orig_prepare.call(this, data);
+		};
+
 		// ---------------- Open the POS (Controller): ERPNext's opening dialog, with the cash in
 		// the drawer carried from the store's last closing (pos_cash.py):
 		// - a user on only one POS Profile gets it filled in (pos_scope.my_pos_profiles);

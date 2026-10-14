@@ -53,19 +53,13 @@ frappe.ui.form.on('Sales Order', {
             });
         }
 
-        // --- Remove unwanted standard "Create" buttons ---
-        setTimeout(() => {
-            frm.remove_custom_button('Maintenance Visit', 'Create');
-            frm.remove_custom_button('Work Order', 'Create');
-            frm.remove_custom_button('Purchase Order', 'Create');
-            frm.remove_custom_button('Project', 'Create');
-            frm.remove_custom_button('Payment Request', 'Create');
-            frm.remove_custom_button('Request for Raw Materials', 'Create');
-            frm.remove_custom_button('Pick List', 'Create');
-            // frm.remove_custom_button('Material Request', 'Create');
-            frm.remove_custom_button('Delivery Note', 'Create');
-            frm.remove_custom_button('Sales Invoice', 'Create');
-        }, 500);
+        // --- Remove standard "Create" buttons outside our flow ---
+        // Pick List / Delivery Note / Sales Invoice are made from the Item Stock & Action Plan
+        // and the Order Flow dashboard; Material Request, our "Create Purchase Order" and
+        // Payment (advance against the order) stay. ERPNext adds some of these late (after
+        // async calls), so the removal repeats — one pass at 500 ms left them all showing.
+        dacs_hide_create_buttons(frm, ['Maintenance Visit', 'Maintenance Schedule', 'Work Order', 'Purchase Order',
+            'Project', 'Payment Request', 'Request for Raw Materials', 'Pick List', 'Delivery Note', 'Sales Invoice']);
 
         // --- Custom "Create Purchase Order" button (submitted docs only) ---
         if (frm.doc.docstatus === 1) {
@@ -5090,11 +5084,10 @@ function show_picked_others_details_modal(pair_key) {
 //  SECTION 9: UTILITY
 // ================================================================
 
-function flt(val, precision) {
-    const n = parseFloat(val);
-    if (isNaN(n)) return 0;
-    return precision !== undefined ? parseFloat(n.toFixed(precision)) : n;
-}
+// No local flt(): this file is loaded as a plain script (Sales Order form, Order Flow page),
+// so a top-level `function flt` replaced Frappe's global flt for the whole desk. Frappe's
+// flt(value, precision) takes the same arguments and also reads "42,784.00" correctly;
+// a parseFloat copy turned it into 42 in every number field after this file loaded.
 
 function so_format_currency(val, currency) {
     if (val === undefined || val === null) return '--';
@@ -6486,4 +6479,13 @@ function so_is_scoped_merchandiser() {
     const r = frappe.user_roles || [];
     return r.includes('Merchandiser User') && frappe.session.user !== 'Administrator'
         && !['System Manager', 'Super Admin', 'Admin'].some((x) => r.includes(x));
+}
+
+// Remove standard buttons from a form's "Create" menu, repeating for 2 s because ERPNext adds
+// some of them after its own async calls. Shared by sales_order.js, delivery_note.js and
+// sales_invoice.js (defined here and in the other two only if missing).
+function dacs_hide_create_buttons(frm, labels) {
+    const remover = () => labels.forEach(l => frm.remove_custom_button(__(l), __('Create')));
+    remover();
+    [300, 800, 1500, 2500].forEach(delay => setTimeout(remover, delay));
 }

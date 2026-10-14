@@ -159,6 +159,14 @@ def get_embroidery_transfers(status=None, search=None, scope=None, page=1, page_
         conditions.append("(name LIKE %(search)s OR source_item LIKE %(search)s OR target_item LIKE %(search)s)")
         values["search"] = f"%{search}%"
 
+    # The page's custom date range ("from~to") narrows by date sent. "Last N days" is not
+    # applied here: this tab has always listed every transfer.
+    days = kwargs.get("days")
+    if days and "~" in str(days):
+        from erp_dacsinc_custom.order_flow_api import _from_date, _to_next
+        conditions.append("date_sent >= %(from_date)s AND date_sent < %(to_next)s")
+        values["from_date"], values["to_next"] = _from_date(days), _to_next(days)
+
     where_clause = f"WHERE {' AND '.join(conditions)}" if conditions else ""
 
     transfers = _paged_query(f"""
