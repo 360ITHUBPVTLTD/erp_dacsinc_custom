@@ -1,0 +1,91 @@
+{
+ "actions": [],
+ "creation": "2026-10-15 12:00:00.000000",
+ "doctype": "DocType",
+ "editable_grid": 1,
+ "engine": "InnoDB",
+ "istable": 1,
+ "module": "Erp Dacsinc Custom",
+ "name": "Uniform Embroidery Transfer Item",
+ "owner": "Administrator",
+ "modified": "2026-10-15 12:00:00.000000",
+ "modified_by": "Administrator",
+ "row_format": "Dynamic",
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "states": [],
+ "permissions": [],
+ "links": [],
+ "field_order": [
+  "source_item",
+  "same_item",
+  "target_item",
+  "qty",
+  "uom",
+  "received_qty",
+  "pending_qty"
+ ],
+ "fields": [
+  {
+   "fieldname": "source_item",
+   "fieldtype": "Link",
+   "options": "Item",
+   "label": "Plain Item (Sent)",
+   "reqd": 1,
+   "in_list_view": 1,
+   "columns": 3
+  },
+  {
+   "fieldname": "same_item",
+   "fieldtype": "Check",
+   "label": "Same Item",
+   "in_list_view": 1,
+   "columns": 1,
+   "default": "0",
+   "description": "Comes back as the same item (embroidery only)"
+  },
+  {
+   "fieldname": "target_item",
+   "fieldtype": "Link",
+   "options": "Item",
+   "label": "Embroidered Item (Comes Back)",
+   "reqd": 1,
+   "in_list_view": 1,
+   "columns": 3
+  },
+  {
+   "fieldname": "qty",
+   "fieldtype": "Float",
+   "label": "Qty Sent",
+   "reqd": 1,
+   "in_list_view": 1,
+   "columns": 1
+  },
+  {
+   "fieldname": "uom",
+   "fieldtype": "Link",
+   "options": "UOM",
+   "label": "UOM",
+   "read_only": 1,
+   "fetch_from": "source_item.stock_uom"
+  },
+  {
+   "fieldname": "received_qty",
+   "fieldtype": "Float",
+   "label": "Qty Received",
+   "read_only": 1,
+   "in_list_view": 1,
+   "columns": 1,
+   "no_copy": 1
+  },
+  {
+   "fieldname": "pending_qty",
+   "fieldtype": "Float",
+   "label": "Pending",
+   "read_only": 1,
+   "in_list_view": 1,
+   "columns": 1,
+   "no_copy": 1
+  }
+ ]
+}

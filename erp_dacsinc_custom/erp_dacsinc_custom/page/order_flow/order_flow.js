@@ -17,6 +17,8 @@ frappe.pages['order-flow'].on_page_load = function (wrapper) {
 };
 
 const OF_SEEN_KEY = 'dac_order_flow_last_seen';
+// The page's filters, remembered per user in this browser across reloads (save_view_prefs).
+const OF_PREFS_KEY = 'dac_order_flow_filters';
 
 // The single definition of the tracker stages. The summary tiles, the filter bar
 // and its counts all read from here, so a stage can never appear in one place with
@@ -123,6 +125,22 @@ const OF_TABS = [
 const OF_TAB_LABELS = Object.fromEntries(OF_TABS.map(t => [t.key, t.label]));
 
 
+// Which document types each visible table lists — a change to one of them by another user
+// is worth an "update waiting" note (is_relevant_change). '*' = the tab's only table.
+const OF_TABLE_DOCTYPES = {
+    tracker:  { so: ['Sales Order'], mr: ['Material Request'], fp: ['Embroidery Work Order'], pn: ['Embroidery Work Order'] },
+    purchase: { po: ['Purchase Order'], receipt: ['Purchase Receipt', 'Subcontracting Receipt'], bill: ['Purchase Order', 'Purchase Invoice', 'Purchase Receipt'] },
+    jobwork:  { po: ['Purchase Order', 'Subcontracting Order'], receipt: ['Purchase Receipt', 'Subcontracting Receipt'],
+                fp: ['Embroidery Work Order'], pn: ['Embroidery Work Order'] },
+    accounts: { receivables: ['Sales Invoice', 'Payment Entry', 'Journal Entry'], supplier: ['Purchase Invoice', 'Payment Entry', 'Journal Entry'],
+                jobber: ['Purchase Invoice', 'Payment Entry', 'Journal Entry'] },
+    approval: { '*': ['Sales Order'] },
+    picklist: { '*': ['Pick List'] },
+    billing:  { '*': ['Delivery Note', 'Sales Invoice', 'Pick List'] },
+    uniform:  { '*': ['Uniform Embroidery Transfer'] },
+    logistics: { '*': ['Sales Invoice'] },
+};
+
 // Toolbar Status filter, per list (order_flow_api._STATUS_SQL has the conditions).
 // `closed`: the option finds documents "Open orders" hides, so choosing it switches to "All orders".
 const OF_STATUS_OPTIONS = {
@@ -155,6 +173,9 @@ const OF_PO_FILTERS = [['received', 'select', OF_TRI('received'), 'Received'], [
     ['overdue', 'select', [['yes', 'Overdue (past expected date)']], 'Overdue']];
 const OF_EWO_FILTERS = (key, jobber_label) => [['received', 'select', OF_TRI('received', true), 'Received'],
     ['stage', 'select', OF_EWO_STAGE[key], 'Stage'], ['supplier', 'link', 'Supplier', jobber_label]];
+// Stock Tracker counts for this warehouse by default (the store everything is picked from).
+const OF_MAIN_WAREHOUSE = 'VV Puram - IND';
+
 const OF_TABLE_FILTERS = {
     'approval': [['approval_stage', 'mirror', '#of-approval-stage', 'Approval stage'], ['merchandiser', 'mirror', '#of-merchandiser', 'Merchandiser'], ['customer', 'link', 'Customer']],
     'tracker.so': [['merchandiser', 'mirror', '#of-merchandiser', 'Merchandiser'], ['industry', 'mirror', '#of-tracker-industry', 'Industry'],
@@ -165,7 +186,7 @@ const OF_TABLE_FILTERS = {
         ['customer', 'link', 'Customer'], ['pos', 'pos']],
     'tracker.ewo_fp': OF_EWO_FILTERS('ewo_fp', 'Jobber').concat([['customer', 'link', 'Customer']]),
     'tracker.ewo_pn': OF_EWO_FILTERS('ewo_pn', 'Jobber').concat([['customer', 'link', 'Customer']]),
-    'picklist': [['status', 'status', 'pl', 'Status'], ['customer', 'link', 'Customer'], ['warehouse', 'link', 'Warehouse']],
+    'picklist': [['status', 'status', 'pl', 'Status'], ['customer', 'link', 'Customer'], ['item', 'link', 'Item']],
     'purchase.po': OF_PO_FILTERS.concat([['supplier', 'link', 'Supplier'], ['customer', 'link', 'Customer']]),
     'purchase.receipt': [['status', 'status', 'receipt', 'Billing'], ['supplier', 'link', 'Supplier']],
     'purchase.bill': [['supplier', 'link', 'Supplier']],
@@ -219,7 +240,7 @@ class OrderFlow {
         this.merchandiser_filter = '';
         this.approval_stage_filter = '';
         this.uniform_status_filter = ''; // Embroidery Transfers tab only — see #of-uniform-status
-        this.stock_warehouse_filter = ''; // Stock Tracker tab only — see #of-stock-warehouse
+        this.stock_warehouse_filter = OF_MAIN_WAREHOUSE; // Stock Tracker: counts for the main warehouse unless another is chosen
         this.tracker_industry_filter = ''; // Sales Tracker's SO subtab only — see #of-tracker-industry
         this.approval_rejected_stage_filter = ''; // SO Approvals' Rejected Orders sub-tab only — 'merchandiser' | 'final'
 
@@ -330,6 +351,7 @@ class OrderFlow {
                         const ok = this.allowed_subtabs[tab];
                         return (!ok || !ok.length || of_subtab_ok(tab, cur, ok)) ? cur : ok[0];
                     };
+                    this.load_view_prefs();
                     this.tracker_subtab = first_ok('tracker', this.tracker_subtab);
                     this.pur_subtab = first_ok('purchase', this.pur_subtab);
                     this.job_subtab = first_ok('jobwork', this.job_subtab);
@@ -338,6 +360,7 @@ class OrderFlow {
 
                     this.render_shell();
                     this.bind();
+                    this.apply_view_prefs_to_controls();
                     this.watch_subtab_perms();
 
                     // Remember the last tab across reloads, but only if this
@@ -357,7 +380,9 @@ class OrderFlow {
             const now = Date.now();
             if (now - last_focus_refresh > 3000) {
                 last_focus_refresh = now;
-                this.queue_background_refresh(null);
+                // Coming back to the page is not "another user changed something": refresh
+                // quietly when nothing is open, otherwise leave the screen as it is.
+                if (this.active && !this.is_busy()) this.refresh(true);
             }
         });
 
@@ -453,14 +478,20 @@ class OrderFlow {
         return $p.find('tr.of-so-details-row:visible, tr.of-doc-items-row:visible, tr.of-ewo-items-row:visible').length > 0;
     }
 
-    // Does a broadcast change touch what this tab shows? Unknown → yes.
+    // Does another user's change touch the table on screen? Own changes never count (the
+    // action that made them refreshes the screen). A change counts when its document type is what
+    // the visible table lists (OF_TABLE_DOCTYPES), or it belongs to a Sales Order shown on it.
     is_relevant_change(p) {
         if (!p || !p.doctype) return true;
-        if (p.user && p.user === frappe.session.user && this.is_busy()) return false; // own action; its own screen refreshes itself
-        const doctypes = (OF_TAB_FILTERS[this.active] || {}).doctypes;
-        if (!doctypes || doctypes.includes(p.doctype)) return true;
-        const shown = new Set(this.$body.find(`#of-panel-${this.active} [data-so]`).map((i, el) => String($(el).data('so'))).get());
-        return (p.sales_orders || []).some(so => shown.has(so));
+        if (p.user && p.user === frappe.session.user) return false;
+        const sub = { tracker: this.tracker_subtab, purchase: this.pur_subtab, jobwork: this.job_subtab, accounts: this.acc_subtab }[this.active];
+        const map = OF_TABLE_DOCTYPES[this.active];
+        const doctypes = map ? (map[sub || ''] || map['*']) : (OF_TAB_FILTERS[this.active] || {}).doctypes;
+        if (doctypes && doctypes.includes(p.doctype)) return true;
+        const $p = this.$body.find(`#of-panel-${this.active}`);
+        const shown = new Set($p.find('[data-so]:visible').map((i, el) => String($(el).data('so'))).get());
+        if ((p.sales_orders || []).some(so => shown.has(so))) return true;
+        return !!(p.name && $p.find(':visible').filter((i, el) => el.textContent === p.name).length);
     }
 
     // Another user's change (or the browser tab regaining focus): refresh now when
@@ -549,6 +580,32 @@ class OrderFlow {
         window.scrollTo(0, state.scroll);
     }
 
+    // The "Custom range…" picker: one Frappe DateRange control (pick first day, then last) that
+    // writes the two hidden dates and fires their change → apply_date_range, as the two date
+    // boxes did.
+    mount_date_range() {
+        const $wrap = this.$body.find('#of-daterange .of-daterange__pick');
+        const $from = this.$body.find('#of-date-from'), $to = this.$body.find('#of-date-to');
+        if (!$wrap.length) return;
+        if (!this._date_range_ctrl) {
+            const ctrl = frappe.ui.form.make_control({
+                parent: $wrap,
+                df: {
+                    fieldtype: 'DateRange', fieldname: 'of_between', placeholder: __('From – To'),
+                    onchange: () => {
+                        const v = ctrl.get_value();
+                        if (!Array.isArray(v) || !v[0] || !v[1]) return;
+                        if (v[0] === $from.val() && v[1] === $to.val()) return;
+                        $from.val(v[0]); $to.val(v[1]).trigger('change');
+                    },
+                },
+                render_input: true, only_input: true,
+            });
+            this._date_range_ctrl = ctrl;
+        }
+        if ($from.val() && $to.val()) this._date_range_ctrl.set_value([$from.val(), $to.val()]);
+    }
+
     // Custom range: both dates set → every tab gets days="from~to" (order_flow_api._date_range).
     apply_date_range() {
         const from = this.$body.find('#of-date-from').val(), to = this.$body.find('#of-date-to').val();
@@ -600,11 +657,11 @@ class OrderFlow {
                     ${opts.map(o => `<option value="${of_esc(o[0])}"${o[0] === cur ? ' selected' : ''}>${__(o[1])}</option>`).join('')}</select>`, !!cur);
             }
             if (type === 'link') {
-                const opts = (this.tf_options[key] || {})[field];
-                if (Array.isArray(opts)) {   // search box over the parties actually in this table
+                const raw = (this.tf_options[key] || {})[field];
+                if (Array.isArray(raw)) {   // search box over the parties actually in this table
+                    const opts = of_tf_merged(raw);
                     const cur = vals[field] || '';
-                    const hit = opts.find(o => o[0] === cur);
-                    const shown = cur ? (hit ? (hit[1] || hit[0]) : cur) : '';
+                    const shown = cur ? of_tf_label(raw, cur) : '';
                     return field_html(__(label || arg), `<span class="of-tf-combo" data-list="${key}" data-f="${field}">
                         <input type="text" class="of-tf-combo-input" autocomplete="off" value="${of_esc(shown)}"
                                placeholder="${of_esc(__('All ({0}) — type to search', [opts.length]))}">
@@ -618,8 +675,9 @@ class OrderFlow {
                 if (!$t.length) return '';
                 if (arg === '#of-merchandiser' && !this.merch_filter_allowed()) return '';
                 const cur = $t.val() || '';
-                if (cur) any = true;
-                return field_html(__(label || ''), `<select class="of-tf-mirror" data-target="${arg}">${of_mirror_options($t)}</select>`, !!cur);
+                const is_default = arg === '#of-stock-warehouse' && cur === OF_MAIN_WAREHOUSE;   // the default is not a filter
+                if (cur && !is_default) any = true;
+                return field_html(__(label || ''), `<select class="of-tf-mirror" data-target="${arg}">${of_mirror_options($t)}</select>`, !!cur && !is_default);
             }
             if (type === 'pos') {
                 const on = !!(this.perms && this.perms.show_pos_docs);
@@ -659,6 +717,7 @@ class OrderFlow {
                 df: {
                     fieldtype: 'Link', options: $w.data('doctype'), fieldname: `tf_${field}`, placeholder: $w.data('label'),
                     onchange: () => {
+                        if (!$w[0].isConnected) return;   // replaced by a redraw, not a user change
                         const v = ctrl.get_value() || '';
                         const f = (this.table_filters[key] = this.table_filters[key] || {});
                         if (v === (f[field] || '')) return;
@@ -679,6 +738,221 @@ class OrderFlow {
                 const v = $t.val(); $m.html(of_mirror_options($t)).val(v);
             }
         });
+    }
+
+    // ── Filters remembered across reloads (per user, this browser) ──
+    // Every filter change runs refresh(), which saves; sub-tab clicks save too (fit_tables'
+    // click hook). Restored before the first paint; stale values simply match nothing.
+    view_prefs_key() {
+        return `${OF_PREFS_KEY}:${frappe.session.user}`;
+    }
+
+    save_view_prefs() {
+        try {
+            localStorage.setItem(this.view_prefs_key(), JSON.stringify({
+                days: this.days, scope: this.scope, search: this.search, stage_filter: this.stage_filter,
+                date_from: this.$body.find('#of-date-from').val() || '', date_to: this.$body.find('#of-date-to').val() || '',
+                table_filters: this.table_filters, docstatus_filter: this.docstatus_filter,
+                merchandiser_filter: this.merchandiser_filter, approval_stage_filter: this.approval_stage_filter,
+                uniform_status_filter: this.uniform_status_filter, stock_warehouse_filter: this.stock_warehouse_filter,
+                tracker_industry_filter: this.tracker_industry_filter,
+                tracker_subtab: this.tracker_subtab, pur_subtab: this.pur_subtab, job_subtab: this.job_subtab,
+                acc_subtab: this.acc_subtab, approval_subtab: this.approval_subtab,
+            }));
+        } catch (e) { /* storage full / blocked: the page just won't remember */ }
+    }
+
+    load_view_prefs() {
+        let p = null;
+        try { p = JSON.parse(localStorage.getItem(this.view_prefs_key()) || 'null'); } catch (e) { p = null; }
+        if (!p || typeof p !== 'object') return;
+        const str = (v) => (typeof v === 'string' ? v : '');
+        if (p.days !== undefined && p.days !== null && p.days !== '') this.days = p.days;
+        if (['open', 'all', 'mine'].includes(p.scope)) this.scope = p.scope;
+        this.search = str(p.search);
+        if (str(p.stage_filter)) this.stage_filter = p.stage_filter;
+        if (p.table_filters && typeof p.table_filters === 'object') this.table_filters = p.table_filters;
+        if (p.docstatus_filter && typeof p.docstatus_filter === 'object') {
+            Object.keys(this.docstatus_filter).forEach(t => Object.assign(this.docstatus_filter[t], p.docstatus_filter[t] || {}));
+        }
+        ['merchandiser_filter', 'approval_stage_filter', 'uniform_status_filter', 'tracker_industry_filter'].forEach(k => { this[k] = str(p[k]); });
+        if (p.stock_warehouse_filter !== undefined) this.stock_warehouse_filter = str(p.stock_warehouse_filter);
+        ['tracker_subtab', 'pur_subtab', 'job_subtab', 'acc_subtab', 'approval_subtab'].forEach(k => { if (str(p[k])) this[k] = p[k]; });
+        this._prefs_dates = { from: str(p.date_from), to: str(p.date_to) };
+    }
+
+    // Put the restored values back into the controls (render_shell draws them at their defaults).
+    apply_view_prefs_to_controls() {
+        const $b = this.$body;
+        $b.find('#of-search').val(this.search || '');
+        $b.find('#of-scope').val(this.scope);
+        const custom = String(this.days).includes('~');
+        $b.find('#of-days').val(custom ? 'custom' : String(this.days));
+        if (custom) {
+            const [from, to] = String(this.days).split('~');
+            $b.find('#of-date-from').val(from); $b.find('#of-date-to').val(to);
+            $b.find('#of-daterange').show();
+            this.mount_date_range();
+        } else if (this._prefs_dates) {
+            $b.find('#of-date-from').val(this._prefs_dates.from); $b.find('#of-date-to').val(this._prefs_dates.to);
+        }
+        if (!$b.find('#of-days').val()) { $b.find('#of-days').val('120'); this.days = 120; }   // an old option
+        $b.find('#of-approval-stage').val(this.approval_stage_filter || '');
+        $b.find('#of-uniform-status').val(this.uniform_status_filter || '');
+        $b.find('.of-stage-btn').removeClass('is-active').filter(`[data-stage="${this.stage_filter}"]`).addClass('is-active');
+        if (!$b.find('.of-stage-btn.is-active').length) {
+            this.stage_filter = 'all';
+            $b.find('.of-stage-btn[data-stage="all"]').addClass('is-active');
+        }
+    }
+
+    // UI only: the controls that narrow the whole tab — search, Open / All, Last N days (custom
+    // range), "Show my customers' orders" and, on Sales Tracker › Sales Orders, the stage chips —
+    // sit in the visible table's filter bar, right above it and sticky with it, instead of the top
+    // toolbar. The same elements are moved (ids and delegated handlers unchanged), so what they
+    // do is unchanged. Moved back to the toolbar dock before every redraw (panel.html would
+    // destroy them) and placed again after it. A tab with no filter bar keeps them in the toolbar.
+    shared_control_els() {
+        return ['.of-toolbar .of-search, .of-tf-row .of-search', '#of-scope', '#of-days', '#of-daterange', '#of-my-customers']
+            .map(sel => this.$body.find(sel)[0]).filter(Boolean);
+    }
+
+    park_shared_controls() {
+        const active = document.activeElement;
+        const focus = active && active.id === 'of-search'
+            ? { start: active.selectionStart, end: active.selectionEnd } : null;
+        const $dock = this.$body.find('#of-shared-dock');
+        if (!$dock.length) return focus;
+        let at = $dock[0];
+        this.shared_control_els().forEach(el => {
+            if (el.parentNode !== at.parentNode || el.previousSibling !== at) at.after(el);
+            at = el;
+        });
+        const $bar = this.$body.find('#of-stage-bar');
+        const $panel = this.$body.find('#of-panel-tracker');
+        if ($bar.length && $panel.length && !$bar.next().is($panel)) $bar.insertBefore($panel);
+        return focus;
+    }
+
+    place_shared_controls(focus) {
+        const active = document.activeElement;
+        if (!focus && active && active.id === 'of-search') focus = { start: active.selectionStart, end: active.selectionEnd };
+        const $panel = this.$body.find(`#of-panel-${this.active}`);
+        const sticky = $panel.find('.of-card__sticky').toArray().find(el => el.offsetParent && $(el).children('.of-tf-row').length);
+        const $toolbar = this.$body.find('.of-toolbar');
+        if (!sticky) {
+            this.park_shared_controls();
+            // Shown in the toolbar only for a drawn tab that has no filter bar — not while a tab
+            // is still loading (they would flash there, then jump into the table's bar).
+            const drawn = $panel.find('.of-card').length && !$panel.find('.of-empty .fa-spinner').length;
+            $toolbar.toggleClass('of-shared-in-toolbar', !!drawn);
+            return;
+        }
+        $toolbar.removeClass('of-shared-in-toolbar');
+        const row = $(sticky).children('.of-tf-row')[0];
+        let at = null;
+        this.shared_control_els().forEach(el => {
+            if (at ? el.previousSibling !== at : row.firstChild !== el) {
+                if (at) at.after(el); else row.prepend(el);
+            }
+            at = el;
+        });
+        // Stage chips: under the Sales Orders title, above its filter bar; they wrap (nothing
+        // to scroll), and stages with no orders fold behind "+N more".
+        const $bar = this.$body.find('#of-stage-bar');
+        if ($bar.length) {
+            const so_sticky = this.active === 'tracker'
+                ? $panel.find('.of-tf-row[data-list="tracker.so"]').parent('.of-card__sticky')[0] : null;
+            if (so_sticky) {
+                if ($bar.parent()[0] !== so_sticky || !$bar.next().hasClass('of-tf-row')) {
+                    $(so_sticky).children('.of-tf-row').before($bar);
+                }
+            } else if (!$bar.next().is($('#of-panel-tracker'))) {
+                $bar.insertBefore(this.$body.find('#of-panel-tracker'));
+            }
+        }
+        if (focus) {
+            const inp = this.$body.find('#of-search')[0];
+            if (inp && document.activeElement !== inp) {
+                inp.focus();
+                try { inp.setSelectionRange(focus.start, focus.end); } catch (e) { /* type=search */ }
+            }
+        }
+    }
+
+    // Phone: a table's filter strip folds behind a "Filters (n)" button in its title row, so the
+    // table is in view without scrolling past a column of filters. Open / closed is kept per
+    // table across redraws (this.tf_open). Hidden above 768px (CSS), where the strip always shows.
+    add_filter_toggles() {
+        this.tf_open = this.tf_open || {};
+        this.$body.find('.of-card__sticky').each((i, el) => {
+            const $st = $(el), $row = $st.children('.of-tf-row'), $head = $st.children('.of-card__head');
+            if (!$row.length || !$head.length) return;
+            const key = $row.data('list');
+            const n = $row.find('.of-tf-field.is-set').length;
+            const label = `<i class="fa fa-filter"></i> ${__('Filters')}${n ? ` <span class="of-tf-toggle__n">${n}</span>` : ''}`;
+            let $btn = $head.find('.of-tf-toggle');
+            if (!$btn.length) {
+                $btn = $(`<button type="button" class="of-btn of-tf-toggle"></button>`).appendTo($head);
+            }
+            if ($btn.html() !== label) $btn.html(label);
+            $st.toggleClass('of-tf-is-open', !!this.tf_open[key]);
+        });
+        if (!this._tf_toggle_bound) {
+            this._tf_toggle_bound = true;
+            this.$body.on('click', '.of-tf-toggle', (e) => {
+                e.preventDefault();
+                const $st = $(e.currentTarget).closest('.of-card__sticky');
+                const key = $st.children('.of-tf-row').data('list');
+                this.tf_open[key] = !this.tf_open[key];
+                $st.toggleClass('of-tf-is-open', this.tf_open[key]);
+                this.fit_tables();
+            });
+        }
+    }
+
+    // Column headings stay in view on every screen: each main table scrolls inside a box exactly
+    // as tall as the screen below the navbar and the table's sticky title / filter strip (and
+    // above its pagination bar), with its <thead> pinned (CSS --of-box-h). Re-measured after
+    // every redraw, tab / sub-tab switch and resize.
+    fit_tables() {
+        const run = () => {
+            const nav = (document.querySelector('.navbar') || {}).offsetHeight || 48;
+            const phone = window.matchMedia('(max-width: 768px)').matches;
+            this.$body.find('[id^="of-panel-"] .of-card > .of-scroll').each((i, el) => {
+                if (!el.offsetParent) return;
+                const st = el.closest('.of-card').querySelector(':scope > .of-card__sticky');
+                const head = st && !phone ? st.offsetHeight : 0;
+                let foot = 0;
+                for (let n = el.nextElementSibling; n; n = n.nextElementSibling) foot += n.offsetHeight;
+                // Whatever the page still has below this card (padding, footer) lets the page scroll
+                // that much further, pushing the box's top (its heading) up under the sticky strip.
+                const card = el.closest('.of-card');
+                const doc_h = document.documentElement.scrollHeight;
+                const below = Math.max(0, doc_h - (card.getBoundingClientRect().bottom + window.scrollY));
+                const h = Math.max(phone ? 300 : 240, window.innerHeight - nav - head - foot - below - 4);
+                if (el.style.getPropertyValue('--of-box-h') !== h + 'px') el.style.setProperty('--of-box-h', h + 'px');
+            });
+        };
+        run();
+        // The strip can grow after this ran (stage counts arrive, a filter box mounts, "+N more"
+        // opens): re-measure whenever any sticky strip changes height.
+        if (window.ResizeObserver) {
+            this._fit_ro = this._fit_ro || new ResizeObserver(() => {
+                clearTimeout(this._fit_ro_t); this._fit_ro_t = setTimeout(run, 30);
+            });
+            this._fit_seen = this._fit_seen || new WeakSet();
+            this.$body.find('.of-card__sticky').each((i, el) => {
+                if (!this._fit_seen.has(el)) { this._fit_seen.add(el); this._fit_ro.observe(el); }
+            });
+        }
+        if (!this._fit_bound) {
+            this._fit_bound = true;
+            let t = null;
+            const later = () => { clearTimeout(t); t = setTimeout(() => { this.place_shared_controls(); run(); this.save_view_prefs(); }, 80); };
+            window.addEventListener('resize', later);
+            this.$body.on('click', '[data-tab], .of-subtab, .of-acc-subtab, .of-pl-more > summary', later);
+        }
     }
 
     party_args(tab) {
@@ -742,8 +1016,11 @@ class OrderFlow {
     watch_subtab_perms() {
         const apply = () => {
             this.mount_table_filters();
+            this.place_shared_controls();
+            this.add_filter_toggles();
             this.add_submit_buttons();
             this.strip_view_only_tab_actions();
+            this.fit_tables();
             Object.entries(this.allowed_subtabs || {}).forEach(([tab, ok]) => {
                 const $btns = this.$body.find(`#of-panel-${tab}`).find('.of-subtab[data-subtab], .of-acc-subtab[data-subtab]');
                 if (!$btns.length) return;
@@ -814,6 +1091,9 @@ class OrderFlow {
                     <button class="of-btn of-btn--primary" id="of-btn-refresh" title="${__('Load the latest data (open rows stay open)')}">
                         <i class="fa fa-refresh"></i> ${__('Refresh')}
                     </button>
+                    <!-- Search / Open-All / dates / stage chips live here only until the visible table
+                         is drawn: place_shared_controls moves them into its filter bar. -->
+                    <span id="of-shared-dock" class="of-shared-dock"></span>
                     <span class="of-search">
                         <i class="fa fa-search text-muted"></i>
                         <input type="search" id="of-search" autocomplete="off"
@@ -866,10 +1146,12 @@ class OrderFlow {
                         <option value="custom">Custom range…</option>
                     </select>
                     <!-- "Custom range…": From / To dates, sent to every tab as days="from~to" -->
+                    <!-- One "between" picker (Frappe DateRange, mount_date_range) fills the two hidden
+                         dates; apply_date_range reads them as before. -->
                     <span class="of-daterange" id="of-daterange" style="display: none;">
-                        <input type="date" class="of-select" id="of-date-from" title="${__('From date')}">
-                        <span class="text-muted">–</span>
-                        <input type="date" class="of-select" id="of-date-to" title="${__('To date')}">
+                        <span class="of-daterange__pick" title="${__('Between dates — pick the first day, then the last')}"></span>
+                        <input type="hidden" id="of-date-from">
+                        <input type="hidden" id="of-date-to">
                     </span>
                     <span class="of-spacer"></span>
                     <span class="of-count" id="of-count"></span>
@@ -897,13 +1179,14 @@ class OrderFlow {
 
                 <!-- Stage Filter Sub-Bar (Sales Tracker view) -->
                 <div class="of-stage-bar" id="of-stage-bar">
-                    <span class="of-stage-bar__label">Filter by Stage:</span>
+                    <span class="of-stage-bar__label">${__('Stage')}:</span>
                     ${OF_STAGES.map(s => `
                         <button class="of-stage-btn ${s.mod ? `of-stage-btn--${s.mod}` : ''} ${s.key === 'all' ? 'is-active' : ''}"
                                 data-stage="${s.key}">
                             ${s.label}
                             <span class="of-stage-count" data-count="${s.key}">·</span>
                         </button>`).join('')}
+                    <button type="button" class="of-stage-more" id="of-stage-more" title="${__('Show the stages with no orders')}"></button>
                 </div>
 
                 <div id="of-panel-tracker"></div>
@@ -924,6 +1207,9 @@ class OrderFlow {
             </div>
         `);
 
+        // Tabs and Refresh / bell / Create share one line (no separate toolbar row).
+        this.$body.find('.of-page > .of-tabs, .of-page > .of-toolbar').wrapAll('<div class="of-topbar"></div>');
+
         frappe.call({
             method: 'erp_dacsinc_custom.order_flow_api.get_merchandisers'
         }).then(r => {
@@ -932,6 +1218,7 @@ class OrderFlow {
             list.forEach(m => {
                 select.append(`<option value="${m.name}">${m.full_name}</option>`);
             });
+            select.val(this.merchandiser_filter || '');   // a remembered choice (load_view_prefs)
         });
 
         frappe.call({
@@ -942,6 +1229,7 @@ class OrderFlow {
             list.forEach(w => {
                 select.append(`<option value="${of_esc(w.name)}">${of_esc(w.name)}</option>`);
             });
+            select.val(this.stock_warehouse_filter || '');   // VV Puram by default
         });
 
         frappe.call({
@@ -952,6 +1240,7 @@ class OrderFlow {
             list.forEach(i => {
                 select.append(`<option value="${of_esc(i.name)}">${of_esc(i.name)}</option>`);
             });
+            select.val(this.tracker_industry_filter || '');   // a remembered choice (load_view_prefs)
         });
     }
 
@@ -1040,6 +1329,13 @@ class OrderFlow {
             this.set_stage_filter(stage);
         });
 
+        this.$body.on('click', '#of-stage-more', (e) => {
+            e.preventDefault();
+            this.$body.find('#of-stage-bar').toggleClass('of-stage-bar--all');
+            this.update_stage_more();
+            this.fit_tables();
+        });
+
         let timer = null;
         this.$body.on('input', '#of-search', (e) => {
             this.search = e.target.value.trim();
@@ -1105,6 +1401,7 @@ class OrderFlow {
                 const $from = this.$body.find('#of-date-from'), $to = this.$body.find('#of-date-to');
                 if (!$from.val()) $from.val(frappe.datetime.add_days(frappe.datetime.get_today(), -30));
                 if (!$to.val()) $to.val(frappe.datetime.get_today());
+                this.mount_date_range();
                 this.apply_date_range();
                 return;
             }
@@ -1148,7 +1445,8 @@ class OrderFlow {
             delete this.table_filters[key];
             (OF_TABLE_FILTERS[key] || []).filter(d => d[1] === 'mirror').forEach(d => {
                 const $t = this.$body.find(d[2]);
-                if ($t.val()) $t.val('').trigger('change');
+                const back = d[2] === '#of-stock-warehouse' ? OF_MAIN_WAREHOUSE : '';   // Stock Tracker returns to the main warehouse
+                if (($t.val() || '') !== back) $t.val(back).trigger('change');
             });
             this.reset_all_pagination();
             this.refresh(true);
@@ -2018,68 +2316,66 @@ class OrderFlow {
             of_print_sco($(e.currentTarget).data('name'));
         });
 
-        // Uniform Embroidery Receive Click Handler
+        // Uniform Embroidery Receive: every pending line with the qty received now and the
+        // warehouse it goes to (per line). One Repack Stock Entry per received line.
         this.$body.on('click', '.of-receive-btn', (e) => {
             const transfer_id = $(e.currentTarget).data('id');
-            const outstanding = flt_of($(e.currentTarget).data('outstanding'));
-            const dialog = new frappe.ui.Dialog({
-                title: __('Receive from Embroidery'),
-                fields: [
-                    {
-                        fieldtype: 'HTML',
-                        fieldname: 'outstanding_note',
-                        options: `<div style="margin-bottom:6px; font-size:12px; color:var(--text-muted);">
-                            ${__('{0} is still outstanding on this transfer. Receive all of it, or only part if the jobber has sent back a partial batch — the rest stays open to receive later.', [`<b>${outstanding}</b>`])}
-                        </div>`
-                    },
-                    {
-                        fieldtype: 'Link',
-                        fieldname: 'to_warehouse',
-                        options: 'Warehouse',
-                        label: __('Destination Warehouse'),
-                        reqd: 1,
-                        default: 'VV Puram - IND'
-                    },
-                    {
-                        fieldtype: 'Column Break'
-                    },
-                    {
-                        fieldtype: 'Float',
-                        fieldname: 'qty',
-                        label: __('Quantity Received Now'),
-                        reqd: 1,
-                        default: outstanding,
-                        description: __('Defaults to the full outstanding quantity — lower it for a partial receipt.')
-                    }
-                ],
-                primary_action_label: __('Receive'),
-                primary_action: (values) => {
-                    if (flt_of(values.qty) > outstanding) {
-                        frappe.msgprint(__('Cannot receive more than the {0} still outstanding.', [outstanding]));
-                        return;
-                    }
-                    dialog.get_primary_btn().attr('disabled', true);
-                    frappe.call({
-                        method: 'erp_dacsinc_custom.uniform_transfer_api.receive_embroidery_transfer',
-                        args: {
-                            transfer_id: transfer_id,
-                            to_warehouse: values.to_warehouse,
-                            qty: values.qty
+            frappe.call({ method: 'erp_dacsinc_custom.uniform_transfer_api.get_transfer_receipts', args: { transfer_id } }).then(r => {
+                const pending = ((r.message || {}).items || []).filter(l => flt_of(l.pending_qty) > 0);
+                if (!pending.length) return frappe.msgprint(__('Nothing is pending on this transfer.'));
+                const dialog = new frappe.ui.Dialog({
+                    title: __('Receive from Embroidery — {0}', [transfer_id]),
+                    size: 'extra-large',
+                    fields: [
+                        { fieldtype: 'HTML', fieldname: 'note', options: `<div style="margin-bottom:6px;font-size:12px;color:var(--text-muted);">
+                            ${__('Enter what came back for each line and where it goes. Leave a line at 0 if nothing of it came back yet — it stays pending.')}</div>` },
+                        { fieldtype: 'Link', fieldname: 'all_wh', options: 'Warehouse', label: __('Set the same warehouse on every line'),
+                          default: 'VV Puram - IND',
+                          onchange: () => {
+                              const wh = dialog.get_value('all_wh');
+                              if (!wh) return;
+                              (dialog.fields_dict.lines.grid.get_data() || []).forEach(l => { l.to_warehouse = wh; });
+                              dialog.fields_dict.lines.grid.refresh();
+                          } },
+                        { fieldtype: 'Table', fieldname: 'lines', label: __('Lines'), cannot_add_rows: 1, cannot_delete_rows: 1, in_place_edit: true,
+                          data: pending.map(l => ({ row: l.name, source_item: l.source_item, target_item: l.target_item,
+                                                    pending_qty: flt_of(l.pending_qty), qty: flt_of(l.pending_qty), to_warehouse: 'VV Puram - IND' })),
+                          fields: [
+                              { fieldtype: 'Data', fieldname: 'row', hidden: 1 },
+                              { fieldtype: 'Data', fieldname: 'source_item', label: __('Plain item'), read_only: 1, in_list_view: 1, columns: 2 },
+                              { fieldtype: 'Data', fieldname: 'target_item', label: __('Comes back as'), read_only: 1, in_list_view: 1, columns: 3 },
+                              { fieldtype: 'Float', fieldname: 'pending_qty', label: __('Pending'), read_only: 1, in_list_view: 1, columns: 1 },
+                              { fieldtype: 'Float', fieldname: 'qty', label: __('Received now'), in_list_view: 1, columns: 1 },
+                              { fieldtype: 'Link', fieldname: 'to_warehouse', options: 'Warehouse', label: __('Into warehouse'), in_list_view: 1, columns: 3 },
+                          ] },
+                    ],
+                    primary_action_label: __('Receive'),
+                    primary_action: () => {
+                        const lines = (dialog.fields_dict.lines.grid.get_data() || []).filter(l => flt_of(l.qty) > 0);
+                        if (!lines.length) return frappe.msgprint(__('Enter the quantity received for at least one line.'));
+                        for (const l of lines) {
+                            if (flt_of(l.qty) - flt_of(l.pending_qty) > 0.0005)
+                                return frappe.msgprint(__('{0}: cannot receive {1} — only {2} pending.', [frappe.utils.escape_html(l.target_item), l.qty, l.pending_qty]));
+                            if (!l.to_warehouse) return frappe.msgprint(__('{0}: choose the warehouse it goes to.', [frappe.utils.escape_html(l.target_item)]));
                         }
-                    }).then(r => {
-                        dialog.hide();
-                        const result = r.message || {};
-                        const message = result.status === 'Partially Received'
-                            ? __('Partial receipt recorded — {0} still outstanding.', [flt_of(result.outstanding)])
-                            : __('Embroidered items received successfully — transfer complete.');
-                        frappe.show_alert({message, color: 'green'});
-                        this.refresh(true);
-                    }).always(() => {
-                        dialog.get_primary_btn().attr('disabled', false);
-                    });
-                }
+                        dialog.get_primary_btn().attr('disabled', true);
+                        frappe.call({
+                            method: 'erp_dacsinc_custom.uniform_transfer_api.receive_embroidery_transfer',
+                            args: { transfer_id, lines: lines.map(l => ({ row: l.row, qty: flt_of(l.qty), to_warehouse: l.to_warehouse })) },
+                            freeze: true, freeze_message: __('Receiving…'),
+                        }).then(res => {
+                            dialog.hide();
+                            const m = res.message || {};
+                            frappe.show_alert({ indicator: 'green', message: m.status === 'Received'
+                                ? __('All items received back — transfer complete.')
+                                : __('Received. {0} still pending on this transfer.', [flt_of(m.outstanding)]) });
+                            this.refresh(true);
+                        }).always(() => dialog.get_primary_btn().attr('disabled', false));
+                    },
+                });
+                dialog.$wrapper.addClass('of-receive-lines-dialog');   // fixed lines: no add / upload
+                dialog.show();
             });
-            dialog.show();
         });
 
         // Embroidery Transfer Create Click Handler
@@ -2334,7 +2630,7 @@ class OrderFlow {
             purchase: __('Search Purchase Order #, Supplier, Sales Order, Item, LR Number…'),
             jobwork: __('Search Job Work #, Supplier, Purchase Order, Sales Order…'),
             stock: __('Search item code, item name…'),
-            picklist: __('Search Pick List #, Customer, Sales Order, Item, Warehouse…'),
+            picklist: __('Search Pick List #, Customer, Sales Order, Item…'),
             billing: __('Search Sales Order #, Customer…'),
             accounts: __('Search Invoice #, Customer, Supplier, Sales Order…'),
             approval: __('Search Sales Order #, Customer…'),
@@ -2358,6 +2654,7 @@ class OrderFlow {
         // switch_tab() call triggers the first real refresh() once perms
         // are known.
         if (!this.active) return;
+        this.save_view_prefs();
 
         // Open rows (Item Stock & Action Plan widgets, item lists, embroidery /
         // transfer / stock breakdowns) stay open across this refresh: paint_keeping_view
@@ -2366,15 +2663,20 @@ class OrderFlow {
         // fresh data, showing the old content until the new arrives.
         if (force) this.clear_pending_updates();
 
-        this.load_summary();
+        // Sales Tracker's stage counts are a server call as heavy as the rows: asked for only
+        // after the rows arrive (below), so the two don't compete and the table shows first.
+        // Other tabs build their cards from the rows' own data (a "loading" note until then).
+        if (this.active !== 'tracker') this.load_summary();
         if (force) this.cache = {};
 
         const key = `${this.active}:${this.days}:${this.scope}:${this.stage_filter}:${this.search}:${this.merchandiser_filter}:${this.approval_stage_filter}:${this.uniform_status_filter}:${this.stock_warehouse_filter}:${this.tracker_industry_filter}:${JSON.stringify(this.docstatus_filter[this.active] || {})}:${this.pagination_cache_part(this.active)}:${JSON.stringify(this.party_args(this.active))}`;
         if (this.cache[key]) {
+            this._req_seq = (this._req_seq || 0) + 1;   // any answer still on its way is now stale
+            this.$body.find(`#of-panel-${this.active}`).removeClass('of-is-loading');
             this.collect_filter_options(this.cache[key]);
             this.paint_keeping_view(this.cache[key]);
-            this.load_activity();
             this.load_summary();
+            this.load_activity();
             return;
         }
 
@@ -2383,6 +2685,12 @@ class OrderFlow {
             panel.html(`<div class="of-card"><div class="of-empty">
                 <i class="fa fa-spinner fa-spin"></i> Loading data…</div></div>`);
         }
+        // A filter changed again before this answer came back: only the latest request paints
+        // (an older, slower answer must not repaint over it). The table dims meanwhile, so the
+        // change is visibly taken at once.
+        const req = this._req_seq = (this._req_seq || 0) + 1;
+        const tab = this.active;
+        panel.addClass('of-is-loading');
 
         const method = {
             tracker:  'erp_dacsinc_custom.order_flow_api.get_sales_tracker',
@@ -2418,23 +2726,28 @@ class OrderFlow {
         frappe.call({ method, args }).then(r => {
             const data = r.message;
             this.cache[key] = data;
-            this.load_activity();
+            if (tab !== this.active) { panel.removeClass('of-is-loading'); return; }   // left this tab
+            if (req !== this._req_seq) return;   // superseded by a newer filter change
+            panel.removeClass('of-is-loading');
             this.collect_filter_options(data);
             this.paint_keeping_view(data);
             this.load_summary();
-        });
+            this.load_activity();
+        }, () => { if (req === this._req_seq) panel.removeClass('of-is-loading'); });
     }
 
     load_summary() {
         if (this.active === 'stock') return; // live report, no summary tiles
         if (this.active === 'picklist') return; // counts render inline in the card header
         if (this.active === 'tracker') {
+            const req = this._summary_seq = (this._summary_seq || 0) + 1;
             frappe.call({
                 method: 'erp_dacsinc_custom.order_flow_api.get_summary',
                 // Same filters as the rows below it — merchandiser included — so a
                 // stage card's count always equals what clicking it lists.
                 args: Object.assign({ days: this.days, scope: this.scope, search: this.search || null, merchandiser: this.merchandiser_filter || null, approval_stage: this.approval_stage_filter || null, industry: this.tracker_industry_filter || null }, this.party_args('tracker'))
             }).then(r => {
+                if (req !== this._summary_seq || this.active !== 'tracker') return;   // superseded
                 const s = r.message || {};
                 this.render_tracker_summary(s);
             });
@@ -2600,6 +2913,15 @@ class OrderFlow {
         }).catch(() => restore());
     }
 
+    /** Stages with no orders fold behind "+N more" (UI only — they stay clickable once shown). */
+    update_stage_more() {
+        const $bar = this.$body.find('#of-stage-bar');
+        const n = $bar.find('.of-stage-btn.is-empty:not(.is-active)').length;
+        const open = $bar.hasClass('of-stage-bar--all');
+        $bar.find('#of-stage-more').toggle(n > 0)
+            .text(open ? __('Show less') : __('+{0} more', [n]));
+    }
+
     /** Put the live count on every "Filter by Stage" button. */
     render_stage_counts(s) {
         s = s || {};
@@ -2611,6 +2933,7 @@ class OrderFlow {
             // A stage with nothing in it stays clickable but recedes.
             $btn.toggleClass('is-empty', !restricted && !value && st.key !== 'all');
         });
+        this.update_stage_more();
     }
 
     render_purchase_summary(data) {
@@ -3183,17 +3506,27 @@ class OrderFlow {
                     method: 'erp_dacsinc_custom.uniform_transfer_api.get_transfer_receipts',
                     args: { transfer_id }
                 }).then(r => {
-                    const rows = r.message || [];
-                    $panel.html(rows.length ? `<div class="of-scroll"><table class="of-table">
-                        <thead><tr><th>Date</th><th>Qty Received</th><th>Stock Entry</th></tr></thead>
-                        <tbody>${rows.map(rc => `<tr>
-                            <td>${of_date(rc.date)}</td>
-                            <td>${of_round2(rc.qty)}</td>
-                            <td>${rc.stock_entry
-                                ? `<a href="/app/stock-entry/${encodeURIComponent(rc.stock_entry)}" target="_blank">${of_esc(rc.stock_entry)}</a>`
-                                : '—'}</td>
-                        </tr>`).join('')}</tbody>
-                    </table></div>` : `<div class="of-empty">${__('No receipts recorded yet.')}</div>`);
+                    const d = r.message || {};
+                    const items = d.items || [], rcpts = d.receipts || [];
+                    const item_tbl = `<div class="of-micro" style="font-weight:600;margin-bottom:4px;">${__('Items')}</div>
+                        <div class="of-scroll"><table class="of-table">
+                        <thead><tr><th>#</th><th>${__('Plain item (sent)')}</th><th>${__('Embroidered item (comes back)')}</th><th>${__('Sent')}</th><th>${__('Received')}</th><th>${__('Pending')}</th></tr></thead>
+                        <tbody>${items.map(l => `<tr>
+                            <td>${l.idx}</td><td style="text-align:left;">${of_esc(l.source_item)}</td>
+                            <td style="text-align:left;">${l.same_item ? `<span class="of-chip">${__('same item')}</span>` : of_esc(l.target_item)}</td>
+                            <td>${of_round2(l.qty)} ${of_esc(l.uom || '')}</td>
+                            <td style="color:var(--of-green);">${of_round2(l.received_qty)}</td>
+                            <td style="color:${flt_of(l.pending_qty) > 0 ? 'var(--of-orange)' : 'var(--text-muted)'};font-weight:600;">${of_round2(l.pending_qty)}</td>
+                        </tr>`).join('')}</tbody></table></div>`;
+                    const rc_tbl = rcpts.length ? `<div class="of-micro" style="font-weight:600;margin:10px 0 4px;">${__('Received back')}</div>
+                        <div class="of-scroll"><table class="of-table">
+                        <thead><tr><th>${__('Date')}</th><th>${__('Item')}</th><th>${__('Qty')}</th><th>${__('Into warehouse')}</th><th>${__('Stock Entry')}</th></tr></thead>
+                        <tbody>${rcpts.map(rc => `<tr>
+                            <td>${of_date(rc.date)}</td><td style="text-align:left;">${of_esc(rc.target_item || '')}</td>
+                            <td>${of_round2(rc.qty)}</td><td>${of_esc(rc.to_warehouse || '')}</td>
+                            <td>${rc.stock_entry ? `<a href="/app/stock-entry/${encodeURIComponent(rc.stock_entry)}" target="_blank">${of_esc(rc.stock_entry)}</a>` : '—'}</td>
+                        </tr>`).join('')}</tbody></table></div>` : `<div class="of-micro text-muted" style="margin-top:8px;">${__('Nothing received back yet.')}</div>`;
+                    $panel.html(item_tbl + rc_tbl);
                 });
             }
         } else {
@@ -3255,7 +3588,10 @@ class OrderFlow {
             if (this.active === 'approval') html = this.approval_html(data);
             if (this.active === 'uniform')  html = this.uniform_html(data);
             if (this.active === 'logistics') html = this.logistics_html(data);
+            const focus = this.park_shared_controls();
             panel.html(html);
+            this.mount_table_filters();
+            this.place_shared_controls(focus);
         } catch (e) {
             console.error("Error painting panel:", this.active, e);
             const panel = this.$body.find(`#of-panel-${this.active}`);
@@ -3571,7 +3907,7 @@ class OrderFlow {
             <!-- Sales Tracker Sub-Tab Navigation Bar -->
             <div class="of-kcards of-kcards--4">
                 ${of_tabcard({ sub: 'so', active: subtab === 'so', icon: 'list-ul', tone: 'blue', title: __('Sales Orders'),
-                    value: flt_of(data.total), value_label: __('orders'), meta: __('filter by stage above') })}
+                    value: flt_of(data.total), value_label: __('orders'), meta: __('filter by stage below') })}
                 ${of_tabcard({ sub: 'mr', active: subtab === 'mr', icon: 'file-text-o', tone: 'purple', title: __('Material Requests'),
                     value: flt_of(mrs_env.total), value_label: __('requests'), ds: mrs_env.docstatus_counts })}
                 ${of_tabcard({ sub: 'fp', active: subtab === 'fp', icon: 'magic', tone: 'orange', title: __('Embroidery - FP'),
@@ -4607,35 +4943,51 @@ class OrderFlow {
     stock_html(data) {
         data = data || {};
         const items = data.rows || [];
-        this.$body.find('#of-count').text(
-            data.total ? __('{0} item(s) match', [data.total]) : ''
-        );
-
+        this._stock_items = items;
+        this.$body.find('#of-count').text(data.total ? __('{0} item(s) match', [data.total]) : '');
+        const wh = this.stock_warehouse_filter || '';
+        const where = wh ? ` — ${wh}` : '';
+        const link = (it, qty, kind, label) => {
+            qty = of_round2(qty);
+            if (!qty) return '<span class="text-muted">0</span>';
+            return `<a href="#" class="of-reserve-link" data-item="${of_esc(it.item_code)}" data-warehouse="${of_esc(wh)}"
+                        data-kind="${kind}" data-label="${of_esc(label)}">${qty}</a>`;
+        };
+        // what the held number is made of, in one short line
+        const held_parts = (it) => [
+            [it.picked_draft_qty, __('draft pick')], [it.picked_submitted_qty, __('picked')],
+            [it.embroidery_qty, __('at embroidery')], [it.earmark_qty, __('bought for order')],
+        ].filter(x => flt_of(x[0])).map(x => `${of_round2(x[0])} ${x[1]}`).join(' · ');
         const rows = items.map(it => {
-            const net = of_round2(it.net_available);
-            const pick_cell = (qty, kind, label) => {
-                qty = of_round2(qty);
-                if (!qty) return '0';
-                return `<a href="#" class="of-reserve-link" data-item="${of_esc(it.item_code)}" data-warehouse="${of_esc(this.stock_warehouse_filter || '')}"
-                            data-kind="${kind}" data-label="${of_esc(label)}">${qty}</a>`;
-            };
+            const after = of_round2(it.after_orders);
             return `<tr data-item="${of_esc(it.item_code)}" class="of-stock-row">
-                <td><i class="fa fa-caret-right of-stock-wh-toggle" data-item="${of_esc(it.item_code)}" style="cursor:pointer;margin-right:4px;color:var(--text-light);"></i>
+                <td style="text-align:left;"><i class="fa fa-caret-right of-stock-wh-toggle" data-item="${of_esc(it.item_code)}" style="cursor:pointer;margin-right:4px;color:var(--text-light);"></i>
                     <a href="/app/item/${encodeURIComponent(it.item_code)}" target="_blank" style="font-weight:700;">${of_esc(it.item_code)}</a>
                     ${it.item_name && it.item_name !== it.item_code ? `<div class="of-micro text-muted">${of_esc(it.item_name)}</div>` : ''}</td>
-                <td>${of_round2(it.total_available_stock)} ${of_esc(it.stock_uom || '')}</td>
-                <td>${pick_cell(it.picked_draft_qty, 'pick_draft', `Picked (Draft) — ${of_esc(it.item_code)}` + (this.stock_warehouse_filter ? ` at ${of_esc(this.stock_warehouse_filter)}` : ''))}</td>
-                <td>${pick_cell(it.picked_submitted_qty, 'pick_submitted', `Picked (Submitted) — ${of_esc(it.item_code)}` + (this.stock_warehouse_filter ? ` at ${of_esc(this.stock_warehouse_filter)}` : ''))}</td>
-                <td style="font-weight:700; color:${net <= 0 ? 'var(--of-red)' : 'var(--of-green)'};">${net}</td>
+                <td><b>${of_round2(it.actual_qty)}</b> <span class="of-micro text-muted">${of_esc(it.stock_uom || '')}</span></td>
+                <td class="of-st-held">${flt_of(it.held_qty) ? `<b>${of_round2(it.held_qty)}</b><div class="of-micro text-muted">${held_parts(it)}</div>` : '<span class="text-muted">0</span>'}</td>
+                <td class="of-st-free"><b>${of_round2(it.free_qty)}</b></td>
+                <td>${link(it, it.booked_not_picked, 'reserved', `Submitted Sales Orders still to deliver — ${it.item_code}${where}`)}</td>
+                <td style="font-weight:700;color:${after < 0 ? 'var(--of-red)' : 'var(--of-green)'};">${after < 0 ? `${__('short')} ${-after}` : after}</td>
+                ${wh ? `<td class="text-muted">${flt_of(it.other_qty) ? of_round2(it.other_qty) : '0'}</td>` : ''}
             </tr>`;
         }).join('');
 
         return `
-            ${of_card('Item Availability', 'cubes', `
-                <table class="of-table">
-                    <thead><tr><th style="min-width:180px;">Item</th><th>Physical Stock</th>
-                        <th>Picked (Draft)</th><th>Picked (Submitted)</th><th>Net Available</th></tr></thead>
-                    <tbody>${rows || of_empty_row(5)}</tbody>
+            ${of_card(wh ? __('Item Availability — {0}', [wh]) : __('Item Availability — all warehouses'), 'cubes', `
+                <div class="of-st-legend">
+                    <span><b>${__('Held for orders')}</b>: ${__('draft / submitted Pick Lists, goods at the embroidery jobber, raw material bought for an order')}.</span>
+                    <span><b>${__('Free now')}</b> = ${__('On hand − Held')}.</span>
+                    <span><b>${__('Ordered, not picked')}</b>: ${__('submitted Sales Orders not picked yet (draft orders not counted)')}.</span>
+                    <span class="text-muted">${__('Open an item for the details and other warehouses.')}</span>
+                </div>
+                <table class="of-table of-stock-table">
+                    <thead><tr><th style="min-width:200px;">${__('Item')}</th><th>${__('On hand')}</th>
+                        <th class="of-st-held-head">${__('Held for orders')}</th><th class="of-st-free">${__('Free now')}</th>
+                        <th title="${__('Submitted Sales Orders still to deliver, minus what Pick Lists already cover. Draft Sales Orders are not counted.')}">${__('Ordered, not picked')}</th>
+                        <th>${__('Free after open orders')}</th>
+                        ${wh ? `<th title="${__('Stock in every other warehouse (not counted here)')}">${__('Other warehouses')}</th>` : ''}</tr></thead>
+                    <tbody>${rows || of_empty_row(wh ? 7 : 6)}</tbody>
                 </table>`, null, of_pagination_html('stock', null, data), this.table_filters_html('stock'))}
         `;
     }
@@ -4645,31 +4997,34 @@ class OrderFlow {
     toggle_stock_wh_row($row, item_code, $btn) {
         let $details = $row.next('.of-doc-items-row');
         if (!$details.length) {
-            const item = (this._stock_items || []).find(i => i.item_code === item_code);
-            const wh_rows = (item && item.warehouse_stock) || [];
-            const colspan = $row.find('td').length || 5;
-
-            // A reservation count is otherwise just a bare number with no way
-            // to see what's actually behind it — make it a link into
-            // show_reservation_details_modal whenever it's non-zero.
-            const reserve_cell = (warehouse, qty, kind, label) => {
+            const it = (this._stock_items || []).find(i => i.item_code === item_code) || {};
+            const colspan = $row.find('td').length || 7;
+            const wh = this.stock_warehouse_filter || '';
+            const link = (warehouse, qty, kind, label) => {
                 qty = of_round2(qty);
-                if (!qty) return '0';
+                if (!qty) return '<span class="text-muted">0</span>';
                 return `<a href="#" class="of-reserve-link" data-item="${of_esc(item_code)}" data-warehouse="${of_esc(warehouse)}"
                             data-kind="${kind}" data-label="${of_esc(label)}">${qty}</a>`;
             };
-
-            const body = wh_rows.length ? `<div class="of-scroll"><table class="of-table">
-                <thead><tr><th>Warehouse</th><th>Actual Qty</th><th>Reserved</th>
-                    <th>Reserved for Production</th><th>Reserved for Subcontract</th></tr></thead>
-                <tbody>${wh_rows.map(w => `<tr>
-                    <td>${of_esc(w.warehouse)}</td>
-                    <td>${of_round2(w.actual_qty)}</td>
-                    <td>${reserve_cell(w.warehouse, w.reserved_qty, 'reserved', `Reserved for ${of_esc(item_code)} at ${of_esc(w.warehouse)} — Sales Orders`)}</td>
-                    <td>${reserve_cell(w.warehouse, w.reserved_qty_for_production, 'production', `Reserved for Production — ${of_esc(item_code)} at ${of_esc(w.warehouse)} — Work Orders`)}</td>
-                    <td>${reserve_cell(w.warehouse, w.reserved_qty_for_sub_contract, 'subcontract', `Reserved for Subcontract — ${of_esc(item_code)} at ${of_esc(w.warehouse)} — Purchase / Subcontracting Orders`)}</td>
-                </tr>`).join('')}</tbody>
-            </table></div>` : `<div class="of-empty">${__('No warehouse stock for this item.')}</div>`;
+            // 1. what is held, by kind (click a number for the documents)
+            const held = `<div class="of-st-detail">
+                <div class="of-micro" style="font-weight:700;margin-bottom:4px;">${__('Held for orders')}${wh ? ` — ${of_esc(wh)}` : ''}</div>
+                <div class="of-st-chips">
+                    <span>${__('Draft Pick Lists')}: ${link(wh, it.picked_draft_qty, 'pick_draft', `Draft Pick Lists — ${item_code}${wh ? ' at ' + wh : ''}`)}</span>
+                    <span>${__('Picked (submitted, not delivered)')}: ${link(wh, it.picked_submitted_qty, 'pick_submitted', `Submitted Pick Lists — ${item_code}${wh ? ' at ' + wh : ''}`)}</span>
+                    <span>${__('At embroidery jobber')}: ${link(wh, it.embroidery_qty, 'embroidery', `At the embroidery jobber — ${item_code}`)}</span>
+                    <span>${__('Bought for an order')}: ${link(wh, it.earmark_qty, 'earmark', `Raw material bought for an order — ${item_code}`)}</span>
+                </div>
+                ${flt_of(it.over_held) > 0 ? `<div class="of-micro" style="color:var(--of-red);margin-top:4px;">${__('Held {0} more than is on hand.', [of_round2(it.over_held)])}</div>` : ''}
+            </div>`;
+            // 2. stock elsewhere: other warehouses when one is chosen, else every warehouse
+            const others = wh ? (it.other_warehouses || []) : (it.warehouse_stock || []);
+            const other_tbl = others.length ? `<div class="of-micro" style="font-weight:700;margin:10px 0 4px;">${wh ? __('Other warehouses (not counted above)') : __('By warehouse')}</div>
+                <div class="of-scroll"><table class="of-table"><thead><tr><th>${__('Warehouse')}</th><th>${__('On hand')}</th>${wh ? '' : `<th>${__('Held')}</th><th>${__('Free now')}</th>`}</tr></thead>
+                <tbody>${others.map(o => `<tr><td style="text-align:left;">${of_esc(o.warehouse)}</td><td><b>${of_round2(o.actual_qty)}</b></td>
+                    ${wh ? '' : `<td>${of_round2(o.held_qty)}</td><td style="color:var(--of-green);font-weight:700;">${of_round2(o.free_qty)}</td>`}</tr>`).join('')}</tbody></table></div>`
+                : `<div class="of-micro text-muted" style="margin-top:8px;">${wh ? __('No stock in other warehouses.') : ''}</div>`;
+            const body = held + other_tbl;
 
             $details = $(`
                 <tr class="of-doc-items-row of-hidden" style="display:none;">
@@ -4715,6 +5070,15 @@ class OrderFlow {
                         <td>${of_round2(x.qty)}</td>
                         <td>${of_round2(x.delivered_qty)}</td>
                         <td style="font-weight:700;">${of_round2(x.outstanding_qty)}</td>
+                    </tr>`).join('')}</tbody>
+                </table>`;
+            } else if (kind === 'embroidery' || kind === 'earmark') {
+                body = `<table class="of-table">
+                    <thead><tr><th>${kind === 'embroidery' ? __('Embroidery Work Order') : __('Held for')}</th><th>${__('Sales Order')}</th><th>${__('Qty')}</th></tr></thead>
+                    <tbody>${rows.map(x => `<tr>
+                        <td>${kind === 'embroidery' ? `<a href="/app/embroidery-work-order/${encodeURIComponent(x.name)}" target="_blank">${of_esc(x.name)}</a>` : __('raw material for the order')}</td>
+                        <td>${x.sales_order ? `${of_so_link(x.sales_order)}${x.customer_name ? `<div class="of-micro text-muted">${of_esc(x.customer_name)}</div>` : ''}` : '—'}</td>
+                        <td style="font-weight:700;">${of_round2(x.qty)}</td>
                     </tr>`).join('')}</tbody>
                 </table>`;
             } else if (kind === 'production') {
@@ -4841,13 +5205,12 @@ class OrderFlow {
                        style="font-weight:700;">${of_esc(r.name)}</a>
                     <div class="of-micro text-muted">${of_esc(r.purpose || '')}</div>
                     ${of_creator_html(r)}</td>
-                <td>${status_pill(r)}</td>
+                <td class="of-pl-status">${status_pill(r)}</td>
                 <td>${of_esc(r.customer_name || r.customer || '')}
                     ${r.customer && r.customer_name && r.customer !== r.customer_name
                         ? `<div class="of-micro text-muted">${of_esc(r.customer)}</div>` : ''}</td>
                 <td>${so_links || '<span class="of-val--zero">—</span>'}</td>
-                <td>${of_esc((r.warehouses || []).join(', ') || r.parent_warehouse || '')}</td>
-                <td>${of_num(r.distinct_items)}</td>
+                <td style="min-width:200px;text-align:left;">${of_pl_items_html(r.items, of_num(r.docstatus) === 0)}</td>
                 <td>${of_round2(r.total_qty)}</td>
                 <td>${picked_cell}</td>
                 <td>${of_round2(r.delivered_qty)}</td>
@@ -4866,12 +5229,12 @@ class OrderFlow {
             ${of_card('Pick Lists', 'hand-paper-o', `
                 <table class="of-table">
                     <thead><tr>
-                        <th style="min-width:150px;">Pick List</th><th>Status</th>
+                        <th style="min-width:150px;">Pick List</th><th style="width:150px;">Status</th>
                         <th style="min-width:140px;">Customer</th><th>Sales Order</th>
-                        <th>Warehouse</th><th>Items</th><th>Qty</th><th>Picked</th>
+                        <th>Items</th><th>Qty</th><th>Picked</th>
                         <th>Delivered</th><th>Last Activity</th><th>Action</th>
                     </tr></thead>
-                    <tbody>${rows || of_empty_row(11)}</tbody>
+                    <tbody>${rows || of_empty_row(10)}</tbody>
                 </table>`, counts, of_pagination_html('picklist', null, data),
                 this.table_filters_html('picklist'))}
         `;
@@ -5737,14 +6100,18 @@ class OrderFlow {
                     : `<span class="text-muted" style="font-size: 11px;"><i class="fa fa-check"></i> Completed</span>`))
                 + ` <button class="of-btn of-uet-print-btn" data-name="${of_esc(t.name)}" title="${__('Print transfer')}"><i class="fa fa-print"></i></button>`;
 
+            const lines = t.items || [];
+            const items_html = lines.slice(0, 3).map(l => `<div class="of-uet-line">
+                    <span>${of_esc(l.source_item)}</span>
+                    ${l.same_item || l.source_item === l.target_item ? `<span class="of-chip">${__('same')}</span>` : `<i class="fa fa-long-arrow-right"></i> <span>${of_esc(l.target_item)}</span>`}
+                    <b>× ${of_round2(l.qty)}</b>${flt_of(l.received_qty) > 0 ? ` <span style="color:var(--of-green);">(${of_round2(l.received_qty)} ${__('back')})</span>` : ''}
+                </div>`).join('') + (lines.length > 3 ? `<div class="of-micro text-muted">+ ${lines.length - 3} ${__('more — expand the row')}</div>` : '');
             return `
-                <tr class="${received > 0 ? 'of-transfer-row' : ''}">
-                    <td>${received > 0
-                        ? `<i class="fa fa-caret-right of-transfer-receipts-toggle" data-id="${of_esc(t.name)}" style="cursor:pointer;margin-right:4px;color:var(--text-light);"></i>`
-                        : ''}<a href="/app/uniform-embroidery-transfer/${encodeURIComponent(t.name)}" target="_blank"><b>${of_esc(t.name)}</b></a>
+                <tr class="of-transfer-row">
+                    <td><i class="fa fa-caret-right of-transfer-receipts-toggle" data-id="${of_esc(t.name)}" style="cursor:pointer;margin-right:4px;color:var(--text-light);"></i><a href="/app/uniform-embroidery-transfer/${encodeURIComponent(t.name)}" target="_blank"><b>${of_esc(t.name)}</b></a>
+                        <div class="of-micro text-muted">${lines.length} ${lines.length === 1 ? __('item') : __('items')}</div>
                         ${of_creator_html(t)}</td>
-                    <td><a href="/app/item/${encodeURIComponent(t.source_item)}" target="_blank">${of_esc(t.source_item)}</a></td>
-                    <td><a href="/app/item/${encodeURIComponent(t.target_item)}" target="_blank">${of_esc(t.target_item)}</a></td>
+                    <td style="text-align:left;">${items_html || '—'}</td>
                     <td><b>${total}</b></td>
                     <td>
                         <b style="color:${received > 0 ? 'var(--of-green)' : 'inherit'};">${received}</b>
@@ -5776,8 +6143,7 @@ class OrderFlow {
                         <thead>
                             <tr>
                                 <th>Transfer ID</th>
-                                <th>Source Item (Plain)</th>
-                                <th>Target Item (Embroidered)</th>
+                                <th>${__('Items (Plain → Embroidered × Qty)')}</th>
                                 <th>Sent Qty</th>
                                 <th>Received Qty</th>
                                 <th>Route</th>
@@ -5788,7 +6154,7 @@ class OrderFlow {
                             </tr>
                         </thead>
                         <tbody>
-                            ${rows_html || `<tr><td colspan="10" class="of-empty"><i class="fa fa-inbox"></i>No transfers found.</td></tr>`}
+                            ${rows_html || `<tr><td colspan="9" class="of-empty"><i class="fa fa-inbox"></i>No transfers found.</td></tr>`}
                         </tbody>
                     </table>
                 </div>
@@ -5874,171 +6240,116 @@ class OrderFlow {
         `;
     }
 
+    // Create Embroidery Transfer: several lines at once — a plain item and the embroidered item
+    // it comes back as (or the same item), with a qty. Only free stock can go (stock held for
+    // Sales Orders is not free); one Stock Entry moves all lines (uniform_transfer_api).
     prompt_create_transfer() {
+        const free_cache = {};   // "item|warehouse" -> stock details
+        const item_query = () => ({ filters: { is_stock_item: 1, disabled: 0 } });
         const dialog = new frappe.ui.Dialog({
             title: __('Create Embroidery Transfer'),
+            size: 'extra-large',
             fields: [
-                {
-                    fieldtype: 'HTML',
-                    fieldname: 'intro_html',
-                    options: `<div style="margin-bottom:6px; font-size:12px; color:var(--text-muted);">
-                        ${__('Moves plain stock into embroidery WIP: a Stock Entry transfers the quantity below from your warehouse into the jobber\'s, ready for the embroidered item to come back from it.')}
-                    </div>`
-                },
-                { fieldtype: 'Section Break', label: __('Source (Plain Stock)') },
-                {
-                    fieldtype: 'Link',
-                    fieldname: 'source_item',
-                    options: 'Item',
-                    label: __('Source Item (Plain)'),
-                    reqd: 1,
-                    // This dialog only ever moves physical stock (a Stock Entry
-                    // under the hood), so non-stock items — 55 of them on this
-                    // site — have no business in either Item dropdown here.
-                    get_query: () => ({ filters: { is_stock_item: 1, disabled: 0 } }),
-                    onchange: function() {
-                        const source = this.get_value();
-                        if (dialog.get_value('transfer_to_same_item')) {
-                            dialog.set_value('target_item', source);
-                        } else {
-                            if (source && source === dialog.get_value('target_item')) {
-                                frappe.msgprint(__('Source Item (Plain) and Target Item (Embroidered) cannot be the same item.'));
-                                this.set_value('');
-                                return;
-                            }
-                        }
-                        const warehouse = dialog.get_value('from_warehouse');
-                        if (source && warehouse) {
-                            fetch_stock_details(source, warehouse);
-                        } else {
-                            dialog.fields_dict.stock_details_html.$wrapper.html('');
-                        }
-                    }
-                },
-                {
-                    fieldtype: 'Check',
-                    fieldname: 'transfer_to_same_item',
-                    label: __('Transfer to Same Item'),
-                    default: 0,
-                    onchange: function() {
-                        const checked = this.get_value();
-                        if (checked) {
-                            const source = dialog.get_value('source_item');
-                            if (source) {
-                                dialog.set_value('target_item', source);
-                            }
-                            dialog.set_df_property('target_item', 'read_only', 1);
-                        } else {
-                            dialog.set_df_property('target_item', 'read_only', 0);
-                        }
-                    }
-                },
-                { fieldtype: 'Column Break' },
-                {
-                    fieldtype: 'Link',
-                    fieldname: 'from_warehouse',
-                    options: 'Warehouse',
-                    label: __('From Warehouse'),
-                    reqd: 1,
-                    default: 'VV Puram - IND',
-                    onchange: function() {
-                        const warehouse = this.get_value();
-                        const source = dialog.get_value('source_item');
-                        if (source && warehouse) {
-                            fetch_stock_details(source, warehouse);
-                        } else {
-                            dialog.fields_dict.stock_details_html.$wrapper.html('');
-                        }
-                    }
-                },
-                { fieldtype: 'Section Break' },
-                {
-                    fieldtype: 'HTML',
-                    fieldname: 'stock_details_html'
-                },
-                { fieldtype: 'Section Break', label: __('Destination (Embroidery WIP)') },
-                {
-                    fieldtype: 'Link',
-                    fieldname: 'target_item',
-                    options: 'Item',
-                    label: __('Target Item (Embroidered)'),
-                    reqd: 1,
-                    get_query: () => ({ filters: { is_stock_item: 1, disabled: 0 } }),
-                    onchange: function() {
-                        const target = this.get_value();
-                        if (!dialog.get_value('transfer_to_same_item') && target && target === dialog.get_value('source_item')) {
-                            frappe.msgprint(__('Source Item (Plain) and Target Item (Embroidered) cannot be the same item.'));
-                            this.set_value('');
-                        }
-                    }
-                },
-                { fieldtype: 'Column Break' },
-                {
-                    fieldtype: 'Link',
-                    fieldname: 'wip_warehouse',
-                    options: 'Warehouse',
-                    label: __('WIP Warehouse (Embroiderer)'),
-                    reqd: 1,
-                    default: 'Jobers Warehouse - IND'
-                },
-                { fieldtype: 'Section Break', label: __('Quantity to Transfer') },
-                {
-                    fieldtype: 'Float',
-                    fieldname: 'qty',
-                    label: __('Quantity'),
-                    reqd: 1
-                }
+                // The two warehouses are fixed for this flow: shown as one read-only line, not as
+                // editable boxes (the values still go to the server).
+                { fieldtype: 'HTML', fieldname: 'intro_html',
+                  options: `<div style="margin-bottom:8px; font-size:12px; color:var(--text-muted);">
+                    ${__('Add one line per item: the plain item and the embroidered item it comes back as — tick "Same item" when it comes back as the same item. Only free stock (not held for Sales Orders) can go.')}</div>
+                    <div class="of-uet-route"><i class="fa fa-truck"></i> ${__('From')} <b>VV Puram - IND</b>
+                        <i class="fa fa-long-arrow-right"></i> ${__('to the embroidery jobber')} <b>Jobers Warehouse - IND</b></div>` },
+                { fieldtype: 'Data', fieldname: 'from_warehouse', label: __('From Warehouse'), hidden: 1, default: 'VV Puram - IND' },
+                { fieldtype: 'Data', fieldname: 'wip_warehouse', label: __('WIP Warehouse (Embroiderer)'), hidden: 1, default: 'Jobers Warehouse - IND' },
+                { fieldtype: 'Section Break', label: __('Items to send') },
+                { fieldtype: 'Table', fieldname: 'lines', label: __('Lines'), cannot_add_rows: 0, in_place_edit: true,
+                  data: [{}],
+                  fields: [
+                      { fieldtype: 'Link', fieldname: 'source_item', options: 'Item', label: __('Plain item (send)'), in_list_view: 1, columns: 3,
+                        get_query: item_query, onchange: () => setTimeout(() => refresh_free(false), 50) },
+                      { fieldtype: 'Check', fieldname: 'same_item', label: __('Same item'), in_list_view: 1, columns: 1,
+                        onchange: () => setTimeout(() => refresh_free(false), 50) },
+                      { fieldtype: 'Link', fieldname: 'target_item', options: 'Item', label: __('Embroidered item (comes back)'), in_list_view: 1, columns: 3,
+                        get_query: item_query },
+                      { fieldtype: 'Float', fieldname: 'qty', label: __('Qty'), in_list_view: 1, columns: 1,
+                        onchange: () => setTimeout(() => refresh_free(false), 50) },
+                      { fieldtype: 'Data', fieldname: 'free_info', label: __('Free to send'), in_list_view: 1, columns: 2, read_only: 1 },
+                  ] },
+                { fieldtype: 'HTML', fieldname: 'free_html' },
             ],
             primary_action_label: __('Send to Embroidery'),
             primary_action: (values) => {
-                if (!values.transfer_to_same_item && values.source_item === values.target_item) {
-                    frappe.msgprint(__('Source Item (Plain) and Target Item (Embroidered) cannot be the same item.'));
-                    return;
+                const lines = (dialog.get_value('lines') || []).filter(l => l.source_item || flt(l.qty));
+                if (!lines.length) return frappe.msgprint(__('Add at least one line.'));
+                for (const [n, l] of lines.entries()) {
+                    if (!l.source_item) return frappe.msgprint(__('Line {0}: choose the plain item.', [n + 1]));
+                    if (!l.same_item && !l.target_item) return frappe.msgprint(__('Line {0}: choose the embroidered item, or tick Same item.', [n + 1]));
+                    if (!l.same_item && l.target_item === l.source_item) return frappe.msgprint(__('Line {0}: the embroidered item is the same as the plain item — tick Same item instead.', [n + 1]));
+                    if (flt(l.qty) <= 0) return frappe.msgprint(__('Line {0}: enter the quantity.', [n + 1]));
                 }
+                const over = over_free(lines);
+                if (over.length) return frappe.msgprint({ title: __('Not enough free stock'), indicator: 'red', message: over.join('<br>') });
                 dialog.get_primary_btn().attr('disabled', true);
                 frappe.call({
-                    method: 'erp_dacsinc_custom.uniform_transfer_api.create_embroidery_transfer',
+                    method: 'erp_dacsinc_custom.uniform_transfer_api.create_embroidery_transfers',
                     args: {
-                        source_item: values.source_item,
-                        target_item: values.target_item,
-                        qty: values.qty,
-                        from_warehouse: values.from_warehouse,
-                        wip_warehouse: values.wip_warehouse
-                    }
+                        lines: lines.map(l => ({ source_item: l.source_item, target_item: l.same_item ? l.source_item : l.target_item,
+                                                 same_item: l.same_item ? 1 : 0, qty: flt(l.qty) })),
+                        from_warehouse: values.from_warehouse, wip_warehouse: values.wip_warehouse,
+                    },
+                    freeze: true, freeze_message: __('Sending to embroidery…'),
                 }).then(r => {
+                    const m = r.message || {};
                     dialog.hide();
-                    frappe.show_alert({message: __('Plain items transferred to embroidery WIP successfully'), color: 'green'});
+                    frappe.show_alert({ message: __('Transfer {0} sent to embroidery with {1} line(s) ({2})', [m.transfer, lines.length, m.stock_entry || '']), indicator: 'green' });
                     this.refresh(true);
-                    if (r && r.message && window.dacs_print_prompt) dacs_print_prompt('Uniform Embroidery Transfer', r.message, __('Embroidery transfer'));
-                }).always(() => {
-                    dialog.get_primary_btn().attr('disabled', false);
-                });
-            }
+                    if (m.transfer && window.dacs_print_prompt) dacs_print_prompt('Uniform Embroidery Transfer', m.transfer, __('Embroidery transfer'));
+                }).always(() => dialog.get_primary_btn().attr('disabled', false));
+            },
         });
 
-        const fetch_stock_details = (source, warehouse) => {
-            frappe.call({
-                method: 'erp_dacsinc_custom.uniform_transfer_api.get_item_stock_details',
-                args: {
-                    item_code: source,
-                    warehouse: warehouse
-                }
-            }).then(r => {
-                const d = r.message || {};
-                const html = `
-                    <div style="margin-top: 10px; padding: 12px; font-size: 12px; line-height: 1.6; border: 1px solid #d1ecf1; border-radius: 4px; background-color: #f8f9fa; color: #0c5460;">
-                        <strong style="font-size: 13px;">Stock Details for ${frappe.utils.escape_html(source)}:</strong><br>
-                        • Actual Physical Qty: <b>${of_round2(d.actual_qty)}</b><br>
-                        • Reserved for Sales: <b>${of_round2(d.reserved_qty)}</b><br>
-                        • Reserved for Production: <b>${of_round2(d.reserved_qty_for_production)}</b><br>
-                        • Reserved for Subcontract: <b>${of_round2(d.reserved_qty_for_sub_contract)}</b><br>
-                        <div style="border-top: 1px dashed #bee5eb; margin: 8px 0; padding-top: 8px;">
-                            <span style="color: #28a745; font-weight: 700; font-size: 13px;">✔ Fully Available (Unreserved): ${of_round2(d.net_available)}</span>
-                        </div>
-                    </div>
-                `;
-                dialog.fields_dict.stock_details_html.$wrapper.html(html);
+        // Free stock per plain item (cached per warehouse), shown on each line and summed up below.
+        const refresh_free = (reset) => {
+            if (reset) Object.keys(free_cache).forEach(k => delete free_cache[k]);
+            const wh = dialog.get_value('from_warehouse');
+            const lines = dialog.fields_dict.lines.grid.get_data() || [];
+            const need = [...new Set(lines.map(l => l.source_item).filter(Boolean))].filter(i => !free_cache[`${i}|${wh}`]);
+            Promise.all(need.map(item => frappe.call({
+                method: 'erp_dacsinc_custom.uniform_transfer_api.get_item_stock_details', args: { item_code: item, warehouse: wh },
+            }).then(r => { free_cache[`${item}|${wh}`] = r.message || {}; }))).then(() => paint_free());
+        };
+
+        const over_free = (lines) => {
+            const wh = dialog.get_value('from_warehouse'), want = {};
+            lines.forEach(l => { if (l.source_item) want[l.source_item] = (want[l.source_item] || 0) + flt(l.qty); });
+            return Object.entries(want).filter(([item, q]) => free_cache[`${item}|${wh}`] && q - flt(free_cache[`${item}|${wh}`].net_available) > 0.0005)
+                .map(([item, q]) => __('{0}: {1} asked, only {2} free', [frappe.utils.escape_html(item), q, flt(free_cache[`${item}|${wh}`].net_available)]));
+        };
+
+        const paint_free = () => {
+            const wh = dialog.get_value('from_warehouse');
+            const grid = dialog.fields_dict.lines.grid;
+            const lines = grid.get_data() || [];
+            const used = {};
+            lines.forEach(l => {
+                const d = free_cache[`${l.source_item}|${wh}`];
+                if (l.same_item && l.source_item && l.target_item !== l.source_item) l.target_item = l.source_item;
+                l.free_info = d ? `${flt(d.net_available)} ${d.stock_uom || ''}` : '';
+                if (l.source_item) used[l.source_item] = (used[l.source_item] || 0) + flt(l.qty);
             });
+            grid.refresh();
+            const rows = Object.entries(used).map(([item, q]) => {
+                const d = free_cache[`${item}|${wh}`] || {};
+                const free = flt(d.net_available), bad = q - free > 0.0005;
+                const holds = (d.holds || []).map(h => `${flt(h.qty)} ${__('held for')} ${frappe.utils.escape_html(h.sales_order || h.doc)}`).join(', ');
+                return `<tr${bad ? ' class="is-over"' : ''}>
+                    <td>${frappe.utils.escape_html(item)}</td><td style="text-align:right;">${flt(d.actual_qty)}</td>
+                    <td style="text-align:right;">${flt(d.held_qty)}</td><td style="text-align:right;">${free}</td>
+                    <td style="text-align:right;">${q}</td><td class="text-muted" style="font-size:11px;">${holds}</td></tr>`;
+            }).join('');
+            dialog.fields_dict.free_html.$wrapper.html(rows ? `
+                <table class="of-confirm-table" style="margin-top:6px;border:1px solid var(--border-color);border-radius:6px;">
+                    <thead><tr><th>${__('Plain item')}</th><th style="text-align:right;">${__('On hand')}</th><th style="text-align:right;">${__('Held for Sales Orders')}</th>
+                        <th style="text-align:right;">${__('Free')}</th><th style="text-align:right;">${__('Sending')}</th><th>${__('Held by')}</th></tr></thead>
+                    <tbody>${rows}</tbody></table>` : '');
         };
 
         dialog.show();
@@ -6699,28 +7010,88 @@ function of_card(title, icon, inner, actions_html, footer_html, title_suffix_htm
  * at the top of the Accounts tab. The settled amount and the percentage are the
  * only figures not available above, so they lead.
  */
+// The lines of a Pick List as "item name / item code × qty" (picked once submitted) —
+// the first 3, then "+N more" that opens to the rest.
+function of_pl_items_html(items, is_draft) {
+    items = items || [];
+    if (!items.length) return '<span class="of-val--zero">—</span>';
+    const line = (it) => {
+        const qty = is_draft || flt(it.picked_qty) === flt(it.qty)
+            ? of_round2(it.qty)
+            : `${of_round2(it.picked_qty)} / ${of_round2(it.qty)}`;
+        return `<div class="of-pl-item">
+            <div class="of-pl-item__name">${of_esc(it.item_name || it.item_code)}</div>
+            <div class="of-micro text-muted">${it.item_name && it.item_name !== it.item_code ? of_esc(it.item_code) + ' · ' : ''}<b>× ${qty}</b> ${of_esc(it.uom || '')}</div>
+        </div>`;
+    };
+    const head = items.slice(0, 3).map(line).join('');
+    const rest = items.slice(3);
+    return head + (rest.length ? `<details class="of-pl-more"><summary class="of-micro">${__('+{0} more', [rest.length])}</summary>${rest.map(line).join('')}</details>` : '');
+}
+
 // ── Table filter search box (Customer / Supplier / …): an input over the table's own
 // options (OrderFlow.tf_options[list][field]); the matches open in one popup on <body>.
+// The options shown by name only — several records with the same name (five suppliers called
+// "DAC") become one entry whose value is their ids joined by "||" (order_flow_api.TF_MULTI_SEP;
+// the server matches any of them).
+function of_tf_merged(opts) {
+    const by = new Map();
+    (opts || []).forEach(([v, label]) => {
+        const name = String(label || v).trim();
+        const k = name.toLowerCase();
+        if (!by.has(k)) by.set(k, [[], name]);
+        by.get(k)[0].push(v);
+    });
+    return [...by.values()].map(([vals, name]) => [vals.join('||'), name]);
+}
+
+// The name to show in the box for the chosen value (one id or several joined by "||").
+function of_tf_label(opts, cur) {
+    const names = String(cur).split('||').map(v => {
+        const o = (opts || []).find(x => x[0] === v);
+        return o ? (o[1] || o[0]) : v;
+    });
+    return [...new Set(names)].join(', ');
+}
+
 function of_tf_combo_pop() {
     let $p = $('#of-tf-pop');
-    if (!$p.length) $p = $('<div id="of-tf-pop" class="of-tf-pop"></div>').appendTo(document.body);
+    if (!$p.length) {
+        $p = $('<div id="of-tf-pop" class="of-tf-pop"></div>').appendTo(document.body);
+        // The popup is fixed on the screen: keep it under its search box while the page (or any
+        // table) scrolls, and hide it once the box itself has scrolled out of sight.
+        const follow = () => { if ($p.is(':visible')) of_tf_combo_place($p); };
+        window.addEventListener('scroll', follow, true);
+        window.addEventListener('resize', follow);
+    }
     return $p;
+}
+
+function of_tf_combo_place($p) {
+    const combo = $p.data('combo');
+    const input = combo && combo.querySelector('.of-tf-combo-input');
+    if (!input || !document.body.contains(input)) { $p.hide(); return; }
+    const r = input.getBoundingClientRect();
+    if (r.bottom < 0 || r.top > window.innerHeight || (r.width === 0 && r.height === 0)) { $p.hide(); return; }
+    const w = Math.min(Math.max(260, r.width + 60), window.innerWidth - 16);
+    const left = Math.max(8, Math.min(r.left - 8, window.innerWidth - w - 8));
+    $p.css({ left, top: r.bottom + 4, width: w, minWidth: 0 });
 }
 
 function of_tf_combo_open(of, $input, on_focus) {
     const $c = $input.closest('.of-tf-combo');
     const key = $c.data('list'), field = $c.data('f');
-    const opts = ((of.tf_options[key] || {})[field]) || [];
+    const opts = of_tf_merged(((of.tf_options[key] || {})[field]) || []);
     const q = on_focus ? '' : String($input.val() || '').trim().toLowerCase();
     if (on_focus) $input.select();
     const hits = opts.filter(o => !q || String(o[1] || '').toLowerCase().includes(q) || String(o[0]).toLowerCase().includes(q)).slice(0, 80);
     const $p = of_tf_combo_pop();
-    const r = $input[0].getBoundingClientRect();
-    $p.css({ left: r.left - 8, top: r.bottom + 4, minWidth: Math.max(260, r.width + 60) }).data('combo', $c[0]).data('active', 0)
+    $p.data('combo', $c[0]).data('active', 0)
       .html(hits.length ? hits.map((o, i) => `<div class="of-tf-pop__item${i === 0 ? ' is-active' : ''}" data-v="${of_esc(o[0])}">
-            <span>${of_esc(o[1] || o[0])}</span>${o[1] && o[1] !== o[0] ? `<small>${of_esc(o[0])}</small>` : ''}</div>`).join('')
+            <span>${of_esc(o[1] || o[0])}</span></div>`).join('')
           : `<div class="of-tf-pop__empty">${__('No match in this table')}</div>`)
       .show();
+    of_tf_combo_place($p);
     $p.off('mousedown').on('mousedown', '.of-tf-pop__item', (ev) => {
         ev.preventDefault();
         of.set_table_filter(key, field, $(ev.currentTarget).data('v'));
@@ -6750,6 +7121,9 @@ function of_tf_combo_key(of, $input, e) {
 }
 
 function of_tf_combo_close(of, $input) {
+    // A redraw (after picking, or a background refresh) replaces the box while it has focus, and
+    // the browser then "blurs" the removed, empty box — that is not the user clearing the filter.
+    if (!$input[0] || !$input[0].isConnected) return;
     const $p = of_tf_combo_pop();
     const $c = $input.closest('.of-tf-combo');
     if ($p.data('combo') === $c[0]) $p.hide();
@@ -6757,8 +7131,7 @@ function of_tf_combo_close(of, $input) {
     const key = $c.data('list'), field = $c.data('f');
     const cur = ((of.table_filters[key] || {})[field]) || '';
     if (!String($input.val() || '').trim()) { if (cur) of.set_table_filter(key, field, ''); return; }
-    const hit = (((of.tf_options[key] || {})[field]) || []).find(o => o[0] === cur);
-    $input.val(cur ? (hit ? (hit[1] || hit[0]) : cur) : '');
+    $input.val(cur ? of_tf_label(((of.tf_options[key] || {})[field]) || [], cur) : '');
 }
 
 // A plain sub-tab (Purchase Flow, Job Work, Sales Tracker) drawn as a summary card: the count
@@ -6954,16 +7327,27 @@ function of_payment_prompt(doctype, name, on_done) {
                   options: [''].concat((d.modes || []).map(m => m.name)).join('\n') },
                 { fieldtype: 'HTML', fieldname: 'mode_info' },
                 { fieldtype: 'Column Break' },
+                // Two amounts, kept in step (sync below): what this payment clears on the invoice,
+                // and what actually moves through the bank / cash after the deductions.
+                { fieldtype: 'Float', precision: 2, fieldname: 'settle_amount', reqd: 1, default: d.outstanding,
+                  label: receive ? __('Amount settled on this invoice') : __('Amount settled on this bill'),
+                  description: receive ? __('How much of the invoice this payment clears — including any bank charges, TDS or write-off below.')
+                                       : __('How much of the bill this payment clears — including any TDS or write-off below.') },
                 { fieldtype: 'Float', precision: 2, fieldname: 'amount', reqd: 1, default: d.outstanding,
-                  label: receive ? __('Amount Received (in bank / cash)') : __('Amount Paid to Supplier') },
+                  label: receive ? __('Amount credited in bank / cash') : __('Amount paid to supplier'),
+                  description: receive ? __('What actually reached your bank / cash = settled amount − bank charges − TDS − write-off. Calculated for you; change it if the bank shows a different figure.')
+                                       : __('What the supplier receives = settled amount − TDS − write-off. Bank charges are extra, from your bank.') },
                 { fieldtype: 'Data', fieldname: 'reference_no', label: __('Reference No (UTR / Cheque No)') },
                 { fieldtype: 'Date', fieldname: 'reference_date', label: __('Reference Date') },
-                { fieldtype: 'Section Break', label: __('Deductions (only if any)'), collapsible: 0 },
+                { fieldtype: 'Section Break', label: receive ? __('Not received in the bank (only if any)') : __('Deductions (only if any)'), collapsible: 0 },
                 { fieldtype: 'Float', precision: 2, fieldname: 'bank_charges',
-                  label: receive ? __('Bank Charges deducted by bank') : __('Bank Charges paid by us') },
+                  label: receive ? __('Bank charges cut by the bank') : __('Bank charges paid by us (extra)'),
+                  description: receive ? __('Part of the settled amount the bank kept — not in the credited amount.') : __('Added on top of the amount paid; goes out of your bank.') },
                 { fieldtype: 'Float', precision: 2, fieldname: 'tds_amount',
-                  label: receive ? __('TDS deducted by customer') : __('TDS deducted now (not on the bill)') },
-                { fieldtype: 'Float', precision: 2, fieldname: 'write_off_amount', label: __('Small difference to write off (round off)') },
+                  label: receive ? __('TDS cut by the customer') : __('TDS cut by us now (not on the bill)'),
+                  description: receive ? __('Part of the settled amount the customer kept as TDS.') : __('Part of the settled amount we keep and pay to the government.') },
+                { fieldtype: 'Float', precision: 2, fieldname: 'write_off_amount', label: __('Small difference to write off (round off)'),
+                  description: __('Part of the settled amount nobody pays (a few rupees).') },
                 { fieldtype: 'Column Break' },
                 { fieldtype: 'Link', fieldname: 'bank_charges_account', label: __('Bank Charges Account'), options: 'Account',
                   default: d.defaults.bank_charges_account, get_query: acc_filter },
@@ -6978,6 +7362,20 @@ function of_payment_prompt(doctype, name, on_done) {
             primary_action_label: __('Review'),
             primary_action: (v) => review(v),
         });
+
+        // Keep "settled" and "credited / paid" in step: change the settled amount or a deduction →
+        // the bank amount follows; change the bank amount → the settled amount follows.
+        let syncing = false;
+        const cut = (v) => receive ? flt(v.bank_charges) + flt(v.tds_amount) + flt(v.write_off_amount)
+                                   : flt(v.tds_amount) + flt(v.write_off_amount);
+        const sync = (from) => {
+            if (syncing) return;
+            syncing = true;
+            const v = dlg.get_values(true) || {};
+            if (from === 'amount') dlg.set_value('settle_amount', flt(flt(v.amount) + cut(v), 2));
+            else dlg.set_value('amount', flt(Math.max(0, flt(v.settle_amount) - cut(v)), 2));
+            setTimeout(() => { syncing = false; paint(); }, 50);
+        };
 
         const calc = () => {
             const v = dlg.get_values(true) || {};
@@ -7001,11 +7399,28 @@ function of_payment_prompt(doctype, name, on_done) {
                 : (c.remaining < -0.004
                     ? `<span style="color:var(--of-info);font-weight:600;">${money(-c.remaining)} ${__('extra — kept as advance for {0}', [of_esc(d.party_name || d.party)])}</span>`
                     : `<span style="color:var(--of-green);font-weight:600;">${__('Invoice fully settled')}</span>`);
+            const line = (label, val, sign, strong) => `<div class="of-pay-eq__row${strong ? ' is-total' : ''}"><span>${sign || ''} ${label}</span><b>${money(val)}</b></div>`;
+            const eq = receive ? [
+                line(__('Credited in bank / cash'), c.amount, '', false),
+                c.charges ? line(__('Bank charges cut by the bank'), c.charges, '+') : '',
+                c.tds ? line(__('TDS cut by the customer'), c.tds, '+') : '',
+                c.wo ? line(__('Written off'), c.wo, '+') : '',
+                line(__('Settled on the invoice'), c.settled, '=', true),
+            ] : [
+                line(__('Paid to supplier'), c.amount, '', false),
+                c.tds ? line(__('TDS cut by us'), c.tds, '+') : '',
+                c.wo ? line(__('Written off'), c.wo, '+') : '',
+                line(__('Settled on the bill'), c.settled, '=', true),
+            ];
             dlg.fields_dict.summary.$wrapper.html(`
-                <div style="border:1px solid var(--border-color);border-radius:6px;padding:10px 12px;font-size:12.5px;display:grid;gap:4px;">
-                    <div>${__('Settles on invoice')}: <b>${money(c.allocated)}</b> ${__('of')} ${money(d.outstanding)}</div>
-                    <div>${receive ? __('Into bank / cash') : __('Out of bank / cash')}: <b>${money(c.bank)}</b></div>
-                    <div>${rem}</div>
+                <div class="of-pay-eq">
+                    <div class="of-pay-eq__calc">${eq.join('')}</div>
+                    <div class="of-pay-eq__side">
+                        <div>${receive ? __('Money into') : __('Money out of')} <b>${of_esc((c.mode && c.mode.account) || __('bank / cash'))}</b>: <b>${money(c.bank)}</b>
+                            ${!receive && c.charges ? `<span class="text-muted">(${money(c.amount)} + ${money(c.charges)} ${__('bank charges')})</span>` : ''}</div>
+                        <div>${__('Invoice outstanding')}: ${money(d.outstanding)} → <b>${money(Math.max(c.remaining, 0))}</b></div>
+                        <div>${rem}</div>
+                    </div>
                 </div>`);
         };
 
@@ -7018,9 +7433,10 @@ function of_payment_prompt(doctype, name, on_done) {
                 ${d.bill_no ? `<div>${__('Supplier Bill No')}: <b>${of_esc(d.bill_no)}</b></div>` : ''}
                 ${d.tds_on_invoice ? `<div class="text-muted">${__('TDS already deducted on the bill')}: ${money(d.tds_on_invoice)}</div>` : ''}
             </div>`);
-        ['amount', 'bank_charges', 'tds_amount', 'write_off_amount', 'mode_of_payment'].forEach(f => {
+        ['settle_amount', 'amount', 'bank_charges', 'tds_amount', 'write_off_amount', 'mode_of_payment'].forEach(f => {
             dlg.fields_dict[f].$input && dlg.fields_dict[f].$input.on('input change', () => setTimeout(paint, 0));
-            if (f !== 'mode_of_payment') dlg.fields_dict[f].df.onchange = () => paint();
+            if (f === 'mode_of_payment') return;
+            dlg.fields_dict[f].df.onchange = () => sync(f === 'amount' ? 'amount' : 'settle');
         });
         dlg.fields_dict.mode_of_payment.df.onchange = () => {
             const m = mode_by_name[dlg.get_value('mode_of_payment')];
@@ -7100,11 +7516,11 @@ function of_payment_prompt(doctype, name, on_done) {
                     ${row(__('Payment Date'), frappe.datetime.str_to_user(v.posting_date))}
                     ${row(__('Mode of Payment'), of_esc(v.mode_of_payment))}
                     ${v.reference_no ? row(__('Reference'), `${of_esc(v.reference_no)} · ${frappe.datetime.str_to_user(v.reference_date)}`) : ''}
-                    ${row(receive ? __('Amount Received') : __('Amount Paid to Supplier'), money(c.amount))}
+                    ${row(receive ? __('Credited in bank / cash') : __('Paid to supplier'), money(c.amount))}
                     ${c.charges ? row(__('Bank Charges'), money(c.charges)) : ''}
                     ${c.tds ? row(__('TDS'), money(c.tds)) : ''}
                     ${c.wo ? row(__('Write Off'), money(c.wo)) : ''}
-                    ${row(__('Settles on invoice'), money(c.allocated))}
+                    ${row(receive ? __('Settled on the invoice') : __('Settled on the bill'), money(c.settled))}
                     ${row(__('Outstanding after this'), money(Math.max(c.remaining, 0)))}
                     ${c.remaining < -0.004 ? row(__('Advance'), money(-c.remaining)) : ''}
                 </table>

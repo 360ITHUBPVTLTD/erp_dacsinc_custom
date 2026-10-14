@@ -1674,7 +1674,7 @@ td > .of-action-btn {
     position: sticky; top: var(--navbar-height, 48px); z-index: 5;
     background: var(--card-bg); border-radius: 8px 8px 0 0; box-shadow: 0 1px 0 var(--border-color);
 }
-@media (max-height: 700px) { [id^="of-panel-"] .of-card__sticky { position: static; } }
+@media (max-width: 768px) { [id^="of-panel-"] .of-card__sticky { position: static; } }
 
 /* Table filter search box (Customer / Supplier / …) and its popup */
 .of-tf-combo { flex: 1; min-width: 0; display: flex; align-items: center; position: relative; }
@@ -1690,7 +1690,7 @@ td > .of-action-btn {
     background: var(--card-bg, #fff); border: 1px solid var(--border-color); border-radius: 8px;
     box-shadow: 0 10px 28px rgba(0,0,0,.16); padding: 4px; font-size: 12.5px;
 }
-.of-tf-pop__item { display: flex; justify-content: space-between; gap: 10px; padding: 7px 10px; border-radius: 6px; cursor: pointer; }
+.of-tf-pop__item { display: flex; justify-content: space-between; gap: 10px; padding: 7px 10px; border-radius: 6px; cursor: pointer; white-space: normal; overflow-wrap: anywhere; line-height: 1.35; }
 .of-tf-pop__item small { color: var(--text-muted); white-space: nowrap; }
 .of-tf-pop__item.is-active, .of-tf-pop__item:hover { background: var(--of-blue-tint, rgba(36,144,239,.1)); color: var(--of-blue, #2490ef); }
 .of-tf-pop__empty { padding: 10px; color: var(--text-muted); }
@@ -1717,3 +1717,182 @@ td > .of-action-btn {
 .of-kcard__amt small { font-size: 10.5px; }
 .of-kcard .of-bar { grid-column: 1 / -1; height: 4px !important; margin: 1px 0 0 !important; }
 .of-kcard__meta { grid-column: 1 / -1; font-size: 10.5px; line-height: 1.3; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+/* Receive / Pay prompt: the arithmetic, spelled out */
+.of-pay-eq { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 14px; border: 1px solid var(--border-color);
+    border-radius: 8px; padding: 10px 12px; font-size: 12.5px; }
+@media (max-width: 640px) { .of-pay-eq { grid-template-columns: 1fr; } }
+.of-pay-eq__calc { display: grid; gap: 3px; }
+.of-pay-eq__row { display: flex; justify-content: space-between; gap: 10px; font-variant-numeric: tabular-nums; }
+.of-pay-eq__row.is-total { border-top: 1px solid var(--border-color); padding-top: 4px; margin-top: 2px; color: var(--of-blue, #2490ef); }
+.of-pay-eq__side { display: grid; gap: 4px; align-content: start; }
+.of-confirm-table tr.is-over td { color: var(--of-red, #e24c4c) !important; font-weight: 700; background: #fff1f0 !important; }
+.of-uet-line { display: flex; align-items: center; gap: 5px; flex-wrap: wrap; font-size: 12px; line-height: 1.6; }
+.of-uet-line .fa { color: var(--text-muted); }
+.of-receive-lines-dialog .grid-add-row, .of-receive-lines-dialog .grid-add-multiple-rows, .of-receive-lines-dialog .grid-upload, .of-receive-lines-dialog .grid-remove-rows { display: none !important; }
+.of-uet-route { display: inline-flex; align-items: center; gap: 6px; flex-wrap: wrap; padding: 6px 10px; margin-bottom: 4px;
+    border-radius: 6px; background: var(--subtle-fg, #f4f5f6); border: 1px solid var(--border-color); font-size: 12.5px; }
+.of-uet-route .fa { color: var(--text-muted); }
+
+/* Stock Tracker: what each number means */
+.of-st-legend { display: flex; flex-wrap: wrap; gap: 4px 16px; padding: 8px 14px; font-size: 11.5px; color: var(--text-color);
+    background: var(--subtle-fg, #f7f8f9); border-bottom: 1px solid var(--border-color); }
+.of-stock-table th.of-st-held-head { background: #f39c12 !important; }
+.of-stock-table td.of-st-held { background: rgba(243, 156, 18, .06); }
+.of-stock-table .of-st-free { background: rgba(46, 204, 113, .08); }
+.of-stock-table th.of-st-free { background: #27ae60 !important; }
+.of-st-detail .of-st-chips { display: flex; flex-wrap: wrap; gap: 6px 18px; font-size: 12px; }
+.of-st-detail .of-st-chips span { white-space: nowrap; }
+
+/* Column headings stay in view: each main table (a direct child .of-scroll of a card) scrolls inside
+   a screen-high area with its <thead> pinned (height: OrderFlow.fit_tables → --of-box-h). A sticky header can't stick to the page from inside a
+   sideways-scrolling box, so the box itself scrolls. Nested detail tables are not affected. */
+[id^="of-panel-"] .of-card > .of-scroll {
+    max-height: var(--of-box-h, calc(100vh - 210px));
+    overflow: auto;
+    -webkit-overflow-scrolling: touch;
+}
+[id^="of-panel-"] .of-card > .of-scroll > table > thead {
+    position: sticky; top: 0; z-index: 4;
+}
+[id^="of-panel-"] .of-card > .of-scroll > table > thead th { box-shadow: inset 0 -1px 0 rgba(0,0,0,.08); }
+
+/* Pick List tab: the items on each Pick List */
+.of-pl-item { padding: 2px 0; line-height: 1.25; }
+.of-pl-item + .of-pl-item { border-top: 1px dashed var(--border-color, #e2e6e9); margin-top: 2px; padding-top: 4px; }
+.of-pl-item__name { font-weight: 600; font-size: 12px; }
+.of-pl-more > summary { cursor: pointer; color: var(--of-blue, #2490ef); margin-top: 2px; }
+/* Pick List tab: a narrow Status column — the embroidery note wraps under the pill
+   instead of stretching the column (and the table) sideways. */
+.of-table td.of-pl-status { width: 150px; max-width: 150px; }
+.of-table td.of-pl-status .of-chip { white-space: normal; display: inline-block; line-height: 1.3; }
+
+/* Filters button in a table's title row — phone only (OrderFlow.add_filter_toggles) */
+.of-tf-toggle { display: none; }
+.of-tf-toggle__n { display: inline-block; min-width: 16px; padding: 0 4px; border-radius: 8px; background: var(--of-blue, #2490ef);
+    color: #fff; font-size: 10px; line-height: 16px; text-align: center; }
+
+/* ── Phone / small tablet ─────────────────────────────────────── */
+@media (max-width: 768px) {
+    /* Toolbar: search on its own line, the rest side by side (not one control per line) */
+    .of-toolbar { flex-direction: row !important; flex-wrap: wrap; align-items: center !important; gap: 6px; }
+    .of-toolbar .of-search { order: -1; flex: 1 1 100%; width: 100% !important; }
+    .of-toolbar .of-search input { width: 100% !important; }
+    .of-toolbar #of-btn-refresh { width: auto !important; flex: 0 0 auto; padding: 0 10px; }
+    .of-toolbar .of-select { width: auto !important; flex: 1 1 calc(50% - 3px); min-width: 0; font-size: 12px; }
+    .of-toolbar #of-btn-refresh, .of-toolbar .of-bell-btn, .of-toolbar .of-create-dropdown { order: 5; }
+    .of-toolbar .of-daterange { flex: 1 1 100%; display: flex; gap: 4px; }
+    .of-toolbar .of-daterange[style*="none"] { display: none !important; }
+    .of-toolbar .of-daterange input { flex: 1; min-width: 0; }
+    .of-toolbar .of-count { flex: 1 1 100%; order: 10; font-size: 11px; }
+    .of-toolbar .of-bell-btn, .of-toolbar .of-create-dropdown { flex: 0 0 auto; width: auto !important; }
+    .of-toolbar #of-btn-create { width: auto !important; margin-left: 0 !important; }
+    .of-toolbar .of-create-dropdown { margin-left: auto; }
+    .of-toolbar .of-count:empty { display: none; }
+
+    /* Summary cards: one swipeable row instead of a full-width card per line */
+    .of-kcards, .of-kcards--4 { display: flex !important; overflow-x: auto; scroll-snap-type: x mandatory; gap: 8px;
+        padding-bottom: 4px; -webkit-overflow-scrolling: touch; }
+    .of-kcards > .of-kcard { flex: 0 0 72%; min-width: 0; scroll-snap-align: start; }
+
+    /* Card title row: pills and Create wrap; Filters button shown */
+    .of-card__head { padding: 8px 10px !important; gap: 6px; }
+    .of-tf-toggle { display: inline-flex; align-items: center; gap: 5px; margin-left: auto; }
+    .of-card__sticky:not(.of-tf-is-open) > .of-tf-row { display: none !important; }
+    .of-card__sticky.of-tf-is-open > .of-tf-row { display: grid !important; grid-template-columns: 1fr; gap: 6px; padding: 8px 10px; }
+    .of-tf-row .of-tf-field { width: 100%; min-width: 0; }
+
+    /* Tables: tighter cells so more columns fit before the sideways scroll */
+    .of-table { font-size: 12px; }
+    .of-table th { font-size: 11px; padding: 6px 6px; }
+    .of-table td { padding: 6px 6px; }
+    .of-table td.of-pl-status { width: 110px; max-width: 110px; }
+    /* natural column widths (the desktop % widths squash a phone into tall, narrow rows) */
+    [id^="of-panel-"] .of-card > .of-scroll > table { table-layout: auto !important; min-width: 680px; }
+    [id^="of-panel-"] .of-card > .of-scroll > table > thead th { width: auto !important; }
+    .of-scroll-hint { display: none !important; }
+
+    /* Dialogs opened from the dashboard use the full width */
+    .modal-dialog { margin: 8px auto; max-width: calc(100vw - 16px) !important; }
+}
+
+/* Search / Open-All / dates / stage chips inside the visible table's filter bar
+   (OrderFlow.place_shared_controls) — same height and look as the filter boxes */
+.of-shared-dock { display: none; }
+.of-tf-row > .of-search { flex: 2 1 240px; max-width: 420px; height: 32px; border-radius: 6px; box-sizing: border-box; }
+.of-tf-row > .of-search input { width: 100%; min-width: 0; flex: 1; }
+.of-tf-row > .of-select { flex: 0 1 150px; height: 32px; border-radius: 6px; }
+.of-tf-row > .of-daterange { display: inline-flex; align-items: center; gap: 4px; }
+.of-tf-row > .of-daterange[style*="none"] { display: none !important; }
+.of-tf-row > .of-daterange .of-select { height: 32px; border-radius: 6px; }
+.of-tf-row > .of-my-customers { height: 32px; border-radius: 6px; }
+.of-card__sticky > .of-stage-bar { margin: 0; border: 0; border-radius: 0; border-bottom: 1px solid var(--border-color); padding: 7px 16px; }
+.of-stage-bar:not(.of-stage-bar--all) .of-stage-btn.is-empty:not(.is-active) { display: none; }
+.of-stage-more { border: 0; background: none; padding: 3px 6px; font-size: 11px; font-weight: 600; color: var(--of-blue, #2490ef); cursor: pointer; }
+.of-stage-more:hover { text-decoration: underline; }
+@media (max-width: 768px) {
+    .of-tf-row > .of-search, .of-tf-row > .of-select, .of-tf-row > .of-daterange, .of-tf-row > .of-my-customers { width: 100%; max-width: none; }
+    .of-card__sticky > .of-stage-bar { flex-wrap: wrap; row-gap: 4px; }
+    .of-card__sticky > .of-stage-bar .of-stage-btn { white-space: nowrap; }
+}
+
+/* Tabs + Refresh / bell / Create on one line (render_shell wraps them in .of-topbar) */
+.of-topbar { display: flex; align-items: center; gap: 10px; border-bottom: 1px solid var(--border-color); margin-bottom: 10px; }
+.of-topbar > .of-tabs { flex: 1 1 auto; min-width: 0; margin-bottom: 0; border-bottom: 0; }
+.of-topbar > .of-toolbar { flex: 0 0 auto; margin: 0; flex-wrap: nowrap; gap: 6px; }
+.of-topbar > .of-toolbar .of-spacer { display: none; }
+.of-topbar > .of-toolbar .of-count { max-width: 180px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.of-topbar > .of-toolbar .of-bell-btn { margin-left: 0; }
+.of-topbar > .of-toolbar #of-btn-create { margin-left: 0 !important; }
+
+/* "Custom range…": one between-dates picker */
+.of-daterange__pick { display: inline-flex; min-width: 210px; }
+.of-daterange__pick .frappe-control { margin: 0 !important; width: 100%; }
+.of-daterange__pick input { height: 32px !important; font-size: 12px !important; border-radius: 6px !important; }
+@media (max-width: 768px) {
+    .of-topbar { flex-wrap: wrap; row-gap: 6px; padding-bottom: 6px; }
+    .of-topbar > .of-tabs { flex: 1 1 100%; }
+    .of-topbar > .of-toolbar { flex: 1 1 100%; flex-wrap: wrap; }
+    .of-daterange__pick { width: 100%; }
+}
+
+/* Compact sticky strip: title row, stage chips (one line, swipe) and the filter boxes (one line
+   on a desktop) take as little height as possible, so the table gets the screen */
+@media (min-width: 769px) {
+    .of-card__sticky > .of-card__head { padding-top: 6px !important; padding-bottom: 6px !important; min-height: 0; }
+    .of-card__sticky > .of-card__head small { display: none; }
+    .of-card__sticky > .of-stage-bar { flex-wrap: wrap; row-gap: 4px; padding: 5px 14px; }
+    .of-card__sticky > .of-stage-bar .of-stage-btn, .of-card__sticky > .of-stage-bar .of-stage-more { white-space: nowrap; }
+    .of-card__sticky > .of-stage-bar .of-stage-btn { padding: 2px 8px; }
+    .of-tf-row { padding: 6px 14px; gap: 6px; }
+    .of-tf-field { height: 28px; flex: 1 1 140px; max-width: 280px; }
+    .of-tf-cap { padding: 0 7px; font-size: 10.5px; }
+    .of-tf-combo-input { height: 26px; }
+    .of-tf-link input { height: 26px !important; }
+    .of-tf-row > .of-search { height: 28px; flex: 1.4 1 170px; max-width: 340px; }
+    .of-tf-row > .of-select { height: 28px; flex: 0 1 128px; }
+    .of-tf-row > .of-daterange .of-select, .of-daterange__pick input { height: 28px !important; }
+    .of-tf-row > .of-my-customers { height: 28px; }
+    .of-tf-clear { height: 28px; padding: 0 10px; }
+}
+
+/* A filter / page change is loading: the table dims (and ignores clicks) until it repaints */
+[id^="of-panel-"].of-is-loading .of-card > .of-scroll { opacity: .45; pointer-events: none; transition: opacity .12s; }
+[id^="of-panel-"].of-is-loading .of-card__sticky .of-card__head::after {
+    content: ""; width: 12px; height: 12px; margin-left: 8px; border-radius: 50%; display: inline-block;
+    border: 2px solid var(--of-blue, #2490ef); border-right-color: transparent; animation: of-spin .7s linear infinite; }
+@keyframes of-spin { to { transform: rotate(360deg); } }
+
+/* Shared controls parked in the toolbar stay hidden unless that tab really has no filter bar
+   (place_shared_controls) — no flash in the old place while a tab loads. */
+.of-toolbar:not(.of-shared-in-toolbar) > .of-search,
+.of-toolbar:not(.of-shared-in-toolbar) > #of-scope,
+.of-toolbar:not(.of-shared-in-toolbar) > #of-days,
+.of-toolbar:not(.of-shared-in-toolbar) > #of-daterange,
+.of-toolbar:not(.of-shared-in-toolbar) > #of-my-customers { display: none !important; }
+
+}
+.of-stage-bar__label { white-space: nowrap; }
+/* The stage chips parked outside the Sales Orders card (before it is drawn) stay hidden, so a
+   reload never shows them in the old place first (place_shared_controls moves them in). */
+.of-page > .of-stage-bar { display: none !important; }

@@ -54,6 +54,18 @@ DN/SI, or — ahead of both — **held for embroidery** (see below). A draft's
 Picked column reads "not yet" rather than `0`, because `picked_qty` genuinely
 stays 0 until submit and a bare 0 reads like something went wrong.
 
+The **Items** column lists what is on the Pick List — item name, code under it when different,
+`× qty uom` (`picked / qty` once submitted and short) — from one batch query over the page's Pick
+Lists (`rows[].items`); the first 3, then "+N more" that opens to the rest (`of_pl_items_html`).
+The search box matches item names as well as codes. The Status column is held at 150px: its
+embroidery note wraps under the pill instead of widening the table into a sideways scroll.
+
+The Pick List prompts show the item name too: the Sales Order widget's "Pick Lists" modal
+(`get_pick_lists_for_so` returns `item_name`), the Create DN / SI modal and its "already on a
+draft" chips (`get_draft_dn_si_for_so` details carry `item_name`), the select-Pick-List(s) source
+lines, and the widget's **Submit Pick List** confirm, which lists the lines (`get_pick_list_rows`)
+before asking.
+
 ### Held for embroidery — a fourth Action state
 
 A Pick List can hold qty that is out at a Full Piece embroidery jobber,
@@ -268,13 +280,14 @@ loading closed again when the repaint landed.
 - **The widget's own raw-material rows** stay open too: `load_so_details` gives its mock frm a
   `_so_open_rows` property backed by `this.so_open_rows[so]`, so the list survives the widget
   being rebuilt (it used to live on a mock frm thrown away on every reload).
-- **Other users' changes** (`order_flow_changed`, debounced 1.2 s) and the browser tab regaining
-  focus go through `queue_background_refresh`: if `is_busy()` — a row or prompt open, focus in
+- **Other users' changes** (`order_flow_changed`, debounced 1.2 s) go through `queue_background_refresh`: if `is_busy()` — a row or prompt open, focus in
   an input, or any use of the page in the last 15 s — nothing is redrawn and the bar "N updates
   waiting — Refresh" shows; otherwise it refreshes. Every 5 s, waiting updates apply by themselves
-  once the user is no longer busy. `is_relevant_change` ignores changes to doctypes the tab doesn't
-  list unless they touch an order on screen, and ignores the user's own changes while busy (the
-  broadcast now carries `user`).
+  once the user is no longer busy. `is_relevant_change` counts only **another user's** change
+  (the broadcast carries `user`; own actions refresh the screen themselves) to a document type the
+  **visible table** lists (`OF_TABLE_DOCTYPES`, per sub-tab), or one belonging to a Sales Order
+  shown on it. Coming back to the browser tab refreshes quietly when the user isn't busy and never
+  raises the bar. Payment Entry submit / cancel broadcasts too (Finance).
 - **Refresh** (first button in the toolbar, or the bar's) always reloads the latest data and keeps
   open rows open.
 
@@ -1592,8 +1605,15 @@ invoice: the 50 paise round-off appeared as money received / missing.
 
 Rows with an outstanding amount get **Receive** (Receivables) or **Pay** (Payables) when the
 user may create and submit Payment Entries (`can_pay`) and may act on that sub-tab
-(`guard_act("accounts", receivables|supplier|jobber)`). The prompt asks: payment date, mode of
-payment (shows the account it posts to), amount, reference no / date (required when the mode's
+(`guard_act("accounts", receivables|supplier|jobber)`). The prompt shows **two amounts kept in
+step**: *Amount settled on this invoice / bill* (what the payment clears, deductions included) and
+*Amount credited in bank / cash* (Receive) or *Amount paid to supplier* (Pay). Receive: credited =
+settled − bank charges − TDS − write-off; Pay: paid to supplier = settled − TDS − write-off, and
+bank charges come on top from our bank. Changing the settled amount or a deduction recalculates the
+bank amount; changing the bank amount recalculates the settled amount. A live sum shows it, e.g.
+"9,950 credited + 50 bank charges = 10,000 settled". The server still receives the bank amount as
+`amount`. It also asks: payment date, mode of
+payment (shows the account it posts to), reference no / date (required when the mode's
 account is a Bank account), and optional deductions with their accounts — bank charges (Card
 modes default to Card Swipe Bank Charges), TDS (TDS Receivable / TDS Payable), and a small
 difference written off. A live box shows what settles on the invoice, what moves through bank /
@@ -1713,7 +1733,9 @@ deleted still shows under Open while its goods are out.
 
 ## The page filters work on every tab (Open / All, Last N days, search)
 
-**Custom range.** The days dropdown's "Custom range…" shows From / To dates; the page then
+**Custom range.** The days dropdown's "Custom range…" shows one "between" picker (Frappe
+DateRange, `mount_date_range`: pick the first day, then the last) that fills two hidden From / To
+inputs; the page then
 sends `days="YYYY-MM-DD~YYYY-MM-DD"` instead of a number, so no endpoint signature changed.
 `order_flow_api._date_range(days)` reads either form, and every date condition is
 `col >= %(from_date)s AND col < %(to_next)s` (`_to_next` = the day after "To", far future for
@@ -1727,15 +1749,36 @@ name is never read as a chosen value; `mount_table_filters` moves the strip unde
 mounts the Link boxes. The boxes stretch to fill the row (flex), and "Clear filters" sits at its end.
 Customer / Supplier / Jobber / Transporter / Warehouse are **search boxes over the parties actually
 in that table** (`of_tf_combo_*`: type part of a name or code, pick from the popup, arrow keys /
-Enter / Esc; an emptied box clears the filter): each list returns `filter_options` (`_filter_options` — the distinct
+Enter / Esc; an emptied box clears the filter; the popup is fixed on `<body>` and re-placed under
+its box on every scroll / resize, hiding once the box scrolls out of view — `of_tf_combo_place`): each list returns `filter_options` (`_filter_options` — the distinct
 values under all the table's other filters, its own choice for that field left out, so the list
 stays complete after picking one); the page collects them (`collect_filter_options`) and renders a
 select with "All (n)". Pending DN/SI offers the customers of the orders in its queue. A table that
 returns no options falls back to a Link box.
 "Not received / Not billed / Not ordered" include drafts — nothing is received against a draft
 either; the Draft / Submitted pills narrow it. The
-toolbar keeps only what applies to the whole tab: Refresh, Search, Open / All / Created by me, Last
-N days / Custom range, Create. Values live per table in `this.table_filters["<tab>.<table>"]` and go
+whole-tab controls — Search, Open / All / Created by me, Last N days / Custom range, "Show my
+customers' orders" and, on Sales Tracker › Sales Orders, the stage chips — sit **in the visible
+table's filter bar**, right above it and sticky with it (`place_shared_controls`). It is UI only:
+the same elements are moved (ids and delegated handlers unchanged) and still narrow the whole tab;
+`paint` parks them in the toolbar dock (`#of-shared-dock`) before `panel.html` and places them
+again after it, keeping the search box's focus and caret; a tab with no filter bar keeps them in
+the toolbar (`.of-shared-in-toolbar`) — while a tab is still loading they stay hidden, so they don't
+flash in the toolbar and jump into the bar on a reload; the stage chips likewise stay hidden
+while parked outside the Sales Orders card (`.of-page > .of-stage-bar`). The stage chips sit under the Sales Orders
+title, above its filter bar, and wrap onto a second line when needed — nothing to scroll; stages
+with no orders fold behind "+N more" (`update_stage_more`).
+
+**Filters are remembered across reloads** (per user, in this browser — `localStorage`
+`dac_order_flow_filters:<user>`): tab (as before), sub-tabs, search, Open / All, Last N days /
+custom range, stage, Draft / Submitted pills, every table filter and the mirrored toolbar
+filters. `refresh` saves on every change (sub-tab clicks too); `load_view_prefs` restores them
+before the first paint and `apply_view_prefs_to_controls` puts them back into the controls (the
+Merchandiser / Industry / Warehouse lists re-apply theirs when their options load). A remembered
+value that no longer exists just matches nothing; Clear filters / All reset as usual. The toolbar itself
+holds only Refresh · bell · Create and shares one line with the tabs (`.of-topbar`). On a desktop
+the sticky strip is compact (title row without its subtitle, stage chips in one compact row,
+28px filter boxes on one line) so the table gets the screen. Values live per table in `this.table_filters["<tab>.<table>"]` and go
 to the server as `of_tf` JSON; each query reads its own table's with `_tf(list_key)` through
 `_add_party_filter` (Customer / Supplier / Jobber / Transporter), `_add_choice_filter` (fixed options),
 `_add_value_filter` (warehouse, stage) and `_add_status_filter`. So the PO table's Supplier never
@@ -1747,7 +1790,7 @@ filters Receipts or To Bill. One dropdown per question:
 | Sales Tracker › Sales Orders | Merchandiser · Industry · Dispatch (Not / Partly / Fully) · Customer |
 | Sales Tracker › Material Requests | Ordered · Received (Not / Partly / Fully) · Type · Customer · POS |
 | Embroidery FP / Panel (Tracker, Job Work) | Received · Stage · Jobber (· Customer on the Tracker) |
-| Pick Lists | Status · Customer · Warehouse |
+| Pick Lists | Status · Customer · Item (Pick Lists with a line for it; no Warehouse — all picking is from VV Puram) |
 | Purchase Flow › POs | Received · Billed · Overdue · Supplier · Customer (of the Sales Order) |
 | Purchase Flow › Receipts / Job Work › Sub Receipts | Billing (To bill / Billed / Returns) · Supplier / Jobber |
 | Purchase Flow › To Bill | Supplier |
@@ -1764,6 +1807,35 @@ POS) stay in the DOM as hidden state holders (`.of-moved`); the header shows a m
 (`.of-tf-mirror`) / POS switch that sets them, so their existing server arguments are unchanged.
 An option that finds what "Open orders" hides (Fully billed, Paid, Completed…) switches the scope to
 All orders. **Clear** resets one table. The activity stream ignores table filters.
+
+The search boxes list **names only**, never ids. Records sharing a name (five suppliers called
+"DAC") are one entry (`of_tf_merged`) whose value is their ids joined by `||`
+(`TF_MULTI_SEP`); the server matches any of them (`_tf_condition`: `IN (…)` for a column, the
+`{p}` condition OR-ed per id). The popup is kept inside the screen and long names wrap. A redraw
+that replaces a focused box makes the browser "blur" the removed, empty box — `of_tf_combo_close`
+ignores a box no longer in the page (as does the Link fallback), or that blur cleared the filter
+just picked.
+
+**Applying a filter.** `refresh` asks for the table's rows first and paints them; Sales Tracker's
+stage counts (`get_summary`, as heavy as the rows) and the activity stream are asked for only
+after that, so the requests don't compete and the table shows in about the server's own time.
+While the rows load the table dims (`.of-is-loading`, a spinner by its title). Only the latest
+request paints (`_req_seq` / `_summary_seq`): an older, slower answer to a filter changed again
+since is cached but never painted over the newer one.
+
+**Column headings stay in view on every screen size.** Each main table (`.of-card > .of-scroll`)
+scrolls inside a box with its `<thead>` sticky; `fit_tables` sets the box height (`--of-box-h`) to
+the screen below the navbar and the table's sticky title / filter strip (re-measured by a
+ResizeObserver whenever that strip changes height), minus its pagination bar
+and whatever the page has below the card (otherwise the page scrolls that much further and the
+heading slides under the strip). Re-measured after every redraw, tab / sub-tab switch and resize.
+
+**Phone (≤ 768px):** tabs on their own line, Refresh · bell · Create under them; search, Open /
+Last N days and the table filters are in the table's **Filters** fold (the stage chips stay
+visible, one swipeable line); summary cards are one swipeable row; a table's filter strip folds behind a
+**Filters (n)** button in its title row (`add_filter_toggles`, open state kept per table); the
+title strip is not sticky (the table's own heading is); tables take natural column widths (min
+680px) and scroll sideways.
 
 Every tab endpoint receives the page's `days`, `scope`, `search` (and
 merchandiser on Approvals / Tracker). Frappe silently drops an argument a
@@ -1850,3 +1922,61 @@ their default format). The Embroidery work order tables (Full Piece / Panel) hav
 **Notes** column showing the full notes (`of_ewo_notes_html`: one line per entry, the date of
 each "• <date time>: Status changed…" entry in bold; the box scrolls past ~7 lines), and Embroidery Transfers rows have a
 Print button.
+
+
+## Embroidery Transfers: one record, several item lines, free stock only
+
+A **Uniform Embroidery Transfer** holds several lines in its **Items** table (child doctype
+*Uniform Embroidery Transfer Item*: plain item sent, Same item, embroidered item it comes back as,
+qty sent, qty received, pending, UOM). The controller fills the embroidered item for "Same item"
+lines, keeps pending, Total Qty Sent / Total Received, and the status (Sent → Partially Received →
+Received, from the lines). The old single-item header fields stay hidden for history;
+`patches/uniform_transfer_items_table.py` moved every older transfer into one Items line.
+
+- **Create Transfer** (`create_embroidery_transfers`): a lines table with each line's free stock and
+  a summary (on hand, held for Sales Orders with the holding orders, free, sending). One Stock Entry
+  moves every line to the jobber's WIP warehouse and **one** transfer record holds them all. Only
+  free stock may go: `_free_stock` = on hand − what stock_hold allocates to Sales Orders (Pick Lists,
+  embroidery at the jobber, raw-material earmarks; held only in the hold warehouse). No override here.
+- **Receive** (`receive_embroidery_transfer(transfer_id, lines)`): every pending line with "Received
+  now" and **its own warehouse** (a "same warehouse on every line" shortcut fills them). Each received
+  line gets its own Repack Stock Entry (plain item out of WIP, embroidered item into that line's
+  warehouse) so each item's valuation is its own, and its own row in Receipts (with the item and the
+  line it belongs to). Lines can come back in parts, any number of times.
+- **The tab** lists one row per transfer with its lines ("plain → embroidered × qty (n back)");
+  expanding a row shows the Items with sent / received / pending and the receipt history.
+- **Deleting a transfer undoes its stock** (`UniformEmbroideryTransfer.on_trash`): its receipt Repack
+  entries (newest first) and then the sending Material Transfer are cancelled (a draft entry is
+  deleted). The transfer only points at those entries, so before this a delete left the stock at the
+  jobber / in the receiving warehouse. If an entry can't be cancelled (e.g. the embroidered items were
+  already used) or another transfer shares it, the delete is refused and nothing changes.
+- The doctype numbers from a database sequence; `patches/ensure_autoincrement_sequences.py` creates
+  any missing one ("Unknown SEQUENCE: 'uniform_embroidery_transfer_id_seq'").
+
+
+## Stock Tracker: VV Puram first; held, free and ordered spelled out
+
+Counts are for **VV Puram - IND** by default (`OF_MAIN_WAREHOUSE`, the store orders are picked from);
+the table's Warehouse box picks another or All. The default is not treated as a filter ("Clear
+filters" returns to it). Per item: **On hand · Held for orders** (with a one-line breakdown) **· Free
+now · Ordered, not picked · Free after open orders · Other warehouses** (stock elsewhere, not counted).
+Opening an item shows the held breakdown by kind (each number opens its documents) and the stock in
+the other warehouses.
+
+
+`get_stock_tracker` returns per item and per warehouse (and the page shows, with a legend and a
+click-through to the documents behind each number — `get_stock_reservation_details`):
+
+| Column | Meaning |
+|---|---|
+| On hand | `Bin.actual_qty` |
+| Draft Pick List | stock_qty of draft Pick Lists (not Completed / Cancelled) |
+| Picked (submitted) | picked − delivered on submitted Pick Lists |
+| At embroidery | goods at the embroidery jobber from a Sales Order's own stock (stock_hold, hold warehouse only) |
+| Bought for an order | raw material earmarked for a Sales Order (stock_hold, hold warehouse only) |
+| **Free now** | On hand − the four held columns (never below 0; "held N more than on hand" when over-held) |
+| Ordered, not picked | submitted Sales Orders still to deliver (`Bin.reserved_qty`) − what Pick Lists cover. **Draft Sales Orders are never counted** (ERPNext books stock only on submit) |
+| Free after open orders | Free now − Ordered, not picked; negative shows as "short N" |
+
+The held columns are the same holds the Stock Hold guard and the embroidery transfer's free-stock
+check use, so "free" means the same everywhere. Expanding an item shows these columns per warehouse.

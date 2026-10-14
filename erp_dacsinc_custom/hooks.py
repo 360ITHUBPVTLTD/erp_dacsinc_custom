@@ -256,6 +256,11 @@ has_permission = {
 # Hook on document methods and events
 
 doc_events = {
+    # Finance tab: another user's payment changes outstanding amounts — tell open dashboards
+    "Payment Entry": {
+        "on_submit": "erp_dacsinc_custom.order_flow_api.broadcast_order_flow_change",
+        "on_cancel": "erp_dacsinc_custom.order_flow_api.broadcast_order_flow_change",
+    },
     # Role Permission Manager edits reach the access sheet (access_reverse.py).
     "Custom DocPerm": {
         "after_insert": "erp_dacsinc_custom.access_reverse.on_custom_docperm_change",
