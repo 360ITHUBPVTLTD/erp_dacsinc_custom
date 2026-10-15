@@ -32,6 +32,9 @@ previously-buggy edge cases — are documented in `docs/`:
   by section, vendors as Suppliers).
 - `docs/rate-read-only.md` — item Rate is read-only on SO / SI / PO / PI; users change
   the Price List Rate and the discount.
+- `docs/overall-discount.md` — overall (Additional) discount on Quotation / SO / DN / SI /
+  POS Invoice skips items ticked "Exclude from Overall Discount" (freight, packing); re-run
+  its tests after every ERPNext update.
 - `docs/stock-hold.md` — stock held for Sales Orders (Pick Lists, jobber, earmarks)
   can't be delivered, moved, reconciled or cancelled away by anything else.
 
