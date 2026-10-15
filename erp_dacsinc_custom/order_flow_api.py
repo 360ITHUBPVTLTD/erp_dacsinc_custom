@@ -4666,6 +4666,13 @@ def get_billing_flow(days=120, search=None, scope="open", page=1, page_size=100)
         or o.get("stage", {}).get("secondary_action")
     ]
 
+    # "Waiting for invoice" (on unless the table filter says "all"): only orders with delivered qty
+    # not yet invoiced — billing is the primary stage, or a secondary action next to another stage
+    # (part delivered / part invoiced). Orders only ready for a Delivery Note are left out.
+    if cstr(_tf("billing").get("invoice")) != "all":
+        rows = [o for o in rows if o.get("stage", {}).get("stage_key") == "need_to_bill"
+                or o.get("stage", {}).get("secondary_action")]
+
     # The table's Stage filter: orders ready for a Delivery Note, or delivered and waiting
     # for the invoice (billing as the primary stage or as the secondary action).
     stage_pick = cstr(_tf("billing").get("stage"))

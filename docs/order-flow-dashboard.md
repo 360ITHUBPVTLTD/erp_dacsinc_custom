@@ -1798,7 +1798,7 @@ sends `days="YYYY-MM-DD~YYYY-MM-DD"` instead of a number, so no endpoint signatu
 
 **Table filters.** Every table's own filters sit in a full-width strip right under its title row
 (the title keeps the All / Draft / Submitted pills and the Create button). `OF_TABLE_FILTERS` →
-`table_filters_html` renders captioned boxes ("Received │ All ▾", "Supplier │ Any") so a filter's
+`table_filters_html` renders captioned boxes (a select's 5th entry names what the empty value means when a filter is on by default, e.g. Pending DN/SI's "Waiting for invoice: Yes") ("Received │ All ▾", "Supplier │ Any") so a filter's
 name is never read as a chosen value; `mount_table_filters` moves the strip under the title and
 mounts the Link boxes. The boxes stretch to fill the row (flex), and "Clear filters" sits at its end.
 Customer / Supplier / Jobber / Transporter / Warehouse are **search boxes over the parties actually
@@ -1850,7 +1850,7 @@ filters Receipts or To Bill. One dropdown per question:
 | Purchase Flow › To Bill | Supplier |
 | Job Work › Sub POs | Received · Billed · Overdue · Subcontracting order (Made / Not made) · Jobber |
 | Stock Tracker | Warehouse · Stock (In / No stock) |
-| Pending DN/SI | Stage (Ready for DN / Needs invoice) · Customer |
+| Pending DN/SI | **Waiting for invoice** (on by default: only orders with delivered qty not yet invoiced, fully or partly — billing as the primary stage or the secondary action; "All orders" = the whole queue) · Stage (Ready for DN / Needs invoice) · Customer |
 | Finance › Receivables | Payment · Delivery (`_SI_DONE_SQL`) · Customer · POS |
 | Finance › Supplier / Jobber Payables | Payment · Receipt (`_PI_DONE_SQL`) · Supplier / Jobber |
 | Embroidery Transfers | Status |
