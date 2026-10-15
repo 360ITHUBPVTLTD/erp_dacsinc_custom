@@ -61,6 +61,8 @@ page_js = {"point-of-sale": "public/js/pos_page_extend.js"}
 
 # include js in doctype views  
 doctype_js = {
+    # Mode of Payment: only modes ticked "Show in Payment Entry" (payment_modes.py)
+    "Payment Entry": "public/js/payment_entry.js",
     # Close the POS: tables exist and the entry loads its opening amounts / invoices
     "POS Closing Entry": "public/js/pos_closing_entry.js",
 	"Lead": "public/js/lead.js",
@@ -628,6 +630,8 @@ doc_events = {
 # of relying on a one-shot patch that could drift from the real config over
 # time.
 after_migrate = [
+    # Mode of Payment › "Show in Payment Entry" tick (payment_modes.py). Idempotent.
+    "erp_dacsinc_custom.payment_modes.ensure_field",
     # POS store requests: fields, Goods In Transit warehouse, workspace board block (pos_request.py). Idempotent.
     "erp_dacsinc_custom.pos_request.setup",
     # Cash-in-the-drawer fields on POS Opening / Closing Entry (pos_cash.py). Idempotent.

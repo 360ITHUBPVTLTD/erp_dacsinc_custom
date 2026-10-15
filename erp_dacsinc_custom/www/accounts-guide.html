@@ -1,0 +1,718 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Accounts Guide — Dacsinc ERP</title>
+<style>
+  :root {
+    --ink: #1f2328; --soft: #57606a; --muted: #6e7781; --paper: #f6f7f9; --card: #ffffff;
+    --line: #d8dee4; --line-soft: #eaeef2;
+    --blue: #1f6feb; --blue-soft: #e8f0fe; --green: #1a7f37; --green-soft: #e6f4ea;
+    --orange: #b35900; --orange-soft: #fff1e0; --red: #c0362c; --red-soft: #fdecea;
+    --purple: #6f42c1; --purple-soft: #f1ebfb;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --ink: #e6edf3; --soft: #b1bac4; --muted: #8b949e; --paper: #0d1117; --card: #161b22;
+      --line: #30363d; --line-soft: #21262d;
+      --blue: #58a6ff; --blue-soft: #132339; --green: #3fb950; --green-soft: #12261a;
+      --orange: #f0883e; --orange-soft: #2b1d0e; --red: #f85149; --red-soft: #2d1414;
+      --purple: #bc8cff; --purple-soft: #231a35;
+    }
+  }
+  :root[data-theme="dark"] {
+    --ink: #e6edf3; --soft: #b1bac4; --muted: #8b949e; --paper: #0d1117; --card: #161b22;
+    --line: #30363d; --line-soft: #21262d;
+    --blue: #58a6ff; --blue-soft: #132339; --green: #3fb950; --green-soft: #12261a;
+    --orange: #f0883e; --orange-soft: #2b1d0e; --red: #f85149; --red-soft: #2d1414;
+    --purple: #bc8cff; --purple-soft: #231a35;
+  }
+  * { box-sizing: border-box; }
+  html { background: var(--paper); scroll-behavior: smooth; }
+  body { margin: 0; background: var(--paper); color: var(--ink);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Inter, Roboto, "Helvetica Neue", Arial, sans-serif;
+    font-size: 14.5px; line-height: 1.6; -webkit-font-smoothing: antialiased; }
+  a { color: var(--blue); }
+  code { font-family: ui-monospace, SFMono-Regular, Consolas, monospace; font-size: .86em; background: var(--line-soft);
+    padding: 1px 5px; border-radius: 4px; }
+
+  .top { position: sticky; top: 0; z-index: 20; display: flex; align-items: center; gap: 12px; padding: 10px 20px;
+    background: var(--card); border-bottom: 1px solid var(--line); }
+  .top b { font-size: 15px; }
+  .top span { color: var(--muted); font-size: 13px; }
+  .top .sp { flex: 1; }
+  .top a.btn, .top button { font: inherit; font-size: 13px; padding: 5px 12px; border-radius: 6px; border: 1px solid var(--line);
+    background: var(--card); color: var(--ink); text-decoration: none; cursor: pointer; }
+  .top input { font: inherit; font-size: 13px; padding: 5px 10px; border-radius: 6px; border: 1px solid var(--line);
+    background: var(--paper); color: var(--ink); width: 220px; }
+
+  .wrap { display: grid; grid-template-columns: 230px minmax(0, 1fr); gap: 28px; max-width: 1180px; margin: 0 auto; padding: 24px 20px 80px; }
+  nav.toc { position: sticky; top: 64px; align-self: start; font-size: 13px; }
+  nav.toc a { display: block; padding: 4px 10px; border-left: 2px solid var(--line-soft); color: var(--soft); text-decoration: none; }
+  nav.toc a:hover, nav.toc a.on { color: var(--blue); border-left-color: var(--blue); }
+  nav.toc .h { font-size: 11px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); margin: 0 0 6px 12px; font-weight: 700; }
+
+  main section { background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 18px 22px; margin-bottom: 18px; scroll-margin-top: 70px; }
+  main h1 { font-size: 24px; margin: 0 0 4px; }
+  main .lede { color: var(--soft); margin: 0 0 18px; font-size: 15px; }
+  h2 { font-size: 18px; margin: 0 0 10px; display: flex; align-items: center; gap: 10px; }
+  h2 .n { display: inline-grid; place-items: center; width: 26px; height: 26px; border-radius: 50%; background: var(--blue-soft);
+    color: var(--blue); font-size: 13px; flex: 0 0 auto; }
+  h3 { font-size: 15px; margin: 18px 0 6px; }
+  p { margin: 6px 0 10px; }
+  ul { margin: 6px 0 10px; padding-left: 20px; }
+  li { margin: 3px 0; }
+
+  table { width: 100%; border-collapse: collapse; font-size: 13.5px; margin: 8px 0 12px; }
+  th, td { border: 1px solid var(--line); padding: 7px 10px; text-align: left; vertical-align: top; }
+  th { background: var(--line-soft); font-weight: 600; }
+  td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+  .scroll { overflow-x: auto; }
+
+  .note, .tip, .warn { border-radius: 8px; padding: 9px 12px; margin: 10px 0; font-size: 13.5px; }
+  .note { background: var(--blue-soft); }
+  .tip  { background: var(--green-soft); }
+  .warn { background: var(--orange-soft); }
+  .note b:first-child, .tip b:first-child, .warn b:first-child { margin-right: 4px; }
+
+  .rule { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 10px; margin: 10px 0; }
+  .rule > div { border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px; }
+  .rule .dr { border-top: 4px solid var(--green); }
+  .rule .cr { border-top: 4px solid var(--purple); }
+  .rule b { display: block; font-size: 15px; }
+  .rule small { color: var(--muted); }
+
+  .ledger { border: 1px solid var(--line); border-radius: 8px; margin: 8px 0 14px; overflow: hidden; }
+  .ledger .t { background: var(--line-soft); padding: 7px 12px; font-weight: 600; font-size: 13.5px; }
+  .ledger .t small { font-weight: 400; color: var(--muted); }
+  .ledger table { margin: 0; border: 0; }
+  .ledger th, .ledger td { border-left: 0; border-right: 0; }
+  .ledger tr:last-child td { border-bottom: 0; }
+  .dr-c { color: var(--green); }
+  .cr-c { color: var(--purple); }
+
+  .pill { display: inline-block; font-size: 11.5px; font-weight: 600; padding: 1px 8px; border-radius: 10px; }
+  .p-blue { background: var(--blue-soft); color: var(--blue); }
+  .p-green { background: var(--green-soft); color: var(--green); }
+  .p-orange { background: var(--orange-soft); color: var(--orange); }
+  .p-red { background: var(--red-soft); color: var(--red); }
+
+  .steps { counter-reset: s; list-style: none; padding: 0; }
+  .steps li { counter-increment: s; position: relative; padding-left: 32px; margin: 8px 0; }
+  .steps li::before { content: counter(s); position: absolute; left: 0; top: 1px; width: 22px; height: 22px; border-radius: 50%;
+    background: var(--line-soft); display: grid; place-items: center; font-size: 12px; font-weight: 700; }
+
+  mark { background: #fff3a3; color: inherit; padding: 0 1px; }
+  .hide { display: none !important; }
+
+  @media (max-width: 860px) {
+    .wrap { grid-template-columns: 1fr; padding: 14px 12px 60px; }
+    nav.toc { position: static; display: flex; flex-wrap: wrap; gap: 4px; }
+    nav.toc .h { width: 100%; }
+    nav.toc a { border: 1px solid var(--line); border-radius: 14px; padding: 2px 10px; }
+    main section { padding: 14px; }
+    .top input { width: 140px; }
+    .top span { display: none; }
+  }
+  @media print {
+    .top, nav.toc { display: none; }
+    .wrap { display: block; padding: 0; }
+    main section { break-inside: avoid; border: 0; padding: 0 0 12px; }
+  }
+  /* simple reading */
+  body { font-size: 15px; line-height: 1.7; }
+  main section p, main section li { max-width: 760px; }
+  .big { font-size: 16.5px; }
+  .say { border-left: 4px solid var(--blue); background: var(--blue-soft); padding: 10px 14px; border-radius: 0 8px 8px 0; margin: 12px 0; font-size: 15.5px; }
+  .say b { color: var(--blue); }
+
+  /* golden rules */
+  .gold { display: grid; grid-template-columns: repeat(auto-fit, minmax(230px, 1fr)); gap: 12px; margin: 12px 0; }
+  .gold > div { border: 1px solid var(--line); border-radius: 10px; padding: 12px 14px; background: var(--card); }
+  .gold h4 { margin: 0 0 4px; font-size: 14.5px; }
+  .gold .r { font-size: 15px; margin: 6px 0; }
+  .gold small { color: var(--soft); display: block; line-height: 1.5; }
+
+  /* account page (T-account) pictures */
+  .tpair { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 12px; margin: 10px 0 6px; }
+  .tacc { border: 1px solid var(--line); border-radius: 8px; overflow: hidden; background: var(--card); }
+  .tacc .nm { text-align: center; font-weight: 700; padding: 6px; background: var(--line-soft); font-size: 13.5px; }
+  .tacc .nm small { display: block; font-weight: 400; color: var(--muted); font-size: 11.5px; }
+  .tacc .sides { display: grid; grid-template-columns: 1fr 1fr; }
+  .tacc .sides > div { padding: 6px 10px; min-height: 48px; font-size: 13.5px; }
+  .tacc .sides > div:first-child { border-right: 2px solid var(--ink); }
+  .tacc .hd { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); }
+  .tacc .amt { font-weight: 700; font-variant-numeric: tabular-nums; }
+  .event { border: 1px solid var(--line); border-radius: 10px; padding: 12px 14px; margin: 14px 0; }
+  .event > .q { font-weight: 700; font-size: 15px; }
+  .event .why { color: var(--soft); font-size: 14px; margin-top: 6px; }
+
+  /* practice */
+  details.quiz { border: 1px solid var(--line); border-radius: 8px; padding: 8px 12px; margin: 8px 0; background: var(--card); }
+  details.quiz summary { cursor: pointer; font-weight: 600; }
+  details.quiz[open] summary { margin-bottom: 6px; }
+
+  /* story flow */
+  .flow { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin: 8px 0 12px; font-size: 13.5px; }
+  .flow span { border: 1px solid var(--line); border-radius: 16px; padding: 3px 12px; background: var(--card); font-weight: 600; }
+  .flow i { color: var(--muted); font-style: normal; }
+  .do { background: var(--green-soft); border-radius: 8px; padding: 8px 12px; margin: 8px 0; }
+  .do b:first-child { color: var(--green); }
+  @media (max-width: 860px) {
+    .top { flex-wrap: wrap; gap: 8px; padding: 8px 12px; }
+    .top b { font-size: 14px; }
+    .top .sp { display: none; }
+    .top a.btn { white-space: nowrap; margin-left: auto; }
+    .top button { display: none; }
+    .top input { order: 5; width: 100%; }
+  }
+  /* task cards */
+  .tasks { display: grid; grid-template-columns: repeat(auto-fill, minmax(210px, 1fr)); gap: 10px; margin-top: 6px; }
+  .tasks a { display: grid; grid-template-columns: 34px 1fr; grid-template-rows: auto auto; column-gap: 8px; align-items: center;
+    border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px; background: var(--card); text-decoration: none; color: var(--ink); }
+  .tasks a:hover { border-color: var(--blue); box-shadow: 0 2px 8px rgba(0,0,0,.06); }
+  .tasks i { font-style: normal; font-size: 22px; grid-row: 1 / 3; text-align: center; }
+  .tasks b { font-size: 14px; line-height: 1.3; }
+  .tasks small { color: var(--muted); font-size: 12px; }
+  .acc { background: var(--purple-soft); border-radius: 8px; padding: 8px 12px; margin: 10px 0; font-size: 14px; }
+  .acc b:first-child { color: var(--purple); }
+  .muted { color: var(--muted); }
+  main section h2 { font-size: 18px; }
+  .wrap > main, .wrap > nav { min-width: 0; }
+  p.wr { margin: 12px 0 2px; font-size: 13.5px; } p.wr b { color: var(--ink); }
+  /* entry types */
+  .types { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 12px; margin: 10px 0; }
+  .type { border: 1px solid var(--line); border-radius: 10px; padding: 12px 14px; background: var(--card); display: grid; gap: 6px; align-content: start; }
+  .type__h { display: flex; align-items: center; gap: 8px; }
+  .type__h i { font-style: normal; font-size: 20px; }
+  .type__h b { font-size: 15px; }
+  .type p { margin: 0; font-size: 14px; }
+  .type__ex { font-size: 13px; color: var(--soft); }
+  .type small { color: var(--muted); font-size: 12.5px; }
+  .mini { border: 1px solid var(--line-soft); border-radius: 6px; font-size: 13px; overflow: hidden; }
+  .mini > div { display: grid; grid-template-columns: 1fr 72px 72px; gap: 6px; padding: 4px 8px; border-top: 1px solid var(--line-soft); }
+  .mini > div:first-child { border-top: 0; }
+  .mini b { text-align: right; font-variant-numeric: tabular-nums; font-weight: 600; }
+  table.drtable td:nth-child(2) { color: var(--green); font-weight: 600; }
+  table.drtable td:nth-child(3) { color: var(--purple); font-weight: 600; }
+  .say b.dr-c { color: var(--green); } .say b.cr-c { color: var(--purple); }
+  /* filled-form examples */
+  h4.ex-h { margin: 14px 0 6px; font-size: 14px; color: var(--blue); }
+  .frm { border: 1px solid var(--line); border-radius: 10px; margin: 8px 0 12px; background: var(--card); overflow: hidden; }
+  .frm__t { background: var(--line-soft); padding: 7px 12px; font-weight: 700; font-size: 13.5px; }
+  .frm__grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(330px, 1fr)); gap: 0 24px; padding: 8px 12px; }
+  .frm__row { display: grid; grid-template-columns: 150px 1fr; gap: 8px; padding: 4px 0; border-bottom: 1px dashed var(--line-soft); font-size: 13.5px; }
+  .frm__row span { color: var(--muted); }
+  .frm__row b { font-weight: 600; }
+  .frm__row i, .frm__foot i { font-weight: 400; color: var(--muted); font-style: normal; }
+  .frm__tbl { padding: 0 12px; overflow-x: auto; }
+  .frm__tbl table { margin: 4px 0 8px; font-size: 13px; }
+  .frm__foot { padding: 7px 12px; border-top: 1px solid var(--line-soft); font-size: 13px; }
+  .match { display: grid; grid-template-columns: 1fr auto 1.3fr; gap: 10px; align-items: center; margin: 8px 0 12px; }
+  .match > div { border: 1px solid var(--line); border-radius: 8px; padding: 8px 12px; background: var(--card); font-size: 13.5px; }
+  .match__bank small { display: block; color: var(--muted); }
+  .match__arrow { border: 0 !important; background: none !important; color: var(--muted); text-align: center; }
+  .match__arrow::after { content: " →"; }
+  .match__tot { margin-top: 4px; color: var(--green); }
+  @media (max-width: 700px) { .match { grid-template-columns: 1fr; } .match__arrow::after { content: " ↓"; } .frm__row { grid-template-columns: 120px 1fr; } }
+</style>
+</head>
+<body>
+<div class="top">
+  <b>Accounts Guide</b><span>How to do your accounts work in ERPNext</span>
+  <div class="sp"></div>
+  <input type="search" id="q" placeholder="Search: e.g. supplier bill, TDS, advance…" aria-label="Search this guide">
+  <a class="btn" href="/app/order-flow">← Order Flow</a>
+  <button type="button" onclick="window.print()">Print</button>
+</div>
+
+<div class="wrap">
+  <nav class="toc" id="toc">
+    <div class="h">Learn first</div>
+    <a href="#drcr">1. Debit and credit</a>
+    <a href="#types">2. Types of entries</a>
+    <div class="h" style="margin-top:12px;">How to</div>
+    <a href="#tasks">3. What do you want to do?</a>
+    <a href="#t-sinv">· Submit a sales invoice</a>
+    <a href="#t-receive">· Receive money</a>
+    <a href="#t-bill">· Enter a supplier bill</a>
+    <a href="#t-pay">· Pay a supplier / jobber</a>
+    <a href="#t-advance">· Money before the invoice</a>
+    <a href="#t-cheque">· One cheque, many customers</a>
+    <a href="#t-bounce">· A cheque bounced</a>
+    <a href="#t-creditnote">· Customer returned goods</a>
+    <a href="#t-debitnote">· We returned goods</a>
+    <a href="#t-bank">· Bank charges / interest</a>
+    <a href="#t-tds">· Deposit TDS</a>
+    <a href="#t-fix">· Correct a mistake</a>
+    <a href="#t-check">· Check balances</a>
+    <div class="h" style="margin-top:12px;">Help</div>
+    <a href="#ledgers">Our main accounts</a>
+    <a href="#stuck">Stuck? Do this</a>
+    <a href="#routine">Your checklist</a>
+    <a href="#words">Words used</a>
+  </nav>
+
+  <main>
+    <h1>Accounts Guide</h1>
+    <p class="lede">First learn two things: what <b>debit and credit</b> are, and the <b>types of entries</b> in ERPNext. Then use the <b>How to</b> part for your daily work.</p>
+
+    <section id="drcr">
+      <h2><span class="n">1</span>Debit and credit — in 2 minutes</h2>
+      <p>Every entry in accounts has <b>two sides</b>: a <b class="dr-c">Debit (Dr)</b> side and a <b class="cr-c">Credit (Cr)</b> side, always with the <b>same amount</b>.</p>
+      <div class="say big">Remember just one rule:<br><b class="dr-c">Debit</b> = where the money (or goods) <b>goes</b> &nbsp;·&nbsp; <b class="cr-c">Credit</b> = where it <b>comes from</b></div>
+      <h3>Examples</h3>
+      <div class="scroll"><table class="drtable">
+        <tr><th>What happened</th><th class="dr-c">Debit — goes to</th><th class="cr-c">Credit — comes from</th></tr>
+        <tr><td>A customer pays us ₹1,000 into the bank</td><td>Bank</td><td>Customer</td></tr>
+        <tr><td>We pay the electricity bill, ₹500, from the bank</td><td>Electricity (expense)</td><td>Bank</td></tr>
+        <tr><td>We pay a supplier ₹2,000</td><td>Supplier</td><td>Bank</td></tr>
+        <tr><td>We sell goods for ₹1,000; the customer will pay later</td><td>Customer (now owes us)</td><td>Sales</td></tr>
+        <tr><td>We buy goods for ₹2,000; we will pay later</td><td>Stock (goods came in)</td><td>Supplier (we now owe them)</td></tr>
+        <tr><td>We put ₹5,000 cash into the bank</td><td>Bank</td><td>Cash</td></tr>
+        <tr><td>The bank cuts ₹50 charges</td><td>Bank Charges (expense)</td><td>Bank</td></tr>
+      </table></div>
+      <h3>See it on the account pages</h3>
+      <p>Each account is like a page with two sides: <b class="dr-c">left = Debit</b>, <b class="cr-c">right = Credit</b>.</p>
+      <div class="event"><div class="q">A customer pays us ₹1,000 into the bank</div><div class="tpair"><div class="tacc"><div class="nm">Bank<small>the money went here</small></div><div class="sides"><div><div class="hd dr-c">Debit (Dr)</div><div class="amt">₹1,000</div></div><div><div class="hd cr-c">Credit (Cr)</div></div></div></div><div class="tacc"><div class="nm">Customer<small>the money came from here</small></div><div class="sides"><div><div class="hd dr-c">Debit (Dr)</div></div><div><div class="hd cr-c">Credit (Cr)</div><div class="amt">₹1,000</div></div></div></div></div><div class="why">Money went to the bank → <b class="dr-c">Debit Bank</b>. It came from the customer → <b class="cr-c">Credit Customer</b>.</div></div><div class="event"><div class="q">We sell goods for ₹1,000; the customer will pay later</div><div class="tpair"><div class="tacc"><div class="nm">Customer<small>the goods went here (now owes us)</small></div><div class="sides"><div><div class="hd dr-c">Debit (Dr)</div><div class="amt">₹1,000</div></div><div><div class="hd cr-c">Credit (Cr)</div></div></div></div><div class="tacc"><div class="nm">Sales<small>the value came from our sales</small></div><div class="sides"><div><div class="hd dr-c">Debit (Dr)</div></div><div><div class="hd cr-c">Credit (Cr)</div><div class="amt">₹1,000</div></div></div></div></div><div class="why">The goods went to the customer → <b class="dr-c">Debit Customer</b>. They came from our sales → <b class="cr-c">Credit Sales</b>.</div></div><div class="event"><div class="q">We pay the electricity bill, ₹500, from the bank</div><div class="tpair"><div class="tacc"><div class="nm">Electricity<small>the money went here (expense)</small></div><div class="sides"><div><div class="hd dr-c">Debit (Dr)</div><div class="amt">₹500</div></div><div><div class="hd cr-c">Credit (Cr)</div></div></div></div><div class="tacc"><div class="nm">Bank<small>the money came from here</small></div><div class="sides"><div><div class="hd dr-c">Debit (Dr)</div></div><div><div class="hd cr-c">Credit (Cr)</div><div class="amt">₹500</div></div></div></div></div><div class="why">Money went to the electricity expense → <b class="dr-c">Debit Electricity</b>. It came from the bank → <b class="cr-c">Credit Bank</b>.</div></div>
+      <h3>What it does to each kind of account</h3>
+      <div class="scroll"><table>
+        <tr><th>Kind of account</th><th>Examples</th><th>Debit makes it</th><th>Credit makes it</th></tr>
+        <tr><td><b>What we have</b> (asset)</td><td>Bank, cash, stock, customers who owe us</td><td class="dr-c">bigger ▲</td><td class="cr-c">smaller ▼</td></tr>
+        <tr><td><b>What we spend</b> (expense)</td><td>Rent, salary, bank charges, electricity</td><td class="dr-c">bigger ▲</td><td class="cr-c">smaller ▼</td></tr>
+        <tr><td><b>What we owe</b> (liability)</td><td>Suppliers, GST and TDS to the government</td><td class="dr-c">smaller ▼</td><td class="cr-c">bigger ▲</td></tr>
+        <tr><td><b>What we earn</b> (income)</td><td>Sales, interest received</td><td class="dr-c">smaller ▼</td><td class="cr-c">bigger ▲</td></tr>
+      </table></div>
+      <details class="quiz"><summary>For accountants: the three golden rules</summary>
+        <ul><li><b>People</b> (customers, suppliers): debit the receiver, credit the giver.</li>
+        <li><b>Things</b> (bank, cash, stock): debit what comes in, credit what goes out.</li>
+        <li><b>Expenses / income</b>: debit expenses and losses, credit income and gains.</li></ul></details>
+      <h3>Try it</h3>
+      <details class="quiz"><summary>1. We pay office rent ₹15,000 by bank transfer.</summary><div class="ledger"><div class="t">Answer <small>money went to rent; it came from the bank</small></div><table><tr><th>Account</th><th class="num">Debit</th><th class="num">Credit</th></tr><tr><td>Rent (expense)</td><td class="num">15,000.00</td><td class="num"></td></tr><tr><td>Bank</td><td class="num"></td><td class="num">15,000.00</td></tr></table></div></details><details class="quiz"><summary>2. A customer pays ₹5,000 in cash at the counter.</summary><div class="ledger"><div class="t">Answer <small>money went to cash; it came from the customer</small></div><table><tr><th>Account</th><th class="num">Debit</th><th class="num">Credit</th></tr><tr><td>Cash</td><td class="num">5,000.00</td><td class="num"></td></tr><tr><td>Debtors — the customer</td><td class="num"></td><td class="num">5,000.00</td></tr></table></div></details><details class="quiz"><summary>3. The bank statement shows ₹50 bank charges.</summary><div class="ledger"><div class="t">Answer <small>money went to bank charges; it came from the bank</small></div><table><tr><th>Account</th><th class="num">Debit</th><th class="num">Credit</th></tr><tr><td>Bank Charges</td><td class="num">50.00</td><td class="num"></td></tr><tr><td>Bank</td><td class="num"></td><td class="num">50.00</td></tr></table></div></details><details class="quiz"><summary>4. We deposit ₹20,000 cash into the bank.</summary><div class="ledger"><div class="t">Answer <small>money went to the bank; it came from cash (in ERPNext: Payment Entry › Internal Transfer)</small></div><table><tr><th>Account</th><th class="num">Debit</th><th class="num">Credit</th></tr><tr><td>Bank</td><td class="num">20,000.00</td><td class="num"></td></tr><tr><td>Cash</td><td class="num"></td><td class="num">20,000.00</td></tr></table></div></details>
+    </section>
+
+    <section id="types">
+      <h2><span class="n">2</span>Types of entries in ERPNext</h2>
+      <p>In ERPNext each kind of event has its own <b>document</b>. You fill the document and click <b>Submit</b>, and ERPNext writes the debit and credit for you. Here are the ones the accounts team uses:</p>
+      <div class="types"><div class="type"><div class="type__h"><i>🧾</i><b>Sales Invoice</b></div><p>We bill a customer for goods sold.</p>
+          <div class="type__ex">Example: Sold uniforms ₹10,000 + GST ₹1,800</div><div class="mini"><div><span>Customer (Debtors)</span><b class="dr-c">Dr 11,800</b><b class="cr-c"></b></div><div><span>Sales</span><b class="dr-c"></b><b class="cr-c">Cr 10,000</b></div><div><span>Output GST</span><b class="dr-c"></b><b class="cr-c">Cr 1,800</b></div></div><small>The customer now owes us.</small></div><div class="type"><div class="type__h"><i>📥</i><b>Purchase Invoice</b></div><p>We enter a supplier's bill.</p>
+          <div class="type__ex">Example: Fabric ₹5,000 + GST ₹900</div><div class="mini"><div><span>Stock (goods bought)</span><b class="dr-c">Dr 5,000</b><b class="cr-c"></b></div><div><span>Input GST</span><b class="dr-c">Dr 900</b><b class="cr-c"></b></div><div><span>Supplier (Creditors)</span><b class="dr-c"></b><b class="cr-c">Cr 5,900</b></div></div><small>We now owe the supplier.</small></div><div class="type"><div class="type__h"><i>💰</i><b>Payment Entry — Receive</b></div><p>A customer pays us.</p>
+          <div class="type__ex">Example: Customer pays ₹11,800 by NEFT</div><div class="mini"><div><span>Bank</span><b class="dr-c">Dr 11,800</b><b class="cr-c"></b></div><div><span>Customer (Debtors)</span><b class="dr-c"></b><b class="cr-c">Cr 11,800</b></div></div><small>Money into the bank; the customer owes nothing now.</small></div><div class="type"><div class="type__h"><i>💸</i><b>Payment Entry — Pay</b></div><p>We pay a supplier or jobber.</p>
+          <div class="type__ex">Example: We pay the supplier ₹5,900</div><div class="mini"><div><span>Supplier (Creditors)</span><b class="dr-c">Dr 5,900</b><b class="cr-c"></b></div><div><span>Bank</span><b class="dr-c"></b><b class="cr-c">Cr 5,900</b></div></div><small>Money out of the bank; we owe nothing now.</small></div><div class="type"><div class="type__h"><i>🔁</i><b>Payment Entry — Internal Transfer</b></div><p>Money moves between our own accounts.</p>
+          <div class="type__ex">Example: Cash ₹20,000 deposited in the bank</div><div class="mini"><div><span>Bank</span><b class="dr-c">Dr 20,000</b><b class="cr-c"></b></div><div><span>Cash</span><b class="dr-c"></b><b class="cr-c">Cr 20,000</b></div></div><small>Only our own money moved.</small></div><div class="type"><div class="type__h"><i>↩️</i><b>Credit Note</b></div><p>A customer returns goods (the sale in reverse).</p>
+          <div class="type__ex">Example: Return of ₹1,000 + GST ₹180</div><div class="mini"><div><span>Sales</span><b class="dr-c">Dr 1,000</b><b class="cr-c"></b></div><div><span>Output GST</span><b class="dr-c">Dr 180</b><b class="cr-c"></b></div><div><span>Customer (Debtors)</span><b class="dr-c"></b><b class="cr-c">Cr 1,180</b></div></div><small>The customer owes us less. The goods come back with a <b>Sales Return</b> (from the Delivery Note).</small></div><div class="type"><div class="type__h"><i>↪️</i><b>Debit Note</b></div><p>We return goods to a supplier (the bill in reverse).</p>
+          <div class="type__ex">Example: Return of ₹2,000 + GST ₹360</div><div class="mini"><div><span>Supplier (Creditors)</span><b class="dr-c">Dr 2,360</b><b class="cr-c"></b></div><div><span>Stock / purchase</span><b class="dr-c"></b><b class="cr-c">Cr 2,000</b></div><div><span>Input GST</span><b class="dr-c"></b><b class="cr-c">Cr 360</b></div></div><small>We owe the supplier less. The goods go out with a <b>Purchase Return</b> (from the Purchase Receipt).</small></div><div class="type"><div class="type__h"><i>📝</i><b>Journal Entry</b></div><p>Anything with no other document: bank charges, TDS deposit, corrections. You type both sides yourself.</p>
+          <div class="type__ex">Example: Bank charges ₹50 on the statement</div><div class="mini"><div><span>Bank Charges (expense)</span><b class="dr-c">Dr 50</b><b class="cr-c"></b></div><div><span>Bank</span><b class="dr-c"></b><b class="cr-c">Cr 50</b></div></div><small>Use only when no other document fits.</small></div><div class="type"><div class="type__h"><i>🚚</i><b>Delivery Note</b></div><p>Goods leave our warehouse for a customer.</p>
+          <div class="type__ex">Example: Goods that cost us ₹7,000</div><div class="mini"><div><span>Cost of Goods Sold</span><b class="dr-c">Dr 7,000</b><b class="cr-c"></b></div><div><span>Stock In Hand</span><b class="dr-c"></b><b class="cr-c">Cr 7,000</b></div></div><small>Writes the stock side of a sale.</small></div><div class="type"><div class="type__h"><i>📦</i><b>Purchase Receipt</b></div><p>Goods from a supplier arrive.</p>
+          <div class="type__ex">Example: Goods worth ₹5,000 received</div><div class="mini"><div><span>Stock In Hand</span><b class="dr-c">Dr 5,000</b><b class="cr-c"></b></div><div><span>Stock Received But Not Billed</span><b class="dr-c"></b><b class="cr-c">Cr 5,000</b></div></div><small>The bill (Purchase Invoice) clears the "not billed" part.</small></div></div>
+      <div class="note"><b>No accounts entry:</b> Sales Order, Purchase Order, Material Request and Pick List only plan the work. They write no debit or credit.</div>
+      <h3>Good to know</h3>
+      <ul>
+        <li><b>Draft</b> = saved, but nothing written to the accounts yet. <b>Submit</b> = the debit and credit are written.</li>
+        <li><b>Cancel</b> = ERPNext writes the same lines on the opposite sides, so it is as if it never happened. Then <b>Amend</b> to make a corrected copy.</li>
+        <li>To see what a document wrote: on an invoice, Delivery Note or Purchase Receipt click <b>View › Accounting Ledger</b>; on a Payment Entry or Journal Entry click the <b>Ledger</b> button. For one customer, supplier or account: report <b>General Ledger</b>. (Cancelled entries are hidden there unless you tick <b>Show Cancelled Entries</b>.)</li>
+        <li>On a <b>Payment Entry</b>, <b>Paid To</b> is the debit side (where the money goes) and <b>Paid From</b> is the credit side (where it comes from).</li>
+        <li>On a <b>Journal Entry</b>, you type the <b>Debit</b> and <b>Credit</b> columns yourself. The two totals must be equal.</li>
+      </ul>
+    </section>
+
+    <section id="tasks">
+      <h2><span class="n">3</span>How to — what do you want to do?</h2>
+      <p>Click a task. Each one has the steps, and the debit and credit ERPNext writes for it.</p>
+      <div class="tasks">
+        <a href="#t-sinv"><i>🧾</i><b>Submit a sales invoice</b><small>A draft invoice is waiting</small></a>
+        <a href="#t-receive"><i>💰</i><b>Receive money from a customer</b><small>NEFT, cheque, cash, UPI…</small></a>
+        <a href="#t-bill"><i>📥</i><b>Enter a supplier's bill</b><small>Goods came; the bill arrived</small></a>
+        <a href="#t-pay"><i>💸</i><b>Pay a supplier or jobber</b><small>Against their bill</small></a>
+        <a href="#t-advance"><i>⏩</i><b>Money came before the invoice</b><small>Advance from a customer</small></a>
+        <a href="#t-cheque"><i>📑</i><b>One cheque for many customers / invoices</b><small>Split one cheque</small></a>
+        <a href="#t-bounce"><i>⛔</i><b>A cheque bounced</b><small>Undo the payment</small></a>
+        <a href="#t-creditnote"><i>↩️</i><b>Customer returned goods</b><small>Credit Note</small></a>
+        <a href="#t-debitnote"><i>↪️</i><b>We returned goods to a supplier</b><small>Debit Note</small></a>
+        <a href="#t-bank"><i>🏦</i><b>Bank charges or interest on the statement</b><small>Not linked to any invoice</small></a>
+        <a href="#t-tds"><i>🏛️</i><b>Deposit TDS with the government</b><small>Monthly</small></a>
+        <a href="#t-fix"><i>✏️</i><b>Correct a mistake</b><small>Wrong amount, date or account</small></a>
+        <a href="#t-check"><i>🔎</i><b>See who owes us / whom we owe</b><small>Balances and reports</small></a>
+      </div>
+    </section>
+
+    <section id="t-sinv">
+      <h2>🧾 Submit a sales invoice</h2>
+      <p>After goods are delivered, the sales invoice is made from the Delivery Note and waits as a <b>draft</b>. A draft is not a bill yet: the customer owes nothing until you submit it.</p>
+      <ol class="steps">
+        <li>Go to <b>Order Flow › Finance › Receivables</b> and click the <b>Draft</b> pill.</li>
+        <li>Click the arrow next to an invoice to see its items. Check the <b>customer, items, rate, GST and total</b>.</li>
+        <li>Click <b>Submit</b> on the row, read the summary, tick the box and confirm.</li>
+      </ol>
+      <div class="acc"><b>In the accounts:</b> the customer now owes the invoice total (₹11,800 for ₹10,000 + ₹1,800 GST). Our sales go up by ₹10,000, and ₹1,800 GST is due to the government.</div>
+      <p class="wr"><b>ERPNext writes</b> (example figures):</p>
+      <div class="ledger"><div class="t">Sales Invoice <small>₹10,000 + GST 18% (same state)</small></div><table><tr><th>Account</th><th class="num">Debit</th><th class="num">Credit</th></tr><tr><td>Debtors - IND (the customer)</td><td class="num">11,800.00</td><td class="num"></td></tr><tr><td>Sales - IND</td><td class="num"></td><td class="num">10,000.00</td></tr><tr><td>Output Tax CGST - IND</td><td class="num"></td><td class="num">900.00</td></tr><tr><td>Output Tax SGST - IND</td><td class="num"></td><td class="num">900.00</td></tr></table></div>
+      <p class="muted">The <b>Delivery Note</b> before it already wrote the stock side: the cost of the goods left the warehouse.</p>
+      <div class="ledger"><div class="t">Delivery Note <small>goods that cost us ₹7,000 left the warehouse</small></div><table><tr><th>Account</th><th class="num">Debit</th><th class="num">Credit</th></tr><tr><td>Cost of Goods Sold - IND</td><td class="num">7,000.00</td><td class="num"></td></tr><tr><td>Stock In Hand - IND</td><td class="num"></td><td class="num">7,000.00</td></tr></table></div>
+      <div class="warn"><b>Something wrong?</b> Don't submit it. Open the invoice, correct it and save, or ask whoever made it.</div>
+    </section>
+
+    <section id="t-receive">
+      <h2>💰 Receive money from a customer</h2>
+      <ol class="steps">
+        <li>Go to <b>Order Flow › Finance › Receivables</b>. Find the invoice with the search box or the <b>Customer</b> filter.</li>
+        <li>Click <b>Receive</b> on that invoice. (On the invoice itself, the same button is <b>Receive Payment</b>.)</li>
+        <li><b>Amount settled on this invoice</b>: how much of the invoice this payment clears. Paid in full? Click <b>Full outstanding</b>.</li>
+        <li><b>Mode of Payment</b>: NEFT, Cheque, Cash, UPI… For a bank payment, type the <b>UTR / cheque number</b> and its <b>date</b>.</li>
+        <li>Bank cut charges, or the customer cut TDS? Open <b>③ Bank charges, TDS, write-off</b> and type them in.</li>
+        <li>Check the box on the right: <b>"Into bank"</b> must match your bank statement.</li>
+        <li>Click <b>Review</b>, read it once, tick the box, click <b>Submit Payment</b>.</li>
+      </ol>
+      <h3>Which numbers to type</h3>
+      <div class="scroll"><table>
+        <tr><th>What happened (invoice ₹11,800)</th><th>Settled</th><th>Deductions</th><th>"Into bank" shows</th><th>Invoice becomes</th></tr>
+        <tr><td>Paid in full</td><td class="num">11,800</td><td>—</td><td class="num">11,800</td><td><span class="pill p-green">Paid</span></td></tr>
+        <tr><td>Customer cut ₹200 TDS; bank cut ₹20</td><td class="num">11,800</td><td>TDS 200 · Bank charges 20</td><td class="num">11,580</td><td><span class="pill p-green">Paid</span></td></tr>
+        <tr><td>Paid only part</td><td class="num">5,000</td><td>—</td><td class="num">5,000</td><td><span class="pill p-orange">Partly Paid</span> (6,800 left)</td></tr>
+        <tr><td>Paid ₹11,795; the ₹5 won't come</td><td class="num">11,800</td><td>Write off 5</td><td class="num">11,795</td><td><span class="pill p-green">Paid</span></td></tr>
+        <tr><td>Paid ₹12,000 (₹200 extra)</td><td class="num">12,000</td><td>—</td><td class="num">12,000</td><td><span class="pill p-green">Paid</span> + ₹200 advance</td></tr>
+      </table></div>
+      <div class="acc"><b>In the accounts:</b> our bank goes up, and the customer owes us less. TDS is kept to claim later; bank charges and write-off are expenses.</div>
+      <p class="wr"><b>ERPNext writes</b> (example figures):</p>
+      <div class="ledger"><div class="t">Paid in full <small>₹11,800 by NEFT</small></div><table><tr><th>Account</th><th class="num">Debit</th><th class="num">Credit</th></tr><tr><td>Bank (YES BANK)</td><td class="num">11,800.00</td><td class="num"></td></tr><tr><td>Debtors - IND (the customer)</td><td class="num"></td><td class="num">11,800.00</td></tr></table></div>
+      <div class="ledger"><div class="t">With ₹200 TDS and ₹20 bank charges <small>bank got ₹11,580</small></div><table><tr><th>Account</th><th class="num">Debit</th><th class="num">Credit</th></tr><tr><td>Bank (YES BANK)</td><td class="num">11,580.00</td><td class="num"></td></tr><tr><td>TDS Receivable - IND</td><td class="num">200.00</td><td class="num"></td></tr><tr><td>Bank Charges - IND</td><td class="num">20.00</td><td class="num"></td></tr><tr><td>Debtors - IND (the customer)</td><td class="num"></td><td class="num">11,800.00</td></tr></table></div>
+      <div class="warn"><b>Mode of Payment not in the list?</b> Only the modes ticked <b>Show in Payment Entry</b> are shown (POS counter modes are left out). Ask the admin.</div>
+    </section>
+
+    <section id="t-bill">
+      <h2>📥 Enter a supplier's bill</h2>
+      <p>First the store enters the goods that arrived (<b>Purchase Receipt</b>). Then you enter the supplier's bill <b>from that receipt</b>, so the quantities and rates match.</p>
+      <ol class="steps">
+        <li>Go to <b>Order Flow › Purchase Flow › To Bill</b>. It lists the receipts still waiting for a bill.</li>
+        <li>Open the receipt and click <b>Create › Purchase Invoice</b>.<br><small class="muted">Or: Accounting › Purchase Invoice › New › choose the supplier › <b>Get Items from PR</b>.</small></li>
+        <li>Type the <b>Supplier Invoice No</b> and <b>Supplier Invoice Date</b> exactly as on their bill.</li>
+        <li>Check the <b>quantity, rate, GST and total</b> against the paper bill. Different? Stop and check with purchase.</li>
+        <li><b>Save</b>, then <b>Submit</b>.</li>
+      </ol>
+      <div class="acc"><b>In the accounts:</b> we now owe the supplier the bill total. The GST on the bill is ours to claim back.</div>
+      <p class="wr"><b>ERPNext writes</b> (example figures):</p>
+      <div class="ledger"><div class="t">Purchase Receipt (by the store) <small>goods worth ₹50,000 arrived</small></div><table><tr><th>Account</th><th class="num">Debit</th><th class="num">Credit</th></tr><tr><td>Stock In Hand - IND</td><td class="num">50,000.00</td><td class="num"></td></tr><tr><td>Stock Received But Not Billed - IND</td><td class="num"></td><td class="num">50,000.00</td></tr></table></div>
+      <div class="ledger"><div class="t">Purchase Invoice (by you) <small>bill ₹50,000 + GST ₹9,000</small></div><table><tr><th>Account</th><th class="num">Debit</th><th class="num">Credit</th></tr><tr><td>Stock Received But Not Billed - IND</td><td class="num">50,000.00</td><td class="num"></td></tr><tr><td>Input Tax CGST - IND</td><td class="num">4,500.00</td><td class="num"></td></tr><tr><td>Input Tax SGST - IND</td><td class="num">4,500.00</td><td class="num"></td></tr><tr><td>Creditors - IND (the supplier)</td><td class="num"></td><td class="num">59,000.00</td></tr></table></div>
+      <p class="muted">"Stock Received But Not Billed" is a waiting account: the receipt puts ₹50,000 on its credit side, and the bill takes it off on the debit side, back to zero.</p>
+      <div class="tip"><b>Jobber's bill?</b> Same steps. It then appears under <b>Jobber Payables</b> on the Finance tab.</div>
+    </section>
+
+    <section id="t-pay">
+      <h2>💸 Pay a supplier or jobber</h2>
+      <ol class="steps">
+        <li>Go to <b>Order Flow › Finance › Supplier Payables</b> (or <b>Jobber Payables</b>) and find the bill.</li>
+        <li>Click <b>Pay</b>. (On the bill itself, the button is <b>Make Payment</b>.)</li>
+        <li><b>Amount settled on this bill</b>: how much of the bill this payment clears (<b>Full outstanding</b> for all of it).</li>
+        <li>Choose the <b>Mode of Payment</b>, then type the <b>UTR / cheque number and date</b>.</li>
+        <li>Our bank took charges? Type them in <b>Bank charges</b>. TDS from the supplier: see the note below.</li>
+        <li><b>Review</b> › tick › <b>Submit Payment</b>.</li>
+      </ol>
+      <div class="scroll"><table>
+        <tr><th>What happened (bill ₹59,000)</th><th>Settled</th><th>Deductions</th><th>Supplier gets</th><th>Out of our bank</th></tr>
+        <tr><td>Paid in full</td><td class="num">59,000</td><td>—</td><td class="num">59,000</td><td class="num">59,000</td></tr>
+        <tr><td>We cut ₹1,000 TDS</td><td class="num">59,000</td><td>TDS 1,000</td><td class="num">58,000</td><td class="num">58,000</td></tr>
+        <tr><td>Our bank took ₹15 charges</td><td class="num">59,000</td><td>Bank charges 15</td><td class="num">59,000</td><td class="num">59,015</td></tr>
+      </table></div>
+      <div class="note"><b>TDS on suppliers — the ERPNext way:</b> set a <b>Tax Withholding Category</b> (e.g. 194C contract) on the <b>Supplier</b>. ERPNext then deducts the TDS <b>on the Purchase Invoice</b> itself (Cr TDS account, and we owe the supplier that much less), and you pay only the balance. The <b>TDS</b> box in the Pay prompt is only for TDS that is <b>not already on the bill</b>. Our suppliers don't have a category yet, so ask the accounts head which to use.</div>
+      <div class="acc"><b>In the accounts:</b> we owe the supplier less, and our bank goes down. TDS we cut is owed to the government: deposit it monthly (see <a href="#t-tds">Deposit TDS</a>).</div>
+      <p class="wr"><b>ERPNext writes</b> (example figures):</p>
+      <div class="ledger"><div class="t">Paid in full <small>₹59,000 by NEFT</small></div><table><tr><th>Account</th><th class="num">Debit</th><th class="num">Credit</th></tr><tr><td>Creditors - IND (the supplier)</td><td class="num">59,000.00</td><td class="num"></td></tr><tr><td>Bank (YES BANK)</td><td class="num"></td><td class="num">59,000.00</td></tr></table></div>
+      <div class="ledger"><div class="t">With ₹1,000 TDS cut by us <small>supplier gets ₹58,000</small></div><table><tr><th>Account</th><th class="num">Debit</th><th class="num">Credit</th></tr><tr><td>Creditors - IND (the supplier)</td><td class="num">59,000.00</td><td class="num"></td></tr><tr><td>Bank (YES BANK)</td><td class="num"></td><td class="num">58,000.00</td></tr><tr><td>TDS on Contract - IND</td><td class="num"></td><td class="num">1,000.00</td></tr></table></div>
+    </section>
+
+    <section id="t-advance">
+      <h2>⏩ Money came before the invoice (advance)</h2>
+      <ol class="steps">
+        <li><b>Accounting › Payment Entry › New</b>.</li>
+        <li><b>Payment Type: Receive</b> · <b>Party Type: Customer</b> · <b>Party:</b> the customer.</li>
+        <li><b>Mode of Payment</b>, then <b>Paid Amount</b>. Type the <b>reference number and date</b>.</li>
+        <li>Leave the invoice table empty. <b>Save</b> › <b>Submit</b>.</li>
+        <li>When the invoice is made later, open it and use <b>Get Advances Received</b> to use up the advance (for a supplier advance, the Purchase Invoice has <b>Get Advances Paid</b>). Or: <b>Accounting › Payment Reconciliation</b> › choose the customer › match the advance with the invoice.</li>
+      </ol>
+      <div class="acc"><b>In the accounts:</b> our bank goes up, and the customer has money "kept" with us until the invoice comes.</div>
+      <p class="wr"><b>ERPNext writes</b> (example figures):</p>
+      <div class="ledger"><div class="t">Advance received <small>₹25,000 before any invoice</small></div><table><tr><th>Account</th><th class="num">Debit</th><th class="num">Credit</th></tr><tr><td>Bank (YES BANK)</td><td class="num">25,000.00</td><td class="num"></td></tr><tr><td>Debtors - IND (the customer — shown as advance)</td><td class="num"></td><td class="num">25,000.00</td></tr></table></div>
+      <p class="muted">Paying a supplier in advance works the same way, with <b>Payment Type: Pay</b> and Party Type: Supplier.</p>
+    </section>
+
+    <section id="t-cheque">
+      <h2>📑 One cheque for many customers / invoices</h2>
+      <p>Example: cheque <b>123456</b> for <b>₹50,000</b> pays three invoices of two customers:</p>
+      <div class="scroll"><table>
+        <tr><th>Customer</th><th>Invoice</th><th class="num">Amount</th></tr>
+        <tr><td>Customer A</td><td>INV-001</td><td class="num">10,000</td></tr>
+        <tr><td>Customer A</td><td>INV-002</td><td class="num">15,000</td></tr>
+        <tr><td>Customer B</td><td>INV-010</td><td class="num">25,000</td></tr>
+        <tr><th colspan="2">Cheque total</th><th class="num">50,000</th></tr>
+      </table></div>
+      <div class="note"><b>Remember:</b> one Payment Entry can have only <b>one customer</b>. So one cheque for two customers needs <b>two Payment Entries</b> (option 1, the one we use), or one Journal Entry (option 2).</div>
+
+      <h3>Option 1 (use this) — one Payment Entry per customer, same cheque number</h3>
+      <p>For <b>each customer</b> on the cheque:</p>
+      <ol class="steps">
+        <li><b>Accounting › Payment Entry › New</b>. <b>Payment Type: Receive</b> · <b>Party Type: Customer</b> · <b>Party:</b> the customer.</li>
+        <li><b>Mode of Payment: Cheque</b>. <b>Paid Amount</b> = this customer's share (A: 25,000 · B: 25,000).</li>
+        <li><b>Cheque / Reference No: 123456</b> and the cheque date. Use the <b>same number on every entry</b>, so all parts of the cheque can be found together.</li>
+        <li>Click <b>Get Outstanding Invoices</b>, tick this customer's invoices, and check the <b>Allocated</b> amount on each (A: INV-001 10,000 + INV-002 15,000).</li>
+        <li><b>Remarks:</b> "Cheque 123456 ₹50,000 — also for Customer B". <b>Save › Submit</b>.</li>
+      </ol>
+      <h4 class="ex-h">Worked example — what to type</h4>
+      <div class="frm"><div class="frm__t">Payment Entry — Customer A (fill like this)</div><div class="frm__grid"><div class="frm__row"><span>Payment Type</span><b>Receive</b></div><div class="frm__row"><span>Posting Date</span><b>15-10-2026</b></div><div class="frm__row"><span>Mode of Payment</span><b>Cheque</b></div><div class="frm__row"><span>Party Type</span><b>Customer</b></div><div class="frm__row"><span>Party</span><b>Customer A</b></div><div class="frm__row"><span>Account Paid From</span><b>Debtors - IND <i>(filled for you)</i></b></div><div class="frm__row"><span>Account Paid To</span><b>YES BANK - IND <i>(from the Mode of Payment)</i></b></div><div class="frm__row"><span>Paid Amount</span><b>25,000.00</b></div><div class="frm__row"><span>Cheque/Reference No</span><b>123456</b></div><div class="frm__row"><span>Cheque/Reference Date</span><b>14-10-2026 <i>(date on the cheque)</i></b></div></div><div class="frm__tbl"><table><tr><th>Type</th><th>Name</th><th>Outstanding</th><th>Allocated</th></tr><tr><td>Sales Invoice</td><td>INV-001</td><td>10,000.00</td><td>10,000.00</td></tr><tr><td>Sales Invoice</td><td>INV-002</td><td>15,000.00</td><td>15,000.00</td></tr></table></div><div class="frm__foot">Remarks: <i>Cheque 123456 ₹50,000 — also pays Customer B (INV-010)</i> · Total Allocated 25,000 = Paid Amount 25,000 ✓</div></div>
+      <div class="frm"><div class="frm__t">Payment Entry — Customer B (fill like this)</div><div class="frm__grid"><div class="frm__row"><span>Payment Type</span><b>Receive</b></div><div class="frm__row"><span>Posting Date</span><b>15-10-2026</b></div><div class="frm__row"><span>Mode of Payment</span><b>Cheque</b></div><div class="frm__row"><span>Party Type</span><b>Customer</b></div><div class="frm__row"><span>Party</span><b>Customer B</b></div><div class="frm__row"><span>Paid Amount</span><b>25,000.00</b></div><div class="frm__row"><span>Cheque/Reference No</span><b>123456 <i>(same number)</i></b></div><div class="frm__row"><span>Cheque/Reference Date</span><b>14-10-2026</b></div></div><div class="frm__tbl"><table><tr><th>Type</th><th>Name</th><th>Outstanding</th><th>Allocated</th></tr><tr><td>Sales Invoice</td><td>INV-010</td><td>25,000.00</td><td>25,000.00</td></tr></table></div><div class="frm__foot">Remarks: <i>Cheque 123456 ₹50,000 — also pays Customer A (INV-001, INV-002)</i></div></div>
+      <p class="wr"><b>ERPNext writes</b> (two Payment Entries):</p>
+      <div class="ledger"><div class="t">Payment Entry 1 — Customer A <small>cheque 123456 · INV-001 10,000 + INV-002 15,000</small></div><table><tr><th>Account</th><th class="num">Debit</th><th class="num">Credit</th></tr><tr><td>Bank (YES BANK)</td><td class="num">25,000.00</td><td class="num"></td></tr><tr><td>Debtors - IND (Customer A)</td><td class="num"></td><td class="num">25,000.00</td></tr></table></div>
+      <div class="ledger"><div class="t">Payment Entry 2 — Customer B <small>cheque 123456 · INV-010 25,000</small></div><table><tr><th>Account</th><th class="num">Debit</th><th class="num">Credit</th></tr><tr><td>Bank (YES BANK)</td><td class="num">25,000.00</td><td class="num"></td></tr><tr><td>Debtors - IND (Customer B)</td><td class="num"></td><td class="num">25,000.00</td></tr></table></div>
+      <div class="tip"><b>Result:</b> INV-001, INV-002 and INV-010 all show <span class="pill p-green">Paid</span>. Customer A's ledger shows ₹25,000 received and Customer B's shows ₹25,000, both with cheque 123456.</div>
+      <h4 class="ex-h">When the cheque clears — Bank Reconciliation Tool</h4>
+      <p>First import the bank statement (<b>Accounting › Bank Statement Import</b>), so ERPNext has the bank's lines. The statement shows <b>one</b> credit of ₹50,000. In <b>Accounting › Bank Reconciliation Tool</b>, choose the bank account and dates, click that bank line, and tick <b>both</b> Payment Entries:</p>
+      <div class="match"><div class="match__bank"><small>Bank statement line</small><b>16-10-2026 · CHQ 123456 · Cr ₹50,000</b></div>
+        <div class="match__arrow">matched to</div>
+        <div class="match__pe"><div>Payment Entry <b>ACC-PAY-…-001</b> · Customer A · ₹25,000</div><div>Payment Entry <b>ACC-PAY-…-002</b> · Customer B · ₹25,000</div><div class="match__tot">25,000 + 25,000 = <b>50,000 ✓</b></div></div></div>
+      <p class="muted">One customer, many invoices, one cheque? It's the same, with just one Payment Entry: Get Outstanding Invoices and tick all their invoices. (The <b>Receive</b> button on the Finance tab works one invoice at a time, so for this case use the Payment Entry as above.)</p>
+
+      <h3>Option 2 — one Journal Entry for the whole cheque</h3>
+      <p>Use this only if you want <b>one voucher</b> for the cheque.</p>
+      <ol class="steps">
+        <li><b>Accounting › Journal Entry › New</b>. <b>Entry Type: Bank Entry</b> · <b>Reference Number: 123456</b> and <b>Reference Date</b> = the cheque date.</li>
+        <li>Row 1: the <b>bank</b> → <b>Debit</b> 50,000.</li>
+        <li>One row per invoice: <b>Debtors - IND</b>, <b>Party Type: Customer</b>, <b>Party</b>, <b>Reference Type: Sales Invoice</b>, <b>Reference Name:</b> the invoice → <b>Credit</b> its amount.</li>
+        <li>Check Total Debit = Total Credit (50,000). <b>Save › Submit</b>.</li>
+      </ol>
+      <h4 class="ex-h">Worked example — what to type</h4>
+      <div class="frm"><div class="frm__t">Journal Entry (fill like this)</div><div class="frm__grid"><div class="frm__row"><span>Entry Type</span><b>Bank Entry</b></div><div class="frm__row"><span>Posting Date</span><b>15-10-2026</b></div><div class="frm__row"><span>Reference Number</span><b>123456</b></div><div class="frm__row"><span>Reference Date</span><b>14-10-2026</b></div><div class="frm__row"><span>User Remark</span><b>Cheque 123456 from Customer A and Customer B</b></div></div><div class="frm__tbl"><table><tr><th>Account</th><th>Party Type</th><th>Party</th><th>Reference Type</th><th>Reference Name</th><th>Debit</th><th>Credit</th></tr><tr><td>YES BANK - IND</td><td></td><td></td><td></td><td></td><td>50,000.00</td><td></td></tr><tr><td>Debtors - IND</td><td>Customer</td><td>Customer A</td><td>Sales Invoice</td><td>INV-001</td><td></td><td>10,000.00</td></tr><tr><td>Debtors - IND</td><td>Customer</td><td>Customer A</td><td>Sales Invoice</td><td>INV-002</td><td></td><td>15,000.00</td></tr><tr><td>Debtors - IND</td><td>Customer</td><td>Customer B</td><td>Sales Invoice</td><td>INV-010</td><td></td><td>25,000.00</td></tr></table></div><div class="frm__foot">Total Debit 50,000 = Total Credit 50,000 ✓</div></div>
+      <p class="muted">The Journal Entry's rows <i>are</i> the debit and credit: Bank debited 50,000; each customer credited for their invoice.</p>
+      <div class="warn"><b>Careful:</b> fill <b>Reference Type and Reference Name</b> on every customer row. If you miss one, that invoice stays <b>Unpaid</b> until you run Payment Reconciliation. If this cheque bounces, cancelling the Journal Entry reopens <b>all</b> its invoices.</div>
+
+      <h3>More cheque cases</h3>
+      <div class="scroll"><table>
+        <tr><th>Case (same three invoices, ₹50,000 due)</th><th>What to do</th><th>Result</th></tr>
+        <tr><td><b>Cheque is ₹45,000</b>: Customer B paid only ₹20,000 of INV-010</td>
+            <td>Customer A's entry as above (25,000). Customer B's entry: Paid Amount <b>20,000</b>, allocated 20,000 to INV-010.</td>
+            <td>INV-010 <span class="pill p-orange">Partly Paid</span>, ₹5,000 still outstanding</td></tr>
+        <tr><td><b>Cheque is ₹52,000</b>: Customer B paid ₹2,000 extra</td>
+            <td>Customer B's entry: Paid Amount <b>27,000</b>, allocate 25,000 to INV-010; the 2,000 stays unallocated.</td>
+            <td>INV-010 <span class="pill p-green">Paid</span> + ₹2,000 <b>advance</b> on Customer B, used on their next invoice</td></tr>
+        <tr><td><b>Customer A cut ₹500 TDS</b> (cheque ₹49,500)</td>
+            <td>Customer A's entry: Paid Amount <b>24,500</b>; in <b>Deductions or Loss</b> add TDS Receivable - IND 500; allocate 25,000 to the invoices.</td>
+            <td>Both A invoices <span class="pill p-green">Paid</span>; ₹500 TDS to claim</td></tr>
+      </table></div>
+
+      <h3>Don't know the split yet?</h3>
+      <ol class="steps">
+        <li>Make one Payment Entry per customer with their amount, but <b>tick no invoices</b>. The money sits as an <b>advance</b> on the customer.</li>
+        <li>When you know the split: <b>Accounting › Payment Reconciliation</b> › choose the customer › <b>Get Unreconciled Entries</b> › match the payment to the invoices › <b>Reconcile</b>.</li>
+      </ol>
+    </section>
+
+    <section id="t-bounce">
+      <h2>⛔ A cheque bounced</h2>
+      <ol class="steps">
+        <li>Find every entry for that cheque: in the Payment Entry list, filter <b>Cheque/Reference No</b> = the cheque number (Journal Entry list: <b>Reference Number</b>).</li>
+        <li>Open each one › <b>Cancel</b>. ERPNext reverses the bank and customer lines, and the invoices go back to <b>Unpaid</b> / <b>Overdue</b>.</li>
+        <li>Bounce charges from the bank: a <b>Journal Entry (Bank Entry)</b> with <b>Bank Charges - IND</b> in Debit and the bank in Credit.</li>
+        <li>Charging those to the customer? Add them to the customer's next invoice, or ask the accounts head.</li>
+        <li>When the customer pays again, receive it as normal with the new reference.</li>
+      </ol>
+      <h4 class="ex-h">Worked example</h4>
+      <div class="scroll"><table>
+        <tr><th>Date</th><th>What happened</th><th>What you do</th><th>Invoices</th></tr>
+        <tr><td>15-10</td><td>Cheque 123456 ₹50,000 received</td><td>Payment Entries 001 (A) and 002 (B), as above</td><td>All <span class="pill p-green">Paid</span></td></tr>
+        <tr><td>18-10</td><td>Bank returns the cheque, ₹300 bounce charges</td><td>Cancel 001 and 002 · Journal Entry: Bank Charges - IND Dr 300 / YES BANK Cr 300</td><td>INV-001, 002, 010 back to <span class="pill p-red">Unpaid</span></td></tr>
+        <tr><td>22-10</td><td>Customers pay again by NEFT</td><td>Receive each invoice as normal, with the new UTR</td><td>All <span class="pill p-green">Paid</span></td></tr>
+      </table></div>
+      <p class="wr"><b>Cancelling writes the opposite lines</b> (Customer A's entry):</p>
+      <div class="ledger"><div class="t">Cancel of Payment Entry 1 <small>the receipt is reversed</small></div><table><tr><th>Account</th><th class="num">Debit</th><th class="num">Credit</th></tr><tr><td>Debtors - IND (Customer A)</td><td class="num">25,000.00</td><td class="num"></td></tr><tr><td>Bank (YES BANK)</td><td class="num"></td><td class="num">25,000.00</td></tr></table></div>
+    </section>
+
+    <section id="t-creditnote">
+      <h2>↩️ Customer returned goods (Sales Return + Credit Note)</h2>
+      <p>A return has <b>two parts</b> in ERPNext: the <b>goods</b> come back into the warehouse, and the <b>money</b> the customer owes goes down. Do both:</p>
+      <ol class="steps">
+        <li><b>Goods back:</b> open the <b>Delivery Note</b> for those goods › <b>Create › Sales Return</b>. Keep only the items and quantities actually returned, choose the warehouse they come back to, then <b>Save › Submit</b>.</li>
+        <li><b>Money side:</b> open the customer's <b>Sales Invoice</b> › <b>Create › Return / Credit Note</b>. Keep only the same items and quantities, then <b>Save › Submit</b>.</li>
+        <li>If the customer had already paid, the credit note stays as a credit on the customer. It is used against their next invoice, or refunded with a Payment Entry (Payment Type: Pay).</li>
+      </ol>
+      <div class="acc"><b>In the accounts:</b> the stock and its cost come back, the customer owes us less, and our sales and GST payable go down.</div>
+      <p class="wr"><b>ERPNext writes</b> (goods sold for ₹1,000 + GST ₹180 that cost us ₹700):</p>
+      <div class="ledger"><div class="t">Sales Return (from the Delivery Note) <small>goods come back</small></div><table><tr><th>Account</th><th class="num">Debit</th><th class="num">Credit</th></tr><tr><td>Stock In Hand - IND</td><td class="num">700.00</td><td class="num"></td></tr><tr><td>Cost of Goods Sold - IND</td><td class="num"></td><td class="num">700.00</td></tr></table></div>
+      <div class="ledger"><div class="t">Credit Note (from the Sales Invoice) <small>the sale reversed</small></div><table><tr><th>Account</th><th class="num">Debit</th><th class="num">Credit</th></tr><tr><td>Sales - IND</td><td class="num">1,000.00</td><td class="num"></td></tr><tr><td>Output Tax CGST - IND</td><td class="num">90.00</td><td class="num"></td></tr><tr><td>Output Tax SGST - IND</td><td class="num">90.00</td><td class="num"></td></tr><tr><td>Debtors - IND (the customer)</td><td class="num"></td><td class="num">1,180.00</td></tr></table></div>
+      <p class="muted">A Credit Note made <b>without</b> the Sales Return changes only the money. The stock in ERPNext would stay wrong.</p>
+    </section>
+
+    <section id="t-debitnote">
+      <h2>↪️ We returned goods to a supplier (Purchase Return + Debit Note)</h2>
+      <ol class="steps">
+        <li><b>Goods out:</b> open the <b>Purchase Receipt</b> for those goods › <b>Create › Purchase Return</b>. Keep only the items and quantities returned, then <b>Save › Submit</b>.</li>
+        <li><b>Money side:</b> open the supplier's <b>Purchase Invoice</b> › <b>Create › Return / Debit Note</b>. Keep the same items and quantities, type the supplier's credit note number if they gave one, then <b>Save › Submit</b>.</li>
+      </ol>
+      <div class="acc"><b>In the accounts:</b> the stock goes down, we owe the supplier less, and the GST we claim on those goods goes down.</div>
+      <p class="wr"><b>ERPNext writes</b> (goods ₹2,000 + GST ₹360 returned):</p>
+      <div class="ledger"><div class="t">Purchase Return (from the Purchase Receipt) <small>goods go back</small></div><table><tr><th>Account</th><th class="num">Debit</th><th class="num">Credit</th></tr><tr><td>Stock Received But Not Billed - IND</td><td class="num">2,000.00</td><td class="num"></td></tr><tr><td>Stock In Hand - IND</td><td class="num"></td><td class="num">2,000.00</td></tr></table></div>
+      <div class="ledger"><div class="t">Debit Note (from the Purchase Invoice) <small>the bill reversed</small></div><table><tr><th>Account</th><th class="num">Debit</th><th class="num">Credit</th></tr><tr><td>Creditors - IND (the supplier)</td><td class="num">2,360.00</td><td class="num"></td></tr><tr><td>Stock Received But Not Billed - IND</td><td class="num"></td><td class="num">2,000.00</td></tr><tr><td>Input Tax CGST - IND</td><td class="num"></td><td class="num">180.00</td></tr><tr><td>Input Tax SGST - IND</td><td class="num"></td><td class="num">180.00</td></tr></table></div>
+    </section>
+
+    <section id="t-bank">
+      <h2>🏦 Bank charges or interest on the bank statement</h2>
+      <p>Use this only for amounts <b>not linked to any invoice</b>, such as monthly bank charges, SMS charges or interest.</p>
+      <ol class="steps">
+        <li><b>Accounting › Journal Entry › New</b>. <b>Entry Type: Bank Entry</b>. Posting date = the date on the statement.</li>
+        <li>Row 1: <b>Bank Charges - IND</b> → amount in <b>Debit</b>.</li>
+        <li>Row 2: <b>your bank account</b> → the same amount in <b>Credit</b>.</li>
+        <li>Type the statement reference and a <b>User Remark</b> (e.g. "SMS charges, Sept"). <b>Save › Submit</b>.</li>
+      </ol>
+      <div class="ledger"><div class="t">Example 1 — the bank statement shows ₹354 charges <small>Entry Type: Bank Entry</small></div><table><tr><th>Account</th><th class="num">Debit</th><th class="num">Credit</th></tr><tr><td>Bank Charges - IND</td><td class="num">354.00</td><td class="num"></td></tr><tr><td>Bank (YES BANK)</td><td class="num"></td><td class="num">354.00</td></tr></table></div>
+      <p>For <b>interest received</b>, swap the sides: Bank in <b>Debit</b>, and an interest income account in <b>Credit</b>.</p>
+    </section>
+
+    <section id="t-tds">
+      <h2>🏛️ Deposit TDS with the government</h2>
+      <p>The TDS we cut from suppliers has to be paid to the government by the <b>7th of the next month</b> (30 April for March).</p>
+      <ol class="steps">
+        <li>Pay the TDS on the government portal and keep the challan.</li>
+        <li><b>Accounting › Journal Entry › New</b>, <b>Entry Type: Bank Entry</b>.</li>
+        <li>Row 1: the TDS account (e.g. <b>TDS on Contract - IND</b>) → amount in <b>Debit</b>.</li>
+        <li>Row 2: <b>your bank account</b> → the same amount in <b>Credit</b>.</li>
+        <li>Reference = challan number and date. <b>Save › Submit</b>.</li>
+      </ol>
+      <div class="ledger"><div class="t">Example 2 — depositing TDS of ₹2,000 cut from suppliers <small>Entry Type: Bank Entry</small></div><table><tr><th>Account</th><th class="num">Debit</th><th class="num">Credit</th></tr><tr><td>TDS on Contract - IND</td><td class="num">2,000.00</td><td class="num"></td></tr><tr><td>Bank (YES BANK)</td><td class="num"></td><td class="num">2,000.00</td></tr></table></div>
+    </section>
+
+    <section id="t-fix">
+      <h2>✏️ Correct a mistake</h2>
+      <div class="scroll"><table>
+        <tr><th>Mistake</th><th>What to do</th></tr>
+        <tr><td>Wrong amount, date or mode on a <b>submitted</b> payment</td><td>Open the Payment Entry › <b>Cancel</b> › <b>Amend</b> › correct it › <b>Submit</b>.</td></tr>
+        <tr><td>Wrong item, rate or GST on a <b>submitted</b> invoice</td><td>Cancel its payments first, then the invoice › <b>Amend</b> › correct › Submit. Then receive / pay again.</td></tr>
+        <tr><td>Anything on a <b>draft</b></td><td>Just open it, correct it and save. A draft has not touched the accounts yet.</td></tr>
+        <tr><td>An expense booked to the <b>wrong account</b></td><td>Journal Entry: put the correct account in <b>Debit</b> and the wrong account in <b>Credit</b> (example below).</td></tr>
+      </table></div>
+      <div class="ledger"><div class="t">Example 3 — a ₹2,000 courier bill was booked to Sales Promotion by mistake <small>Entry Type: Journal Entry</small></div><table><tr><th>Account</th><th class="num">Debit</th><th class="num">Credit</th></tr><tr><td>Courier Charges - IND (correct account)</td><td class="num">2,000.00</td><td class="num"></td></tr><tr><td>Sales Promotion - IND (wrong account)</td><td class="num"></td><td class="num">2,000.00</td></tr></table></div>
+      <div class="warn"><b>Never delete</b> a submitted document. <b>Cancel</b> it: that reverses its accounts. Cancel the later documents first, e.g. the payment before its invoice.</div>
+    </section>
+
+    <section id="t-check">
+      <h2>🔎 See who owes us / whom we owe</h2>
+      <div class="scroll"><table>
+        <tr><th>I want to see…</th><th>Go to</th></tr>
+        <tr><td>What customers still owe, invoice by invoice</td><td>Order Flow › Finance › <b>Receivables</b> (sort by <span class="pill p-red">Overdue</span>)</td></tr>
+        <tr><td>What we owe suppliers / jobbers</td><td>Finance › <b>Supplier Payables</b> / <b>Jobber Payables</b></td></tr>
+        <tr><td>How old the dues are (0–30, 31–60 … days)</td><td>Report: <b>Accounts Receivable</b> / <b>Accounts Payable</b></td></tr>
+        <tr><td>Everything posted for one customer, supplier or account</td><td>Report: <b>General Ledger</b> › filter by party or account</td></tr>
+        <tr><td>What one document did to the accounts</td><td>Invoice / Delivery Note / Purchase Receipt: <b>View › Accounting Ledger</b> · Payment Entry / Journal Entry: <b>Ledger</b> button</td></tr>
+        <tr><td>Whether our books match the bank</td><td>Import the bank statement (<b>Bank Statement Import</b>), then <b>Bank Reconciliation Tool</b> (weekly)</td></tr>
+        <tr><td>Receipts still waiting for a supplier bill</td><td>Order Flow › Purchase Flow › <b>To Bill</b></td></tr>
+      </table></div>
+    </section>
+
+    <section id="ledgers">
+      <h2>Our main accounts, in plain words</h2>
+      <div class="scroll"><table>
+        <tr><th>Account</th><th>What it means</th></tr>
+        <tr><td>Debtors - IND</td><td>Customers who owe us</td></tr>
+        <tr><td>Creditors - IND</td><td>Suppliers and jobbers we owe</td></tr>
+        <tr><td>Bank accounts (e.g. … - YES BANK - IND), Cash - IND</td><td>Our money</td></tr>
+        <tr><td>Stock In Hand - IND</td><td>Value of the goods in our warehouses</td></tr>
+        <tr><td>Stock Received But Not Billed - IND</td><td>Goods came, bill not entered yet. Should go back to zero when the bill is entered.</td></tr>
+        <tr><td>Input Tax CGST / SGST / IGST - IND</td><td>GST on our purchases. We claim it back.</td></tr>
+        <tr><td>Output Tax CGST / SGST / IGST - IND</td><td>GST on our sales. We pay it to the government.</td></tr>
+        <tr><td>TDS Receivable - IND</td><td>TDS customers cut from us. We claim it.</td></tr>
+        <tr><td>TDS - IND, TDS on Contract - IND …</td><td>TDS we cut from suppliers. We deposit it.</td></tr>
+        <tr><td>Sales - IND · Cost of Goods Sold - IND</td><td>What we sold · what those goods cost us</td></tr>
+        <tr><td>Bank Charges - IND · Write Off - IND · Rounded Off - IND</td><td>Bank fees · small amounts let go · paise rounding</td></tr>
+      </table></div>
+      <p class="muted">Same-state customer: GST 18% = CGST 9% + SGST 9%. Other state: IGST 18%.</p>
+    </section>
+
+    <section id="stuck">
+      <h2>Stuck? Do this</h2>
+      <div class="scroll"><table>
+        <tr><th>What you see</th><th>Do this</th></tr>
+        <tr><td>Customer paid, but the invoice still says <b>Unpaid</b></td><td>Open the Payment Entry and <b>Submit</b> it (it may still be a draft). Made without the invoice? <b>Payment Reconciliation</b> › customer › match it.</td></tr>
+        <tr><td>No <b>Receive / Pay</b> button</td><td>Submit the invoice first. Already paid in full? Nothing to receive. Still missing? Ask the admin for Payment Entry rights.</td></tr>
+        <tr><td>"Into bank" doesn't match the bank statement</td><td>Check the TDS and bank charges you typed. The bank amount must equal the statement.</td></tr>
+        <tr><td>"Cannot cancel" an invoice</td><td>Cancel its payment(s) first, then the invoice.</td></tr>
+        <tr><td>"Difference Amount" on a Payment Entry</td><td>Correct the TDS / bank charges / write-off until the difference is 0.</td></tr>
+        <tr><td>Journal Entry won't submit</td><td>Total Debit must equal total Credit. Customer / supplier lines need the <b>Party</b>.</td></tr>
+        <tr><td>GST looks wrong</td><td>Check the party's address (same state or other state) and the tax template, <b>before</b> submitting.</td></tr>
+        <tr><td>Mode of Payment missing</td><td>It is not ticked <b>Show in Payment Entry</b>. Ask the admin.</td></tr>
+      </table></div>
+    </section>
+
+    <section id="routine">
+      <h2>Your checklist</h2>
+      <div class="scroll"><table>
+        <tr><th>Every day</th><th>Every week</th><th>Every month</th></tr>
+        <tr><td>
+          <ul>
+            <li>Submit the draft sales invoices</li>
+            <li>Enter the supplier / jobber bills</li>
+            <li>Receive every bank credit</li>
+            <li>Pay what is due</li>
+            <li>Follow up on Overdue</li>
+          </ul></td><td>
+          <ul>
+            <li>Import bank statement › Bank Reconciliation Tool</li>
+            <li>Accounts Receivable / Payable ageing</li>
+            <li>Purchase Flow › To Bill</li>
+          </ul></td><td>
+          <ul>
+            <li>Deposit TDS by the 7th</li>
+            <li>GSTR-1 and GSTR-3B</li>
+            <li>Match purchase bills with GSTR-2B</li>
+            <li>Check the Trial Balance</li>
+          </ul></td></tr>
+      </table></div>
+    </section>
+
+    <section id="words">
+      <h2>Words used</h2>
+      <table>
+        <tr><td><b>Draft / Submit</b></td><td>Saved but not final / final; now in the accounts</td></tr>
+        <tr><td><b>Cancel / Amend</b></td><td>Reverse a submitted document / make a corrected copy of it</td></tr>
+        <tr><td><b>Outstanding</b></td><td>The part of an invoice still unpaid</td></tr>
+        <tr><td><b>Settled</b></td><td>How much of the invoice a payment clears, including TDS and charges</td></tr>
+        <tr><td><b>Advance</b></td><td>Money paid before the invoice</td></tr>
+        <tr><td><b>TDS</b></td><td>Tax Deducted at Source: a part of a payment kept back and paid to the government</td></tr>
+        <tr><td><b>Credit Note / Debit Note</b></td><td>Return from a customer / return to a supplier</td></tr>
+        <tr><td><b>Ledger / Account</b></td><td>One "page" in the books: a bank, a customer, sales, rent…</td></tr>
+      </table>
+    </section>
+  </main>
+</div>
+
+<script>
+  // Search: shows only the sections (and table rows) that contain the words typed.
+  (function () {
+    const q = document.getElementById('q');
+    const sections = [...document.querySelectorAll('main section')];
+    const strip = (el) => el.querySelectorAll('mark').forEach(m => m.replaceWith(document.createTextNode(m.textContent)));
+    q.addEventListener('input', () => {
+      const words = q.value.trim().toLowerCase().split(/\s+/).filter(Boolean);
+      sections.forEach(s => {
+        strip(s); s.normalize();
+        s.querySelectorAll('tr').forEach(tr => tr.classList.remove('hide'));
+        if (!words.length) { s.classList.remove('hide'); return; }
+        const hit = words.every(w => s.textContent.toLowerCase().includes(w));
+        s.classList.toggle('hide', !hit);
+        if (!hit) return;
+        s.querySelectorAll('table:not(.keep) tr').forEach((tr, i) => {
+          if (tr.querySelector('th')) return;
+          const t = tr.textContent.toLowerCase();
+          if (!words.some(w => t.includes(w)) && tr.closest('.ledger') === null) tr.classList.add('hide');
+        });
+      });
+    });
+    // Highlight the section in view in the contents list.
+    const links = [...document.querySelectorAll('nav.toc a')];
+    const io = new IntersectionObserver((entries) => {
+      entries.forEach(e => {
+        if (!e.isIntersecting) return;
+        links.forEach(a => a.classList.toggle('on', a.getAttribute('href') === '#' + e.target.id));
+      });
+    }, { rootMargin: '-40% 0px -55% 0px' });
+    sections.forEach(s => io.observe(s));
+  })();
+</script>
+</body>
+</html>

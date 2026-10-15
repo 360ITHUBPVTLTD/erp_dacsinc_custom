@@ -1391,7 +1391,8 @@ class OrderFlow {
         });
         this.$body.on('click', '.of-pay-btn', (e) => {
             const $b = $(e.currentTarget);
-            of_payment_prompt($b.data('doctype'), String($b.data('name')), () => this.refresh(true));
+            frappe.require('/assets/erp_dacsinc_custom/js/payment_prompt.js',
+                () => of_payment_prompt($b.data('doctype'), String($b.data('name')), () => this.refresh(true)));
         });
         this.$body.on('change', '#of-scope', (e) => { this.scope = e.target.value; this.reset_all_pagination(); this.refresh(true); });
         this.$body.on('change', '#of-days',  (e) => {
@@ -5454,6 +5455,11 @@ class OrderFlow {
                     title: __('Jobber Payables'), open: m.jobber_outstanding, open_label: __('to pay'),
                     settled: m.jobber_paid, total: m.jobber_total, settled_label: __('paid'),
                     docs: jobs_env.total || 0, doc_label: __('jobber invoice') })}
+                <!-- The Accounts Guide (/accounts-guide): entries, debit / credit, Journal Entry, fixes. -->
+                <a class="of-guide-tile" href="/accounts-guide" target="_blank" title="${__('How the accounts team works: types of entries, debit and credit, Journal Entry, examples, quick fixes')}">
+                    <i class="fa fa-book"></i>
+                    <span><b>${__('Accounts Guide')}</b><small>${__('Entries, debit / credit, Journal Entry, fixes')}</small></span>
+                </a>
             </div>
 
             <!-- Tables -->
@@ -7298,239 +7304,6 @@ function of_submit_draft_prompt(doctype, name, on_done) {
             </div>`);
         dlg.fields_dict.checked.$wrapper.addClass('of-cm-check');
         dlg.show();
-    });
-}
-
-// Finance › Receive / Pay: record a payment against one invoice (dashboard_payment.py).
-// Step 1 asks what a Payment Entry needs; step 2 shows everything back with the ledger
-// effect and needs a tick before it submits.
-function of_payment_prompt(doctype, name, on_done) {
-    frappe.call({
-        method: 'erp_dacsinc_custom.dashboard_payment.get_payment_prompt',
-        args: { doctype, name },
-    }).then(r => {
-        const d = r.message;
-        if (!d) return;
-        const money = (v) => format_currency(flt(v, 2), d.currency);
-        const receive = d.receive;
-        const mode_by_name = Object.fromEntries((d.modes || []).map(m => [m.name, m]));
-        const acc_filter = () => ({ filters: { company: d.company, is_group: 0 } });
-
-        const dlg = new frappe.ui.Dialog({
-            title: receive ? __('Receive Payment — {0}', [d.name]) : __('Make Payment — {0}', [d.name]),
-            size: 'large',
-            fields: [
-                { fieldtype: 'HTML', fieldname: 'head' },
-                { fieldtype: 'Section Break', label: __('Payment') },
-                { fieldtype: 'Date', fieldname: 'posting_date', label: __('Payment Date'), reqd: 1, default: frappe.datetime.get_today() },
-                { fieldtype: 'Select', fieldname: 'mode_of_payment', label: __('Mode of Payment'), reqd: 1,
-                  options: [''].concat((d.modes || []).map(m => m.name)).join('\n') },
-                { fieldtype: 'HTML', fieldname: 'mode_info' },
-                { fieldtype: 'Column Break' },
-                // Two amounts, kept in step (sync below): what this payment clears on the invoice,
-                // and what actually moves through the bank / cash after the deductions.
-                { fieldtype: 'Float', precision: 2, fieldname: 'settle_amount', reqd: 1, default: d.outstanding,
-                  label: receive ? __('Amount settled on this invoice') : __('Amount settled on this bill'),
-                  description: receive ? __('How much of the invoice this payment clears — including any bank charges, TDS or write-off below.')
-                                       : __('How much of the bill this payment clears — including any TDS or write-off below.') },
-                { fieldtype: 'Float', precision: 2, fieldname: 'amount', reqd: 1, default: d.outstanding,
-                  label: receive ? __('Amount credited in bank / cash') : __('Amount paid to supplier'),
-                  description: receive ? __('What actually reached your bank / cash = settled amount − bank charges − TDS − write-off. Calculated for you; change it if the bank shows a different figure.')
-                                       : __('What the supplier receives = settled amount − TDS − write-off. Bank charges are extra, from your bank.') },
-                { fieldtype: 'Data', fieldname: 'reference_no', label: __('Reference No (UTR / Cheque No)') },
-                { fieldtype: 'Date', fieldname: 'reference_date', label: __('Reference Date') },
-                { fieldtype: 'Section Break', label: receive ? __('Not received in the bank (only if any)') : __('Deductions (only if any)'), collapsible: 0 },
-                { fieldtype: 'Float', precision: 2, fieldname: 'bank_charges',
-                  label: receive ? __('Bank charges cut by the bank') : __('Bank charges paid by us (extra)'),
-                  description: receive ? __('Part of the settled amount the bank kept — not in the credited amount.') : __('Added on top of the amount paid; goes out of your bank.') },
-                { fieldtype: 'Float', precision: 2, fieldname: 'tds_amount',
-                  label: receive ? __('TDS cut by the customer') : __('TDS cut by us now (not on the bill)'),
-                  description: receive ? __('Part of the settled amount the customer kept as TDS.') : __('Part of the settled amount we keep and pay to the government.') },
-                { fieldtype: 'Float', precision: 2, fieldname: 'write_off_amount', label: __('Small difference to write off (round off)'),
-                  description: __('Part of the settled amount nobody pays (a few rupees).') },
-                { fieldtype: 'Column Break' },
-                { fieldtype: 'Link', fieldname: 'bank_charges_account', label: __('Bank Charges Account'), options: 'Account',
-                  default: d.defaults.bank_charges_account, get_query: acc_filter },
-                { fieldtype: 'Link', fieldname: 'tds_account', label: __('TDS Account'), options: 'Account',
-                  default: d.defaults.tds_account, get_query: acc_filter },
-                { fieldtype: 'Link', fieldname: 'write_off_account', label: __('Write Off Account'), options: 'Account',
-                  default: d.defaults.write_off_account, get_query: acc_filter },
-                { fieldtype: 'Section Break' },
-                { fieldtype: 'Small Text', fieldname: 'remarks', label: __('Remarks') },
-                { fieldtype: 'HTML', fieldname: 'summary' },
-            ],
-            primary_action_label: __('Review'),
-            primary_action: (v) => review(v),
-        });
-
-        // Keep "settled" and "credited / paid" in step: change the settled amount or a deduction →
-        // the bank amount follows; change the bank amount → the settled amount follows.
-        let syncing = false;
-        const cut = (v) => receive ? flt(v.bank_charges) + flt(v.tds_amount) + flt(v.write_off_amount)
-                                   : flt(v.tds_amount) + flt(v.write_off_amount);
-        const sync = (from) => {
-            if (syncing) return;
-            syncing = true;
-            const v = dlg.get_values(true) || {};
-            if (from === 'amount') dlg.set_value('settle_amount', flt(flt(v.amount) + cut(v), 2));
-            else dlg.set_value('amount', flt(Math.max(0, flt(v.settle_amount) - cut(v)), 2));
-            setTimeout(() => { syncing = false; paint(); }, 50);
-        };
-
-        const calc = () => {
-            const v = dlg.get_values(true) || {};
-            const amount = flt(v.amount), charges = flt(v.bank_charges), tds = flt(v.tds_amount), wo = flt(v.write_off_amount);
-            const settled = receive ? amount + charges + tds + wo : amount + tds + wo;
-            const bank = receive ? amount : amount + charges;
-            return { v, amount, charges, tds, wo, settled, bank,
-                     allocated: Math.min(settled, d.outstanding),
-                     remaining: flt(d.outstanding - settled, 2), mode: mode_by_name[v.mode_of_payment] };
-        };
-
-        const paint = () => {
-            const c = calc();
-            const is_bank = c.mode && c.mode.account_type === 'Bank';
-            dlg.set_df_property('reference_no', 'reqd', is_bank ? 1 : 0);
-            dlg.set_df_property('reference_date', 'reqd', is_bank ? 1 : 0);
-            dlg.fields_dict.mode_info.$wrapper.html(c.mode
-                ? `<div class="text-muted small" style="margin:-6px 0 8px;">${receive ? __('Money goes into') : __('Money goes out of')}: <b>${of_esc(c.mode.account)}</b></div>` : '');
-            const rem = c.remaining > 0.004
-                ? `<span style="color:var(--of-orange);font-weight:600;">${money(c.remaining)} ${__('still outstanding (part payment)')}</span>`
-                : (c.remaining < -0.004
-                    ? `<span style="color:var(--of-info);font-weight:600;">${money(-c.remaining)} ${__('extra — kept as advance for {0}', [of_esc(d.party_name || d.party)])}</span>`
-                    : `<span style="color:var(--of-green);font-weight:600;">${__('Invoice fully settled')}</span>`);
-            const line = (label, val, sign, strong) => `<div class="of-pay-eq__row${strong ? ' is-total' : ''}"><span>${sign || ''} ${label}</span><b>${money(val)}</b></div>`;
-            const eq = receive ? [
-                line(__('Credited in bank / cash'), c.amount, '', false),
-                c.charges ? line(__('Bank charges cut by the bank'), c.charges, '+') : '',
-                c.tds ? line(__('TDS cut by the customer'), c.tds, '+') : '',
-                c.wo ? line(__('Written off'), c.wo, '+') : '',
-                line(__('Settled on the invoice'), c.settled, '=', true),
-            ] : [
-                line(__('Paid to supplier'), c.amount, '', false),
-                c.tds ? line(__('TDS cut by us'), c.tds, '+') : '',
-                c.wo ? line(__('Written off'), c.wo, '+') : '',
-                line(__('Settled on the bill'), c.settled, '=', true),
-            ];
-            dlg.fields_dict.summary.$wrapper.html(`
-                <div class="of-pay-eq">
-                    <div class="of-pay-eq__calc">${eq.join('')}</div>
-                    <div class="of-pay-eq__side">
-                        <div>${receive ? __('Money into') : __('Money out of')} <b>${of_esc((c.mode && c.mode.account) || __('bank / cash'))}</b>: <b>${money(c.bank)}</b>
-                            ${!receive && c.charges ? `<span class="text-muted">(${money(c.amount)} + ${money(c.charges)} ${__('bank charges')})</span>` : ''}</div>
-                        <div>${__('Invoice outstanding')}: ${money(d.outstanding)} → <b>${money(Math.max(c.remaining, 0))}</b></div>
-                        <div>${rem}</div>
-                    </div>
-                </div>`);
-        };
-
-        dlg.fields_dict.head.$wrapper.html(`
-            <div style="display:flex;flex-wrap:wrap;gap:8px 24px;font-size:13px;padding:4px 0 2px;">
-                <div>${receive ? __('Customer') : __('Supplier')}: <b>${of_esc(d.party_name || d.party)}</b> <span class="text-muted">${of_esc(d.party)}</span></div>
-                <div>${__('Invoice Total')}: <b>${money(d.invoice_total)}</b></div>
-                <div>${__('Outstanding')}: <b style="color:var(--of-red);">${money(d.outstanding)}</b></div>
-                ${d.due_date ? `<div>${__('Due')}: <b>${frappe.datetime.str_to_user(d.due_date)}</b></div>` : ''}
-                ${d.bill_no ? `<div>${__('Supplier Bill No')}: <b>${of_esc(d.bill_no)}</b></div>` : ''}
-                ${d.tds_on_invoice ? `<div class="text-muted">${__('TDS already deducted on the bill')}: ${money(d.tds_on_invoice)}</div>` : ''}
-            </div>`);
-        ['settle_amount', 'amount', 'bank_charges', 'tds_amount', 'write_off_amount', 'mode_of_payment'].forEach(f => {
-            dlg.fields_dict[f].$input && dlg.fields_dict[f].$input.on('input change', () => setTimeout(paint, 0));
-            if (f === 'mode_of_payment') return;
-            dlg.fields_dict[f].df.onchange = () => sync(f === 'amount' ? 'amount' : 'settle');
-        });
-        dlg.fields_dict.mode_of_payment.df.onchange = () => {
-            const m = mode_by_name[dlg.get_value('mode_of_payment')];
-            if (m && /card/i.test(m.name) && d.defaults.card_charges_account) dlg.set_value('bank_charges_account', d.defaults.card_charges_account);
-            paint();
-        };
-        dlg.show();
-        paint();
-
-        function review(v) {
-            const c = calc();
-            const is_bank = c.mode && c.mode.account_type === 'Bank';
-            if (!c.mode) return frappe.msgprint(__('Choose the Mode of Payment.'));
-            if (c.amount <= 0) return frappe.msgprint(__('Enter the amount.'));
-            if (is_bank && (!v.reference_no || !v.reference_date)) return frappe.msgprint(__('Enter the Reference No (UTR / cheque no) and Reference Date.'));
-            if (c.charges && !v.bank_charges_account) return frappe.msgprint(__('Choose the Bank Charges Account.'));
-            if (c.tds && !v.tds_account) return frappe.msgprint(__('Choose the TDS Account.'));
-            if (c.wo && !v.write_off_account) return frappe.msgprint(__('Choose the Write Off Account.'));
-            if ((c.charges || c.tds || c.wo) && c.remaining < -0.004)
-                return frappe.msgprint(__('Amount plus deductions is more than the outstanding. Reduce the deductions.'));
-
-            const row = (k, val) => `<tr><td style="padding:4px 10px 4px 0;color:var(--text-muted);">${k}</td><td style="padding:4px 0;"><b>${val}</b></td></tr>`;
-            const party_acc = receive ? 'Debtors' : 'Creditors';
-            const lines = receive ? [
-                [`${of_esc(c.mode.account)}`, money(c.bank), ''],
-                c.charges ? [of_esc(v.bank_charges_account), money(c.charges), ''] : null,
-                c.tds ? [of_esc(v.tds_account), money(c.tds), ''] : null,
-                c.wo ? [of_esc(v.write_off_account), money(c.wo), ''] : null,
-                [`${party_acc} — ${of_esc(d.party_name || d.party)}`, '', money(c.settled)],
-            ] : [
-                [`${party_acc} — ${of_esc(d.party_name || d.party)}`, money(c.settled), ''],
-                c.charges ? [of_esc(v.bank_charges_account), money(c.charges), ''] : null,
-                [`${of_esc(c.mode.account)}`, '', money(c.bank)],
-                c.tds ? [of_esc(v.tds_account), '', money(c.tds)] : null,
-                c.wo ? [of_esc(v.write_off_account), '', money(c.wo)] : null,
-            ];
-            const gl = lines.filter(Boolean).map(l => `<tr><td style="padding:3px 8px;">${l[0]}</td><td style="padding:3px 8px;text-align:right;white-space:nowrap;">${l[1]}</td><td style="padding:3px 8px;text-align:right;white-space:nowrap;">${l[2]}</td></tr>`).join('');
-
-            const confirm = new frappe.ui.Dialog({
-                title: __('Confirm Payment'),
-                fields: [
-                    { fieldtype: 'HTML', fieldname: 'body' },
-                    { fieldtype: 'Check', fieldname: 'checked', label: __('I have checked the amount, mode of payment, reference and accounts') },
-                ],
-                primary_action_label: __('Submit Payment'),
-                primary_action: (cv) => {
-                    if (!cv.checked) return frappe.msgprint(__('Tick the confirmation to submit.'));
-                    confirm.get_primary_btn().prop('disabled', true);
-                    frappe.call({
-                        method: 'erp_dacsinc_custom.dashboard_payment.record_payment',
-                        args: {
-                            doctype, name, mode_of_payment: v.mode_of_payment, amount: c.amount,
-                            posting_date: v.posting_date, reference_no: v.reference_no || null, reference_date: v.reference_date || null,
-                            bank_charges: c.charges, bank_charges_account: c.charges ? v.bank_charges_account : null,
-                            tds_amount: c.tds, tds_account: c.tds ? v.tds_account : null,
-                            write_off_amount: c.wo, write_off_account: c.wo ? v.write_off_account : null,
-                            remarks: v.remarks || null,
-                        },
-                        freeze: true, freeze_message: __('Submitting payment…'),
-                    }).then(res => {
-                        const m = res.message || {};
-                        confirm.hide(); dlg.hide();
-                        frappe.msgprint({
-                            title: __('Payment submitted'), indicator: 'green',
-                            message: __('Payment Entry {0} is submitted. Outstanding on {1} is now {2}.',
-                                [`<a href="/app/payment-entry/${encodeURIComponent(m.name)}" target="_blank">${of_esc(m.name)}</a>`, of_esc(name), money(m.outstanding)]),
-                        });
-                        on_done && on_done();
-                    }).catch(() => confirm.get_primary_btn().prop('disabled', false));
-                },
-            });
-            confirm.fields_dict.body.$wrapper.html(`
-                <div class="alert alert-warning" style="font-size:12.5px;">${__('This submits the Payment Entry. To undo it later, the Payment Entry has to be cancelled.')}</div>
-                <table style="font-size:13px;margin-bottom:10px;">
-                    ${row(receive ? __('Received from') : __('Paid to'), `${of_esc(d.party_name || d.party)} (${of_esc(d.party)})`)}
-                    ${row(__('Against'), `${of_esc(doctype)} ${of_esc(name)}`)}
-                    ${row(__('Payment Date'), frappe.datetime.str_to_user(v.posting_date))}
-                    ${row(__('Mode of Payment'), of_esc(v.mode_of_payment))}
-                    ${v.reference_no ? row(__('Reference'), `${of_esc(v.reference_no)} · ${frappe.datetime.str_to_user(v.reference_date)}`) : ''}
-                    ${row(receive ? __('Credited in bank / cash') : __('Paid to supplier'), money(c.amount))}
-                    ${c.charges ? row(__('Bank Charges'), money(c.charges)) : ''}
-                    ${c.tds ? row(__('TDS'), money(c.tds)) : ''}
-                    ${c.wo ? row(__('Write Off'), money(c.wo)) : ''}
-                    ${row(receive ? __('Settled on the invoice') : __('Settled on the bill'), money(c.settled))}
-                    ${row(__('Outstanding after this'), money(Math.max(c.remaining, 0)))}
-                    ${c.remaining < -0.004 ? row(__('Advance'), money(-c.remaining)) : ''}
-                </table>
-                <div class="text-muted small" style="margin-bottom:4px;">${__('Ledger entries')}</div>
-                <table style="width:100%;font-size:12.5px;border:1px solid var(--border-color);">
-                    <tr style="background:var(--subtle-fg);"><th style="padding:4px 8px;">${__('Account')}</th><th style="padding:4px 8px;text-align:right;">${__('Debit')}</th><th style="padding:4px 8px;text-align:right;">${__('Credit')}</th></tr>
-                    ${gl}
-                </table>`);
-            confirm.show();
-        }
     });
 }
 

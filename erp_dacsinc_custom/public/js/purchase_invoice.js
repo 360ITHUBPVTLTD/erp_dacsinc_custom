@@ -19,6 +19,18 @@ frappe.ui.form.on('Purchase Invoice', {
     
     refresh: function(frm) {
         clean_up_get_items_buttons(frm);
+        // The Make Payment prompt (public/js/payment_prompt.js — the same one as Order Flow ›
+        // Finance) in place of ERPNext's Create › Payment, which is removed (added after async
+        // calls, so removed again a few times).
+        const drop_payment = () => frm.remove_custom_button(__('Payment'), __('Create'));
+        drop_payment();
+        [300, 800, 1500, 2500].forEach(delay => setTimeout(drop_payment, delay));
+        if (frm.doc.docstatus === 1 && flt(frm.doc.outstanding_amount) > 0 && frappe.model.can_create('Payment Entry')) {
+            frm.add_custom_button(__('Make Payment'), () => {
+                frappe.require('/assets/erp_dacsinc_custom/js/payment_prompt.js', () =>
+                    of_payment_prompt('Purchase Invoice', frm.doc.name, () => frm.reload_doc(), { from_form: 1 }));
+            }).addClass('btn-primary');
+        }
         
         if(frm.doc.docstatus === 0) {
             frm.add_custom_button(__('Get Items from PR'), function() {

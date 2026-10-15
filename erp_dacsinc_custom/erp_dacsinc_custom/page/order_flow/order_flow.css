@@ -1718,14 +1718,6 @@ td > .of-action-btn {
 .of-kcard .of-bar { grid-column: 1 / -1; height: 4px !important; margin: 1px 0 0 !important; }
 .of-kcard__meta { grid-column: 1 / -1; font-size: 10.5px; line-height: 1.3; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 
-/* Receive / Pay prompt: the arithmetic, spelled out */
-.of-pay-eq { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 14px; border: 1px solid var(--border-color);
-    border-radius: 8px; padding: 10px 12px; font-size: 12.5px; }
-@media (max-width: 640px) { .of-pay-eq { grid-template-columns: 1fr; } }
-.of-pay-eq__calc { display: grid; gap: 3px; }
-.of-pay-eq__row { display: flex; justify-content: space-between; gap: 10px; font-variant-numeric: tabular-nums; }
-.of-pay-eq__row.is-total { border-top: 1px solid var(--border-color); padding-top: 4px; margin-top: 2px; color: var(--of-blue, #2490ef); }
-.of-pay-eq__side { display: grid; gap: 4px; align-content: start; }
 .of-confirm-table tr.is-over td { color: var(--of-red, #e24c4c) !important; font-weight: 700; background: #fff1f0 !important; }
 .of-uet-line { display: flex; align-items: center; gap: 5px; flex-wrap: wrap; font-size: 12px; line-height: 1.6; }
 .of-uet-line .fa { color: var(--text-muted); }
@@ -1896,3 +1888,15 @@ td > .of-action-btn {
 /* The stage chips parked outside the Sales Orders card (before it is drawn) stay hidden, so a
    reload never shows them in the old place first (place_shared_controls moves them in). */
 .of-page > .of-stage-bar { display: none !important; }
+
+
+/* Finance: the Accounts Guide tile beside the three summary cards */
+.of-guide-tile { display: flex; align-items: center; gap: 10px; padding: 7px 12px; border-radius: 8px; text-decoration: none !important;
+    border: 1px dashed var(--of-blue, #2490ef); background: var(--card-bg); color: var(--text-color) !important; min-width: 0; }
+.of-guide-tile .fa { font-size: 18px; color: var(--of-blue, #2490ef); }
+.of-guide-tile span { display: grid; min-width: 0; line-height: 1.3; }
+.of-guide-tile b { font-size: 12px; color: var(--of-blue, #2490ef); }
+.of-guide-tile small { font-size: 10.5px; color: var(--text-muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.of-guide-tile:hover { background: var(--of-blue-tint, rgba(36,144,239,.06)); }
+@media (min-width: 769px) { .of-kcards:has(> .of-guide-tile) { grid-template-columns: repeat(3, minmax(0, 1fr)) minmax(0, .7fr); } }
+@media (max-width: 768px) { .of-kcards > .of-guide-tile { flex: 0 0 60%; scroll-snap-align: start; } }
