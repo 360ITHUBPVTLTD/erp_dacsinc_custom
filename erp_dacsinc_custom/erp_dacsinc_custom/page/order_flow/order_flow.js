@@ -196,7 +196,10 @@ const OF_TABLE_FILTERS = {
     'jobwork.ewo_fp': OF_EWO_FILTERS('ewo_fp', 'Jobber'),
     'jobwork.ewo_pn': OF_EWO_FILTERS('ewo_pn', 'Jobber'),
     'stock': [['warehouse', 'mirror', '#of-stock-warehouse', 'Warehouse'], ['stock', 'select', [['in', 'In stock'], ['out', 'No stock']], 'Stock']],
-    'billing': [['stage', 'select', [['deliver', 'Ready for Delivery Note'], ['bill', 'Needs invoice']], 'Stage'], ['customer', 'link', 'Customer']],
+    // "Waiting for invoice" is on by default (the empty value): only orders with delivered qty not
+    // yet invoiced, fully or partly; "All orders" shows the whole queue (order_flow_api.get_billing_flow).
+    'billing': [['invoice', 'select', [['all', 'All orders']], 'Waiting for invoice', 'Yes (incl. partly invoiced)'],
+        ['stage', 'select', [['deliver', 'Ready for Delivery Note'], ['bill', 'Needs invoice']], 'Stage'], ['customer', 'link', 'Customer']],
     'accounts.receivables': [['status', 'status', 'inv', 'Payment'], ['goods', 'select', OF_GOODS('delivered'), 'Delivery'],
         ['customer', 'link', 'Customer'], ['pos', 'pos']],
     'accounts.supplier': [['status', 'status', 'inv', 'Payment'], ['goods', 'select', OF_GOODS('received'), 'Receipt'], ['supplier', 'link', 'Supplier']],
@@ -648,12 +651,13 @@ class OrderFlow {
         let any = Object.keys(vals).length > 0;
         const field_html = (cap, inner, set, extra) =>
             `<label class="of-tf-field${set ? ' is-set' : ''}${extra ? ' ' + extra : ''}"><span class="of-tf-cap">${cap}</span>${inner}</label>`;
-        const parts = defs.map(([field, type, arg, label]) => {
+        const parts = defs.map(([field, type, arg, label, default_label]) => {
             if (type === 'status' || type === 'select') {
                 const opts = type === 'status' ? (OF_STATUS_OPTIONS[arg] || []) : arg;
                 const cur = vals[field] || '';
+                // default_label: what the empty value means when it is not "All" (a filter on by default)
                 return field_html(__(label || 'Status'), `<select class="of-tf-select" data-list="${key}" data-f="${field}">
-                    <option value="">${__('All')}</option>
+                    <option value="">${__(default_label || 'All')}</option>
                     ${opts.map(o => `<option value="${of_esc(o[0])}"${o[0] === cur ? ' selected' : ''}>${__(o[1])}</option>`).join('')}</select>`, !!cur);
             }
             if (type === 'link') {
