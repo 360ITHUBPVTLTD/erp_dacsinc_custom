@@ -31,3 +31,4 @@ erp_dacsinc_custom.patches.close_stale_pos_shifts
 erp_dacsinc_custom.patches.setup_pos_requests
 erp_dacsinc_custom.patches.ensure_autoincrement_sequences
 erp_dacsinc_custom.patches.uniform_transfer_items_table
+erp_dacsinc_custom.patches.correct_chart_of_accounts

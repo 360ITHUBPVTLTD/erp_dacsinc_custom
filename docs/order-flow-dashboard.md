@@ -1601,6 +1601,30 @@ is what the customer pays and what `outstanding_amount` counts down from. Using 
 total showed ₹52,783.50 billed and ₹9,999.50 received for a ₹10,000 payment on a ₹52,784
 invoice: the 50 paise round-off appeared as money received / missing.
 
+## Finance tab: Accounts Guide
+
+Beside the three summary cards, an **Accounts Guide** tile opens `/accounts-guide`
+(`www/accounts-guide.html`, signed-in staff only), written for the end users. **Learn first:**
+(1) Debit and credit with one rule — debit = where the money / goods go, credit = where they come
+from — an examples table, account-page pictures, what debit / credit do to each kind of account,
+the golden rules folded for accountants, a short practice; (2) Types of entries in ERPNext — one
+card per document (Sales / Purchase Invoice, Payment Entry Receive / Pay / Internal Transfer,
+Credit / Debit Note, Journal Entry, Delivery Note, Purchase Receipt) with when to use it, an
+example and its debit / credit, plus Draft / Submit / Cancel, View › Accounting Ledger, Paid From /
+Paid To. **How to:** task cards with numbered steps and the lines ERPNext writes — including one cheque
+for many customers / invoices (one Payment Entry per customer with the same Cheque/Reference No,
+matched together to the one bank line in the Bank Reconciliation Tool; or one Bank Entry Journal
+Entry with Reference Type / Name per invoice row; or unallocated then Payment Reconciliation) and
+a bounced cheque (cancel every entry with that cheque number; bank charges by Journal Entry). Returns follow the ERPNext pattern: goods by Sales Return (from the
+Delivery Note) / Purchase Return (from the Purchase Receipt), money by Credit Note / Debit Note.
+Supplier TDS is described the ERPNext way (Tax Withholding Category on the supplier, deducted on
+the Purchase Invoice); the Pay prompt's TDS is only for TDS not on the bill. Button names were
+checked against ERPNext v15: View › Accounting Ledger on invoices / Delivery Note / Purchase
+Receipt, a Ledger button on Payment Entry / Journal Entry; Bank Reconciliation needs the statement
+imported first (Bank Statement Import). **Help:** our
+accounts in plain words, "Stuck? Do this", a checklist and a glossary — with a search box. Keep its ledger names and examples in step with
+the chart of accounts and with how Receive / Pay works.
+
 ## Finance tab: Receive / Pay from the row (`dashboard_payment.py`)
 
 Rows with an outstanding amount get **Receive** (Receivables) or **Pay** (Payables) when the
@@ -1619,6 +1643,36 @@ modes default to Card Swipe Bank Charges), TDS (TDS Receivable / TDS Payable), a
 difference written off. A live box shows what settles on the invoice, what moves through bank /
 cash, and what stays outstanding or becomes an advance. **Review** opens a confirmation with
 every value and the ledger lines; it submits only after the tick box.
+
+**One prompt, two places.** `public/js/payment_prompt.js` (`of_payment_prompt`, its CSS injected
+once) is loaded on demand by Finance's Receive / Pay and by the Sales Invoice / Purchase Invoice
+form's **Receive Payment** / **Make Payment** button (submitted, outstanding > 0, user may create
+Payment Entries), which replaces ERPNext's Create › Payment (removed there). From the form
+(`from_form=1`) the server checks read on the invoice and Payment Entry create + submit — as
+Create › Payment does — instead of the Finance tab rules.
+
+**Deduction accounts.** Defaults: Bank Charges - IND (Card Swipe Bank Charges for a card mode),
+Write Off = the company's write-off account; TDS on Receive = TDS Receivable, on Pay = the account on
+the supplier's Tax Withholding Category for the company, else TDS on Contract for a jobber, else
+TDS Payable (`_supplier_tds_account`). The account boxes list only expense ledgers (bank charges,
+write-off) and TDS ledgers (name contains "TDS", Asset / Liability), and `record_payment` refuses any
+other (`_deduction_account_ok`), so a deduction can't land in Sales, Debtors or a bank.
+
+**Modes offered** (`payment_modes.py`): only Modes of Payment ticked **Show in Payment Entry**
+(`custom_show_in_payment_entry`, created after migrate; the first time, the enabled modes no POS
+Profile uses are ticked). The prompt's Mode of Payment dropdown lists only those, the Payment
+Entry form's Mode of Payment link is filtered to them (`public/js/payment_entry.js`), and
+`record_payment` refuses any other — so POS counter / store modes stay out of Payment Entries.
+
+**Layout** (`.of-pay-*` CSS; green for Receive, orange for Pay): a header card
+(party, invoice / bill no, Invoice total · Outstanding · Due tiles, "overdue" tag); **① How much** —
+the settled amount large, a "Full outstanding ₹…" button, the bank amount under it, and beside them
+a live summary card (amount into / out of the bank in large type, the + lines, = settled,
+outstanding before → after, and Part payment / Fully settled / Advance); **② Payment details** —
+Mode of Payment (dropdown of the ticked modes), the account it posts to, payment date, and Reference No / Date
+shown only for a bank mode; **③ Bank charges, TDS, write-off** and **Remarks** fold away (③ opens
+by itself when a value is in it). The confirmation is a receipt: the bank amount large, the lines
+under it, the ledger entries folded, then the warning and the tick box.
 
 `record_payment` builds the entry with ERPNext's `get_payment_entry` (as Create › Payment
 does), sets the amounts and deduction rows, and inserts + submits as the user. Deductions are

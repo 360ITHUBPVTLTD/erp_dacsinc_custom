@@ -453,8 +453,19 @@ def get_customer_contacts(customer):
             c.name, 
             c.first_name,
             c.last_name,
-            (SELECT phone FROM `tabContact Phone` WHERE parent=c.name AND is_primary_phone=1 LIMIT 1) AS phone,
-            (SELECT email_id FROM `tabContact Email` WHERE parent=c.name AND is_primary=1 LIMIT 1) AS email
+            -- Most contacts carry their number as primary *mobile* only (is_primary_phone=0),
+            -- so fall back mobile -> phone -> any phone row instead of primary phone alone.
+            COALESCE(
+                NULLIF(c.mobile_no, ''),
+                NULLIF(c.phone, ''),
+                (SELECT phone FROM `tabContact Phone` WHERE parent=c.name
+                 ORDER BY is_primary_mobile_no DESC, is_primary_phone DESC, idx LIMIT 1)
+            ) AS phone,
+            COALESCE(
+                NULLIF(c.email_id, ''),
+                (SELECT email_id FROM `tabContact Email` WHERE parent=c.name
+                 ORDER BY is_primary DESC, idx LIMIT 1)
+            ) AS email
         FROM `tabContact` c
         INNER JOIN `tabDynamic Link` dl ON dl.parent = c.name
         WHERE dl.link_doctype = 'Customer' AND dl.link_name = %s

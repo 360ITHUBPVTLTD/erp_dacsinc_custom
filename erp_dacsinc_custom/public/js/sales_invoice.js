@@ -69,9 +69,17 @@ frappe.ui.form.on('Sales Invoice', {
 	refresh: function(frm) {
 		frm.trigger('make_linked_rows_read_only');
 		si_remove_get_items_buttons(frm);
-		// Create menu: Payment and Return / Credit Note stay.
+		// Create menu: Return / Credit Note stays. Payment is the "Receive Payment" button below.
 		dacs_hide_create_buttons(frm, ['Payment Request', 'Invoice Discounting', 'Maintenance Schedule',
-			'Delivery Note', 'Dunning', 'Quality Inspection(s)']);
+			'Delivery Note', 'Dunning', 'Quality Inspection(s)', 'Payment']);
+		// The Receive Payment prompt (public/js/payment_prompt.js — the same one as Order Flow ›
+		// Finance) in place of ERPNext's Create › Payment.
+		if (frm.doc.docstatus === 1 && flt(frm.doc.outstanding_amount) > 0 && frappe.model.can_create('Payment Entry')) {
+			frm.add_custom_button(__('Receive Payment'), () => {
+				frappe.require('/assets/erp_dacsinc_custom/js/payment_prompt.js', () =>
+					of_payment_prompt('Sales Invoice', frm.doc.name, () => frm.reload_doc(), { from_form: 1 }));
+			}).addClass('btn-primary');
+		}
 	},
 	make_linked_rows_read_only: function(frm) {
 		if (frm.fields_dict.items && frm.fields_dict.items.grid) {
