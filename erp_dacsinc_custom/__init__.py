@@ -198,7 +198,21 @@ def patch_docshare():
 	except Exception:
 		pass
 
+def patch_overall_discount():
+	# Overall discount skips items ticked "Exclude from Overall Discount" (overall_discount.py).
+	# Not silent: if this fails, discounts fall back to ERPNext's standard spread (freight
+	# included) - logged to logs/erp_dacsinc_custom.log and caught by test_overall_discount.
+	try:
+		from erp_dacsinc_custom import overall_discount
+		overall_discount.patch()
+	except Exception:
+		try:
+			frappe.logger("erp_dacsinc_custom").exception("overall_discount patch failed")
+		except Exception:
+			pass
+
 patch_notifications()
+patch_overall_discount()
 patch_item_query()
 patch_search_widget()
 patch_docshare()

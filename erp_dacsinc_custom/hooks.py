@@ -35,7 +35,9 @@ app_include_js = [
     # "Print it now?" after creating SI / PO / embroidery documents (MOM 8 Oct 2026)
     "/assets/erp_dacsinc_custom/js/print_prompt.js?v=1.0.0",
     # POS store requests board + dialogs (workspace block and Material Request form) — bump ?v= on change
-    "/assets/erp_dacsinc_custom/js/pos_requests_board.js?v=1.0.6"
+    "/assets/erp_dacsinc_custom/js/pos_requests_board.js?v=1.0.6",
+    # Overall discount skips items ticked "Exclude from Overall Discount" (overall_discount.py)
+    "/assets/erp_dacsinc_custom/js/overall_discount.js?v=1.0.1"
 ]
 
 app_include_css = [
@@ -653,6 +655,8 @@ after_migrate = [
     "erp_dacsinc_custom.pos_receipt_email.fill_store_names",
     # Role Profiles flagged for the access sheet by hand (Admin, HR, Employee…).
     "erp_dacsinc_custom.access_sync.apply_flagged_profiles",
+    # Item / Quotation / SO / SI Item › "Exclude from Overall Discount". Idempotent.
+    "erp_dacsinc_custom.overall_discount.create_fields",
 ]
 
 # Ships these Custom Fields with the app rather than leaving them to be
