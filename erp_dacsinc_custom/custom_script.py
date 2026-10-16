@@ -6289,6 +6289,9 @@ def quotation_on_submit(doc, method):
         lead = frappe.get_doc("Lead", doc.custom_lead_id)
         if lead.custom_lead_category == "Enquiry":
             lead.custom_lead_category = "Pipeline"
+            # The submitter may not be able to read this Lead (a DAC CRM user submitting a
+            # quotation shared with them); see custom_lead.validate_lead / quotation_sharing.py.
+            lead.flags.system_update = True
             lead.save(ignore_permissions=True)
         if hasattr(lead, "lead_owner"):
             doc.custom_lead_owner = lead.lead_owner

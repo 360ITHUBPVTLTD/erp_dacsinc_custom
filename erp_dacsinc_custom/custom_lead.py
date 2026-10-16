@@ -2339,6 +2339,13 @@ def get_months_in_range(start_date, end_date):
 
 def validate_lead(doc, method=None):
 
+    # A system update made on behalf of another document (a quotation submit moving the Lead to
+    # Pipeline) runs as that document's user, who may not be allowed to read this Lead. Frappe's
+    # workflow check reads the saved copy with the user's rights and would refuse the save, so let
+    # that copy through for this one save (quotation_sharing.py).
+    if doc.flags.get("system_update") and doc.get_doc_before_save():
+        doc.get_doc_before_save().flags.ignore_permissions = True
+
     # 1. Update Direction Type (Logic you asked for earlier)
     outbound_sources = ["Field Visit", "Cold Calling"]
     doc.custom_direction_type = "Outbound" if doc.source in outbound_sources else "Inbound"

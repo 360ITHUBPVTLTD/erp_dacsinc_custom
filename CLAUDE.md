@@ -18,6 +18,8 @@ previously-buggy edge cases — are documented in `docs/`:
   into it (`access_reverse.py`); resets are System Manager only.
 - `docs/pos-store-scope.md` — store-wise record scoping for POS Admin / POS
   Store Manager (Customer › POS Store).
+- `docs/quotation-sharing.md` — a Quotation shared with a DAC CRM user can be submitted by them
+  (share grants Submit; the Lead's Enquiry → Pipeline update doesn't need Lead access).
 - `docs/sales-order-sharing.md` — Sales Orders shared with their Lead Owner.
 - `docs/master-data-protection.md` — Customer / Supplier / Item Price: who views,
   pick-only users (no list, no form), no export / print / report, master reports.

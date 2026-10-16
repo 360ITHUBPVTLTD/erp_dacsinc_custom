@@ -260,6 +260,11 @@ has_permission = {
 # Hook on document methods and events
 
 doc_events = {
+    # A Quotation shared with a DAC CRM user can be submitted by them (quotation_sharing.py)
+    "DocShare": {
+        "after_insert": "erp_dacsinc_custom.quotation_sharing.grant_submit_on_quotation_share",
+        "on_update": "erp_dacsinc_custom.quotation_sharing.grant_submit_on_quotation_share",
+    },
     # Finance tab: another user's payment changes outstanding amounts — tell open dashboards
     "Payment Entry": {
         "on_submit": "erp_dacsinc_custom.order_flow_api.broadcast_order_flow_change",
