@@ -408,8 +408,8 @@
     "",
     "",
     "",
-    "VNEO",
-    "VNEO",
+    "VNESO",
+    "VNESO",
     "",
     "",
     "",
@@ -611,6 +611,7 @@
    ]
   },
   "letters": "VNESCDO",
+  "note": "Role Permission Manager \u00b7 Administrator: POS Admin \u00b7 Quotation: VNEO \u2192 VNESO",
   "roles": [
    "Accounts Executive",
    "Accounts Manager",
@@ -632,10 +633,10 @@
   ],
   "saved_by": "Administrator",
   "saved_by_name": "Administrator",
-  "saved_on": "2026-10-13 17:25:34.942446",
-  "version": 34
+  "saved_on": "2026-10-16 18:07:57.098341",
+  "version": 37
  },
- "fingerprint": "15df80bd10f7f0c5cb699c38a8e9fc628be22619",
+ "fingerprint": "8e3a158ff423c1270646e4636a4d7b4c2ccf62f3",
  "tab_access": {
   "cells": {
    "Embroidery Transfers": [
