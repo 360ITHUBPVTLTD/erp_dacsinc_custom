@@ -241,8 +241,12 @@
     <a href="#t-advance">· Money before the invoice</a>
     <a href="#t-cheque">· One cheque, many customers</a>
     <a href="#t-bounce">· A cheque bounced</a>
-    <a href="#t-creditnote">· Customer returned goods</a>
-    <a href="#t-debitnote">· We returned goods</a>
+    <a href="#t-returns">· Returns — start here</a>
+    <a href="#t-creditnote">· &nbsp; Customer returned goods</a>
+    <a href="#t-debitnote">· &nbsp; We returned goods</a>
+    <a href="#t-afterreturn">· &nbsp; Adjust or refund</a>
+    <a href="#t-directnote">· &nbsp; Note without goods</a>
+    <a href="#t-returnmistakes">· &nbsp; Return mistakes</a>
     <a href="#t-bank">· Bank charges / interest</a>
     <a href="#t-tds">· Deposit TDS</a>
     <a href="#t-fix">· Correct a mistake</a>
@@ -328,8 +332,11 @@
         <a href="#t-advance"><i>⏩</i><b>Money came before the invoice</b><small>Advance from a customer</small></a>
         <a href="#t-cheque"><i>📑</i><b>One cheque for many customers / invoices</b><small>Split one cheque</small></a>
         <a href="#t-bounce"><i>⛔</i><b>A cheque bounced</b><small>Undo the payment</small></a>
-        <a href="#t-creditnote"><i>↩️</i><b>Customer returned goods</b><small>Credit Note</small></a>
-        <a href="#t-debitnote"><i>↪️</i><b>We returned goods to a supplier</b><small>Debit Note</small></a>
+        <a href="#t-returns"><i>🔄</i><b>Returns — start here</b><small>Which documents, in which order</small></a>
+        <a href="#t-creditnote"><i>↩️</i><b>Customer returned goods</b><small>Sales Return + Credit Note</small></a>
+        <a href="#t-debitnote"><i>↪️</i><b>We returned goods to a supplier</b><small>Purchase Return + Debit Note</small></a>
+        <a href="#t-afterreturn"><i>🔁</i><b>After a return: adjust or refund</b><small>Paid invoice, customer credit</small></a>
+        <a href="#t-directnote"><i>🧾</i><b>Credit / Debit Note without goods</b><small>Discount, service, rate difference</small></a>
         <a href="#t-bank"><i>🏦</i><b>Bank charges or interest on the statement</b><small>Not linked to any invoice</small></a>
         <a href="#t-tds"><i>🏛️</i><b>Deposit TDS with the government</b><small>Monthly</small></a>
         <a href="#t-fix"><i>✏️</i><b>Correct a mistake</b><small>Wrong amount, date or account</small></a>
@@ -525,31 +532,109 @@
       <div class="ledger"><div class="t">Cancel of Payment Entry 1 <small>the receipt is reversed</small></div><table><tr><th>Account</th><th class="num">Debit</th><th class="num">Credit</th></tr><tr><td>Debtors - IND (Customer A)</td><td class="num">25,000.00</td><td class="num"></td></tr><tr><td>Bank (YES BANK)</td><td class="num"></td><td class="num">25,000.00</td></tr></table></div>
     </section>
 
+    <section id="t-returns">
+      <h2>↩️ Returns — start here</h2>
+      <p>A return always has <b>two sides</b>, and ERPNext has a separate document for each. The <b>goods</b> document moves the stock; the <b>money</b> document changes what is owed. Make both — and make each <b>from the original document</b> (Create › …), never as a new entry typed by hand, so ERPNext links it to the invoice, the order and GST.</p>
+      <div class="scroll"><table>
+        <tr><th>What happened</th><th>Goods side (store)</th><th>Money side (you)</th><th>Result</th></tr>
+        <tr><td>Customer sent goods back</td><td><b>Sales Return</b><br><small>Delivery Note › Create › Sales Return</small></td><td><b>Credit Note</b><br><small>Sales Invoice › Create › Return / Credit Note</small></td><td>Customer owes us less</td></tr>
+        <tr><td>We sent goods back to a supplier / jobber</td><td><b>Purchase Return</b><br><small>Purchase Receipt › Create › Purchase Return</small></td><td><b>Debit Note</b><br><small>Purchase Invoice › Create › Return / Debit Note</small></td><td>We owe the supplier less</td></tr>
+        <tr><td>Price cut / discount after the bill, service not given — no goods move</td><td>—</td><td><b>Credit Note (direct)</b> / <b>Debit Note (direct)</b> — see <a href="#t-directnote">below</a></td><td>Customer owes less / we owe less</td></tr>
+      </table></div>
+      <div class="tip"><b>Invoice made with "Update Stock" (direct bill, no Delivery Note)?</b> Then its Credit Note also has Update Stock ticked and brings the goods back itself — no separate Sales Return.</div>
+      <div class="note"><b>Where returns show:</b> <b>Order Flow › Finance › Returns / Notes</b> lists every Credit and Debit Note with what it did and what is left to do. The invoice lists show a red <span class="pill p-red">↩ note ₹</span> chip on the invoice it was made against. Returns are <b>never</b> counted as deliveries, invoices or receipts on the Sales Tracker.</div>
+    </section>
+
     <section id="t-creditnote">
       <h2>↩️ Customer returned goods (Sales Return + Credit Note)</h2>
-      <p>A return has <b>two parts</b> in ERPNext: the <b>goods</b> come back into the warehouse, and the <b>money</b> the customer owes goes down. Do both:</p>
       <ol class="steps">
-        <li><b>Goods back:</b> open the <b>Delivery Note</b> for those goods › <b>Create › Sales Return</b>. Keep only the items and quantities actually returned, choose the warehouse they come back to, then <b>Save › Submit</b>.</li>
-        <li><b>Money side:</b> open the customer's <b>Sales Invoice</b> › <b>Create › Return / Credit Note</b>. Keep only the same items and quantities, then <b>Save › Submit</b>.</li>
-        <li>If the customer had already paid, the credit note stays as a credit on the customer. It is used against their next invoice, or refunded with a Payment Entry (Payment Type: Pay).</li>
+        <li><b>Goods back (store):</b> open the <b>Delivery Note</b> for those goods › <b>Create › Sales Return</b>. Keep only the items and quantities actually returned, choose the warehouse they come back to, then <b>Save › Submit</b>.</li>
+        <li><b>Money side (you):</b> open the customer's <b>Sales Invoice</b> › <b>Create › Return / Credit Note</b>.</li>
+        <li>Delete the rows that did not come back. In <b>Qty</b> type how many came back — type <b>2</b> and it becomes <b>-2</b> (return quantities are always negative). Item and rate stay as on the invoice; ERPNext refuses more than was invoiced.</li>
+        <li>In <b>Remarks</b> write the <b>reason</b> (e.g. "2 shirts size M — wrong size"). It prints on the Credit Note and can be changed even after submit.</li>
+        <li><b>Save › Submit</b>. Then see <a href="#t-afterreturn">what happens to the invoice</a> — sometimes you still have one step.</li>
+        <li>To print: <b>Print Credit Note</b> on the form (Original / Duplicate / Triplicate / Quadruplicate / All 4), or 🖨 on its row in Finance › Returns / Notes.</li>
       </ol>
       <div class="acc"><b>In the accounts:</b> the stock and its cost come back, the customer owes us less, and our sales and GST payable go down.</div>
       <p class="wr"><b>ERPNext writes</b> (goods sold for ₹1,000 + GST ₹180 that cost us ₹700):</p>
       <div class="ledger"><div class="t">Sales Return (from the Delivery Note) <small>goods come back</small></div><table><tr><th>Account</th><th class="num">Debit</th><th class="num">Credit</th></tr><tr><td>Stock In Hand - IND</td><td class="num">700.00</td><td class="num"></td></tr><tr><td>Cost of Goods Sold - IND</td><td class="num"></td><td class="num">700.00</td></tr></table></div>
       <div class="ledger"><div class="t">Credit Note (from the Sales Invoice) <small>the sale reversed</small></div><table><tr><th>Account</th><th class="num">Debit</th><th class="num">Credit</th></tr><tr><td>Sales - IND</td><td class="num">1,000.00</td><td class="num"></td></tr><tr><td>Output Tax CGST - IND</td><td class="num">90.00</td><td class="num"></td></tr><tr><td>Output Tax SGST - IND</td><td class="num">90.00</td><td class="num"></td></tr><tr><td>Debtors - IND (the customer)</td><td class="num"></td><td class="num">1,180.00</td></tr></table></div>
-      <p class="muted">A Credit Note made <b>without</b> the Sales Return changes only the money. The stock in ERPNext would stay wrong.</p>
+      <p class="muted">A Credit Note made <b>without</b> the Sales Return changes only the money — the stock in ERPNext would stay wrong. A Sales Return without the Credit Note leaves the customer owing for goods they gave back.</p>
     </section>
 
     <section id="t-debitnote">
       <h2>↪️ We returned goods to a supplier (Purchase Return + Debit Note)</h2>
       <ol class="steps">
-        <li><b>Goods out:</b> open the <b>Purchase Receipt</b> for those goods › <b>Create › Purchase Return</b>. Keep only the items and quantities returned, then <b>Save › Submit</b>.</li>
-        <li><b>Money side:</b> open the supplier's <b>Purchase Invoice</b> › <b>Create › Return / Debit Note</b>. Keep the same items and quantities, type the supplier's credit note number if they gave one, then <b>Save › Submit</b>.</li>
+        <li><b>Goods out (store):</b> open the <b>Purchase Receipt</b> for those goods › <b>Create › Purchase Return</b>. Keep only the items and quantities returned, then <b>Save › Submit</b>.</li>
+        <li><b>Money side (you):</b> open the supplier's <b>Purchase Invoice</b> › <b>Create › Return / Debit Note</b>.</li>
+        <li>Keep the same items and quantities (negative, like on the Credit Note). If the supplier sent their own credit note, type its number and date in <b>Supplier Invoice No / Date</b>.</li>
+        <li><b>Remarks</b>: the reason (e.g. "10 m fabric — colour mismatch"). <b>Save › Submit</b>.</li>
+        <li>Print: <b>Print</b> › <b>Debit Note DAC</b>, or 🖨 on its row in Finance › Returns / Notes — send it to the supplier.</li>
       </ol>
       <div class="acc"><b>In the accounts:</b> the stock goes down, we owe the supplier less, and the GST we claim on those goods goes down.</div>
       <p class="wr"><b>ERPNext writes</b> (goods ₹2,000 + GST ₹360 returned):</p>
       <div class="ledger"><div class="t">Purchase Return (from the Purchase Receipt) <small>goods go back</small></div><table><tr><th>Account</th><th class="num">Debit</th><th class="num">Credit</th></tr><tr><td>Stock Received But Not Billed - IND</td><td class="num">2,000.00</td><td class="num"></td></tr><tr><td>Stock In Hand - IND</td><td class="num"></td><td class="num">2,000.00</td></tr></table></div>
       <div class="ledger"><div class="t">Debit Note (from the Purchase Invoice) <small>the bill reversed</small></div><table><tr><th>Account</th><th class="num">Debit</th><th class="num">Credit</th></tr><tr><td>Creditors - IND (the supplier)</td><td class="num">2,360.00</td><td class="num"></td></tr><tr><td>Stock Received But Not Billed - IND</td><td class="num"></td><td class="num">2,000.00</td></tr><tr><td>Input Tax CGST - IND</td><td class="num"></td><td class="num">180.00</td></tr><tr><td>Input Tax SGST - IND</td><td class="num"></td><td class="num">180.00</td></tr></table></div>
+    </section>
+
+    <section id="t-afterreturn">
+      <h2>🔁 After the return: is anything left to do? (Adjust or Refund)</h2>
+      <p>It depends on how much was <b>still unpaid</b> on the invoice when the return was submitted. If the return fits in what is still due, ERPNext takes it off <b>that invoice</b> and you are done. If not, the whole return becomes a <b>credit</b> the customer has with us (or money the supplier owes us), which you <b>Adjust</b> or <b>Refund</b>.</p>
+      <h4 class="ex-h">Customer — invoice ₹11,800, Credit Note ₹1,180</h4>
+      <div class="scroll"><table>
+        <tr><th>Before the return</th><th>After you submit the Credit Note</th><th>Returns / Notes shows</th><th>You do</th></tr>
+        <tr><td>Nothing paid yet</td><td>Invoice still due: 11,800 − 1,180 = <b>10,620</b></td><td><span class="pill p-green">Reduced INV</span></td><td>Nothing. Receive 10,620 as normal.</td></tr>
+        <tr><td>₹5,000 paid</td><td>Invoice still due: 6,800 − 1,180 = <b>5,620</b></td><td><span class="pill p-green">Reduced INV</span></td><td>Nothing. Receive 5,620.</td></tr>
+        <tr><td>Fully paid (₹11,800)</td><td>Invoice <span class="pill p-green">Paid</span>; the Credit Note keeps <b>₹1,180 customer credit</b></td><td><span class="pill p-orange">Customer credit ₹1,180</span></td><td><b>Adjust</b> it against their other unpaid invoices — or <b>Refund</b> if they want the money back.</td></tr>
+        <tr><td>₹11,000 paid (800 due)</td><td>The return is <b>more</b> than the 800 still due, so ERPNext does not touch the invoice: it still shows <b>800 due</b>, and the Credit Note keeps the whole <b>₹1,180 customer credit</b></td><td><span class="pill p-orange">Customer credit ₹1,180</span></td><td><b>Adjust</b> 800 against this same invoice (it becomes Paid), then Adjust or Refund the other 380.</td></tr>
+      </table></div>
+      <p class="muted">The rule: if the return is <b>not more</b> than what the invoice still owes, it is taken off that invoice. If it is <b>more</b>, ERPNext ticks <b>Update Outstanding for Self</b> on the note and keeps the whole amount as a credit on the note — you set it off yourself with Adjust.</p>
+      <h3>Adjust — use the credit against their next / other invoices (usual case)</h3>
+      <ol class="steps">
+        <li>Finance › Returns / Notes › the note's <b>Adjust</b> button (or on the Credit Note: <b>Adjust (Payment Reconciliation)</b>). Payment Reconciliation opens with the company, party type and customer filled in.</li>
+        <li>Click <b>Get Unreconciled Entries</b>. The Credit Note shows on the left (Payments), their unpaid invoices on the right.</li>
+        <li>Tick the Credit Note and the invoice to set it off against › <b>Allocate</b> › check the amount › <b>Reconcile</b>.</li>
+      </ol>
+      <div class="ledger"><div class="t">Adjust ₹1,180 credit against invoice INV-002 <small>Journal Entry, type Credit Note — made by Reconcile</small></div><table><tr><th>Account</th><th class="num">Debit</th><th class="num">Credit</th></tr><tr><td>Debtors - IND (customer — against the Credit Note)</td><td class="num">1,180.00</td><td class="num"></td></tr><tr><td>Debtors - IND (customer — against INV-002)</td><td class="num"></td><td class="num">1,180.00</td></tr></table></div>
+      <p class="muted">No money moves: one customer line is cleared against another. INV-002 now owes ₹1,180 less; the note shows <span class="pill p-green">Settled</span>. On the invoice row in Finance, "N payments" lists it as <b>Adjusted (Credit Note)</b>.</p>
+      <h3>Refund — give the money back</h3>
+      <ol class="steps">
+        <li>Finance › Returns / Notes › <b>Refund</b> (or on the Credit Note: <b>Refund to Customer</b>).</li>
+        <li>Amount (part refunds allowed, never more than the credit), Mode of Payment, UTR / cheque no. and date › <b>Review</b> › <b>Submit</b>. ERPNext makes a Payment Entry, type <b>Pay</b>, to the customer.</li>
+      </ol>
+      <div class="ledger"><div class="t">Refund ₹1,180 to the customer <small>Payment Entry, Pay</small></div><table><tr><th>Account</th><th class="num">Debit</th><th class="num">Credit</th></tr><tr><td>Debtors - IND (the customer)</td><td class="num">1,180.00</td><td class="num"></td></tr><tr><td>Bank (YES BANK)</td><td class="num"></td><td class="num">1,180.00</td></tr></table></div>
+      <h3>Supplier side — the same, the other way round</h3>
+      <div class="scroll"><table>
+        <tr><th>Before the Debit Note</th><th>Result</th><th>You do</th></tr>
+        <tr><td>Bill not (fully) paid</td><td>The bill owes less — <span class="pill p-green">Reduced PINV</span></td><td>Pay only the balance.</td></tr>
+        <tr><td>Bill already paid</td><td><span class="pill p-blue">Supplier owes us ₹…</span></td><td><b>Adjust</b> against their other unpaid bills (Payment Reconciliation, Party Type Supplier) — or <b>Receive refund</b> when they send the money.</td></tr>
+      </table></div>
+      <div class="ledger"><div class="t">Supplier refunds ₹2,360 <small>Payment Entry, Receive — the Receive refund button</small></div><table><tr><th>Account</th><th class="num">Debit</th><th class="num">Credit</th></tr><tr><td>Bank (YES BANK)</td><td class="num">2,360.00</td><td class="num"></td></tr><tr><td>Creditors - IND (the supplier)</td><td class="num"></td><td class="num">2,360.00</td></tr></table></div>
+    </section>
+
+    <section id="t-directnote">
+      <h2>🧾 Credit / Debit Note without goods (direct)</h2>
+      <p>For a <b>price reduction or discount after the invoice</b>, a short-supplied service, or a charge reversed — when nothing goes back to the store.</p>
+      <ol class="steps">
+        <li><b>Against a known invoice</b> (best — GST links it): open that invoice › <b>Create › Return / Credit Note</b>, keep the row, set Qty to <b>-1</b> (or the qty) and the reduced amount; untick <b>Update Stock</b> if it shows.</li>
+        <li><b>Not tied to one invoice</b> (e.g. a service item): Finance › <b>New › Credit Note (direct)</b> (supplier: <b>Debit Note (direct)</b>). It opens with <b>Is Return</b> ticked. Choose the customer, a <b>service / non-stock item</b>, Qty <b>-1</b>, the rate, GST template; Remarks = reason. <b>Save › Submit</b>.</li>
+        <li>A direct note becomes a credit straight away → <b>Adjust</b> or <b>Refund</b> as <a href="#t-afterreturn">above</a>.</li>
+      </ol>
+      <div class="warn"><b>Don't use a Journal Entry</b> for a return or a price reduction that has GST — only a Credit / Debit Note reduces the GST and is reported in GSTR-1 (Credit / Debit Notes section) in the month it is dated.</div>
+    </section>
+
+    <section id="t-returnmistakes">
+      <h2>⚠️ Returns — mistakes to avoid</h2>
+      <div class="scroll"><table>
+        <tr><th>Don't</th><th>Do</th></tr>
+        <tr><td>Cancel the original invoice because goods came back</td><td>Keep the invoice; make a Credit Note from it. (An invoice already filed in GSTR-1 must not be cancelled.)</td></tr>
+        <tr><td>Make only the Credit Note (or only the Sales Return)</td><td>Make both — goods side and money side.</td></tr>
+        <tr><td>Refund a credit while the customer still has unpaid invoices</td><td>Adjust it first (Returns / Notes shows <b>Adjust</b> as the main button then).</td></tr>
+        <tr><td>Type positive quantities and wonder why it won't save</td><td>Return quantities are negative — our forms flip 2 to -2 for you.</td></tr>
+        <tr><td>Leave Remarks empty</td><td>Write the reason; it prints on the note and helps at audit time.</td></tr>
+        <tr><td>Leave the Credit Note as a draft</td><td>A draft changes nothing. Finance › Returns / Notes › <b>Draft</b> pill shows the ones waiting.</td></tr>
+        <tr><td>Return goods that came on the wrong invoice by cancelling the payment</td><td>Payment stays; the Credit Note leaves a credit you Adjust or Refund.</td></tr>
+      </table></div>
     </section>
 
     <section id="t-bank">
@@ -635,6 +720,8 @@
         <tr><td>"Difference Amount" on a Payment Entry</td><td>Correct the TDS / bank charges / write-off until the difference is 0.</td></tr>
         <tr><td>Journal Entry won't submit</td><td>Total Debit must equal total Credit. Customer / supplier lines need the <b>Party</b>.</td></tr>
         <tr><td>GST looks wrong</td><td>Check the party's address (same state or other state) and the tax template, <b>before</b> submitting.</td></tr>
+        <tr><td>Credit Note won't save: "qty more than invoiced" / positive qty</td><td>Return quantities are negative and can't be more than invoiced (less what earlier returns took).</td></tr>
+        <tr><td>Returned on a paid invoice — where did the money go?</td><td>It is a <b>customer credit</b> on the Credit Note: Finance › Returns / Notes › <b>Adjust</b> or <b>Refund</b>.</td></tr>
         <tr><td>Mode of Payment missing</td><td>It is not ticked <b>Show in Payment Entry</b>. Ask the admin.</td></tr>
       </table></div>
     </section>
@@ -674,7 +761,10 @@
         <tr><td><b>Settled</b></td><td>How much of the invoice a payment clears, including TDS and charges</td></tr>
         <tr><td><b>Advance</b></td><td>Money paid before the invoice</td></tr>
         <tr><td><b>TDS</b></td><td>Tax Deducted at Source: a part of a payment kept back and paid to the government</td></tr>
-        <tr><td><b>Credit Note / Debit Note</b></td><td>Return from a customer / return to a supplier</td></tr>
+        <tr><td><b>Credit Note / Debit Note</b></td><td>Money side of a return from a customer / to a supplier (or a price reduction after the bill)</td></tr>
+        <tr><td><b>Sales Return / Purchase Return</b></td><td>Goods side of a return: stock comes back / goes out</td></tr>
+        <tr><td><b>Customer credit</b></td><td>Money a customer has with us after a return on a paid invoice: adjust it or refund it</td></tr>
+        <tr><td><b>Adjust (Payment Reconciliation)</b></td><td>Set a credit note or advance off against an unpaid invoice — no money moves</td></tr>
         <tr><td><b>Ledger / Account</b></td><td>One "page" in the books: a bank, a customer, sales, rent…</td></tr>
       </table>
     </section>

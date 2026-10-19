@@ -1643,7 +1643,12 @@ for many customers / invoices (one Payment Entry per customer with the same Cheq
 matched together to the one bank line in the Bank Reconciliation Tool; or one Bank Entry Journal
 Entry with Reference Type / Name per invoice row; or unallocated then Payment Reconciliation) and
 a bounced cheque (cancel every entry with that cheque number; bank charges by Journal Entry). Returns follow the ERPNext pattern: goods by Sales Return (from the
-Delivery Note) / Purchase Return (from the Purchase Receipt), money by Credit Note / Debit Note.
+Delivery Note) / Purchase Return (from the Purchase Receipt), money by Credit Note / Debit Note —
+with its own group: Returns — start here (which document for what), Credit / Debit Note steps
+(negative qty, Remarks = reason, printing), **after the return** (unpaid / partly / fully paid
+cases; the ERPNext v15 rule that a return larger than what the invoice still owes becomes a credit on
+the note — Update Outstanding for Self; Adjust via Payment Reconciliation vs Refund, with their
+ledgers; supplier side), notes without goods (direct, service item) and return mistakes to avoid.
 Supplier TDS is described the ERPNext way (Tax Withholding Category on the supplier, deducted on
 the Purchase Invoice); the Pay prompt's TDS is only for TDS not on the bill. Button names were
 checked against ERPNext v15: View › Accounting Ledger on invoices / Delivery Note / Purchase

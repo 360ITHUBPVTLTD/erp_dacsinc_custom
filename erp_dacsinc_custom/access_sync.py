@@ -1054,6 +1054,7 @@ TAB_DOCS = {
 	"Finance": ["Payment Entry"], "Finance › Receivables": ["Sales Invoice", "Payment Entry"],
 	"Finance › Supplier Payables": ["Purchase Invoice", "Payment Entry"],
 	"Finance › Jobber Payables": ["Purchase Invoice", "Payment Entry"],
+	"Finance › Returns / Notes": ["Sales Invoice", "Purchase Invoice", "Payment Entry"],
 	"Embroidery Transfers": ["Uniform Embroidery Transfer"], "Logistics": ["Delivery Note", "Sales Invoice"],
 }
 
