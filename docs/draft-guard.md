@@ -31,3 +31,9 @@ opens.
   edited and submitted.
 - Skipped during import, patches and migrate, and when `doc.flags.ignore_draft_guard`
   is set (for code that knowingly makes a split draft).
+
+**Returns are compared with returns only.** A Credit Note, Sales / Purchase Return or Debit Note
+keeps the source links of what it reverses (so_detail, dn_detail, po_detail …). `existing_drafts`
+matches drafts with the same `is_return` as the new document, so a draft Credit Note never blocks
+the next invoice for that order line (nor the reverse), while a second draft return of the same
+line is still refused. See `docs/returns.md`.

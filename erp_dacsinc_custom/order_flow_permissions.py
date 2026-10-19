@@ -89,7 +89,7 @@ OF_SUBTABS = {
     "tracker": ("so", "mr", "fp", "pn"),
     "purchase": ("po", "receipt", "bill"),
     "jobwork": ("po", "receipt", "fp", "pn"),
-    "accounts": ("receivables", "supplier", "jobber"),
+    "accounts": ("receivables", "supplier", "jobber", "notes"),
 }
 
 

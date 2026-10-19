@@ -25,7 +25,9 @@ frappe.ui.form.on('Purchase Invoice', {
         const drop_payment = () => frm.remove_custom_button(__('Payment'), __('Create'));
         drop_payment();
         [300, 800, 1500, 2500].forEach(delay => setTimeout(drop_payment, delay));
-        if (frm.doc.docstatus === 1 && flt(frm.doc.outstanding_amount) > 0 && frappe.model.can_create('Payment Entry')) {
+        // A Debit Note (return): its own actions — Receive Refund / Adjust (public/js/return_actions.js).
+        dacs_load_return_actions(frm);
+        if (frm.doc.docstatus === 1 && !cint(frm.doc.is_return) && flt(frm.doc.outstanding_amount) > 0 && frappe.model.can_create('Payment Entry')) {
             frm.add_custom_button(__('Make Payment'), () => {
                 frappe.require('/assets/erp_dacsinc_custom/js/payment_prompt.js', () =>
                     of_payment_prompt('Purchase Invoice', frm.doc.name, () => frm.reload_doc(), { from_form: 1 }));
@@ -258,4 +260,24 @@ function render_custom_pr_selector(frm) {
             }
         });
     });
+}
+
+// Credit / Debit Note actions on the form: public/js/return_actions.js (shared with Sales Invoice).
+if (typeof window.dacs_load_return_actions !== 'function') {
+    window.dacs_load_return_actions = function (frm) {
+        // Print: a return prints as a Credit Note / Debit Note (print_format credit_note_dac /
+        // debit_note_dac); an ordinary invoice keeps its own default.
+        const ret_pf = frm.doc.doctype === 'Sales Invoice' ? 'Credit Note DAC' : 'Debit Note DAC';
+        frm.return_print_format = ret_pf;
+        if (cint(frm.doc.is_return)) {
+            if (frm.meta.default_print_format !== ret_pf) {
+                frm.meta._dacs_default_print_format = frm.meta.default_print_format || null;
+                frm.meta.default_print_format = ret_pf;
+            }
+        } else if (frm.meta.default_print_format === ret_pf) {
+            frm.meta.default_print_format = frm.meta._dacs_default_print_format || null;
+        }
+        if (!cint(frm.doc.is_return)) return;
+        frappe.require('/assets/erp_dacsinc_custom/js/return_actions.js', () => window.dacs_return_actions(frm));
+    };
 }

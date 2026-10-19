@@ -33,3 +33,5 @@ erp_dacsinc_custom.patches.ensure_autoincrement_sequences
 erp_dacsinc_custom.patches.uniform_transfer_items_table
 erp_dacsinc_custom.patches.correct_chart_of_accounts
 erp_dacsinc_custom.patches.quotation_share_submit
+erp_dacsinc_custom.patches.finance_notes_subtab_roles
+erp_dacsinc_custom.patches.si_print_button_to_app

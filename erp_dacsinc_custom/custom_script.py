@@ -5589,7 +5589,10 @@ def update_pick_lists_on_dn_submit(doc, method):
     related_sales_orders = list({
         item.against_sales_order for item in doc.items if item.against_sales_order
     })
-    _reconcile_pick_lists_for_sales_orders(related_sales_orders, doc.name)
+    # A Sales Return brings goods back — like a cancel, it may take a "Completed" Pick List's
+    # delivered qty back below 100%.
+    _reconcile_pick_lists_for_sales_orders(related_sales_orders, doc.name,
+                                           allow_downgrade_from_completed=bool(frappe.utils.cint(doc.get("is_return"))))
 
 
 def update_pick_lists_on_dn_cancel(doc, method):
@@ -5635,8 +5638,10 @@ def update_pick_lists_on_stock_si_cancel(doc, method):
 
 
 def _so_has_submitted_dn(sales_order):
-    return bool(frappe.db.exists(
-        "Delivery Note Item", {"against_sales_order": sales_order, "docstatus": 1}))
+    # a Sales Return (is_return DN) is not a delivery
+    return bool(frappe.db.sql("""
+        SELECT 1 FROM `tabDelivery Note Item` dni JOIN `tabDelivery Note` dn ON dn.name = dni.parent
+        WHERE dni.against_sales_order = %s AND dni.docstatus = 1 AND IFNULL(dn.is_return, 0) = 0 LIMIT 1""", sales_order))
 
 
 def _so_draft_delivery_notes(sales_order):
@@ -5652,7 +5657,7 @@ def _so_draft_delivery_notes(sales_order):
         SELECT DISTINCT dni.parent, dn.modified
         FROM `tabDelivery Note Item` dni
         JOIN `tabDelivery Note` dn ON dn.name = dni.parent
-        WHERE dni.against_sales_order = %s AND dn.docstatus = 0
+        WHERE dni.against_sales_order = %s AND dn.docstatus = 0 AND IFNULL(dn.is_return, 0) = 0
         ORDER BY dn.modified DESC
     """, sales_order, as_dict=True)
     return [r.parent for r in rows]
@@ -5795,6 +5800,10 @@ def _revert_pick_list_locked_fields(doc, is_locked_row):
             continue
         changed = False
         for fieldname in _PICK_LIST_LOCKED_FIELDS:
+            # A return (Credit Note / Sales Return) keeps its lines linked to what it reverses,
+            # but the quantity returned is the user's to set — only that stays editable.
+            if fieldname == "qty" and frappe.utils.cint(doc.get("is_return")):
+                continue
             if flt(item.get(fieldname)) != flt(prior.get(fieldname)) if fieldname == "qty" \
                     else item.get(fieldname) != prior.get(fieldname):
                 item.set(fieldname, prior.get(fieldname))
@@ -5827,6 +5836,10 @@ def guard_so_fulfillment_route_lock(doc, method):
     ordinary draft save.
     """
     if doc.doctype == "Sales Invoice" and not doc.update_stock:
+        return
+    # A return brings goods / money back — the one-route rule is about shipping, not returns
+    # (a Credit Note against a Direct Bill order's invoice carries Update Stock).
+    if frappe.utils.cint(doc.get("is_return")):
         return
 
     # One route only: Sales Order → Pick List → Delivery Note → Sales Invoice

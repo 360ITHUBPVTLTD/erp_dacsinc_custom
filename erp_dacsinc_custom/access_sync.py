@@ -220,7 +220,8 @@ SUBTAB_KEYS = {
 	"Sales Tracker": {"Sales Orders": "so", "Material Requests": "mr", "Embroidery - FP": "fp", "Embroidery - Panel": "pn"},
 	"Purchase Flow": {"POs": "po", "Receipts": "receipt", "To Bill": "bill"},
 	"Job Work": {"Sub POs": "po", "Sub Receipts": "receipt", "Embroidery - FP": "fp", "Embroidery - Panel": "pn"},
-	"Finance": {"Receivables": "receivables", "Supplier Payables": "supplier", "Jobber Payables": "jobber"},
+	"Finance": {"Receivables": "receivables", "Supplier Payables": "supplier", "Jobber Payables": "jobber",
+				"Returns / Notes": "notes"},
 }
 # A tab nobody may see gets this role, so it counts as configured (admins see everything anyway).
 NOBODY_ROLE = "Admin"
