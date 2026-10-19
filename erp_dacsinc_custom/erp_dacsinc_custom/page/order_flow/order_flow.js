@@ -151,7 +151,8 @@ const OF_STATUS_OPTIONS = {
     mr: [['pending', 'Pending (not ordered)'], ['partly_ordered', 'Partly ordered'], ['ordered', 'Fully ordered'],
          ['partly_received', 'Partly received'], ['received', 'Fully received', 1]],
     ewo: [['not_received', 'Nothing received yet'], ['partly_received', 'Partly received'], ['fully_received', 'Fully received', 1]],
-    inv: [['unpaid', 'Unpaid'], ['partly_paid', 'Partly paid'], ['overdue', 'Overdue'], ['paid', 'Paid', 1], ['returns', 'Returns / notes']],
+    // Credit / Debit Notes are not in the invoice lists any more — they have their own sub-tab (Returns / Notes)
+    inv: [['unpaid', 'Unpaid'], ['partly_paid', 'Partly paid'], ['overdue', 'Overdue'], ['paid', 'Paid', 1]],
     pl: [['draft', 'Draft'], ['open', 'Open'], ['partly_delivered', 'Partly delivered'], ['completed', 'Completed', 1]],
     logi: [['lr_missing', 'LR No. missing'], ['signed_missing', 'Signed copy missing', 1], ['lr_done_signed_missing', 'LR done, signed copy missing', 1]],
 };
@@ -204,6 +205,10 @@ const OF_TABLE_FILTERS = {
         ['customer', 'link', 'Customer'], ['pos', 'pos']],
     'accounts.supplier': [['status', 'status', 'inv', 'Payment'], ['goods', 'select', OF_GOODS('received'), 'Receipt'], ['supplier', 'link', 'Supplier']],
     'accounts.jobber': [['status', 'status', 'inv', 'Payment'], ['goods', 'select', OF_GOODS('received'), 'Receipt'], ['supplier', 'link', 'Supplier', 'Jobber']],
+    // Finance › Returns / Notes (order_flow_api._accounts_notes)
+    'accounts.notes': [['kind', 'select', [['credit', 'Credit Notes (sales returns)'], ['debit', 'Debit Notes (purchase returns)']], 'Type'],
+        ['next', 'select', [['refund', 'Credit / refund pending'], ['draft', 'Draft — to submit'], ['settled', 'Settled', 1]], 'Status'],
+        ['party', 'link', 'Customer', 'Customer / Supplier']],
     'uniform': [['status', 'mirror', '#of-uniform-status', 'Status']],
     'logistics': [['lr', 'select', [['missing', 'LR No. missing'], ['filled', 'LR No. filled', 1]], 'LR No.'],
         ['signed', 'select', [['missing', 'Signed copy missing'], ['uploaded', 'Signed copy uploaded', 1]], 'Signed copy'],
@@ -255,7 +260,7 @@ class OrderFlow {
             purchase: { po: '', receipt: '' },
             jobwork: { po: '', receipt: '', ewo_fp: '', ewo_pn: '' },
             tracker: { mr: '', ewo_fp: '', ewo_pn: '' },
-            accounts: { sales: '', supplier: '', jobber: '' },
+            accounts: { sales: '', supplier: '', jobber: '', notes: '' },
         };
 
         // Per-tab pagination state. A tab whose data is one list (stock,
@@ -289,6 +294,7 @@ class OrderFlow {
                 sales: { page: 1, page_size: 100 },
                 supplier: { page: 1, page_size: 100 },
                 jobber: { page: 1, page_size: 100 },
+                notes: { page: 1, page_size: 100 },
             },
             approval: { page: 1, page_size: 100 },
             uniform: { page: 1, page_size: 100 },
@@ -984,6 +990,7 @@ class OrderFlow {
             '#of-bulk-approve-btn', '#of-bulk-reject-btn', '.of-approval-select', '.of-sco-btn', '.of-pl-submit',
             '.of-pl-revert', '.of-ewo-send-btn', '.of-ewo-receive-panel-btn', '.of-ewo-close-btn', '.of-ewo-receive-fp-btn',
             '.of-ewo-receive-btn', '.of-receive-btn', '#of-create-transfer-btn', '.of-logi-update-btn', '.of-pay-btn', '.of-submit-draft-btn',
+            '.of-refund-btn', '.of-adjust-btn', '.of-fin-new',
             'a.of-btn[href$="/new"]', 'a.of-btn[href*="/new?"]',
             '.so-btn:not(.so-btn--view):not(#btn-refresh-stock-table)',
         ].join(', ');
@@ -1311,7 +1318,7 @@ class OrderFlow {
             this.acc_subtab = sub;
             this.$body.find('.of-acc-subtab').removeClass('is-active')
                 .filter(`[data-subtab="${sub}"]`).addClass('is-active');
-            ['receivables', 'supplier', 'jobber'].forEach(s => {
+            ['receivables', 'supplier', 'jobber', 'notes'].forEach(s => {
                 this.$body.find(`#of-acc-sec-${s}`).toggleClass('of-hidden', s !== sub);
                 this.$body.find(`#of-acc-kpi-${s}`).toggleClass('of-hidden', s !== sub);
             });
@@ -1392,6 +1399,29 @@ class OrderFlow {
             e.preventDefault(); e.stopPropagation();
             const $b = $(e.currentTarget);
             of_submit_draft_prompt($b.data('doctype'), String($b.data('name')), () => this.refresh(true));
+        });
+        // Returns / Notes: refund a customer credit / receive a supplier's refund (payment_prompt.js),
+        // or set the credit off against their unpaid invoices in Payment Reconciliation.
+        // Print with a choice of copy (print_prompt.js — same as the form's "Print Sales Invoice")
+        this.$body.on('click', '.of-print-copies-btn', (e) => {
+            const $b = $(e.currentTarget);
+            window.dacs_print_copies($b.data('doctype'), String($b.data('name')),
+                { is_return: cint($b.data('isReturn')), docstatus: cint($b.data('docstatus')) });
+        });
+        this.$body.on('click', '.of-pay-link', (e) => {
+            const $b = $(e.currentTarget);
+            of_payments_dialog(String($b.data('invoice')), $b.data('payments') || [], $b.data('currency'));
+        });
+        this.$body.on('click', '.of-refund-btn', (e) => {
+            const $b = $(e.currentTarget);
+            frappe.require('/assets/erp_dacsinc_custom/js/payment_prompt.js',
+                () => of_refund_prompt($b.data('doctype'), String($b.data('name')), () => this.refresh(true)));
+        });
+        this.$body.on('click', '.of-adjust-btn', (e) => {
+            const $b = $(e.currentTarget);
+            const q = new URLSearchParams({ company: frappe.defaults.get_user_default('Company') || '',
+                party_type: $b.data('partyType'), party: String($b.data('party')) });
+            window.open(`/app/payment-reconciliation?${q.toString()}`, '_blank');
         });
         this.$body.on('click', '.of-pay-btn', (e) => {
             const $b = $(e.currentTarget);
@@ -3732,6 +3762,12 @@ class OrderFlow {
                 return `<span class="of-micro of-link-flow" data-doctype="${doctype}" data-docs="${docs_data}" style="display:inline-block;white-space:nowrap;margin:1px 3px 1px 0;color:var(--of-info);font-weight:600;cursor:pointer;text-decoration:underline;" title="Click to view linked ${label}"><b>${n}</b> ${label}</span>`;
             }).join('');
 
+            // Returns against this order (Sales Return, Credit Note, Purchase / Subcontract Return, Debit
+            // Note): not progress, so not in the chain above — one chip each, opening the document.
+            const returns_html = (o.returns || []).length ? `<div class="of-ret-chips" style="align-items:flex-start;">${(o.returns || []).map(r =>
+                `<a class="of-ret-chip${flt_of(r.docstatus) === 0 ? ' is-draft' : ''}" href="/app/${of_route(r.doctype)}/${encodeURIComponent(r.name)}" target="_blank"
+                    title="${of_esc(r.label)} ${of_esc(r.name)}${flt_of(r.docstatus) === 0 ? ' (draft)' : ''}"><i class="fa fa-undo"></i> ${of_esc(r.label)} ${of_esc(r.name)}${flt_of(r.docstatus) === 0 ? ` · ${__('draft')}` : ''}</a>`).join('')}</div>` : '';
+
             const rm_c = o.rm_counts || {};
             const rm_chain_items = [
                 ['MR', rm_c['Material Request'], o.rm_mrs, 'Material Request'],
@@ -3892,7 +3928,7 @@ class OrderFlow {
                 <td>
                     ${action_btn_html}
                 </td>
-                <td style="text-align:left;">${chain}${rm_chain_html}</td>
+                <td style="text-align:left;">${chain}${rm_chain_html}${returns_html}</td>
                 <td>
                     ${of_status_chip(o.per_delivered, st.stage_key, 'delivered', o.delivery_notes, o.draft_delivery_notes, o.stock_invoices, o.per_billed, o.needs_invoice_qty, o.draft_invoices)}
                 </td>
@@ -4427,6 +4463,7 @@ class OrderFlow {
                 <td><i class="fa fa-caret-right of-doc-items-toggle" data-doctype="${of_esc(open_doctype)}" data-docname="${of_esc(open_name)}" data-docstatus="${r.docstatus}" data-submit-doctype="${of_esc(r.doctype)}" data-submit-name="${of_esc(r.name)}" style="cursor:pointer;margin-right:4px;color:var(--text-light);"></i>
                     <a href="/app/${of_route(open_doctype)}/${encodeURIComponent(open_name)}" target="_blank" style="font-weight:700;">${of_esc(r.name)}</a>
                     <div class="of-micro">${of_esc(open_doctype)}${open_doctype !== r.doctype ? ` (via ${of_esc(r.doctype)})` : ''}</div>
+                    ${flt_of(r.is_return) ? `<span class="of-note-type is-debit" title="${__('A return to the supplier / jobber — goods went back out')}">↩ ${__('Return')}</span>` : ''}
                     ${of_creator_html(r)}</td>
                 <td style="text-align:left;">
                     <a href="/app/supplier/${encodeURIComponent(r.supplier)}" target="_blank" style="font-weight:600;">${of_esc(r.supplier_name || r.supplier || '')}</a>
@@ -4436,7 +4473,7 @@ class OrderFlow {
                 <td>${of_po_links(r.purchase_orders)}
                     ${r.supplier_name ? `<div class="of-micro text-muted">${of_esc(r.supplier_name)}</div>` : ''}</td>
                 <td class="of-meta">${of_date(r.posting_date)}</td>
-                <td>${of_qty(r.qty, 'pos')}</td>
+                <td>${flt_of(r.is_return) ? `${of_qty(Math.abs(flt_of(r.qty)), 'neg')}<div class="of-micro text-muted">${__('returned')}</div>` : of_qty(r.qty, 'pos')}</td>
                 <td>${of_money(r.grand_total, r.currency)}</td>
                 <td>${of_doc_status(r.status)}</td>
             </tr>`;
@@ -4761,6 +4798,7 @@ class OrderFlow {
                 <td><i class="fa fa-caret-right of-doc-items-toggle" data-doctype="${of_esc(open_doctype)}" data-docname="${of_esc(open_name)}" data-docstatus="${r.docstatus}" data-submit-doctype="${of_esc(r.doctype)}" data-submit-name="${of_esc(r.name)}" style="cursor:pointer;margin-right:4px;color:var(--text-light);"></i>
                     <a href="/app/${of_route(open_doctype)}/${encodeURIComponent(open_name)}" target="_blank" style="font-weight:700;">${of_esc(r.name)}</a>
                     <div class="of-micro">${of_esc(open_doctype)}${open_doctype !== r.doctype ? ` (via ${of_esc(r.doctype)})` : ''}</div>
+                    ${flt_of(r.is_return) ? `<span class="of-note-type is-debit" title="${__('A return to the supplier / jobber — goods went back out')}">↩ ${__('Return')}</span>` : ''}
                     ${of_creator_html(r)}</td>
                 <td style="text-align:left;">
                     <a href="/app/supplier/${encodeURIComponent(r.supplier)}" target="_blank" style="font-weight:600;">${of_esc(r.supplier_name || r.supplier || '')}</a>
@@ -4770,7 +4808,7 @@ class OrderFlow {
                 <td>${of_po_links(r.purchase_orders)}
                     ${r.supplier_name ? `<div class="of-micro text-muted">${of_esc(r.supplier_name)}</div>` : ''}</td>
                 <td class="of-meta">${of_date(r.posting_date)}</td>
-                <td>${of_qty(r.qty, 'pos')}</td>
+                <td>${flt_of(r.is_return) ? `${of_qty(Math.abs(flt_of(r.qty)), 'neg')}<div class="of-micro text-muted">${__('returned')}</div>` : of_qty(r.qty, 'pos')}</td>
                 <td>${of_money(r.grand_total, r.currency)}</td>
                 <td>${of_doc_status(r.status)}</td>
             </tr>`;
@@ -5339,11 +5377,13 @@ class OrderFlow {
         const sis = sis_env.rows || [];
         const sups = sups_env.rows || [];
         const jobs = jobs_env.rows || [];
+        const notes_env = data.notes || {};
+        const notes = notes_env.rows || [];
         const m = data.metrics || {};
 
         this.$body.find('#of-count').text(
-            __('{0} Customer Invoices · {1} Supplier Invoices · {2} Jobber Invoices',
-                [sis_env.total || 0, sups_env.total || 0, jobs_env.total || 0])
+            __('{0} Customer Invoices · {1} Supplier Invoices · {2} Jobber Invoices · {3} Returns / Notes',
+                [sis_env.total || 0, sups_env.total || 0, jobs_env.total || 0, notes_env.total || 0])
         );
 
         // Render Sales Invoices Rows
@@ -5357,19 +5397,20 @@ class OrderFlow {
                     ${of_creator_html(s)}</td>
                 <td style="text-align:left;">
                     <a href="/app/customer/${encodeURIComponent(s.customer)}" target="_blank" style="font-weight:600;">${of_customer_display(s.customer_name || s.customer, s.contact_person_name)}</a>
-                    <div class="of-micro text-muted">${of_esc(s.customer || '')}</div>
+                    <div class="of-micro text-muted">${of_esc(s.customer || '')}</div>${of_remark_html(s.remarks)}
                 </td>
                 <td>${of_so_links(s.sales_orders)}
                     ${s.so_customer_names ? `<div class="of-micro text-muted">${of_esc(s.so_customer_names)}</div>` : ''}</td>
                 <td class="of-meta">${of_date(s.posting_date)}
                     <div class="of-micro">Due ${of_date(s.due_date)}</div></td>
                 <td style="font-weight:700;">${of_money(s.grand_total, s.currency)}</td>
-                <td style="color:var(--of-green);">${of_money(s.paid_amount, s.currency)}</td>
+                <td style="color:var(--of-green);">${of_money(s.paid_amount, s.currency)}${of_payment_lines(s.payments, s.currency, s.name)}</td>
                 <td style="color:${out > 0 ? 'var(--of-red)' : 'var(--text-muted)'};font-weight:700;">${of_money(out, s.currency)}</td>
-                <td>${status_pill}</td>
+                <td>${status_pill}${of_return_chips(s.returns, 'Sales Invoice')}</td>
                 <td><div class="of-po-actions">
                     ${out > 0 && data.can_pay && flt_of(s.docstatus) === 1 ? `<button class="of-btn of-btn--success of-pay-btn" data-doctype="Sales Invoice" data-name="${of_esc(s.name)}">
                         <i class="fa fa-inr"></i> ${__('Receive')}</button>` : ''}
+<button class="of-btn of-print-copies-btn" data-doctype="Sales Invoice" data-name="${of_esc(s.name)}" data-is-return="${flt_of(s.is_return) ? 1 : 0}" data-docstatus="${s.docstatus}" title="${__('Print — choose Original / Duplicate / Triplicate / Quadruplicate')}"><i class="fa fa-print"></i></button>
                     <a class="of-btn" href="/app/sales-invoice/${encodeURIComponent(s.name)}" target="_blank">
                         <i class="fa fa-external-link"></i> Open
                     </a>
@@ -5387,19 +5428,20 @@ class OrderFlow {
                     <a href="/app/purchase-invoice/${encodeURIComponent(p.name)}" target="_blank" style="font-weight:700;">${of_esc(p.name)}</a>
                     ${of_creator_html(p)}</td>
                 <td style="text-align:left;">
-                    <a href="/app/supplier/${encodeURIComponent(p.supplier)}" target="_blank" style="font-weight:600;">${of_esc(p.supplier_name || p.supplier || '')}</a>
+                    <a href="/app/supplier/${encodeURIComponent(p.supplier)}" target="_blank" style="font-weight:600;">${of_esc(p.supplier_name || p.supplier || '')}</a>${of_remark_html(p.remarks)}
                 </td>
                 <td>${of_so_links(p.sales_orders)}
                     ${p.so_customer_names ? `<div class="of-micro text-muted">${of_esc(p.so_customer_names)}</div>` : ''}</td>
                 <td class="of-meta">${of_date(p.posting_date)}
                     <div class="of-micro">Due ${of_date(p.due_date)}</div></td>
                 <td style="font-weight:700;">${of_money(p.grand_total, p.currency)}</td>
-                <td style="color:var(--of-info);">${of_money(p.paid_amount, p.currency)}</td>
+                <td style="color:var(--of-info);">${of_money(p.paid_amount, p.currency)}${of_payment_lines(p.payments, p.currency, p.name)}</td>
                 <td style="color:${out > 0 ? 'var(--of-red)' : 'var(--text-muted)'};font-weight:700;">${of_money(out, p.currency)}</td>
-                <td>${status_pill}</td>
+                <td>${status_pill}${of_return_chips(p.returns, 'Purchase Invoice')}</td>
                 <td><div class="of-po-actions">
                     ${out > 0 && data.can_pay && flt_of(p.docstatus) === 1 ? `<button class="of-btn of-btn--primary of-pay-btn" data-doctype="Purchase Invoice" data-name="${of_esc(p.name)}">
                         <i class="fa fa-inr"></i> ${__('Pay')}</button>` : ''}
+<button class="of-btn of-print-copies-btn" data-doctype="Purchase Invoice" data-name="${of_esc(p.name)}" data-is-return="${flt_of(p.is_return) ? 1 : 0}" data-docstatus="${p.docstatus}" title="${__('Print — choose Original / Duplicate / Triplicate / Quadruplicate')}"><i class="fa fa-print"></i></button>
                     <a class="of-btn" href="/app/purchase-invoice/${encodeURIComponent(p.name)}" target="_blank">
                         <i class="fa fa-external-link"></i> Open
                     </a>
@@ -5418,19 +5460,20 @@ class OrderFlow {
                     ${of_creator_html(p)}</td>
                 <td style="text-align:left;">
                     <a href="/app/supplier/${encodeURIComponent(p.supplier)}" target="_blank" style="font-weight:600;">${of_esc(p.supplier_name || p.supplier || '')}</a>
-                    <div class="of-micro text-muted"><span class="of-chip">Jobber</span></div>
+                    <div class="of-micro text-muted"><span class="of-chip">Jobber</span></div>${of_remark_html(p.remarks)}
                 </td>
                 <td>${of_so_links(p.sales_orders)}
                     ${p.so_customer_names ? `<div class="of-micro text-muted">${of_esc(p.so_customer_names)}</div>` : ''}</td>
                 <td class="of-meta">${of_date(p.posting_date)}
                     <div class="of-micro">Due ${of_date(p.due_date)}</div></td>
                 <td style="font-weight:700;">${of_money(p.grand_total, p.currency)}</td>
-                <td style="color:var(--of-purple);">${of_money(p.paid_amount, p.currency)}</td>
+                <td style="color:var(--of-purple);">${of_money(p.paid_amount, p.currency)}${of_payment_lines(p.payments, p.currency, p.name)}</td>
                 <td style="color:${out > 0 ? 'var(--of-red)' : 'var(--text-muted)'};font-weight:700;">${of_money(out, p.currency)}</td>
-                <td>${status_pill}</td>
+                <td>${status_pill}${of_return_chips(p.returns, 'Purchase Invoice')}</td>
                 <td><div class="of-po-actions">
                     ${out > 0 && data.can_pay && flt_of(p.docstatus) === 1 ? `<button class="of-btn of-btn--primary of-pay-btn" data-doctype="Purchase Invoice" data-name="${of_esc(p.name)}">
                         <i class="fa fa-inr"></i> ${__('Pay')}</button>` : ''}
+<button class="of-btn of-print-copies-btn" data-doctype="Purchase Invoice" data-name="${of_esc(p.name)}" data-is-return="${flt_of(p.is_return) ? 1 : 0}" data-docstatus="${p.docstatus}" title="${__('Print — choose Original / Duplicate / Triplicate / Quadruplicate')}"><i class="fa fa-print"></i></button>
                     <a class="of-btn" href="/app/purchase-invoice/${encodeURIComponent(p.name)}" target="_blank">
                         <i class="fa fa-external-link"></i> Open
                     </a>
@@ -5438,11 +5481,18 @@ class OrderFlow {
             </tr>`;
         }).join('');
 
+        // Returns / Notes rows: Credit Notes (sales returns) and Debit Notes (purchase returns) with
+        // what each did in the accounts and what is left to do (order_flow_api._describe_notes).
+        const note_rows = notes.map(n => of_note_row_html(n, data.can_pay)).join('');
+
         const subtab = this.acc_subtab || 'receivables';
 
         return `
             <!-- Live Activity Notifications -->
             ${this.activity_stream_html('accounts')}
+
+            <!-- Finance only: start the entries the accounts team makes by hand (open in a new tab) -->
+            ${of_fin_new_bar()}
 
             <!-- Sub-tabs as summary cards: what is open, how much is settled, how many invoices
                  (replaces the six tiles, the plain sub-tab bar and the settlement bar). -->
@@ -5459,6 +5509,7 @@ class OrderFlow {
                     title: __('Jobber Payables'), open: m.jobber_outstanding, open_label: __('to pay'),
                     settled: m.jobber_paid, total: m.jobber_total, settled_label: __('paid'),
                     docs: jobs_env.total || 0, doc_label: __('jobber invoice') })}
+                ${of_notes_kcard(m, subtab === 'notes', notes_env.total || 0)}
                 <!-- The Accounts Guide (/accounts-guide): entries, debit / credit, Journal Entry, fixes. -->
                 <a class="of-guide-tile" href="/accounts-guide" target="_blank" title="${__('How the accounts team works: types of entries, debit and credit, Journal Entry, examples, quick fixes')}">
                     <i class="fa fa-book"></i>
@@ -5504,6 +5555,16 @@ class OrderFlow {
                         <tbody>${job_rows || of_empty_row(9)}</tbody>
                     </table>`, null, of_pagination_html('accounts', 'jobber', jobs_env),
                     of_docstatus_pills('accounts', 'jobber', jobs_env.docstatus_counts, this.docstatus_filter.accounts.jobber) + this.table_filters_html('accounts.jobber'))}
+            </div>
+            <div id="of-acc-sec-notes" class="${subtab !== 'notes' ? 'of-hidden' : ''}">
+                ${of_card('Returns / Notes — Credit Notes & Debit Notes', 'undo', `
+                    <table class="of-table">
+                        <thead><tr><th style="min-width:170px;">Note</th><th style="min-width:150px;">Customer / Supplier</th>
+                            <th style="min-width:150px;">Against invoice</th><th style="min-width:200px;">Items returned</th><th>Date</th>
+                            <th>Amount</th><th style="min-width:150px;">Effect</th><th style="min-width:230px;">What next</th></tr></thead>
+                        <tbody>${note_rows || of_empty_row(8)}</tbody>
+                    </table>`, null, of_pagination_html('accounts', 'notes', notes_env),
+                    of_docstatus_pills('accounts', 'notes', notes_env.docstatus_counts, this.docstatus_filter.accounts.notes) + this.table_filters_html('accounts.notes'))}
             </div>`;
     }
 
@@ -7228,6 +7289,162 @@ function of_invoice_status_html(d) {
     const tone = /^(Delivered|Received)$/.test(g) ? 'var(--of-green)' : (/^Partly/.test(g) ? 'var(--of-orange)' : 'var(--text-muted)');
     const icon = /^(Delivered|Received)$/.test(g) ? 'check-circle' : (/^Partly/.test(g) ? 'adjust' : 'circle-o');
     return `${pill}<div class="of-micro" style="margin-top:4px;color:${tone};font-weight:600;white-space:nowrap;"><i class="fa fa-${icon}"></i> ${of_esc(__(g))}</div>`;
+}
+
+// ── Finance › Returns / Notes ─────────────────────────────────────────────────────────────
+// Chips on an invoice row for the Credit / Debit Notes made against it.
+function of_return_chips(returns, doctype) {
+    if (!returns || !returns.length) return '';
+    const slug = doctype === 'Sales Invoice' ? 'sales-invoice' : 'purchase-invoice';
+    const label = doctype === 'Sales Invoice' ? __('Credit Note') : __('Debit Note');
+    return `<div class="of-ret-chips">${returns.map(r => `<a class="of-ret-chip${flt_of(r.docstatus) === 0 ? ' is-draft' : ''}"
+        href="/app/${slug}/${encodeURIComponent(r.name)}" target="_blank" title="${of_esc(label)} ${of_esc(r.name)}${flt_of(r.docstatus) === 0 ? ' (draft)' : ''}">
+        <i class="fa fa-undo"></i> ${of_esc(r.name)} ${of_money(Math.abs(flt_of(r.amount)))}${flt_of(r.docstatus) === 0 ? ` · ${__('draft')}` : ''}</a>`).join('')}</div>`;
+}
+
+// An invoice's Remarks (editable after submit; a return's reason) under the party.
+function of_remark_html(remarks) {
+    const t = (remarks || '').trim();
+    if (!t) return '';
+    return `<div class="of-remark" title="${of_esc(t)}"><i class="fa fa-comment-o"></i> ${of_esc(t)}</div>`;
+}
+
+// What settled an invoice (order_flow_api._attach_payments): under the Received / Paid amount only a
+// link "N payments"; clicking it (of_payments_dialog) lists each Payment Entry — date, mode, cheque /
+// ref. no., amount set off on this invoice ("1 of N invoices" when one entry settled several),
+// receipt / voucher print (Payment Receipt DAC) — and Journal Entries that set a credit note or
+// advance off against it (Payment Reconciliation).
+function of_payment_lines(payments, currency, invoice) {
+    if (!payments || !payments.length) return '';
+    const drafts = payments.filter(p => flt_of(p.docstatus) === 0).length;
+    const label = payments.length === 1 ? __('1 payment') : __('{0} payments', [payments.length]);
+    return `<div><button class="of-pay-link" data-invoice="${of_esc(invoice || '')}" data-currency="${of_esc(currency || '')}"
+        data-payments="${of_esc(JSON.stringify(payments))}" title="${__('See the payments and print receipts')}">
+        <i class="fa fa-file-text-o"></i> ${label}${drafts ? ` <span class="of-pay-tag">${drafts} ${__('draft')}</span>` : ''}</button></div>`;
+}
+
+function of_payments_dialog(invoice, payments, currency) {
+    const rows = payments.map(p => {
+        const pe = p.doctype === 'Payment Entry';
+        const draft = flt_of(p.docstatus) === 0;
+        return `<tr>
+            <td><a href="/app/${pe ? 'payment-entry' : 'journal-entry'}/${encodeURIComponent(p.name)}" target="_blank" style="font-weight:600;">${of_esc(p.name)}</a>
+                ${draft ? ` <span class="of-pay-tag">${__('draft')}</span>` : ''}</td>
+            <td>${p.date ? frappe.datetime.str_to_user(p.date) : ''}</td>
+            <td>${pe ? of_esc(p.mode || '') : of_esc(__('Adjusted ({0})', [__(p.mode || 'Journal Entry')]))}</td>
+            <td>${of_esc(p.ref_no || '')}</td>
+            <td style="text-align:right;font-weight:700;">${of_money(p.amount, currency)}
+                ${flt_of(p.n_refs) > 1 ? `<div class="of-pay-tag" style="display:inline-block;" title="${__('This one entry settled {0} invoices', [p.n_refs])}">${__('1 of {0} invoices', [p.n_refs])}</div>` : ''}</td>
+            <td>${pe ? `<button class="btn btn-xs btn-default of-pay-dlg-print" data-name="${of_esc(p.name)}" data-docstatus="${p.docstatus}"
+                title="${__('Print the receipt / voucher')}"><i class="fa fa-print"></i></button>` : ''}</td>
+        </tr>`;
+    }).join('');
+    const total = payments.filter(p => flt_of(p.docstatus) === 1).reduce((a, p) => a + flt_of(p.amount), 0);
+    const d = new frappe.ui.Dialog({ title: __('Payments — {0}', [invoice]), size: 'large',
+        fields: [{ fieldtype: 'HTML', fieldname: 'html' }] });
+    d.fields_dict.html.$wrapper.html(`<table class="table table-bordered of-pay-table">
+        <thead><tr><th>${__('Entry')}</th><th>${__('Date')}</th><th>${__('Mode')}</th><th>${__('Cheque / Ref. No.')}</th>
+            <th style="text-align:right;">${__('Amount')}</th><th></th></tr></thead>
+        <tbody>${rows}</tbody>
+        <tfoot><tr><td colspan="4" style="text-align:right;font-weight:600;">${__('Total settled (submitted)')}</td>
+            <td style="text-align:right;font-weight:700;">${of_money(total, currency)}</td><td></td></tr></tfoot></table>`);
+    d.$wrapper.on('click', '.of-pay-dlg-print', (e) => {
+        const $b = $(e.currentTarget);
+        window.dacs_print_copies('Payment Entry', String($b.data('name')), { is_return: 0, docstatus: cint($b.data('docstatus')) });
+    });
+    d.show();
+}
+
+// The Returns / Notes summary card (a sub-tab, like the other three).
+function of_notes_kcard(m, active, total) {
+    const credit = flt_of(m.notes_customer_credit), owed = flt_of(m.notes_supplier_refund);
+    const act = flt_of(m.notes_customer_credit_count) + flt_of(m.notes_supplier_refund_count) + flt_of(m.notes_drafts);
+    return `<button class="of-acc-subtab of-kcard of-kcard--orange${active ? ' is-active' : ''}" data-subtab="notes">
+        <span class="of-kcard__title"><i class="fa fa-undo"></i> ${__('Returns / Notes')}</span>
+        <span class="of-kcard__amt">${act} <small>${__('to act on')}</small></span>
+        <span class="of-kcard__meta">${of_money(credit)} ${__('customer credit')} · ${of_money(owed)} ${__('supplier owes us')} · ${flt_of(m.notes_credit_count)} ${__('credit')} / ${flt_of(m.notes_debit_count)} ${__('debit notes')}</span>
+    </button>`;
+}
+
+function of_note_row_html(n, can_pay) {
+    const cn = n.kind === 'credit_note';
+    const slug = cn ? 'sales-invoice' : 'purchase-invoice';
+    const party_slug = cn ? 'customer' : 'supplier';
+    const type_chip = cn
+        ? `<span class="of-note-type is-credit" title="${__('Sales return: reduces what the customer owes')}">${__('Credit Note')} · ${__('sales return')}</span>`
+        : `<span class="of-note-type is-debit" title="${__('Purchase return: reduces what we owe the supplier')}">${__('Debit Note')} · ${__('purchase return')}</span>`;
+    const against = n.return_against
+        ? `<a href="/app/${slug}/${encodeURIComponent(n.return_against)}" target="_blank" style="font-weight:600;">${of_esc(n.return_against)}</a>
+           ${n.against_status ? `<div><span class="of-pill of-pill--${OF_INVOICE_STATUS_PILL[n.against_status] || 'wait'}">${of_esc(__(n.against_status))}</span></div>` : ''}
+           ${n.against_outstanding != null ? `<div class="of-micro text-muted">${cn ? __('still due') : __('still to pay')}: ${of_money(Math.max(flt_of(n.against_outstanding), 0), n.currency)}</div>` : ''}`
+        : `<span class="of-chip" style="background:var(--subtle-fg);color:var(--text-color);">${__('Direct')}</span><div class="of-micro text-muted">${__('not against an invoice')}</div>`;
+    const items = n.items || [];
+    const items_html = items.length ? items.slice(0, 3).map(it => `<div class="of-note-item">
+            <b>${of_esc(it.item_name || it.item_code)}</b>
+            <span class="of-micro text-muted">${it.item_name && it.item_name !== it.item_code ? of_esc(it.item_code) + ' · ' : ''}${Math.abs(flt_of(it.qty))} ${of_esc(it.uom || '')} × ${of_money(it.rate, n.currency)} = ${of_money(Math.abs(flt_of(it.amount)), n.currency)}</span>
+        </div>`).join('') + (items.length > 3 ? `<div class="of-micro" style="color:var(--of-blue);">+${items.length - 3} ${__('more — click ▸ to see all')}</div>` : '')
+        : '<span class="of-val--zero">—</span>';
+    const due = flt_of(n.refund_due);
+    const effect = {
+        draft: `<span class="of-pill of-pill--draft">${__('Draft')}</span><div class="of-micro text-muted">${__('no effect until submitted')}</div>`,
+        credit: cn ? `<span class="of-note-eff is-credit">${__('Customer credit')} ${of_money(due, n.currency)}</span>`
+                   : `<span class="of-note-eff is-owed">${__('Supplier owes us')} ${of_money(due, n.currency)}</span>`,
+        reduced: `<span class="of-note-eff is-done">${__('Reduced')} ${of_esc(n.return_against || '')}</span>`,
+        settled: `<span class="of-note-eff is-done">${__('Settled')}</span>`,
+    }[n.effect] || '';
+    const party_type = cn ? 'Customer' : 'Supplier';
+    const adjust = `<button class="of-btn ${n.next === 'adjust' ? 'of-btn--primary' : ''} of-adjust-btn" data-party-type="${party_type}" data-party="${of_esc(n.party)}"
+            title="${__('Payment Reconciliation: set this credit off against their unpaid invoices / bills')}"><i class="fa fa-exchange"></i> ${__('Adjust')}</button>`;
+    const refund = can_pay ? `<button class="of-btn ${n.next !== 'adjust' ? (cn ? 'of-btn--warning' : 'of-btn--success') : ''} of-refund-btn" data-doctype="${n.doctype}" data-name="${of_esc(n.name)}">
+            <i class="fa fa-${cn ? 'reply' : 'inr'}"></i> ${cn ? __('Refund') : __('Receive refund')}</button>` : '';
+    const actions = n.effect === 'credit' ? (n.next === 'adjust' ? adjust + refund : refund + adjust) : '';
+    return `<tr class="of-doc-row">
+        <td><i class="fa fa-caret-right of-doc-items-toggle" data-doctype="${n.doctype}" data-docname="${of_esc(n.name)}" data-docstatus="${n.docstatus}" style="cursor:pointer;margin-right:4px;color:var(--text-light);"></i>
+            <a href="/app/${slug}/${encodeURIComponent(n.name)}" target="_blank" style="font-weight:700;">${of_esc(n.name)}</a>
+            <div>${type_chip}</div>${of_creator_html(n)}</td>
+        <td style="text-align:left;"><a href="/app/${party_slug}/${encodeURIComponent(n.party)}" target="_blank" style="font-weight:600;">${of_esc(n.party_name || n.party)}</a>
+            <div class="of-micro text-muted">${of_esc(n.party)}</div>${of_remark_html(n.remarks)}</td>
+        <td>${against}</td>
+        <td style="text-align:left;">${items_html}</td>
+        <td class="of-meta">${of_date(n.posting_date)}</td>
+        <td style="font-weight:700;color:${cn ? 'var(--of-red)' : 'var(--of-green)'};">${of_money(Math.abs(flt_of(n.grand_total)), n.currency)}</td>
+        <td>${effect}</td>
+        <td style="text-align:left;"><div class="of-micro" style="font-weight:600;color:var(--text-color);margin-bottom:5px;">${of_esc(n.next_text || '')}</div>
+            <div class="of-po-actions">${actions}<button class="of-btn of-print-copies-btn" data-doctype="${n.doctype}" data-name="${of_esc(n.name)}" data-is-return="1" data-docstatus="${n.docstatus}"
+                title="${cn ? __('Print the Credit Note') : __('Print the Debit Note')} — ${__('choose the copy')}"><i class="fa fa-print"></i></button><a class="of-btn" href="/app/${slug}/${encodeURIComponent(n.name)}" target="_blank"><i class="fa fa-external-link"></i> ${__('Open')}</a></div></td>
+    </tr>`;
+}
+
+// Finance only: the entries the accounts team starts by hand. Each opens a new form in a new tab;
+// a Payment Entry made here can settle several invoices at once (choose the party, then
+// "Get Outstanding Invoices"). Only what the user may create is shown.
+function of_fin_new_bar() {
+    const can = (dt) => frappe.model.can_create(dt);
+    const read = (dt) => frappe.model.can_read(dt);
+    const q = (o) => '?' + Object.entries(o).map(([k, v]) => `${encodeURIComponent(k)}=${encodeURIComponent(v)}`).join('&');
+    const items = [
+        can('Payment Entry') && ['/app/payment-entry/new' + q({ payment_type: 'Receive', party_type: 'Customer' }), 'arrow-down', __('Receive (Payment Entry)'),
+            __('Money from a customer — choose the customer, then Get Outstanding Invoices to settle several invoices at once')],
+        can('Payment Entry') && ['/app/payment-entry/new' + q({ payment_type: 'Pay', party_type: 'Supplier' }), 'arrow-up', __('Pay (Payment Entry)'),
+            __('Money to a supplier / jobber — choose the supplier, then Get Outstanding Invoices to pay several bills at once')],
+        can('Payment Entry') && ['/app/payment-entry/new' + q({ payment_type: 'Internal Transfer' }), 'exchange', __('Internal Transfer'),
+            __('Between our own accounts: cash deposit, bank to bank')],
+        can('Journal Entry') && ['/app/journal-entry/new', 'book', __('Journal Entry'),
+            __('Adjustments with no other document: bank charges, TDS deposit, corrections')],
+        can('Sales Invoice') && ['/app/sales-invoice/new' + q({ is_return: 1 }), 'undo', __('Credit Note (direct)'),
+            __('A return / allowance to a customer not made from an invoice (e.g. a service item). From an invoice: open it › Create › Return / Credit Note')],
+        can('Purchase Invoice') && ['/app/purchase-invoice/new' + q({ is_return: 1 }), 'undo', __('Debit Note (direct)'),
+            __('A return / claim on a supplier not made from a bill. From a bill: open it › Create › Return / Debit Note')],
+        read('Payment Reconciliation') && ['/app/payment-reconciliation', 'link', __('Payment Reconciliation'),
+            __('Match advances, credit notes and unlinked payments with invoices')],
+        read('Bank Reconciliation Tool') && ['/app/bank-reconciliation-tool', 'university', __('Bank Reconciliation'),
+            __('Match the bank statement with the entries')],
+    ].filter(Boolean);
+    if (!items.length) return '';
+    return `<div class="of-fin-new">
+        <span class="of-fin-new__label"><i class="fa fa-plus"></i> ${__('New')}</span>
+        ${items.map(([href, icon, label, title]) => `<a class="of-btn of-fin-new__btn" href="${href}" target="_blank" title="${of_esc(title)}"><i class="fa fa-${icon}"></i> ${of_esc(label)}</a>`).join('')}
+    </div>`;
 }
 
 // Doctypes whose drafts can be submitted from their row (dashboard_submit.SUBMITTABLE).

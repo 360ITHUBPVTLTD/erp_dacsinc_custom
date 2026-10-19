@@ -378,3 +378,144 @@ function of_payment_prompt(doctype, name, on_done, opts) {
 }
 
 window.of_payment_prompt = of_payment_prompt;
+
+// Refund on a return (dashboard_payment.get_refund_prompt / record_refund):
+//   Credit Note with a customer credit → pay the customer back (Payment Entry type Pay);
+//   Debit Note the supplier owes us    → receive the supplier's refund (type Receive).
+// Same look as the Receive / Pay prompt; a review step with a tick before it submits.
+function of_refund_prompt(doctype, name, on_done, opts) {
+    opts = opts || {};
+    frappe.call({
+        method: 'erp_dacsinc_custom.dashboard_payment.get_refund_prompt',
+        args: { doctype, name, from_form: opts.from_form ? 1 : 0 },
+    }).then(r => {
+        const d = r.message;
+        if (!d) return;
+        const money = (v) => format_currency(flt(v, 2), d.currency);
+        const cn = d.credit_note;
+        const mode_by_name = Object.fromEntries((d.modes || []).map(m => [m.name, m]));
+        const dlg = new frappe.ui.Dialog({
+            title: cn ? __('Refund to Customer — {0}', [d.name]) : __('Receive Refund from Supplier — {0}', [d.name]),
+            fields: [
+                { fieldtype: 'HTML', fieldname: 'head' },
+                { fieldtype: 'Section Break', label: cn ? __('① How much is refunded') : __('① How much is received back') },
+                { fieldtype: 'Float', precision: 2, fieldname: 'amount', reqd: 1, default: d.refund_due,
+                  label: cn ? __('Refund amount') : __('Amount received from supplier'),
+                  description: __('Up to {0}. Less = part refund; the rest stays as credit.', [money(d.refund_due)]) },
+                { fieldtype: 'Column Break' },
+                { fieldtype: 'HTML', fieldname: 'summary' },
+                { fieldtype: 'Section Break', label: __('② Payment details') },
+                { fieldtype: 'Select', fieldname: 'mode_of_payment', label: __('Mode of Payment'), reqd: 1,
+                  options: [''].concat((d.modes || []).map(m => m.name)).join('\n') },
+                { fieldtype: 'HTML', fieldname: 'mode_info' },
+                { fieldtype: 'Date', fieldname: 'posting_date', label: __('Payment Date'), reqd: 1, default: frappe.datetime.get_today() },
+                { fieldtype: 'Column Break' },
+                { fieldtype: 'Data', fieldname: 'reference_no', label: __('Reference No (UTR / Cheque No)') },
+                { fieldtype: 'Date', fieldname: 'reference_date', label: __('Reference Date') },
+                { fieldtype: 'Section Break', collapsible: 1, label: __('Remarks (optional)') },
+                { fieldtype: 'Small Text', fieldname: 'remarks', label: __('Remarks') },
+            ],
+            primary_action_label: __('Review'),
+            primary_action: (v) => review(v),
+        });
+        dlg.$wrapper.addClass('of-pay-dialog');
+        dlg.fields_dict.head.$wrapper.html(`
+            <div class="of-pay-head ${cn ? 'is-out' : 'is-in'}">
+                <div class="of-pay-head__party">
+                    <span class="of-pay-head__role"><i class="fa fa-undo"></i> ${cn ? __('Refund to customer (credit note)') : __('Refund from supplier (debit note)')}</span>
+                    <b>${pp_esc(d.party_name || d.party)}</b>
+                    <span class="of-pay-head__doc">${cn ? __('Credit Note') : __('Debit Note')} ${pp_esc(d.name)}${d.return_against ? ` · ${__('against')} ${pp_esc(d.return_against)}` : ''}</span>
+                </div>
+                <div class="of-pay-head__tiles">
+                    <div><span>${cn ? __('Credit note total') : __('Debit note total')}</span><b>${money(d.note_total)}</b></div>
+                    <div class="is-due"><span>${cn ? __('Customer credit (to refund)') : __('Supplier owes us')}</span><b>${money(d.refund_due)}</b></div>
+                </div>
+            </div>`);
+        const paint = () => {
+            const v = dlg.get_values(true) || {};
+            const m = mode_by_name[v.mode_of_payment];
+            const is_bank = m && m.account_type === 'Bank';
+            dlg.set_df_property('reference_no', 'reqd', is_bank ? 1 : 0);
+            dlg.set_df_property('reference_date', 'reqd', is_bank ? 1 : 0);
+            dlg.set_df_property('reference_no', 'hidden', is_bank ? 0 : 1);
+            dlg.set_df_property('reference_date', 'hidden', is_bank ? 0 : 1);
+            dlg.fields_dict.mode_info.$wrapper.html(m
+                ? `<div class="of-pay-modeinfo"><i class="fa fa-${is_bank ? 'university' : 'money'}"></i> ${cn ? __('Money goes out of') : __('Money goes into')} <b>${pp_esc(m.account)}</b></div>`
+                : `<div class="of-pay-modeinfo is-empty">${__('Choose how the money moves.')}</div>`);
+            const amt = flt(v.amount), left = flt(d.refund_due - amt, 2);
+            dlg.fields_dict.summary.$wrapper.html(`
+                <div class="of-pay-sum ${cn ? 'is-out' : 'is-in'}">
+                    <div class="of-pay-sum__big"><span>${cn ? __('Out of') : __('Into')} ${pp_esc((m && m.account) || __('bank / cash'))}</span><b>${money(amt)}</b></div>
+                    <div class="of-pay-sum__out"><span>${cn ? __('Customer credit') : __('Supplier owes us')}</span>
+                        <span><s>${money(d.refund_due)}</s> <i class="fa fa-long-arrow-right"></i> <b>${money(Math.max(left, 0))}</b></span></div>
+                    <div class="of-pay-sum__state is-${left > 0.004 ? 'part' : (left < -0.004 ? 'adv' : 'full')}">
+                        ${left > 0.004 ? __('Part refund — {0} stays as credit', [money(left)])
+                          : (left < -0.004 ? __('More than due — not allowed') : __('Fully refunded'))}</div>
+                </div>`);
+        };
+        ['amount', 'mode_of_payment'].forEach(f => dlg.fields_dict[f].$input && dlg.fields_dict[f].$input.on('input change', () => setTimeout(paint, 0)));
+        dlg.fields_dict.mode_of_payment.df.onchange = paint;
+        dlg.show();
+        paint();
+
+        function review(v) {
+            const m = mode_by_name[v.mode_of_payment];
+            if (!m) return frappe.msgprint(__('Choose the Mode of Payment.'));
+            const amt = flt(v.amount, 2);
+            if (amt <= 0) return frappe.msgprint(__('Enter the amount.'));
+            if (amt - d.refund_due > 0.005) return frappe.msgprint(__('The amount is more than {0}.', [money(d.refund_due)]));
+            if (m.account_type === 'Bank' && (!v.reference_no || !v.reference_date)) return frappe.msgprint(__('Enter the Reference No (UTR / cheque no) and Reference Date.'));
+            const party_acc = cn ? 'Debtors' : 'Creditors';
+            const gl = cn
+                ? [[`${party_acc} — ${pp_esc(d.party_name || d.party)}`, money(amt), ''], [pp_esc(m.account), '', money(amt)]]
+                : [[pp_esc(m.account), money(amt), ''], [`${party_acc} — ${pp_esc(d.party_name || d.party)}`, '', money(amt)]];
+            const crow = (k, val, cls) => `<div class="of-pay-rcpt__row ${cls || ''}"><span>${k}</span><b>${val}</b></div>`;
+            const confirm = new frappe.ui.Dialog({
+                title: __('Confirm Refund'),
+                fields: [
+                    { fieldtype: 'HTML', fieldname: 'body' },
+                    { fieldtype: 'Check', fieldname: 'checked', label: __('I have checked the amount, mode of payment and reference') },
+                ],
+                primary_action_label: cn ? __('Submit Refund') : __('Submit Receipt'),
+                primary_action: (cv) => {
+                    if (!cv.checked) return frappe.msgprint(__('Tick the confirmation to submit.'));
+                    confirm.get_primary_btn().prop('disabled', true);
+                    frappe.call({
+                        method: 'erp_dacsinc_custom.dashboard_payment.record_refund',
+                        args: { doctype, name, mode_of_payment: v.mode_of_payment, amount: amt, posting_date: v.posting_date,
+                                reference_no: v.reference_no || null, reference_date: v.reference_date || null,
+                                remarks: v.remarks || null, from_form: opts.from_form ? 1 : 0 },
+                        freeze: true, freeze_message: __('Submitting…'),
+                    }).then(res => {
+                        const x = res.message || {};
+                        confirm.hide(); dlg.hide();
+                        frappe.msgprint({ title: cn ? __('Refund submitted') : __('Refund received'), indicator: 'green',
+                            message: __('Payment Entry {0} ({1}) is submitted. Left on {2}: {3}.',
+                                [`<a href="/app/payment-entry/${encodeURIComponent(x.name)}" target="_blank">${pp_esc(x.name)}</a>`,
+                                 pp_esc(x.payment_type), pp_esc(name), money(Math.abs(flt(x.outstanding)))]) });
+                        on_done && on_done();
+                    }).catch(() => confirm.get_primary_btn().prop('disabled', false));
+                },
+            });
+            confirm.$wrapper.addClass('of-pay-dialog');
+            confirm.fields_dict.body.$wrapper.html(`
+                <div class="of-pay-rcpt ${cn ? 'is-out' : 'is-in'}">
+                    <div class="of-pay-rcpt__top">
+                        <span>${cn ? __('Refunding to') : __('Receiving back from')} <b>${pp_esc(d.party_name || d.party)}</b></span>
+                        <b class="of-pay-rcpt__amt">${money(amt)}</b>
+                        <span>${cn ? __('from') : __('into')} ${pp_esc(m.account)} · ${pp_esc(v.mode_of_payment)} · ${frappe.datetime.str_to_user(v.posting_date)}</span>
+                    </div>
+                    ${crow(__('Against'), `${cn ? __('Credit Note') : __('Debit Note')} ${pp_esc(d.name)}`)}
+                    ${v.reference_no ? crow(__('Reference'), `${pp_esc(v.reference_no)} · ${frappe.datetime.str_to_user(v.reference_date)}`) : ''}
+                    ${crow(cn ? __('Customer credit after this') : __('Supplier owes us after this'), money(Math.max(d.refund_due - amt, 0)), 'is-total')}
+                </div>
+                <details class="of-pay-gl"><summary>${__('Ledger entries')}</summary>
+                    <table><tr><th>${__('Account')}</th><th>${__('Debit')}</th><th>${__('Credit')}</th></tr>
+                    ${gl.map(l => `<tr><td style="padding:3px 8px;">${l[0]}</td><td style="padding:3px 8px;text-align:right;">${l[1]}</td><td style="padding:3px 8px;text-align:right;">${l[2]}</td></tr>`).join('')}</table>
+                </details>
+                <div class="of-pay-warn"><i class="fa fa-exclamation-triangle"></i> ${__('This submits a Payment Entry. To undo it later, cancel the Payment Entry.')}</div>`);
+            confirm.show();
+        }
+    });
+}
+window.of_refund_prompt = of_refund_prompt;

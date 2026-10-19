@@ -1601,6 +1601,33 @@ is what the customer pays and what `outstanding_amount` counts down from. Using 
 total showed ₹52,783.50 billed and ₹9,999.50 received for a ₹10,000 payment on a ₹52,784
 invoice: the 50 paise round-off appeared as money received / missing.
 
+## Finance tab: Returns / Notes and the New bar
+
+A fourth sub-tab, **Returns / Notes**, lists Credit Notes and Debit Notes with their effect and
+next step (Adjust / Refund / Receive refund / Submit); the three invoice lists leave returns out and
+show a "↩ note" chip on the invoice instead. The **New** bar above the cards starts Payment Entries
+(Receive / Pay / Internal Transfer), Journal Entry, direct Credit / Debit Notes, Payment
+Reconciliation and Bank Reconciliation. Full rules: `docs/returns.md`. Its visibility comes from
+Admin Settings `of_sub_accounts_notes_roles` / `_act_roles` (the access sheet row "Finance ›
+Returns / Notes"; seeded from Receivables by `patches/finance_notes_subtab_roles.py`).
+Every Finance row (the three invoice lists and Returns / Notes) has a 🖨 **Print** button that asks
+which copy (Original … Quadruplicate, All 4) — `print_prompt.dacs_print_copies`, the same choice and
+formats as the form's "Print Sales Invoice"; a return prints as its Credit / Debit Note.
+The New bar's direct Credit / Debit Note links (`/app/sales-invoice/new?is_return=1`) open the form
+with Is Return ticked — `print_prompt.js` reads the parameter on page load (Is Return is a no-copy
+field, so Frappe's own route options skip it).
+
+## Finance tab: remarks and what settled each invoice
+
+Each invoice row shows the invoice's **Remarks** under the party (ERPNext's automatic "No Remarks" /
+"Against Supplier Invoice …" left out); a Returns / Notes row shows its reason the same way. Under
+**Received / Paid** only a link "N payments" shows (the row stays one line high); it opens a window
+(`of_payments_dialog`) listing what settled the invoice (`order_flow_api._attach_payments`): every Payment
+Entry against it (date · mode · cheque / ref. no. · the amount set off on *this* invoice; "1 of N invoices"
+when one entry settled several; drafts marked) with a 🖨 that prints the receipt / voucher
+(**Payment Receipt DAC**, `docs/print-formats.md`), and every Journal Entry that set a credit note or
+advance off against it (Payment Reconciliation — "Adjusted (Credit Note)"). Cancelled entries never show.
+
 ## Finance tab: Accounts Guide
 
 Beside the three summary cards, an **Accounts Guide** tile opens `/accounts-guide`
@@ -1616,7 +1643,12 @@ for many customers / invoices (one Payment Entry per customer with the same Cheq
 matched together to the one bank line in the Bank Reconciliation Tool; or one Bank Entry Journal
 Entry with Reference Type / Name per invoice row; or unallocated then Payment Reconciliation) and
 a bounced cheque (cancel every entry with that cheque number; bank charges by Journal Entry). Returns follow the ERPNext pattern: goods by Sales Return (from the
-Delivery Note) / Purchase Return (from the Purchase Receipt), money by Credit Note / Debit Note.
+Delivery Note) / Purchase Return (from the Purchase Receipt), money by Credit Note / Debit Note —
+with its own group: Returns — start here (which document for what), Credit / Debit Note steps
+(negative qty, Remarks = reason, printing), **after the return** (unpaid / partly / fully paid
+cases; the ERPNext v15 rule that a return larger than what the invoice still owes becomes a credit on
+the note — Update Outstanding for Self; Adjust via Payment Reconciliation vs Refund, with their
+ledgers; supplier side), notes without goods (direct, service item) and return mistakes to avoid.
 Supplier TDS is described the ERPNext way (Tax Withholding Category on the supplier, deducted on
 the Purchase Invoice); the Pay prompt's TDS is only for TDS not on the bill. Button names were
 checked against ERPNext v15: View › Accounting Ledger on invoices / Delivery Note / Purchase

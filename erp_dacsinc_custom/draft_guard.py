@@ -35,15 +35,21 @@ def existing_drafts(doctype, doc):
 	"""{draft name: {source doctypes}} — drafts of `doctype` made from the same source
 	lines as `doc` (a document or a dict, e.g. a mapped draft not saved yet)."""
 	found = {}
+	# A return (Credit Note, Sales / Purchase Return, Debit Note) keeps the source links of what it
+	# reverses: returns are only compared with returns, ordinary documents with ordinary ones —
+	# a draft credit note must not block the next invoice for that order line, nor the reverse.
+	is_return = 1 if frappe.utils.cint(doc.get("is_return")) else 0
+	has_return = frappe.get_meta(doctype).has_field("is_return")
 	for table, child, field, source in SOURCES.get(doctype, []):
 		values = tuple({r.get(field) for r in (doc.get(table) or []) if r.get(field)})
 		if not values:
 			continue
+		ret_cond = "AND IFNULL(p.is_return, 0) = %(is_return)s" if has_return else ""
 		for d in frappe.db.sql(f"""
 			SELECT DISTINCT c.parent
 			FROM `tab{child}` c JOIN `tab{doctype}` p ON p.name = c.parent
-			WHERE p.docstatus = 0 AND c.`{field}` IN %(v)s
-		""", {"v": values}, as_dict=True):
+			WHERE p.docstatus = 0 AND c.`{field}` IN %(v)s {ret_cond}
+		""", {"v": values, "is_return": is_return}, as_dict=True):
 			found.setdefault(d.parent, set()).add(source)
 	return found
 

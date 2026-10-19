@@ -21,10 +21,18 @@ function dn_row_is_linked(doc) {
 	return !!(doc && DN_LINK_FIELDS.some(f => doc[f]));
 }
 
+// A Sales Return (is_return) keeps its lines linked to the Delivery Note it reverses, but the qty
+// coming back is the user's to set (negative: -1, -2 …); everything else stays as delivered.
+// Same rule as sales_invoice.js (si_field_locked) and custom_script._revert_pick_list_locked_fields.
+function dn_field_locked(row_doc, parent_doc, fieldname) {
+	if (!dn_row_is_linked(row_doc)) return false;
+	return !(fieldname === 'qty' && parent_doc && cint(parent_doc.is_return));
+}
+
 function dn_apply_row_locks(row) {
 	if (!row || !row.doc) return;
-	const locked = dn_row_is_linked(row.doc);
-	DN_LOCKED_FIELDS.forEach(f => row.toggle_editable(f, !locked));
+	const parent_doc = row.frm && row.frm.doc;
+	DN_LOCKED_FIELDS.forEach(f => row.toggle_editable(f, !dn_field_locked(row.doc, parent_doc, f)));
 }
 
 frappe.ui.form.on('Delivery Note', {
@@ -32,17 +40,20 @@ frappe.ui.form.on('Delivery Note', {
 		if (frm.fields_dict.items && frm.fields_dict.items.grid) {
 			// Declarative per-row lock, evaluated by the grid itself on every
 			// render.
-			const lock_expr = 'eval: ' + DN_LINK_FIELDS.map(f => 'doc.' + f).join(' || ');
+			const linked = '(' + DN_LINK_FIELDS.map(f => 'doc.' + f).join(' || ') + ')';
+			const lock_expr = 'eval: ' + linked;
+			const qty_lock_expr = 'eval: ' + linked + ' && !(parent && parent.is_return)';
+			const expr_for = (f) => (f === 'qty' ? qty_lock_expr : lock_expr);
 			(frm.fields_dict.items.grid.docfields || []).forEach(df => {
 				if (DN_LOCKED_FIELDS.includes(df.fieldname)) {
-					df.read_only_depends_on = lock_expr;
+					df.read_only_depends_on = expr_for(df.fieldname);
 				}
 			});
 			DN_LOCKED_FIELDS.forEach(f => {
 				const df = frappe.meta.get_docfield('Delivery Note Item', f, frm.doc.name);
-				if (df) df.read_only_depends_on = lock_expr;
+				if (df) df.read_only_depends_on = expr_for(f);
 				const meta_df = frappe.meta.get_docfield('Delivery Note Item', f);
-				if (meta_df) meta_df.read_only_depends_on = lock_expr;
+				if (meta_df) meta_df.read_only_depends_on = expr_for(f);
 			});
 
 			let old_on_row_refresh = frm.fields_dict.items.grid.on_row_refresh;
@@ -79,7 +90,16 @@ frappe.ui.form.on('Delivery Note Item', {
 	rate: function(frm, cdt, cdn) { frm.trigger('make_linked_rows_read_only'); },
 	price_list_rate: function(frm, cdt, cdn) { frm.trigger('make_linked_rows_read_only'); },
 	amount: function(frm, cdt, cdn) { frm.trigger('make_linked_rows_read_only'); },
-	qty: function(frm, cdt, cdn) { frm.trigger('make_linked_rows_read_only'); },
+	qty: function(frm, cdt, cdn) {
+		// a Sales Return's quantities are negative: typing 2 means -2
+		const row = locals[cdt][cdn];
+		if (cint(frm.doc.is_return) && flt(row.qty) > 0) {
+			frappe.model.set_value(cdt, cdn, 'qty', -flt(row.qty));
+			frappe.show_alert({ message: __('Return quantities are negative — set to {0}', [-flt(row.qty)]), indicator: 'blue' }, 3);
+			return;
+		}
+		frm.trigger('make_linked_rows_read_only');
+	},
 	item_code: function(frm, cdt, cdn) { frm.trigger('make_linked_rows_read_only'); },
 
 	// The expanded row form renders its own controls from the grid's field

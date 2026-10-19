@@ -38,6 +38,10 @@ from erp_dacsinc_custom.custom_script import (
 # Linkage
 # --------------------------------------------------------------------------
 
+# is_return marks a return (Sales Return DN, Credit Note, Purchase Return, Debit Note, SCR return):
+# it carries the Sales Order links of what it reverses but is not progress — the tracker keeps it out
+# of the document-flow counts and stage (row["returns"] instead) and the activity stream labels it.
+#
 # is_rm_tier marks a document raised for a BOM RAW MATERIAL rather than for
 # the item the Sales Order actually sells — it drives the separate "RM:"
 # pipeline indicator and is kept out of stage computation entirely.
@@ -63,7 +67,7 @@ _EVENT_SQL = """
            IF(MAX(CASE WHEN IFNULL(mri.custom_procurement_purpose, '') != 'Raw Material' AND ((mri.sales_order_item IS NOT NULL AND mri.sales_order_item != '')
                           OR EXISTS (SELECT 1 FROM `tabSales Order Item` soi
                                      WHERE soi.parent = mri.sales_order AND soi.item_code = mri.item_code))
-                     THEN 1 ELSE 0 END) > 0, 0, 1) AS is_rm_tier
+                     THEN 1 ELSE 0 END) > 0, 0, 1) AS is_rm_tier, 0 AS is_return
     FROM `tabMaterial Request Item` mri
     JOIN `tabMaterial Request` mr ON mr.name = mri.parent
     WHERE mri.sales_order IS NOT NULL AND mri.sales_order != '' AND mr.docstatus <= 2
@@ -78,7 +82,7 @@ _EVENT_SQL = """
                           OR EXISTS (SELECT 1 FROM `tabSales Order Item` soi
                                      WHERE soi.parent = poi.sales_order
                                        AND soi.item_code IN (poi.item_code, IFNULL(poi.fg_item, poi.item_code))))
-                     THEN 1 ELSE 0 END) > 0, 0, 1) AS is_rm_tier
+                     THEN 1 ELSE 0 END) > 0, 0, 1) AS is_rm_tier, 0 AS is_return
     FROM `tabPurchase Order Item` poi
     JOIN `tabPurchase Order` po ON po.name = poi.parent
     LEFT JOIN `tabSupplier` sup ON sup.name = po.supplier
@@ -93,7 +97,7 @@ _EVENT_SQL = """
            IF(MAX(CASE WHEN IFNULL(pri.custom_procurement_purpose, '') != 'Raw Material' AND ((pri.sales_order_item IS NOT NULL AND pri.sales_order_item != '')
                           OR EXISTS (SELECT 1 FROM `tabSales Order Item` soi
                                      WHERE soi.parent = pri.sales_order AND soi.item_code = pri.item_code))
-                     THEN 1 ELSE 0 END) > 0, 0, 1) AS is_rm_tier
+                     THEN 1 ELSE 0 END) > 0, 0, 1) AS is_rm_tier, MAX(IFNULL(pr.is_return, 0)) AS is_return
     FROM `tabPurchase Receipt Item` pri
     JOIN `tabPurchase Receipt` pr ON pr.name = pri.parent
     LEFT JOIN `tabSupplier` sup ON sup.name = pr.supplier
@@ -109,7 +113,7 @@ _EVENT_SQL = """
                           OR EXISTS (SELECT 1 FROM `tabSales Order Item` soi
                                      WHERE soi.parent = poi.sales_order
                                        AND soi.item_code IN (poi.item_code, IFNULL(poi.fg_item, poi.item_code))))
-                     THEN 1 ELSE 0 END) > 0, 0, 1) AS is_rm_tier
+                     THEN 1 ELSE 0 END) > 0, 0, 1) AS is_rm_tier, MAX(IFNULL(scr.is_return, 0)) AS is_return
     FROM `tabSubcontracting Receipt Item` scri
     JOIN `tabSubcontracting Receipt` scr ON scr.name = scri.parent
     JOIN `tabPurchase Order Item` poi ON poi.name = scri.purchase_order_item
@@ -126,7 +130,7 @@ _EVENT_SQL = """
     -- production step, never a raw-material-only request.
     SELECT 'Job Work (Subcontract)', sco.purchase_order, poi.sales_order,
            sco.modified, sco.creation, sco.status, sco.docstatus, sco.owner,
-           sco.supplier, sup.supplier_name, 0 AS is_rm_tier
+           sco.supplier, sup.supplier_name, 0 AS is_rm_tier, 0 AS is_return
     FROM `tabSubcontracting Order` sco
     JOIN `tabPurchase Order Item` poi ON poi.parent = sco.purchase_order
     LEFT JOIN `tabSupplier` sup ON sup.name = sco.supplier
@@ -139,7 +143,7 @@ _EVENT_SQL = """
     SELECT 'Embroidery Work Order', ewo.purchase_order, poi.sales_order,
            ewo.modified, ewo.creation, ewo.status, ewo.docstatus, ewo.owner,
            COALESCE(ewo.full_piece_jobber, ewo.panel_jobber),
-           COALESCE(fp.supplier_name, pn.supplier_name), 0 AS is_rm_tier
+           COALESCE(fp.supplier_name, pn.supplier_name), 0 AS is_rm_tier, 0 AS is_return
     FROM `tabEmbroidery Work Order` ewo
     JOIN `tabPurchase Order Item` poi ON poi.parent = ewo.purchase_order
     LEFT JOIN `tabSupplier` fp ON fp.name = ewo.full_piece_jobber
@@ -152,7 +156,7 @@ _EVENT_SQL = """
 
     SELECT 'Pick List', pl.name, pli.sales_order,
            pl.modified, pl.creation, pl.status, pl.docstatus, pl.owner,
-           pl.customer, cust.customer_name, 0 AS is_rm_tier
+           pl.customer, cust.customer_name, 0 AS is_rm_tier, 0 AS is_return
     FROM `tabPick List Item` pli
     JOIN `tabPick List` pl ON pl.name = pli.parent
     LEFT JOIN `tabCustomer` cust ON cust.name = pl.customer
@@ -163,7 +167,7 @@ _EVENT_SQL = """
 
     SELECT 'Delivery Note', dn.name, dni.against_sales_order,
            dn.modified, dn.creation, dn.status, dn.docstatus, dn.owner,
-           dn.customer, cust.customer_name, 0 AS is_rm_tier
+           dn.customer, cust.customer_name, 0 AS is_rm_tier, MAX(IFNULL(dn.is_return, 0)) AS is_return
     FROM `tabDelivery Note Item` dni
     JOIN `tabDelivery Note` dn ON dn.name = dni.parent
     LEFT JOIN `tabCustomer` cust ON cust.name = dn.customer
@@ -174,7 +178,7 @@ _EVENT_SQL = """
 
     SELECT 'Sales Invoice', si.name, sii.sales_order,
            si.modified, si.creation, si.status, si.docstatus, si.owner,
-           si.customer, cust.customer_name, 0 AS is_rm_tier
+           si.customer, cust.customer_name, 0 AS is_rm_tier, MAX(IFNULL(si.is_return, 0)) AS is_return
     FROM `tabSales Invoice Item` sii
     JOIN `tabSales Invoice` si ON si.name = sii.parent
     LEFT JOIN `tabCustomer` cust ON cust.name = si.customer
@@ -185,7 +189,7 @@ _EVENT_SQL = """
 
     SELECT 'Purchase Invoice', pi.name, poi.sales_order,
            pi.modified, pi.creation, pi.status, pi.docstatus, pi.owner,
-           pi.supplier, sup.supplier_name, 0 AS is_rm_tier
+           pi.supplier, sup.supplier_name, 0 AS is_rm_tier, MAX(IFNULL(pi.is_return, 0)) AS is_return
     FROM `tabPurchase Invoice Item` pii
     JOIN `tabPurchase Invoice` pi ON pi.name = pii.parent
     JOIN `tabPurchase Order Item` poi ON poi.parent = pii.purchase_order
@@ -197,7 +201,7 @@ _EVENT_SQL = """
 
     SELECT 'Sales Order' AS doctype, so.name, so.name AS sales_order,
            so.modified AS ts, so.creation AS created, COALESCE(so.workflow_state, so.status) AS status, so.docstatus, so.owner,
-           so.customer AS party, so.customer_name AS party_name, 0 AS is_rm_tier
+           so.customer AS party, so.customer_name AS party_name, 0 AS is_rm_tier, 0 AS is_return
     FROM `tabSales Order` so
     WHERE so.docstatus <= 2
 
@@ -205,7 +209,7 @@ _EVENT_SQL = """
 
     SELECT 'Comment' AS doctype, c.name, c.reference_name AS sales_order,
            c.modified AS ts, c.creation AS created, c.content AS status, 0 AS docstatus, c.owner,
-           NULL AS party, NULL AS party_name, 0 AS is_rm_tier
+           NULL AS party, NULL AS party_name, 0 AS is_rm_tier, 0 AS is_return
     FROM `tabComment` c
     WHERE c.reference_doctype = 'Sales Order' AND c.comment_type = 'Comment'
 
@@ -217,7 +221,7 @@ _EVENT_SQL = """
     -- has to tolerate a NULL sales_order.
     SELECT 'Uniform Embroidery Transfer' AS doctype, uet.name, NULL AS sales_order,
            uet.modified AS ts, uet.creation AS created, uet.status, uet.docstatus, uet.owner,
-           NULL AS party, NULL AS party_name, 0 AS is_rm_tier
+           NULL AS party, NULL AS party_name, 0 AS is_rm_tier, 0 AS is_return
     FROM `tabUniform Embroidery Transfer` uet
 """
 
@@ -621,6 +625,20 @@ _SUBMITTED_LABELS = {
     "Purchase Invoice": "Supplier bill booked",
 }
 
+# A return document by its doctype, and what its submit means.
+_RETURN_NAMES = {
+    "Delivery Note": "Sales Return", "Sales Invoice": "Credit Note", "Purchase Receipt": "Purchase Return",
+    "Subcontracting Receipt": "Subcontract Return", "Purchase Invoice": "Debit Note",
+}
+_RETURN_SUBMITTED_LABELS = {
+    "Delivery Note": "Goods returned by customer (Sales Return)",
+    "Sales Invoice": "Credit Note issued to customer",
+    "Purchase Receipt": "Goods returned to supplier (Purchase Return)",
+    "Subcontracting Receipt": "Goods returned to jobber",
+    "Purchase Invoice": "Debit Note issued to supplier",
+}
+
+
 def _plain_text(html):
     if not html:
         return ""
@@ -737,6 +755,15 @@ def _event_importance(ev):
         if "receiv" in st:
             return True, "Embroidery transfer received back"
         return True, "Plain stock sent to embroidery"
+
+    # Returns (is_return, see _EVENT_SQL): their own wording, never "Invoiced" / "Dispatched".
+    if cint(ev.get("is_return")) and dt in _RETURN_NAMES:
+        name = _RETURN_NAMES[dt]
+        if ds == 2:
+            return True, f"{name} cancelled"
+        if ds == 1:
+            return True, _RETURN_SUBMITTED_LABELS[dt]
+        return True, f"{name} created (Draft)"
 
     if dt == "Sales Order":
         if ds == 2:
@@ -1130,6 +1157,7 @@ def _get_tracker_rows(days=120, search=None, scope="open", merchandiser=None, ap
         o["draft_invoices"] = []
         o["delivery_notes"] = []
         o["draft_delivery_notes"] = []
+        o["returns"] = []   # Sales Returns / Credit Notes / Purchase Returns … against this order (chip only)
         # Raw-material-tier procurement (an MR/PO/Receipt for a BOM component,
         # not the SO's own sold item) — tracked separately so it can be shown
         # as its own pipeline without ever driving the main stage/action below.
@@ -1166,7 +1194,7 @@ def _get_tracker_rows(days=120, search=None, scope="open", merchandiser=None, ap
         SELECT DISTINCT sii.sales_order, si.name
         FROM `tabSales Invoice Item` sii
         JOIN `tabSales Invoice` si ON si.name = sii.parent
-        WHERE si.docstatus = 1 AND IFNULL(si.update_stock, 0) = 1
+        WHERE si.docstatus = 1 AND IFNULL(si.update_stock, 0) = 1 AND IFNULL(si.is_return, 0) = 0
           AND sii.sales_order IN %(names)s
     """, {"names": tuple(names)}, as_dict=1):
         row = by_name.get(r.sales_order)
@@ -1280,7 +1308,7 @@ def _get_tracker_rows(days=120, search=None, scope="open", merchandiser=None, ap
 
     # Roll every linked document up to its Sales Order in one pass.
     events = frappe.db.sql(f"""
-        SELECT sales_order, doctype, name, ts, status, docstatus, is_rm_tier
+        SELECT sales_order, doctype, name, ts, status, docstatus, is_rm_tier, is_return
         FROM ({_EVENT_SQL}) ev
         WHERE ev.sales_order IN %(names)s
         ORDER BY ts DESC
@@ -1307,11 +1335,19 @@ def _get_tracker_rows(days=120, search=None, scope="open", merchandiser=None, ap
         is_rm = bool(ev.get("is_rm_tier")) and dt in (
             "Material Request", "Purchase Order", "Purchase Receipt", "Subcontracting Receipt")
 
+        # A return (Sales Return DN, Credit Note, Purchase / Subcontract Return, Debit Note) carries
+        # the order's links but is not progress: listed for its own chip, never counted as a
+        # delivery / invoice / receipt, never a stage — it still shows as last activity, labelled.
+        if cint(ev.get("is_return")):
+            if ds != 2:
+                ret = {"name": ev.name, "doctype": dt, "docstatus": ds, "label": _RETURN_NAMES.get(dt, dt)}
+                if ret not in row["returns"]:
+                    row["returns"].append(ret)
         # A cancelled document is not live progress — it must still surface as
         # the order's last activity (below) but must never count toward doc-flow
         # tallies or stage computation, or a cancelled PO/MR/Receipt would make
         # an order look further along than it actually is.
-        if ds != 2:
+        elif ds != 2:
             if is_rm:
                 row["rm_counts"][dt] = row["rm_counts"].get(dt, 0) + 1
             else:
@@ -2323,6 +2359,7 @@ def _billable_delivery_notes(sales_order):
         FROM `tabDelivery Note Item` dni
         JOIN `tabDelivery Note` dn ON dn.name = dni.parent
         WHERE dni.against_sales_order = %s AND dn.docstatus = 1
+          AND IFNULL(dn.is_return, 0) = 0   -- a Sales Return is never invoiced from
           AND IFNULL(dn.per_billed, 0) < 100
           AND IFNULL(dn.status, '') NOT IN ('Closed', 'Return Issued')
         ORDER BY dni.parent
@@ -3340,9 +3377,9 @@ def get_purchase_flow(days=120, search=None, scope="open", merchandiser=None,
     _add_status_filter(pr_conditions, "purchase.receipt", "pr")
     _add_status_filter(scr_conditions, "purchase.receipt", "scr")
     if scope == "open":
-        pr_conditions.append("pr.status NOT IN ('Completed', 'Cancelled')")
+        pr_conditions.append("pr.status NOT IN ('Completed', 'Cancelled', 'Return')")  # a submitted return is done
         pr_conditions.append("(pri.sales_order IS NULL OR pri.sales_order = '' OR so.status NOT IN ('Closed', 'Completed', 'Cancelled'))")
-        scr_conditions.append("scr.status NOT IN ('Completed', 'Cancelled')")
+        scr_conditions.append("scr.status NOT IN ('Completed', 'Cancelled', 'Return')")
         scr_conditions.append("(poi.sales_order IS NULL OR poi.sales_order = '' OR so.status NOT IN ('Closed', 'Completed', 'Cancelled'))")
     elif scope == "mine":
         pr_conditions.append("pr.owner = %(me)s")
@@ -3382,7 +3419,7 @@ def get_purchase_flow(days=120, search=None, scope="open", merchandiser=None,
                 GROUP_CONCAT(DISTINCT pri.sales_order ORDER BY pri.sales_order SEPARATOR ', ') AS sales_orders,
                 GROUP_CONCAT(DISTINCT so.customer_name ORDER BY so.customer_name SEPARATOR ', ') AS so_customer_names,
                 GROUP_CONCAT(DISTINCT pri.purchase_order ORDER BY pri.purchase_order SEPARATOR ', ') AS purchase_orders,
-                SUM(pri.received_qty) AS qty, NULL AS linked_pr
+                SUM(pri.received_qty) AS qty, NULL AS linked_pr, MAX(IFNULL(pr.is_return, 0)) AS is_return
          FROM {_pr_from_join}
          WHERE {' AND '.join(pr_list_conditions)}
          GROUP BY pr.name, pr.posting_date, pr.status, pr.docstatus, pr.supplier,
@@ -3398,7 +3435,7 @@ def get_purchase_flow(days=120, search=None, scope="open", merchandiser=None,
                 GROUP_CONCAT(DISTINCT scri.purchase_order ORDER BY scri.purchase_order SEPARATOR ', '),
                 SUM(scri.qty),
                 (SELECT pr2.name FROM `tabPurchase Receipt` pr2
-                 WHERE pr2.subcontracting_receipt = scr.name LIMIT 1)
+                 WHERE pr2.subcontracting_receipt = scr.name LIMIT 1), MAX(IFNULL(scr.is_return, 0))
          FROM {_scr_from_join}
          WHERE {' AND '.join(scr_list_conditions)}
          GROUP BY scr.name, scr.posting_date, scr.status, scr.docstatus, scr.supplier, sup.supplier_name, scr.owner)
@@ -3684,9 +3721,9 @@ def get_jobwork_flow(days=180, search=None, scope="open", merchandiser=None,
     _add_status_filter(scr_conditions, "jobwork.receipt", "scr")
 
     if scope == "open":
-        pr_conditions.append("pr.status NOT IN ('Completed', 'Cancelled')")
+        pr_conditions.append("pr.status NOT IN ('Completed', 'Cancelled', 'Return')")  # a submitted return is done
         pr_conditions.append("(pri.sales_order IS NULL OR pri.sales_order = '' OR so.status NOT IN ('Closed', 'Completed', 'Cancelled'))")
-        scr_conditions.append("scr.status NOT IN ('Completed', 'Cancelled')")
+        scr_conditions.append("scr.status NOT IN ('Completed', 'Cancelled', 'Return')")
         scr_conditions.append("(poi.sales_order IS NULL OR poi.sales_order = '' OR so.status NOT IN ('Closed', 'Completed', 'Cancelled'))")
     elif scope == "mine":
         pr_conditions.append("pr.owner = %(me)s")
@@ -3727,7 +3764,7 @@ def get_jobwork_flow(days=180, search=None, scope="open", merchandiser=None,
                 GROUP_CONCAT(DISTINCT pri.sales_order ORDER BY pri.sales_order SEPARATOR ', ') AS sales_orders,
                 GROUP_CONCAT(DISTINCT so.customer_name ORDER BY so.customer_name SEPARATOR ', ') AS so_customer_names,
                 GROUP_CONCAT(DISTINCT pri.purchase_order ORDER BY pri.purchase_order SEPARATOR ', ') AS purchase_orders,
-                SUM(pri.received_qty) AS qty, NULL AS linked_pr
+                SUM(pri.received_qty) AS qty, NULL AS linked_pr, MAX(IFNULL(pr.is_return, 0)) AS is_return
          FROM {_pr_from_join}
          WHERE {' AND '.join(pr_list_conditions)}
          GROUP BY pr.name, pr.posting_date, pr.status, pr.docstatus, pr.supplier, sup.supplier_name, pr.is_subcontracted, pr.currency, pr.grand_total, pr.owner)
@@ -3751,7 +3788,7 @@ def get_jobwork_flow(days=180, search=None, scope="open", merchandiser=None,
                 -- purchase_order.py) — that PR, not the SCR, is the document this
                 -- business actually works from day to day.
                 (SELECT pr2.name FROM `tabPurchase Receipt` pr2
-                 WHERE pr2.subcontracting_receipt = scr.name LIMIT 1) AS linked_pr
+                 WHERE pr2.subcontracting_receipt = scr.name LIMIT 1) AS linked_pr, MAX(IFNULL(scr.is_return, 0)) AS is_return
          FROM {_scr_from_join}
          WHERE {' AND '.join(scr_list_conditions)}
          GROUP BY scr.name, scr.posting_date, scr.status, scr.docstatus, scr.supplier, sup.supplier_name, scr.owner)
@@ -3905,7 +3942,8 @@ def get_summary(days=120, scope="open", search=None, merchandiser=None, approval
 def get_accounts_flow(days=120, search=None, scope="open", merchandiser=None,
                        sales_page=1, sales_page_size=100, supplier_page=1, supplier_page_size=100,
                        jobber_page=1, jobber_page_size=100,
-                       sales_docstatus=None, supplier_docstatus=None, jobber_docstatus=None):
+                       sales_docstatus=None, supplier_docstatus=None, jobber_docstatus=None,
+                       notes_page=1, notes_page_size=100, notes_docstatus=None):
     """
     Financial summary & invoices split into Receivables, Supplier Payables, and Jobber Payables
     (supplier custom_is_jobber = 1, or the invoice is subcontracted).
@@ -3925,12 +3963,15 @@ def get_accounts_flow(days=120, search=None, scope="open", merchandiser=None,
 
     # Draft and submitted invoices both list (All / Draft / Submitted pills); the totals,
     # tiles and collection bar count submitted invoices only — a draft is not owed yet.
-    si_conditions = ["si.docstatus < 2", "si.posting_date >= %(from_date)s AND si.posting_date < %(to_next)s", _NOT_DISABLED_SO]
+    # Credit Notes (returns) are not invoices to collect: they list on Returns / Notes (_accounts_notes).
+    si_conditions = ["si.docstatus < 2", "IFNULL(si.is_return, 0) = 0",
+                     "si.posting_date >= %(from_date)s AND si.posting_date < %(to_next)s", _NOT_DISABLED_SO]
     _add_party_filter(si_conditions, params, customer="si.customer", list_key="accounts.receivables")
     _add_choice_filter(si_conditions, "accounts.receivables", "goods", _done_choices(_SI_DONE_SQL))
     _add_status_filter(si_conditions, "accounts.receivables", "si")
     if scope == "open":
-        si_conditions.append("si.status != 'Paid'")
+        # still something to collect (an invoice cleared by its credit note is not open)
+        si_conditions.append("(si.docstatus = 0 OR si.outstanding_amount > 0)")
     elif scope == "mine":
         si_conditions.append("si.owner = %(me)s")
         params["me"] = frappe.session.user
@@ -3961,14 +4002,14 @@ def get_accounts_flow(days=120, search=None, scope="open", merchandiser=None,
         SELECT si.name, si.posting_date, si.due_date, si.status, si.docstatus,
                si.customer, cust.customer_name, si.currency,
                IF(IFNULL(si.rounded_total, 0) = 0, si.grand_total, si.rounded_total) AS grand_total,
-               si.outstanding_amount, si.owner,
+               si.outstanding_amount, si.owner, NULLIF(TRIM(si.remarks), 'No Remarks') AS remarks,
                ((IF(IFNULL(si.rounded_total, 0) = 0, si.grand_total, si.rounded_total) - si.outstanding_amount)) AS paid_amount,
                GROUP_CONCAT(DISTINCT sii.sales_order ORDER BY sii.sales_order SEPARATOR ', ') AS sales_orders,
                GROUP_CONCAT(DISTINCT so.customer_name ORDER BY so.customer_name SEPARATOR ', ') AS so_customer_names
         FROM {_si_from_join}
         WHERE {' AND '.join(_with_docstatus(si_conditions, "si.docstatus", sales_docstatus))}
         GROUP BY si.name, si.posting_date, si.due_date, si.status, si.docstatus,
-                 si.customer, cust.customer_name, si.currency, si.grand_total, si.rounded_total, si.outstanding_amount, si.owner
+                 si.customer, cust.customer_name, si.currency, si.grand_total, si.rounded_total, si.outstanding_amount, si.owner, si.remarks
         ORDER BY si.posting_date DESC, si.name DESC
     """, params, sales_page, sales_page_size)
 
@@ -3984,9 +4025,11 @@ def get_accounts_flow(days=120, search=None, scope="open", merchandiser=None,
     """, params, as_dict=1)[0]
 
     pi_params = {"from_date": from_date, "to_next": _to_next(days)}
-    pi_conditions = ["pi.docstatus < 2", "pi.posting_date >= %(from_date)s AND pi.posting_date < %(to_next)s", _NOT_DISABLED_SO]
+    # Debit Notes (purchase returns) list on Returns / Notes, not as bills to pay.
+    pi_conditions = ["pi.docstatus < 2", "IFNULL(pi.is_return, 0) = 0",
+                     "pi.posting_date >= %(from_date)s AND pi.posting_date < %(to_next)s", _NOT_DISABLED_SO]
     if scope == "open":
-        pi_conditions.append("pi.status != 'Paid'")
+        pi_conditions.append("(pi.docstatus = 0 OR pi.outstanding_amount > 0)")
     elif scope == "mine":
         pi_conditions.append("pi.owner = %(me)s")
         pi_params["me"] = frappe.session.user
@@ -4033,14 +4076,14 @@ def get_accounts_flow(days=120, search=None, scope="open", merchandiser=None,
                    pi.supplier, sup.supplier_name, pi.currency,
                    IFNULL(sup.custom_is_jobber, 0) AS is_jobber,
                    IF(IFNULL(pi.rounded_total, 0) = 0, pi.grand_total, pi.rounded_total) AS grand_total,
-                   pi.outstanding_amount, pi.owner,
+                   pi.outstanding_amount, pi.owner, IF(pi.remarks LIKE 'Against Supplier Invoice %%', NULL, NULLIF(TRIM(pi.remarks), 'No Remarks')) AS remarks,
                    ((IF(IFNULL(pi.rounded_total, 0) = 0, pi.grand_total, pi.rounded_total) - pi.outstanding_amount)) AS paid_amount,
                    GROUP_CONCAT(DISTINCT poi.sales_order ORDER BY poi.sales_order SEPARATOR ', ') AS sales_orders,
                    GROUP_CONCAT(DISTINCT so.customer_name ORDER BY so.customer_name SEPARATOR ', ') AS so_customer_names
             FROM {_pi_from_join}
             WHERE {' AND '.join(_pi_conds(jobber_flag, docstatus))}
             GROUP BY pi.name, pi.posting_date, pi.due_date, pi.status, pi.docstatus,
-                     pi.supplier, sup.supplier_name, sup.custom_is_jobber, pi.currency, pi.grand_total, pi.rounded_total, pi.outstanding_amount, pi.owner
+                     pi.supplier, sup.supplier_name, sup.custom_is_jobber, pi.currency, pi.grand_total, pi.rounded_total, pi.outstanding_amount, pi.owner, pi.remarks
             ORDER BY pi.posting_date DESC, pi.name DESC
         """
 
@@ -4081,6 +4124,12 @@ def get_accounts_flow(days=120, search=None, scope="open", merchandiser=None,
     _attach_creator_names(sales_invoices["rows"], supplier_invoices["rows"], jobber_invoices["rows"])
     _attach_si_delivery_status(sales_invoices["rows"])
     _attach_pi_receipt_status(supplier_invoices["rows"] + jobber_invoices["rows"])
+    _attach_returns("Sales Invoice", sales_invoices["rows"])
+    _attach_returns("Purchase Invoice", supplier_invoices["rows"] + jobber_invoices["rows"])
+    _attach_payments("Sales Invoice", sales_invoices["rows"])
+    _attach_payments("Purchase Invoice", supplier_invoices["rows"] + jobber_invoices["rows"])
+
+    notes = _accounts_notes(days, search, scope, notes_page, notes_page_size, notes_docstatus)
 
     from erp_dacsinc_custom.dashboard_payment import can_record_payment
 
@@ -4089,6 +4138,7 @@ def get_accounts_flow(days=120, search=None, scope="open", merchandiser=None,
         "sales_invoices": sales_invoices,
         "supplier_invoices": supplier_invoices,
         "jobber_invoices": jobber_invoices,
+        "notes": notes,
         "metrics": {
             "sales_total": flt(sales_agg.total),
             "sales_received": flt(sales_agg.paid),
@@ -4099,8 +4149,252 @@ def get_accounts_flow(days=120, search=None, scope="open", merchandiser=None,
             "jobber_total": flt(jobber_agg.total),
             "jobber_paid": flt(jobber_agg.paid),
             "jobber_outstanding": flt(jobber_agg.outstanding),
+            **notes.pop("metrics"),
         }
     }
+
+
+# ── Finance › Returns / Notes ───────────────────────────────────────────────
+# Credit Notes (Sales Invoice returns) and Debit Notes (Purchase Invoice returns), with what each
+# one means in the accounts and what is left to do — the ERPNext v15 rule: a return made against
+# an invoice reduces THAT invoice's outstanding (its own outstanding stays 0) unless it is larger
+# than what the invoice still owed — then (update_outstanding_for_self) it carries its own negative
+# outstanding: a credit the customer has with us (refund, or adjust against their next invoice) /
+# a refund the supplier owes us (receive it, or adjust against their next bill).
+_NOTE_NEXT_SQL = {
+    "draft": "{t}.docstatus = 0",
+    "refund": "{t}.docstatus = 1 AND {t}.outstanding_amount < -0.005",
+    "settled": "{t}.docstatus = 1 AND {t}.outstanding_amount >= -0.005",
+}
+
+
+def _accounts_notes(days, search, scope, page, page_size, docstatus):
+    tf = _tf("accounts.notes")
+    params = {"from_date": _from_date(days), "to_next": _to_next(days)}
+
+    def conds(t, party_col, name_col_search):
+        c = [f"{t}.docstatus < 2", f"IFNULL({t}.is_return, 0) = 1",
+             f"{t}.posting_date >= %(from_date)s AND {t}.posting_date < %(to_next)s"]
+        if scope == "open":
+            c.append(f"({t}.docstatus = 0 OR {t}.outstanding_amount < -0.005)")
+        elif scope == "mine":
+            c.append(f"{t}.owner = %(me)s")
+            params["me"] = frappe.session.user
+        if search:
+            for idx, word in enumerate(search.strip().split()):
+                k = f"nq_{idx}"
+                c.append(f"({t}.name LIKE %({k})s OR {party_col} LIKE %({k})s OR {name_col_search} LIKE %({k})s"
+                         f" OR IFNULL({t}.return_against, '') LIKE %({k})s)")
+                params[k] = f"%{word}%"
+        nxt = cstr(tf.get("next"))
+        if nxt in _NOTE_NEXT_SQL:
+            c.append(_NOTE_NEXT_SQL[nxt].format(t=t))
+        party = _tf_condition(params, "accounts.notes", "party", tf.get("party"), party_col)
+        if party:
+            c.append(party)
+        return c
+
+    si_c = conds("si", "si.customer", "IFNULL(cust.customer_name, '')")
+    pi_c = conds("pi", "pi.supplier", "IFNULL(sup.supplier_name, '')")
+    if (c := _hide_pos("IFNULL(si.is_pos, 0) = 0")):
+        si_c.append(c)
+    if is_scoped_to_own_customers("accounts"):
+        params["merch_scope"] = frappe.session.user
+        scope_sql = _merch_scope_so()
+        si_c.append(f"""EXISTS (SELECT 1 FROM `tabSales Invoice Item` sii JOIN `tabSales Order` so ON so.name = sii.sales_order
+                        LEFT JOIN `tabCustomer` cust ON cust.name = so.customer WHERE sii.parent = si.name AND {scope_sql})""")
+        pi_c.append(f"""EXISTS (SELECT 1 FROM `tabPurchase Invoice Item` pii JOIN `tabPurchase Order Item` poi ON poi.parent = pii.purchase_order
+                        JOIN `tabSales Order` so ON so.name = poi.sales_order LEFT JOIN `tabCustomer` cust ON cust.name = so.customer
+                        WHERE pii.parent = pi.name AND {scope_sql})""")
+    kind = cstr(tf.get("kind"))
+    si_from = "`tabSales Invoice` si LEFT JOIN `tabCustomer` cust ON cust.name = si.customer"
+    pi_from = "`tabPurchase Invoice` pi LEFT JOIN `tabSupplier` sup ON sup.name = pi.supplier"
+
+    def select_si(c):
+        return f"""SELECT 'credit_note' AS kind, 'Sales Invoice' AS doctype, si.name, si.posting_date, si.docstatus, si.status,
+                'Customer' AS party_type, si.customer AS party, cust.customer_name AS party_name, 0 AS is_jobber, si.currency,
+                IF(IFNULL(si.rounded_total, 0) = 0, si.grand_total, si.rounded_total) AS grand_total, si.outstanding_amount,
+                si.return_against, IFNULL(si.update_outstanding_for_self, 0) AS own_outstanding, si.owner, si.modified,
+                NULLIF(TRIM(si.remarks), 'No Remarks') AS remarks
+            FROM {si_from} WHERE {' AND '.join(c)}"""
+
+    def select_pi(c):
+        return f"""SELECT 'debit_note' AS kind, 'Purchase Invoice' AS doctype, pi.name, pi.posting_date, pi.docstatus, pi.status,
+                'Supplier' AS party_type, pi.supplier AS party, sup.supplier_name AS party_name,
+                IF(IFNULL(sup.custom_is_jobber, 0) = 1 OR IFNULL(pi.is_subcontracted, 0) = 1, 1, 0) AS is_jobber, pi.currency,
+                IF(IFNULL(pi.rounded_total, 0) = 0, pi.grand_total, pi.rounded_total) AS grand_total, pi.outstanding_amount,
+                pi.return_against, IFNULL(pi.update_outstanding_for_self, 0) AS own_outstanding, pi.owner, pi.modified,
+                IF(pi.remarks LIKE 'Against Supplier Invoice %%', NULL, NULLIF(TRIM(pi.remarks), 'No Remarks')) AS remarks
+            FROM {pi_from} WHERE {' AND '.join(c)}"""
+
+    def union(si_cond, pi_cond):
+        parts = []
+        if kind in ("", "credit"):
+            parts.append(select_si(si_cond))
+        if kind in ("", "debit"):
+            parts.append(select_pi(pi_cond))
+        return " UNION ALL ".join(parts) if parts else select_si(si_cond + ["1 = 0"])
+
+    env = _paged_query(union(_with_docstatus(si_c, "si.docstatus", docstatus), _with_docstatus(pi_c, "pi.docstatus", docstatus))
+                       + " ORDER BY posting_date DESC, name DESC", params, page, page_size)
+
+    # Draft / Submitted pill counts over the same list
+    counts = frappe.db.sql(f"SELECT docstatus, COUNT(*) AS n FROM ({union(si_c, pi_c)}) x GROUP BY docstatus", params, as_dict=1)
+    by = {cint(r.docstatus): cint(r.n) for r in counts}
+    env["docstatus_counts"] = {"all": sum(by.values()), "draft": by.get(0, 0), "submitted": by.get(1, 0)}
+
+    # Party search box: everyone in the list (its own party choice left out, like _filter_options)
+    mark = _tf_name("accounts.notes", "party")
+    opt_params = {k: v for k, v in params.items() if not k.startswith(mark)}
+    opt_si = [c for c in si_c if mark not in c]
+    opt_pi = [c for c in pi_c if mark not in c]
+    opts = frappe.db.sql(f"SELECT DISTINCT party, party_name FROM ({union(opt_si, opt_pi)}) x", opt_params)
+    env["filter_options"] = {"list": "accounts.notes",
+                             "party": sorted(([p, n or p] for p, n in opts if p), key=lambda x: cstr(x[1]).lower())}
+
+    _describe_notes(env["rows"])
+    _attach_creator_names(env["rows"])
+
+    # Card figures: notes still to act on, and the money still to move, over the whole date range
+    agg = frappe.db.sql(f"""SELECT kind,
+            SUM(docstatus = 0) AS drafts,
+            SUM(docstatus = 1 AND outstanding_amount < -0.005) AS refund_count,
+            SUM(IF(docstatus = 1 AND outstanding_amount < -0.005, -outstanding_amount, 0)) AS refund_due,
+            COUNT(*) AS total
+        FROM ({union(si_c, pi_c)}) x GROUP BY kind""", params, as_dict=1)
+    a = {r.kind: r for r in agg}
+    cn, dn = a.get("credit_note") or {}, a.get("debit_note") or {}
+    env["metrics"] = {
+        "notes_credit_count": cint(cn.get("total")), "notes_debit_count": cint(dn.get("total")),
+        "notes_drafts": cint(cn.get("drafts")) + cint(dn.get("drafts")),
+        "notes_customer_credit": flt(cn.get("refund_due")), "notes_customer_credit_count": cint(cn.get("refund_count")),
+        "notes_supplier_refund": flt(dn.get("refund_due")), "notes_supplier_refund_count": cint(dn.get("refund_count")),
+    }
+    return env
+
+
+def _describe_notes(rows):
+    """Each note's effect and next step (chips and buttons on Returns / Notes)."""
+    against = {"Sales Invoice": [], "Purchase Invoice": []}
+    for r in rows:
+        if r.return_against:
+            against[r.doctype].append(r.return_against)
+    info = {}
+    for dt, names in against.items():
+        if names:
+            for x in frappe.get_all(dt, filters={"name": ["in", list(set(names))]},
+                                    fields=["name", "status", "outstanding_amount", "docstatus"]):
+                info[(dt, x.name)] = x
+    # What each party still owes us / we still owe them on ordinary invoices: a credit is best
+    # adjusted against that (Payment Reconciliation) rather than refunded.
+    open_by = {}
+    for dt, party_col in (("Sales Invoice", "customer"), ("Purchase Invoice", "supplier")):
+        parties = list({r.party for r in rows if r.doctype == dt and r.party})
+        if parties:
+            for p_, amt, n, first in frappe.db.sql(f"""SELECT {party_col}, SUM(outstanding_amount), COUNT(*), MIN(name)
+                    FROM `tab{dt}` WHERE docstatus = 1 AND IFNULL(is_return, 0) = 0 AND outstanding_amount > 0.005
+                    AND {party_col} IN %(p)s GROUP BY {party_col}""", {"p": tuple(parties)}):
+                open_by[(dt, p_)] = (flt(amt), cint(n), first)
+    # The items on each note (key details on the row; the arrow opens the full list)
+    items = {}
+    for dt, child in (("Sales Invoice", "Sales Invoice Item"), ("Purchase Invoice", "Purchase Invoice Item")):
+        names = [r.name for r in rows if r.doctype == dt]
+        if names:
+            for x in frappe.get_all(child, filters={"parent": ["in", names]},
+                                    fields=["parent", "item_code", "item_name", "qty", "uom", "rate", "amount"], order_by="idx asc"):
+                items.setdefault(x.parent, []).append({"item_code": x.item_code, "item_name": x.item_name, "qty": flt(x.qty),
+                                                       "uom": x.uom, "rate": flt(x.rate), "amount": flt(x.amount)})
+    for r in rows:
+        r["items"] = items.get(r.name, [])
+        r["party_open"], r["party_open_count"], r["party_open_first"] = open_by.get((r.doctype, r.party), (0, 0, None))
+        credit = r.kind == "credit_note"
+        out = flt(r.outstanding_amount)
+        inv = info.get((r.doctype, r.return_against)) if r.return_against else None
+        r["against_status"] = inv.status if inv else None
+        r["against_outstanding"] = flt(inv.outstanding_amount) if inv else None
+        if cint(r.docstatus) == 0:
+            r["effect"], r["next"] = "draft", "submit"
+            r["next_text"] = _("Draft — submit it to apply the return")
+        elif out < -0.005:
+            r["effect"] = "credit"
+            r["refund_due"] = -out
+            amt = frappe.format_value(-out, {"fieldtype": "Currency"})
+            if flt(r.party_open) > 0.005:
+                # they still have unpaid invoices: set the credit off against those first
+                r["next"] = "adjust"
+                due = frappe.format_value(r.party_open, {"fieldtype": "Currency"})
+                r["next_text"] = (_("Customer credit {0} — adjust it against their unpaid invoices ({1} due) in Payment Reconciliation. Refund only if they want the money back.")
+                                  if credit else _("Supplier owes us {0} — adjust it against their unpaid bills ({1} to pay) in Payment Reconciliation, or receive the refund.")
+                                  ).format(amt, due)
+            else:
+                r["next"] = "refund" if credit else "receive_refund"
+                r["next_text"] = (_("Customer credit {0} — nothing else is due from them: refund it, or keep it for their next invoice")
+                                  if credit else _("Supplier owes us {0} — nothing else is due to them: receive the refund, or keep it for their next bill")
+                                  ).format(amt)
+        elif r.return_against and not cint(r.own_outstanding):
+            r["effect"], r["next"] = "reduced", "none"
+            left = flt(inv.outstanding_amount) if inv else 0
+            if credit:
+                r["next_text"] = (_("Reduced {0}. Nothing to refund — {1} still to collect on {0}").format(
+                    r.return_against, frappe.format_value(left, {"fieldtype": "Currency"})) if left > 0.005
+                    else _("Reduced {0}. Nothing to refund").format(r.return_against))
+            else:
+                r["next_text"] = (_("Reduced {0}. Nothing to receive — {1} still to pay on {0}").format(
+                    r.return_against, frappe.format_value(left, {"fieldtype": "Currency"})) if left > 0.005
+                    else _("Reduced {0}. Nothing to receive").format(r.return_against))
+        else:
+            r["effect"], r["next"] = "settled", "none"
+            r["next_text"] = _("Settled — refunded or adjusted")
+
+
+def _attach_returns(doctype, rows):
+    """Credit / Debit Notes made against each listed invoice (chips on the invoice rows)."""
+    names = [r.name for r in rows]
+    if not names:
+        return
+    by = {}
+    for x in frappe.get_all(doctype, filters={"is_return": 1, "return_against": ["in", names], "docstatus": ["<", 2]},
+                            fields=["name", "return_against", "docstatus", "grand_total", "rounded_total"]):
+        by.setdefault(x.return_against, []).append({"name": x.name, "docstatus": x.docstatus,
+                                                    "amount": flt(x.rounded_total) or flt(x.grand_total)})
+    for r in rows:
+        r["returns"] = by.get(r.name, [])
+
+
+def _attach_payments(doctype, rows):
+    """What settled each listed invoice (lines under Paid on the Finance rows): Payment Entries —
+    date, mode, cheque / ref. no., the amount set off on this invoice, how many invoices that one
+    entry settled (a cheque can cover several) — and Journal Entries that set a credit note or an
+    advance off against it (Payment Reconciliation). Drafts show too, marked; cancelled never."""
+    names = [r.name for r in rows if cint(r.docstatus) == 1]
+    if not names:
+        for r in rows:
+            r["payments"] = []
+        return
+    by = {}
+    for x in frappe.db.sql("""
+            SELECT pe.name, pe.docstatus, pe.posting_date, pe.payment_type, pe.mode_of_payment, pe.reference_no,
+                   pe.reference_date, per.reference_name, SUM(per.allocated_amount) AS amount,
+                   (SELECT COUNT(DISTINCT r2.reference_name) FROM `tabPayment Entry Reference` r2 WHERE r2.parent = pe.name) AS n_refs
+            FROM `tabPayment Entry Reference` per JOIN `tabPayment Entry` pe ON pe.name = per.parent
+            WHERE per.reference_doctype = %(dt)s AND per.reference_name IN %(names)s AND pe.docstatus < 2
+            GROUP BY pe.name, per.reference_name""", {"dt": doctype, "names": tuple(names)}, as_dict=1):
+        by.setdefault(x.reference_name, []).append({
+            "doctype": "Payment Entry", "name": x.name, "docstatus": x.docstatus, "date": x.posting_date,
+            "mode": x.mode_of_payment, "ref_no": x.reference_no, "amount": flt(x.amount), "n_refs": cint(x.n_refs)})
+    # a Journal Entry line against the invoice: credit on Debtors (SI) / debit on Creditors (PI) settles it
+    sign = "jea.credit - jea.debit" if doctype == "Sales Invoice" else "jea.debit - jea.credit"
+    for x in frappe.db.sql(f"""
+            SELECT je.name, je.docstatus, je.posting_date, je.voucher_type, je.cheque_no, jea.reference_name,
+                   SUM({sign}) AS amount
+            FROM `tabJournal Entry Account` jea JOIN `tabJournal Entry` je ON je.name = jea.parent
+            WHERE jea.reference_type = %(dt)s AND jea.reference_name IN %(names)s AND je.docstatus < 2
+            GROUP BY je.name, jea.reference_name HAVING SUM({sign}) > 0.005""", {"dt": doctype, "names": tuple(names)}, as_dict=1):
+        by.setdefault(x.reference_name, []).append({
+            "doctype": "Journal Entry", "name": x.name, "docstatus": x.docstatus, "date": x.posting_date,
+            "mode": x.voucher_type, "ref_no": x.cheque_no, "amount": flt(x.amount), "n_refs": 1})
+    for r in rows:
+        r["payments"] = sorted(by.get(r.name, []), key=lambda p: (cstr(p["date"]), p["name"]))
 
 
 # Share of an invoice's goods already delivered / received (same rule as _attach_*_status
@@ -4212,7 +4506,7 @@ def get_logistics_flow(days=None, search=None, scope="open", page=1, page_size=1
     _guard("logistics")
     _guard_tab("logistics")
 
-    conditions = ["si.docstatus = 1"]
+    conditions = ["si.docstatus = 1", "IFNULL(si.is_return, 0) = 0"]   # a Credit Note has no LR / signed copy
     if scope != "all":
         conditions.append("IFNULL(si.lr_no, '') = ''")
         conditions.append("IFNULL(si.custom_signed_copy, '') = ''")
@@ -4418,14 +4712,14 @@ def get_draft_dn_si_for_so(sales_order):
         SELECT dn.name AS parent, dni.item_code, dni.item_name, dni.qty, dni.uom
         FROM `tabDelivery Note Item` dni
         JOIN `tabDelivery Note` dn ON dn.name = dni.parent
-        WHERE dni.against_sales_order = %s AND dn.docstatus = 0
+        WHERE dni.against_sales_order = %s AND dn.docstatus = 0 AND IFNULL(dn.is_return, 0) = 0
         ORDER BY dn.name, dni.idx
     """, sales_order, as_dict=True)
     si_rows = frappe.db.sql("""
         SELECT si.name AS parent, sii.item_code, sii.item_name, sii.qty, sii.uom
         FROM `tabSales Invoice Item` sii
         JOIN `tabSales Invoice` si ON si.name = sii.parent
-        WHERE sii.sales_order = %s AND si.docstatus = 0 AND si.update_stock = 1
+        WHERE sii.sales_order = %s AND si.docstatus = 0 AND si.update_stock = 1 AND IFNULL(si.is_return, 0) = 0
         ORDER BY si.name, sii.idx
     """, sales_order, as_dict=True)
 

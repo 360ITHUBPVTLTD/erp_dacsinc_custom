@@ -259,7 +259,7 @@
         requirements, how to build and deploy, and the task list — delivered, open from the 8 Oct meeting, and Phase 2.</p>
     </div>
     <div class="actions no-print">
-      <a class="btn" href="/assets/erp_dacsinc_custom/docs/project-guide.pdf?v=18" download="Dacsinc ERP - Project Guide.pdf" data-dl-name="Dacsinc ERP - Project Guide">⤓ Download PDF</a>
+      <a class="btn" href="/assets/erp_dacsinc_custom/docs/project-guide.pdf?v=20" download="Dacsinc ERP - Project Guide.pdf" data-dl-name="Dacsinc ERP - Project Guide">⤓ Download PDF</a>
       <button class="btn outline" type="button" id="btn-pdf">⎙ Print all</button>
       <button class="btn outline" type="button" id="btn-tab">⎙ Print this tab</button>
       <button class="btn outline" type="button" id="btn-html">⤓ HTML copy</button>
@@ -801,6 +801,8 @@ const FRD = [
 
 // [status, module, task, source, phase, priority, date, owner, remarks]
 const TASKS = [
+  ["Done", "Accounts", "Printing & payments: Sales Invoice All 4 copies now read Original / Duplicate / Triplicate / Quadruplicate (Multi Copy Master shipped in the app; form button moved into the app with All 4), Payment Receipt / Payment Voucher print format (several invoices, deductions, advance), Finance rows show invoice remarks and every payment / adjustment with its receipt print, direct Credit / Debit Note links open with Is Return ticked", "Delivered", "1", "", "2026-10-19", "360ithub", ""],
+  ["Done", "Accounts", "Returns handled everywhere: Finance › Returns / Notes (credit / debit notes with effect, Adjust / Refund), refund prompt, return buttons on SI / PI, editable negative return qty (SI / DN), returns kept out of tracker / Pending DN/SI / logistics / receipts counts, Credit Note DAC / Debit Note DAC print formats, Remarks editable after submit; Finance New bar (Payment Entry, Journal Entry, direct notes, reconciliation)", "Delivered", "1", "", "2026-10-19", "360ithub", ""],
   ["Done", "Sales", "Overall (Additional) discount skips items ticked Item › Exclude from Overall Discount (freight, packing) on Quotation / Sales Order / Delivery Note / Sales Invoice / POS Invoice: Discount % is taken on the other items only and the excluded item keeps its full amount and GST (docs/overall-discount.md; tests: test_overall_discount.run + scripts/test_overall_discount_js.js after every ERPNext update)", "Delivered", "1", "", "2026-10-15", "360ithub", "Tick the box on Freight and Forwarding Charges after deploy"],
   ["Done", "Accounts", "Accounts Guide (/accounts-guide, tile on Order Flow › Finance): entry types, debit / credit, Journal Entry, worked examples with our ledgers, daily / monthly routine, reports, quick fixes", "Delivered", "1", "", "2026-10-15", "360ithub", ""],
   ["Need to Discuss", "Accounts", "Chart of accounts: TDS Receivable - IND sits under Duties and Taxes (Liabilities); TDS deducted by customers is an asset — accountant to decide and move it under Assets", "Open decision", "1", "", "2026-10-15", "Accounts", ""],

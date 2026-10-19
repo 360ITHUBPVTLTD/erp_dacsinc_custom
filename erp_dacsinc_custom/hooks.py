@@ -33,7 +33,7 @@ app_include_js = [
     "/assets/erp_dacsinc_custom/js/workflow.js?v=1.0.7",
     "/assets/erp_dacsinc_custom/js/toogle.js?v=1.0.5",
     # "Print it now?" after creating SI / PO / embroidery documents (MOM 8 Oct 2026)
-    "/assets/erp_dacsinc_custom/js/print_prompt.js?v=1.0.0",
+    "/assets/erp_dacsinc_custom/js/print_prompt.js?v=1.0.2",
     # POS store requests board + dialogs (workspace block and Material Request form) — bump ?v= on change
     "/assets/erp_dacsinc_custom/js/pos_requests_board.js?v=1.0.6",
     # Overall discount skips items ticked "Exclude from Overall Discount" (overall_discount.py)
@@ -65,6 +65,8 @@ page_js = {"point-of-sale": "public/js/pos_page_extend.js"}
 doctype_js = {
     # Mode of Payment: only modes ticked "Show in Payment Entry" (payment_modes.py)
     "Payment Entry": "public/js/payment_entry.js",
+    # filled in from the "Adjust" links on Credit / Debit Notes (Order Flow › Finance › Returns / Notes)
+    "Payment Reconciliation": "public/js/payment_reconciliation.js",
     # Close the POS: tables exist and the entry loads its opening amounts / invoices
     "POS Closing Entry": "public/js/pos_closing_entry.js",
 	"Lead": "public/js/lead.js",
