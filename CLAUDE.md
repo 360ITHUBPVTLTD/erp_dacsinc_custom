@@ -41,6 +41,9 @@ previously-buggy edge cases — are documented in `docs/`:
 - `docs/overall-discount.md` — overall (Additional) discount on Quotation / SO / DN / SI /
   POS Invoice skips items ticked "Exclude from Overall Discount" (freight, packing); re-run
   its tests after every ERPNext update.
+- `docs/item-taxes.md` — an item's Taxes table is rebuilt from its GST fields: 5% / 18% slab per
+  In-State / Out-State, then Exempted rows (a line sold without GST picks "Exempted - IND"), and why
+  the order and price ranges are set the way they are.
 - `docs/stock-hold.md` — stock held for Sales Orders (Pick Lists, jobber, earmarks)
   can't be delivered, moved, reconciled or cancelled away by anything else.
 
