@@ -20,7 +20,9 @@ With a slab (alternate GST and amount both set):
 | In-State, Out-State | Exempted - IND | – | 9,999,999 |
 
 Without a slab: In-State and Out-State rows with the GST rate, then In-State and Out-State
-`Exempted - IND` rows, none with a range. `Non-GST - IND` items get no rows.
+`Exempted - IND` rows, none with a range. `Non-GST - IND` items get no rows. An item whose GST rate
+is itself `Exempted - IND` (e.g. Khadi, an exempt supply) gets just its In-State / Out-State rows — the
+extra Exempted rows would repeat the template, which the Item form refuses.
 
 ## A line sold without GST
 

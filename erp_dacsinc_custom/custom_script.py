@@ -385,10 +385,13 @@ def update_tax_child(doc):
         tax_rate = doc.custom_tax_rate  # Primary GST template
         alt_tax = doc.get("custom_alternative_gst_") # Slab GST template
         alt_amount = flt(doc.get("custom_alternative_amount")) # Threshold Amount
-        exempted = frappe.db.exists("Item Tax Template", EXEMPTED_TAX_TEMPLATE)
+        # an item that is itself Exempted already has those rows (a template twice per category is refused)
+        exempted = EXEMPTED_TAX_TEMPLATE not in (tax_rate, alt_tax) and frappe.db.exists(
+            "Item Tax Template", EXEMPTED_TAX_TEMPLATE)
 
         if tax_rate:
-            if alt_tax and alt_amount > 0:
+            # alternate GST equal to the GST rate is no slab (the same template twice per category is refused)
+            if alt_tax and alt_tax != tax_rate and alt_amount > 0:
                 # SLAB 1: Below threshold
                 for category in ["In-State", "Out-State"]:
                     doc.append('taxes', {
