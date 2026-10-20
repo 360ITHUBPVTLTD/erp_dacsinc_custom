@@ -106,11 +106,16 @@ import re
 from frappe.utils import flt
 def item_before_save(doc, method):
     doc_before = doc.get_doc_before_save()
-    
+
+    # Imported items carry the GST as text ("0.18", "GST 18% - IND%"), which is
+    # not an Item Tax Template: the Taxes table built from it would not save.
+    for field in ("custom_tax_rate", "custom_alternative_gst_"):
+        doc.set(field, normalize_gst_template(doc.get(field)))
+
     # 1. Check if any tax-related field has changed
     tax_fields = ["custom_tax_rate", "custom_alternative_gst_", "custom_alternative_amount"]
     tax_changed = False
-    
+
     if not doc_before:
         tax_changed = True # New record
     else:
@@ -118,6 +123,10 @@ def item_before_save(doc, method):
             if doc.get(field) != doc_before.get(field):
                 tax_changed = True
                 break
+
+    # An item saved before the Exempted rows existed gets them on its next save.
+    if not tax_changed and doc.custom_tax_rate and doc.custom_tax_rate != "Non-GST - IND":
+        tax_changed = not any(t.item_tax_template == EXEMPTED_TAX_TEMPLATE for t in doc.get("taxes") or [])
 
     # 2. Update Tax Table ONLY if fields changed
     if tax_changed:
@@ -340,6 +349,33 @@ def get_bom_data_for_item(item_code):
 
 
 
+# A line sold without GST: the user changes that line's Item Tax Template to
+# "Exempted - IND" (0%). ERPNext only accepts a template listed on the item for
+# the document's Tax Category, so every taxed item carries an Exempted row for
+# In-State and Out-State — always AFTER the GST rows, because ERPNext fills a
+# line with the first row that fits, and GST must stay the automatic choice.
+# ERPNext ignores rows without a price range whenever a ranged row fits the
+# line, so on a slab item the Exempted rows and the upper GST rows carry a range
+# up to SLAB_UPPER_LIMIT (an upper limit of 0 counts as "no range", and the
+# Item form rejects a minimum above the maximum).
+EXEMPTED_TAX_TEMPLATE = "Exempted - IND"
+SLAB_UPPER_LIMIT = 9999999
+
+
+def normalize_gst_template(value):
+    """'0.18' / '18' / 'GST 18% - IND%' -> 'GST 18% - IND' when that template exists."""
+    if not value or frappe.db.exists("Item Tax Template", value):
+        return value
+    match = re.search(r"(\d+(?:\.\d+)?)", str(value))
+    if not match:
+        return value
+    rate = flt(match.group(1))
+    if 0 < rate < 1:
+        rate *= 100
+    name = f"GST {flt(rate, 2):g}% - IND"
+    return name if frappe.db.exists("Item Tax Template", name) else value
+
+
 def update_tax_child(doc):
     """Your provided logic with protection"""
     try:
@@ -349,6 +385,7 @@ def update_tax_child(doc):
         tax_rate = doc.custom_tax_rate  # Primary GST template
         alt_tax = doc.get("custom_alternative_gst_") # Slab GST template
         alt_amount = flt(doc.get("custom_alternative_amount")) # Threshold Amount
+        exempted = frappe.db.exists("Item Tax Template", EXEMPTED_TAX_TEMPLATE)
 
         if tax_rate:
             if alt_tax and alt_amount > 0:
@@ -366,8 +403,13 @@ def update_tax_child(doc):
                         "tax_category": category,
                         "item_tax_template": alt_tax,
                         "minimum_net_rate": alt_amount,
-                        "maximum_net_rate": 0 # 0 usually means no limit in ERPNext
+                        "maximum_net_rate": SLAB_UPPER_LIMIT
                     })
+
+                if exempted:
+                    for category in ["In-State", "Out-State"]:
+                        doc.append("taxes", {"tax_category": category,
+                            "item_tax_template": EXEMPTED_TAX_TEMPLATE, "maximum_net_rate": SLAB_UPPER_LIMIT})
             else:
                 # Fallback: Normal logic
                 if tax_rate != 'Non-GST - IND':
@@ -376,6 +418,10 @@ def update_tax_child(doc):
                             "tax_category": category,
                             "item_tax_template": tax_rate
                         })
+                    if exempted:
+                        for category in ["In-State", "Out-State"]:
+                            doc.append("taxes", {"tax_category": category,
+                                "item_tax_template": EXEMPTED_TAX_TEMPLATE})
 
     except Exception as e:
         frappe.log_error(title="Error in update_tax_child", message=frappe.get_traceback())
