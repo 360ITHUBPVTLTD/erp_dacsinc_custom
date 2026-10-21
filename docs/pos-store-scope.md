@@ -346,6 +346,24 @@ See "Cash in the drawer" for the rules behind it.
     open shift, or else, for a user on one store, that store's open shift.
   - A user on several stores picks the store in the opening dialog. A store that already
     has an open shift is continued there (`create_opening` returns it), never duplicated.
+  - Picking a store that already has an open shift turns the dialog into **Continue shift**
+    (`opening_defaults` returns `open_shift`). It shows "… already has an open shift (…, opened
+    by … on …)". The cash table and reason are hidden, and no amounts are sent. The shift
+    keeps the opening cash it was opened with, so nothing can mismatch.
+  - The dialog's store list is ERPNext's: the stores the user is listed on (POS Profile ›
+    Applicable for Users), **admins included**. That list is how you choose which stores an
+    admin may open (user's choice, 2026-10-21).
+    Opening or continuing a store's shift needs that listing on the server too
+    (`_check_profile`).
+  - **Switch Store** (POS menu ⋯, only for users listed on more than one store) moves to
+    another of their stores without closing the current shift.
+    - It opens the same dialog, titled "Switch Store" and cancellable. A store with an open
+      shift shows Continue shift; otherwise its shift is opened with the cash in the drawer.
+    - The page then reloads into the chosen shift (`pos_cash.get_shift`, via sessionStorage
+      `dacs_pos_switch_to`).
+    - A bill in progress asks first. The shift left behind stays open for its store.
+    - The menu item is added in ERPNext's `prepare_menu`, which clears the menu when the
+      screen is built.
   - The POS screen says "Continuing <store>'s shift, opened by <name> on <date>"
     (`pos_page_extend.js`).
 - A second open shift for a store is still refused if someone creates one directly

@@ -171,6 +171,39 @@
 			}, done);
 		};
 
+		// ---------------- Switch Store (POS menu): a user listed on several stores (POS Profile ›
+		// Applicable for Users) moves to another of them without closing this shift. The same
+		// store dialog: a store with an open shift is continued, otherwise its shift is opened.
+		// The page then reloads into the chosen shift (pos_cash.get_shift).
+		const SWITCH_KEY = "dacs_pos_switch_to";
+		const dacs_switch_to = (opening) => {
+			try { sessionStorage.setItem(SWITCH_KEY, opening); } catch (e) { /* reload still opens a shift */ }
+			window.location.reload();
+		};
+		const orig_check = PS.Controller.prototype.check_opening_entry;
+		PS.Controller.prototype.check_opening_entry = function () {
+			let wanted = null;
+			try { wanted = sessionStorage.getItem(SWITCH_KEY); sessionStorage.removeItem(SWITCH_KEY); } catch (e) { /* none */ }
+			if (!wanted) return orig_check.call(this);
+			frappe.call({ method: "erp_dacsinc_custom.pos_cash.get_shift", args: { name: wanted } }).then((r) => {
+				if (r && r.message) this.prepare_app_defaults(r.message);
+				else orig_check.call(this);
+			}, () => orig_check.call(this));
+		};
+		const add_switch_menu = (ctrl) => {
+			if (ctrl.__dacs_switch_menu) return;
+			ctrl.__dacs_switch_menu = true;
+			frappe.call({ method: "erp_dacsinc_custom.pos_scope.my_pos_profiles" }).then((r) => {
+				if (((r && r.message) || []).length < 2) return;
+				ctrl.page.add_menu_item(__("Switch Store"), () => {
+					const go = () => { ctrl.__dacs_switching = true; ctrl.create_opening_voucher(); };
+					const cart = ctrl.frm && ctrl.frm.doc && (ctrl.frm.doc.items || []).length;
+					if (cart) frappe.confirm(__("The bill you are making will be dropped. Switch store?"), go);
+					else go();
+				});
+			});
+		};
+
 		// ---------------- One shared shift per store (pos_cash.check_opening_entry / create_opening):
 		// a store user continues the store's open shift, whoever opened it — say so.
 		const orig_prepare = PS.Controller.prototype.prepare_app_defaults;
@@ -184,6 +217,14 @@
 				}, 10);
 			}
 			return orig_prepare.call(this, data);
+		};
+		// ERPNext rebuilds the POS menu (clear_menu) when the screen is made: add ours after it.
+		const orig_menu = PS.Controller.prototype.prepare_menu;
+		PS.Controller.prototype.prepare_menu = function () {
+			const out = orig_menu.apply(this, arguments);
+			this.__dacs_switch_menu = false;
+			add_switch_menu(this);
+			return out;
 		};
 
 		// ---------------- Open the POS (Controller): ERPNext's opening dialog, with the cash in
@@ -216,6 +257,19 @@
 				const r = await frappe.call({ method: "erp_dacsinc_custom.pos_cash.opening_defaults", args: { pos_profile } });
 				if (dialog.get_value("pos_profile") !== pos_profile || !r || !r.message) return;
 				info = r.message;
+				// The store already has an open shift (one drawer, one shift): it is continued as it
+				// is — no cash to enter, nothing new is created (pos_cash.create_opening).
+				const open = info.open_shift;
+				dialog.set_df_property("balance_details", "hidden", !!open);
+				dialog.set_df_property("balance_details", "reqd", !open);
+				dialog.set_primary_action(open ? __("Continue shift") : __("Submit"));
+				if (open) {
+					const e = frappe.utils.escape_html;
+					dialog.fields_dict.carry.$wrapper.html(`<div class="dacs-carry">${__("{0} already has an open shift ({1}, opened by {2} on {3}).",
+						[`<b>${e(pos_profile)}</b>`, e(open.name), e(open.user_name), e(open.opened)])}
+						<div class="text-muted small">${__("You'll continue it: its opening cash stays as it was entered. Nothing new is created.")}</div></div>`);
+					return;
+				}
 				const left = info.last ? flt(info.last.left) : 0;
 				dialog.fields_dict.balance_details.df.data = info.cash.map((m, i) => ({ mode_of_payment: m, opening_amount: i === 0 ? left : 0 }));
 				dialog.fields_dict.balance_details.grid.refresh();
@@ -230,12 +284,14 @@
 				check();
 			};
 			const dialog = new frappe.ui.Dialog({
-				title: __("Create POS Opening Entry"),
-				static: true,
+				title: me.__dacs_switching ? __("Switch Store") : __("Create POS Opening Entry"),
+				static: !me.__dacs_switching,  // switching can be cancelled; the first opening can't
+				on_hide: () => { me.__dacs_switching = false; },
 				fields: [
 					{ fieldtype: "Link", label: __("Company"), default: frappe.defaults.get_default("company"), options: "Company",
 					  fieldname: "company", reqd: 1 },
 					{ fieldtype: "Link", label: __("POS Profile"), options: "POS Profile", fieldname: "pos_profile", reqd: 1,
+					  // the stores this user is listed on (POS Profile › Applicable for Users) — for admins too
 					  get_query: () => ({ query: "erpnext.accounts.doctype.pos_profile.pos_profile.pos_profile_query",
 						  filters: { company: dialog.get_value("company") } }),
 					  onchange: () => load() },
@@ -258,6 +314,19 @@
 				],
 				primary_action: async function ({ company, pos_profile, reason }) {
 					if (!info) return;
+					const switching = me.__dacs_switching;  // read before hide() resets it
+					if (info.open_shift) {
+						const res = await frappe.call({
+							method: "erp_dacsinc_custom.pos_cash.create_opening",
+							args: { pos_profile, company, balance_details: [] },  // continues the open shift
+							freeze: true,
+						});
+						if (res.exc || !res.message) return;
+						dialog.hide();
+						if (switching) return dacs_switch_to(res.message.name);
+						me.prepare_app_defaults(res.message);
+						return;
+					}
 					const cash = (dialog.fields_dict.balance_details.df.data || []).map((d) => ({ mode_of_payment: d.mode_of_payment, opening_amount: flt(d.opening_amount) }));
 					if (differs() && !(reason || "").trim()) {
 						frappe.msgprint(__("Give the reason the cash differs from the last closing."));
@@ -274,8 +343,9 @@
 						freeze: true,
 					});
 					if (res.exc || !res.message) return;
-					me.prepare_app_defaults(res.message);
 					dialog.hide();
+					if (switching) return dacs_switch_to(res.message.name);
+					me.prepare_app_defaults(res.message);
 				},
 				primary_action_label: __("Submit"),
 			});
