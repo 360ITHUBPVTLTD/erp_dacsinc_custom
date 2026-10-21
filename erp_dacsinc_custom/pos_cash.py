@@ -226,9 +226,13 @@ def opening_validate(doc, method=None):
 
 
 def _check_profile(pos_profile):
-	if not frappe.has_permission("POS Profile", "read", pos_profile) and not frappe.db.exists(
-			"POS Profile User", {"parent": pos_profile, "user": frappe.session.user}):
-		frappe.throw(_("Not permitted."), frappe.PermissionError)
+	"""Opening / continuing a store's shift: only users listed on that store's POS Profile
+	(Applicable for Users) — admins too. That list is where you decide which stores each
+	admin may open."""
+	if not frappe.db.exists("POS Profile User", {"parent": pos_profile, "user": frappe.session.user}):
+		frappe.throw(_("You aren't listed on {0}'s POS Profile (Applicable for Users), so you can't open its POS. "
+					   "Ask an admin to add you there.").format(frappe.bold(pos_profile)), frappe.PermissionError,
+					 title=_("Not your store"))
 
 
 @frappe.whitelist()
@@ -240,8 +244,11 @@ def opening_defaults(pos_profile):
 			"parenttype": "POS Profile"}, fields=["mode_of_payment"], order_by="idx")]
 	cash = cash_modes(modes)
 	prev = last_closing(pos_profile)
+	shift = open_store_shift(pos_profile)  # already open: the dialog continues it, no cash to enter
 	return {"cash": [m for m in modes if m in cash], "other": [m for m in modes if m not in cash],
-			"last": dict(prev, period_end=format_datetime(prev.period_end_date, "dd-MM-yyyy HH:mm")) if prev else None}
+			"last": dict(prev, period_end=format_datetime(prev.period_end_date, "dd-MM-yyyy HH:mm")) if prev else None,
+			"open_shift": {"name": shift.name, "user_name": frappe.utils.get_fullname(shift.user),
+						   "opened": format_datetime(shift.period_start_date, "dd-MM-yyyy HH:mm")} if shift else None}
 
 
 # ------------------------------------------------------------------ one shared shift per store
@@ -254,6 +261,17 @@ def open_store_shift(pos_profile):
 	return frappe.db.get_value("POS Opening Entry", {"pos_profile": pos_profile, "docstatus": 1, "status": "Open"},
 							   ["name", "company", "pos_profile", "period_start_date", "user"], as_dict=True,
 							   order_by="period_start_date desc") if pos_profile else None
+
+
+@frappe.whitelist()
+def get_shift(name):
+	"""POS "Switch Store": the chosen open shift, for a user listed on its store."""
+	shift = frappe.db.get_value("POS Opening Entry", {"name": name, "docstatus": 1, "status": "Open"},
+								["name", "company", "pos_profile", "period_start_date", "user"], as_dict=True)
+	if not shift:
+		return None
+	_check_profile(shift.pos_profile)
+	return shift
 
 
 @frappe.whitelist()
