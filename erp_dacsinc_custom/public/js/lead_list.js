@@ -17,6 +17,15 @@ frappe.listview_settings['Lead'] = frappe.listview_settings['Lead'] || {};
             try { existing_onload(listview); } catch (e) { /* keep ours working */ }
         }
 
+        // "+ Lead for Existing Customer": pick the customer instead of hunting for their
+        // old Order lead and clicking Duplicate Lead on it. Same result: the new lead is a
+        // copy with Duplicated Lead ticked and the Customer ID, so it counts as Existing.
+        if (frappe.model.can_create('Lead')) {
+            listview.page.add_inner_button(__('+ Lead for Existing Customer'), function () {
+                open_existing_customer_lead_dialog();
+            });
+        }
+
         // System Manager only.
         if (!frappe.user_roles.includes('System Manager')) return;
 
@@ -261,4 +270,69 @@ function crm_report_period(type) {
     }
 
     return [fmt(now), fmt(now)];
+}
+
+
+// ── New lead for an existing customer (Lead list) ──────────────────────────────
+function open_existing_customer_lead_dialog() {
+    const d = new frappe.ui.Dialog({
+        title: __('New Lead for Existing Customer'),
+        fields: [
+            {
+                fieldname: 'customer', fieldtype: 'Link', options: 'Customer', label: __('Customer'), reqd: 1,
+                description: __('Search by customer name or ID'),
+                onchange: function () { show_source(d.get_value('customer')); }
+            },
+            { fieldname: 'source_html', fieldtype: 'HTML' }
+        ],
+        primary_action_label: __('Create Lead'),
+        primary_action: function (values) {
+            frappe.call({
+                method: 'erp_dacsinc_custom.custom_lead.create_existing_customer_lead',
+                args: { customer: values.customer },
+                freeze: true,
+                freeze_message: __('Creating Lead...'),
+                callback: function (r) {
+                    const res = r.message || {};
+                    d.hide();
+                    if (res.lead) {
+                        frappe.show_alert({ message: __('Lead {0} created', [res.lead]), indicator: 'green' });
+                        frappe.set_route('Form', 'Lead', res.lead);
+                    } else if (res.prefill) {
+                        // No earlier lead for this customer: open a new Lead form filled in
+                        frappe.new_doc('Lead', res.prefill);
+                    }
+                }
+            });
+        }
+    });
+
+    function show_source(customer) {
+        const wrap = d.fields_dict.source_html.$wrapper;
+        if (!customer) { wrap.html(''); return; }
+        wrap.html(`<div class="text-muted small">${__('Checking...')}</div>`);
+        frappe.call({
+            method: 'erp_dacsinc_custom.custom_lead.get_existing_customer_lead_source',
+            args: { customer: customer },
+            callback: function (r) {
+                const src = r.message;
+                if (src) {
+                    wrap.html(`
+                        <div style="background: #f0fdf4; border: 1px solid #bbf7d0; border-radius: 6px; padding: 10px 12px; font-size: 13px;">
+                            ${__('A new lead will be created as a copy of')}
+                            <a href="/app/lead/${encodeURIComponent(src.name)}" target="_blank"><b>${frappe.utils.escape_html(src.name)}</b></a>
+                            &mdash; ${frappe.utils.escape_html(src.lead_name || src.company_name || '')}
+                            (${frappe.utils.escape_html(src.custom_lead_category || '')}, ${__('created')} ${src.created_on}).
+                            <div class="text-muted" style="margin-top: 4px;">${__('It starts as an Enquiry, marked as an existing-customer lead.')}</div>
+                        </div>`);
+                } else {
+                    wrap.html(`
+                        <div style="background: #fffbeb; border: 1px solid #fde68a; border-radius: 6px; padding: 10px 12px; font-size: 13px;">
+                            ${__('This customer has no earlier lead. A new Lead form will open with the customer filled in, marked as an existing-customer lead.')}
+                        </div>`);
+                }
+            }
+        });
+    }
+    d.show();
 }

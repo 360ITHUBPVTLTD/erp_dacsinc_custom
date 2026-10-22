@@ -36,7 +36,7 @@ previously-buggy edge cases — are documented in `docs/`:
   Finance › Returns / Notes, tracker / logistics / receipts handling, form rules, return print formats.
 - `docs/print-formats.md` — Sales Invoice copies (Multi Copy Master over Format 4, why its header is
   rewritten), Credit / Debit Note and Payment Receipt formats; all shipped as app print formats.
-- `docs/rate-read-only.md` — item Rate is read-only on SO / SI / PO / PI; users change
+- `docs/rate-read-only.md` — item Rate is read-only on Quotation / SO / SI / PO / PI; users change
   the Price List Rate and the discount.
 - `docs/overall-discount.md` — overall (Additional) discount on Quotation / SO / DN / SI /
   POS Invoice skips items ticked "Exclude from Overall Discount" (freight, packing); re-run

@@ -1,4 +1,4 @@
-# Rate is read-only on Sales Order, Sales Invoice, Purchase Order, Purchase Invoice
+# Rate is read-only on Quotation, Sales Order, Sales Invoice, Purchase Order, Purchase Invoice
 
 Users never type the item **Rate**. They change the **Price List Rate** and the
 **discount** (Discount % / Discount Amount, or Margin), and ERPNext works out
@@ -9,7 +9,7 @@ row could show a Price List Rate and discount that don't add up to the Rate.
 ## How
 
 - **Property Setters** (shipped in `erp_dacsinc_custom/custom/<doctype>_item.json`,
-  synced on migrate) on Sales Order Item, Sales Invoice Item, Purchase Order Item
+  synced on migrate) on Quotation Item, Sales Order Item, Sales Invoice Item, Purchase Order Item
   and Purchase Invoice Item:
   - `rate` → `read_only = 1`
   - `price_list_rate` → `read_only = 0`. ERPNext ships it read-only on the selling
@@ -32,4 +32,4 @@ row could show a Price List Rate and discount that don't add up to the Rate.
   rate (`custom_script.lock_item_rate_to_sales_order`, see `order-flow-dashboard.md`).
 - The **Update Items** dialog on a submitted SO / PO (ERPNext's `update_child_qty_rate`)
   still has its own Rate column.
-- Quotation, Delivery Note, Purchase Receipt and POS Invoice are unchanged.
+- Delivery Note, Purchase Receipt, POS Invoice and Supplier Quotation are unchanged.

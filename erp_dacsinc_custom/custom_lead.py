@@ -1747,7 +1747,7 @@ def render_lead_html(from_date=None, to_date=None):
 import frappe
 from frappe import _
 
-@frappe.whitelist(allow_guest=True)
+@frappe.whitelist()
 def create_duplicate_lead(lead_name):
     """
     Duplicates the lead, resets Workflow/Status to 'Enquiry', 
@@ -1755,6 +1755,9 @@ def create_duplicate_lead(lead_name):
     """
     if not lead_name:
         return
+    # Was allow_guest; now only a signed-in user who may open the lead and create Leads
+    if not frappe.has_permission("Lead", "create") or not frappe.has_permission("Lead", "read", doc=lead_name):
+        frappe.throw(_("You don't have access to duplicate Lead {0}").format(lead_name), frappe.PermissionError)
 
     # 1. Fetch the original Lead
     original_doc = frappe.get_doc("Lead", lead_name)
@@ -1793,6 +1796,63 @@ def create_duplicate_lead(lead_name):
     new_doc.insert(ignore_permissions=True)
     
     return new_doc.name
+
+def _check_customer_lead_access(customer):
+    """The user must be allowed to create Leads and to open this Customer (a DAC CRM user
+    reads only the customers they own). The dialog's search already shows only those;
+    this also stops a pasted Customer ID from someone else's book."""
+    if not frappe.has_permission("Lead", "create"):
+        frappe.throw(_("Not permitted to create Leads"), frappe.PermissionError)
+    if not customer or not frappe.db.exists("Customer", customer):
+        frappe.throw(_("Customer {0} not found").format(customer or ""))
+    if not frappe.has_permission("Customer", "read", doc=customer):
+        frappe.throw(_("Customer {0} is not assigned to you").format(customer), frappe.PermissionError)
+
+
+@frappe.whitelist()
+def get_existing_customer_lead_source(customer):
+    """Lead list "+ Lead for Existing Customer": the earlier lead a new repeat lead for
+    this customer would be copied from: the latest Order lead carrying the customer's ID,
+    else the lead the Customer was created from. None when the customer has no lead."""
+    _check_customer_lead_access(customer)
+    from_lead = frappe.db.get_value("Customer", customer, "lead_name")
+    rows = frappe.db.sql("""
+        SELECT name, lead_name, company_name, custom_lead_category, COALESCE(custom_po_value, 0) as po_value,
+               DATE_FORMAT(creation, '%%d-%%b-%%Y') as created_on
+        FROM `tabLead`
+        WHERE docstatus < 2 AND (custom_lead_customer = %(c)s OR name = %(fl)s)
+        ORDER BY (custom_lead_category = 'Order') DESC, creation DESC
+        LIMIT 1
+    """, {"c": customer, "fl": from_lead or ""}, as_dict=1)
+    return rows[0] if rows else None
+
+
+@frappe.whitelist()
+def create_existing_customer_lead(customer):
+    """Create a repeat lead for an existing customer. Copies the earlier lead with
+    create_duplicate_lead (ticks Duplicated Lead, keeps the Customer ID), so it counts as
+    an Existing lead. With no earlier lead, returns values to pre-fill a new Lead form."""
+    _check_customer_lead_access(customer)
+    src = get_existing_customer_lead_source(customer)
+    if src:
+        new_name = create_duplicate_lead(src.name)
+        # create_duplicate_lead looks the customer up from the source lead; make sure the
+        # repeat lead carries the customer that was picked
+        if frappe.db.get_value("Lead", new_name, "custom_lead_customer") != customer:
+            frappe.db.set_value("Lead", new_name, "custom_lead_customer", customer)
+        return {"lead": new_name, "copied_from": src.name}
+
+    cust = frappe.get_doc("Customer", customer)
+    prefill = {"company_name": cust.customer_name, "custom_lead_customer": customer,
+               "custom_duplicated_lead": 1, "lead_owner": frappe.session.user}
+    if frappe.db.exists("Lead Source", "Existing Customer"):
+        prefill["source"] = "Existing Customer"
+    for lead_f, cust_f in (("mobile_no", "custom_customer_mobile_no"), ("email_id", "custom_customer_mail_id"),
+                           ("mobile_no", "mobile_no"), ("email_id", "email_id")):
+        if not prefill.get(lead_f) and cust.meta.has_field(cust_f) and cust.get(cust_f):
+            prefill[lead_f] = cust.get(cust_f)
+    return {"prefill": prefill}
+
 
 import frappe
 from erpnext.crm.doctype.lead.lead import make_quotation as original_make_quotation
@@ -2557,7 +2617,7 @@ def validate_lead(doc, method=None):
 
 import frappe
 import datetime
-from frappe.utils import flt, getdate, today, get_last_day
+from frappe.utils import flt, getdate, today, get_last_day, get_datetime
 
 def parse_period_and_dates(period=None, fiscal_year=None, from_date=None, to_date=None, month=None):
     """Resolve period, fiscal_year, month, and custom dates to explicit from_date and to_date."""
@@ -2716,6 +2776,35 @@ LEAD_DRAFT_PIPE_COND_SQL = """
     """
 
 
+# Existing-customer lead (performance table): a repeat lead made with "Duplicate Lead"
+# from an Order lead (create_duplicate_lead ticks custom_duplicated_lead and copies the
+# customer's ID). The Customer ID alone can't be used: customer_after_insert and the Sales
+# Order sync also fill custom_lead_customer when a NEW lead is won. Every other lead is New.
+LEAD_EXISTING_COND_SQL = "(IFNULL(l.custom_duplicated_lead, 0) = 1)"
+
+def lead_kind_sql(lead_kind):
+    """Lead Type filter: 'existing' = repeat leads for existing customers, 'new' = the rest."""
+    if lead_kind == "existing":
+        return f" AND {LEAD_EXISTING_COND_SQL} "
+    if lead_kind == "new":
+        return f" AND NOT {LEAD_EXISTING_COND_SQL} "
+    return ""
+
+
+# Month-wise table: a lead's stage now. Enquiry leads with a draft quotation are Draft.
+LEAD_STAGE_SQL = f"""
+    CASE
+        WHEN {LEAD_DRAFT_PIPE_COND_SQL} THEN 'draft'
+        WHEN l.custom_lead_category = 'Enquiry' THEN 'enquiry'
+        WHEN l.custom_lead_category = 'Pipeline' THEN 'submitted'
+        WHEN l.custom_lead_category = 'Order' THEN 'order'
+        WHEN l.custom_lead_category = 'Lost Enquiry' THEN 'lost_enquiry'
+        WHEN l.custom_lead_category = 'Lost Pipeline' THEN 'lost_pipeline'
+        ELSE 'other'
+    END
+"""
+
+
 # Visit vs Follow-up split of Event Activities (Admin Review "Organizations Reached").
 # Decided by activity type alone, so the dashboard can group types under Visits /
 # Follow-ups and the groups add up: a visit is a physical-meeting type; any other type
@@ -2734,6 +2823,23 @@ ACTIVITY_VISIT_COND_SQL = "(COALESCE(ea.category IN ({}), 0) = 1)".format(
 # logged directly on a Customer). Every Lead and every other contact counts as new.
 # Needs `tabBusiness Contacts` joined as bc on the activity's reference.
 ACTIVITY_FOLLOWUP_COND_SQL = f"(COALESCE(ea.category, '') != '' AND NOT {ACTIVITY_VISIT_COND_SQL})"
+
+
+def activity_class_sql(lead_alias="ld", contact_alias="bc"):
+    """Who an activity was for, one class each: 'existing' = an existing customer (a
+    Contact at status Existing Customer, an existing-customer Lead made with Duplicate
+    Lead, or a Customer); 'lead' = any other Lead; 'contact' = any other Contact; '' =
+    no reference. Needs the Lead / Business Contacts LEFT JOINed under these aliases."""
+    return f"""(CASE
+        WHEN ea.reference_type = 'Customer'
+          OR (ea.reference_type = 'Business Contacts' AND {contact_alias}.status = 'Existing Customer')
+          OR (ea.reference_type = 'Lead' AND IFNULL({lead_alias}.custom_duplicated_lead, 0) = 1) THEN 'existing'
+        WHEN ea.reference_type = 'Lead' THEN 'lead'
+        WHEN ea.reference_type = 'Business Contacts' THEN 'contact'
+        ELSE '' END)"""
+
+
+ACTIVITY_CLASSES = ("lead", "contact", "existing")
 ACTIVITY_EXISTING_COND_SQL = ("(COALESCE(ea.reference_type = 'Customer' OR (ea.reference_type = 'Business Contacts'"
                               " AND bc.status = 'Existing Customer'), 0) = 1)")
 
@@ -2764,6 +2870,185 @@ LEAD_ORDER_CONV_DATE_SQL = f"""
             DATE(l.creation)
         )
     """
+
+
+# ── History basis (Admin Review 2) ───────────────────────────────────────────
+# Movement date ("history" basis). Every step of a lead, with its exact time, read from
+# custom_lead_status_change_history: created (lead creation), draft (its first quotation;
+# Draft is not a status, so it has no history row), and each move to Enquiry (reopened),
+# Pipeline (submitted), Order, Lost Enquiry or Lost Pipeline. History rows older than the
+# lead are ignored (create_duplicate_lead copies the original's history).
+#
+# In each period a lead is counted ONCE in the category columns: the LAST status it
+# reached in that period (by time). A lead created at 15:29, quoted at 15:40 and moved
+# to Pipeline at 15:42 the same day counts that day as Submitted only, and on the day it
+# is lost, as Lost. Leads Generated separately counts the leads created in the period.
+# A range total does the same over the whole range.
+LEAD_HISTORY_STATUS_EVENTS = {"Enquiry": "enquiry", "Pipeline": "submitted", "Order": "order",
+                              "Lost Enquiry": "lost_enquiry", "Lost Pipeline": "lost_pipeline"}
+# Step -> category column, and the order used when two steps share a timestamp
+LEAD_HISTORY_STAGE_OF = {"created": "enquiry", "enquiry": "enquiry", "draft": "draft", "submitted": "submitted",
+                         "order": "order", "lost_enquiry": "lost_enquiry", "lost_pipeline": "lost_pipeline"}
+LEAD_HISTORY_STEP_RANK = {"created": 0, "enquiry": 1, "draft": 2, "submitted": 3, "order": 4,
+                          "lost_enquiry": 5, "lost_pipeline": 5}
+
+
+def _lead_history_events(from_date, to_date, lead_cond, params):
+    """Every lead step in the range: dicts of lead, sales_person, existing, exp_rev,
+    po_value, ev (created / enquiry / draft / submitted / order / lost_enquiry /
+    lost_pipeline), ts (exact time) and d (date)."""
+    def in_range(col):
+        return f" AND DATE({col}) BETWEEN %(sd)s AND %(ed)s " if (from_date and to_date) else ""
+    cols = (f"l.name as lead, COALESCE(l.lead_owner, '') as sales_person, "
+            f"CASE WHEN {LEAD_EXISTING_COND_SQL} THEN 1 ELSE 0 END as existing, "
+            f"COALESCE(l.custom_expected_revenue, 0) as exp_rev, COALESCE(l.custom_po_value, 0) as po_value")
+    ev_case = "CASE h.new_status " + " ".join(
+        f"WHEN '{k}' THEN '{v}'" for k, v in LEAD_HISTORY_STATUS_EVENTS.items()) + " END"
+    statuses = ", ".join(f"'{k}'" for k in LEAD_HISTORY_STATUS_EVENTS)
+    return frappe.db.sql(f"""
+        SELECT {cols}, 'created' as ev, l.creation as ts, DATE(l.creation) as d
+        FROM `tabLead` l
+        WHERE l.docstatus < 2 {lead_cond} {in_range('l.creation')}
+        UNION ALL
+        SELECT {cols}, {ev_case} as ev, h.updated_at as ts, DATE(h.updated_at) as d
+        FROM `tabLead` l
+        JOIN `tabLead Status Change History` h
+          ON h.parent = l.name AND h.parenttype = 'Lead'
+         AND h.parentfield = 'custom_lead_status_change_history' AND h.updated_at >= l.creation
+        WHERE l.docstatus < 2 AND h.new_status IN ({statuses}) {lead_cond} {in_range('h.updated_at')}
+        UNION ALL
+        SELECT {cols}, 'draft' as ev, fq.first_q as ts, DATE(fq.first_q) as d
+        FROM `tabLead` l
+        JOIN (SELECT COALESCE(NULLIF(q.custom_lead_id, ''), q.party_name) as lead_key, MIN(q.creation) as first_q
+              FROM `tabQuotation` q WHERE q.docstatus < 2 GROUP BY lead_key) fq ON fq.lead_key = l.name
+        WHERE l.docstatus < 2 {lead_cond} {in_range('fq.first_q')}
+    """, params, as_dict=1)
+
+
+def _history_bucket(d, period_type, sd=None, ed=None):
+    """(key, label, start, end) of the day / week / month holding date d, clipped to the range."""
+    d = getdate(d)
+    if period_type == "daily":
+        start = end = d
+        key, label = d.isoformat(), d.strftime("%d-%b-%Y (%a)")
+    elif period_type == "weekly":
+        start = add_days(d, -d.weekday())
+        end = add_days(start, 6)
+        key = start.isoformat()
+        label = "Week {0} ({1} to {2})".format(start.isocalendar()[1], start.strftime("%d-%b-%Y (%a)"),
+                                               end.strftime("%d-%b-%Y (%a)"))
+    else:
+        start, end = d.replace(day=1), getdate(get_last_day(d))
+        key, label = start.strftime("%Y-%m"), start.strftime("%B %Y")
+    if sd and getdate(sd) > start:
+        start = getdate(sd)
+    if ed and getdate(ed) < end:
+        end = getdate(ed)
+    return key, label, start, end
+
+
+def _history_scope_add(scope, r):
+    """Fold one step into a scope: created leads, and each lead's latest step."""
+    if r.ev == "created":
+        scope.setdefault("created", {})[r.lead] = r
+    key = (get_datetime(r.ts), LEAD_HISTORY_STEP_RANK.get(r.ev, 0))
+    last = scope.setdefault("last", {})
+    if r.lead not in last or key >= last[r.lead][0]:
+        last[r.lead] = (key, r)
+
+
+def _history_stage_sets(scope):
+    """{category: {lead: step row}} from each lead's last step in the scope."""
+    out = {}
+    for lead, (_key, r) in (scope.get("last") or {}).items():
+        out.setdefault(LEAD_HISTORY_STAGE_OF.get(r.ev, "enquiry"), {})[lead] = r
+    return out
+
+
+def _history_metrics(scope):
+    """Metrics for one scope: leads created, and leads by the last status they reached."""
+    st = _history_stage_sets(scope or {})
+    created = (scope or {}).get("created", {})
+
+    def total(m, f):
+        return flt(sum(flt(r[f]) for r in m.values()))
+
+    def ex(m):
+        return sum(1 for r in m.values() if r["existing"])
+    g = lambda k: st.get(k, {})
+    return {
+        "created": len(created), "existing": ex(created), "created_v": total(created, "exp_rev"),
+        "enquiry_c": len(g("enquiry")), "enquiry_v": total(g("enquiry"), "exp_rev"), "ex_enquiry": ex(g("enquiry")),
+        "draft_c": len(g("draft")), "draft_v": total(g("draft"), "exp_rev"), "ex_draft": ex(g("draft")),
+        "submitted_c": len(g("submitted")), "submitted_v": total(g("submitted"), "exp_rev"), "ex_submitted": ex(g("submitted")),
+        "order_c": len(g("order")), "order_v": total(g("order"), "po_value"), "ex_order": ex(g("order")),
+        "lost_enquiry_c": len(g("lost_enquiry")), "lost_enquiry_v": total(g("lost_enquiry"), "exp_rev"),
+        "ex_lost_enquiry": ex(g("lost_enquiry")),
+        "lost_pipeline_c": len(g("lost_pipeline")), "lost_pipeline_v": total(g("lost_pipeline"), "exp_rev"),
+        "ex_lost_pipeline": ex(g("lost_pipeline")),
+    }
+
+
+def _lead_history_summary(from_date, to_date, lead_cond, params, period_type="monthly"):
+    """Movement-date counts per bucket (day / week / month, or 'owner'), per bucket and
+    owner, per owner, and for the whole range."""
+    events = _lead_history_events(from_date, to_date, lead_cond, params)
+    buckets, scopes = {}, {}
+
+    for r in events:
+        if period_type == "owner":
+            key = r.sales_person
+            if key not in buckets:
+                buckets[key] = {"key": key, "label": key, "from_date": from_date, "to_date": to_date, "sort": key}
+        else:
+            key, label, start, end = _history_bucket(r.d, period_type, from_date, to_date)
+            if key not in buckets:
+                buckets[key] = {"key": key, "label": label, "from_date": str(start), "to_date": str(end), "sort": str(start)}
+        for sc in (("b", key), ("bo", key, r.sales_person), ("o", r.sales_person), ("all",)):
+            _history_scope_add(scopes.setdefault(sc, {}), r)
+
+    def m(scope):
+        return _history_metrics(scopes.get(scope, {}))
+    owners = sorted({r.sales_person for r in events})
+    blist = sorted(buckets.values(), key=lambda b: b["sort"])
+    return {
+        "buckets": blist, "owners": owners,
+        "bucket": {b["key"]: m(("b", b["key"])) for b in blist},
+        "cell": {(b["key"], o): m(("bo", b["key"], o)) for b in blist for o in owners if ("bo", b["key"], o) in scopes},
+        "owner": {o: m(("o", o)) for o in owners},
+        "total": m(("all",)),
+    }
+
+
+def _history_lead_names(stage, from_date, to_date, lead_cond, params):
+    """{lead: (date, quotation_state)} of the leads behind one movement-date count, using
+    the same last-status-in-range rule as the table."""
+    scope = {}
+    for r in _lead_history_events(from_date, to_date, lead_cond, params):
+        _history_scope_add(scope, r)
+    if stage in ("created", "existing", "new"):
+        rows = scope.get("created", {})
+        if stage != "created":
+            rows = {k: v for k, v in rows.items() if bool(v.existing) == (stage == "existing")}
+        return {k: (v.d, None) for k, v in rows.items()}
+    st = _history_stage_sets(scope)
+    if stage == "pipeline":
+        out = {k: (v.d, "Submitted") for k, v in st.get("submitted", {}).items()}
+        out.update({k: (v.d, "Draft") for k, v in st.get("draft", {}).items()})
+        return out
+    q = {"draft": "Draft", "submitted": "Submitted"}.get(stage)
+    return {k: (v.d, q) for k, v in st.get(stage, {}).items()}
+
+
+# Lead list card types -> history stage (history basis)
+LEAD_HISTORY_CARD_STAGE = {
+    "l_enq": "enquiry", "l_enq_only": "enquiry", "lc_all": "created", "lc_existing": "existing",
+    "lc_new": "new", "l_pipe_all": "pipeline", "l_pipe": "submitted", "lc_submitted": "submitted",
+    "l_draft_pipe": "draft", "lc_draft": "draft", "l_ord": "order", "lc_order": "order",
+    "conv_lead": "order", "l_lenq": "lost_enquiry", "lc_lost_enquiry": "lost_enquiry",
+    "l_lpipe": "lost_pipeline", "lc_lost_pipeline": "lost_pipeline",
+    "l_created": "created", "lc_ex_all": "existing", "lc_nw_all": "new",
+}
 
 
 def period_sql_for(date_expr, period_type):
@@ -2817,8 +3102,69 @@ def build_in_clause(values, prefix, column, params):
     return " AND {} IN ({}) ".format(column, placeholders)
 
 
+def _history_lead_rows(from_date, to_date, lead_cond, params, period_type, by_user, bc_conv_filter, conv_params):
+    """Lead breakup rows + totals on the history basis, in get_tabular_dashboard_data's
+    shape. Enquiry = leads created; Pipeline = Submitted (moved to Pipeline) + Draft
+    (first quotation created); Order / Lost = moved there; all within each row's period.
+    enq_only_* carries the Enquiry figure so the block doesn't subtract drafts from it."""
+    mode = "owner" if by_user else period_type
+    summ = _lead_history_summary(from_date, to_date, lead_cond, params, mode)
+
+    # Contact -> Lead conversions, bucketed the same way
+    bc_rows = frappe.db.sql(f"""
+        SELECT COALESCE(assign_to, '') as sales_person, DATE({BC_CONVERSION_DATE_SQL}) as d
+        FROM `tabBusiness Contacts` {bc_conv_filter}
+    """, conv_params, as_dict=1)
+    bc_count, extra = {}, {}
+    for r in bc_rows:
+        if not r.d:
+            continue
+        if by_user:
+            key, label, start, end = r.sales_person, r.sales_person, from_date, to_date
+        else:
+            key, label, start, end = _history_bucket(r.d, period_type, from_date, to_date)
+        bc_count[key] = bc_count.get(key, 0) + 1
+        extra.setdefault(key, {"key": key, "label": label, "from_date": str(start) if start else "",
+                               "to_date": str(end) if end else "", "sort": str(start) if not by_user else key})
+
+    buckets = {b["key"]: b for b in summ["buckets"]}
+    for k, b in extra.items():
+        buckets.setdefault(k, b)
+    names = {}
+    if by_user:
+        names = {u.name: (u.full_name or u.name) for u in frappe.get_all(
+            "User", filters={"name": ["in", list(buckets) or [""]]}, fields=["name", "full_name"])}
+
+    blank = _history_metrics({})
+
+    def row_of(m, conv_bc):
+        return {
+            # enq_c = leads created (the block's Leads Generated); enq_only_* = Enquiry column
+            "enq_c": m["created"], "enq_v": m["created_v"], "enq_only_c": m["enquiry_c"], "enq_only_v": m["enquiry_v"],
+            "ex_enq_only_c": m["ex_enquiry"],
+            "draft_pipe_c": m["draft_c"], "draft_pipe_v": m["draft_v"],
+            "pipe_c": m["submitted_c"], "pipe_v": m["submitted_v"],
+            "ord_c": m["order_c"], "ord_v": m["order_v"],
+            "lenq_c": m["lost_enquiry_c"], "lenq_v": m["lost_enquiry_v"],
+            "lpipe_c": m["lost_pipeline_c"], "lpipe_v": m["lost_pipeline_v"],
+            "conv_bc_to_lead": conv_bc, "conv_lead_to_order": m["order_c"], "convert_to": conv_bc + m["order_c"],
+            # New / Existing split of the created leads, and existing-customer leads per event
+            "existing_c": m["existing"], "ex_enq_c": 0, "ex_draft_c": m["ex_draft"], "ex_pipe_c": m["ex_submitted"],
+            "ex_ord_c": m["ex_order"], "ex_lenq_c": m["ex_lost_enquiry"], "ex_lpipe_c": m["ex_lost_pipeline"],
+        }
+
+    rows = []
+    for b in sorted(buckets.values(), key=lambda x: (names.get(x["key"]) or x["label"] or "").lower() if by_user else x["sort"]):
+        r = row_of(summ["bucket"].get(b["key"], blank), bc_count.get(b["key"], 0))
+        r.update({"label": (names.get(b["key"]) or b["key"] or "Unassigned") if by_user else b["label"],
+                  "f_sort": b["sort"], "m_num": b["key"], "grp_user": b["key"] if by_user else "",
+                  "row_from_date": b["from_date"] or "", "row_to_date": b["to_date"] or ""})
+        rows.append(r)
+    return rows, row_of(summ["total"], len([r for r in bc_rows if r.d]))
+
+
 @frappe.whitelist()
-def get_tabular_dashboard_data(from_date=None, to_date=None, user=None, industry=None, source=None, period_type="monthly", fiscal_year=None, period=None, month=None, group_by="period", **kwargs):
+def get_tabular_dashboard_data(from_date=None, to_date=None, user=None, industry=None, source=None, period_type="monthly", fiscal_year=None, period=None, month=None, group_by="period", basis=None, lead_kind=None, **kwargs):
     from_date, to_date = parse_period_and_dates(period, fiscal_year, from_date, to_date, month=month or kwargs.get("month"))
 
     # Determine the User Filter based on permissions
@@ -2841,6 +3187,9 @@ def get_tabular_dashboard_data(from_date=None, to_date=None, user=None, industry
     where_cont += build_in_clause(industry_list, "ind", "industry", params)
     where_lead += build_in_clause(source_list, "src", "l.source", params)
     where_cont += build_in_clause(source_list, "src", "source", params)
+    # Lead Type filter (Admin Review 2): only existing-customer or only new leads
+    kind_cond = lead_kind_sql(lead_kind)
+    where_lead += kind_cond
 
     lead_action_date = f"""
         CASE
@@ -2855,6 +3204,11 @@ def get_tabular_dashboard_data(from_date=None, to_date=None, user=None, industry
             )
         END
     """
+    if basis == "created":
+        # Created-date basis (Admin Review 2): rows and the date filter use the lead's
+        # creation date; each lead is still counted in its CURRENT category. So a range
+        # shows how many leads were created in it and where those leads are now.
+        lead_action_date = "DATE(l.creation)"
 
     contact_action_date = """
         CASE
@@ -2965,7 +3319,14 @@ def get_tabular_dashboard_data(from_date=None, to_date=None, user=None, industry
             SUM(CASE WHEN l.custom_lead_category = 'Lost Pipeline' THEN 1 ELSE 0 END) as lpipe_c,
             SUM(CASE WHEN l.custom_lead_category = 'Lost Pipeline' THEN COALESCE(l.custom_expected_revenue, 0) ELSE 0 END) as lpipe_v,
             SUM(CASE WHEN {LEAD_DRAFT_PIPE_COND_SQL} THEN 1 ELSE 0 END) as draft_pipe_c,
-            SUM(CASE WHEN {LEAD_DRAFT_PIPE_COND_SQL} THEN COALESCE(l.custom_expected_revenue, 0) ELSE 0 END) as draft_pipe_v
+            SUM(CASE WHEN {LEAD_DRAFT_PIPE_COND_SQL} THEN COALESCE(l.custom_expected_revenue, 0) ELSE 0 END) as draft_pipe_v,
+            SUM(CASE WHEN {LEAD_EXISTING_COND_SQL} THEN 1 ELSE 0 END) as existing_c,
+            SUM(CASE WHEN {LEAD_EXISTING_COND_SQL} AND l.custom_lead_category = 'Enquiry' THEN 1 ELSE 0 END) as ex_enq_c,
+            SUM(CASE WHEN {LEAD_EXISTING_COND_SQL} AND {LEAD_DRAFT_PIPE_COND_SQL} THEN 1 ELSE 0 END) as ex_draft_c,
+            SUM(CASE WHEN {LEAD_EXISTING_COND_SQL} AND l.custom_lead_category = 'Pipeline' THEN 1 ELSE 0 END) as ex_pipe_c,
+            SUM(CASE WHEN {LEAD_EXISTING_COND_SQL} AND l.custom_lead_category = 'Order' THEN 1 ELSE 0 END) as ex_ord_c,
+            SUM(CASE WHEN {LEAD_EXISTING_COND_SQL} AND l.custom_lead_category = 'Lost Enquiry' THEN 1 ELSE 0 END) as ex_lenq_c,
+            SUM(CASE WHEN {LEAD_EXISTING_COND_SQL} AND l.custom_lead_category = 'Lost Pipeline' THEN 1 ELSE 0 END) as ex_lpipe_c
         FROM `tabLead` l
         {where_lead} {lead_creation_date_where}
         GROUP BY {p_group_lead} ORDER BY f_sort ASC
@@ -2999,6 +3360,8 @@ def get_tabular_dashboard_data(from_date=None, to_date=None, user=None, industry
         p["lpipe_v"] += float(r.lpipe_v or 0.0)
         p["draft_pipe_c"] += int(r.draft_pipe_c or 0)
         p["draft_pipe_v"] += float(r.draft_pipe_v or 0.0)
+        for k in ("existing_c", "ex_enq_c", "ex_draft_c", "ex_pipe_c", "ex_ord_c", "ex_lenq_c", "ex_lpipe_c"):
+            p[k] = p.get(k, 0) + int(r.get(k) or 0)
 
     # Conversions for Lead Performance Table
     conv_params = {"sd": from_date, "ed": to_date, "usr": effective_user}
@@ -3010,7 +3373,7 @@ def get_tabular_dashboard_data(from_date=None, to_date=None, user=None, industry
     ind_clause_conv = build_in_clause(industry_list, "ind", "industry", conv_params)
     src_clause_conv = build_in_clause(source_list, "src", "source", conv_params)
     bc_conv_filter += ind_clause_conv + src_clause_conv
-    lead_conv_filter += ind_clause_conv + src_clause_conv
+    lead_conv_filter += ind_clause_conv + src_clause_conv + kind_cond
     # Shared with the drilldown so both bucket a contact into the same period
     bc_lead_conv_date = BC_CONVERSION_DATE_SQL
 
@@ -3172,7 +3535,14 @@ def get_tabular_dashboard_data(from_date=None, to_date=None, user=None, industry
             SUM(CASE WHEN l.custom_lead_category = 'Lost Pipeline' THEN 1 ELSE 0 END) as lpipe_c,
             SUM(CASE WHEN l.custom_lead_category = 'Lost Pipeline' THEN COALESCE(l.custom_expected_revenue, 0) ELSE 0 END) as lpipe_v,
             SUM(CASE WHEN {LEAD_DRAFT_PIPE_COND_SQL} THEN 1 ELSE 0 END) as draft_pipe_c,
-            SUM(CASE WHEN {LEAD_DRAFT_PIPE_COND_SQL} THEN COALESCE(l.custom_expected_revenue, 0) ELSE 0 END) as draft_pipe_v
+            SUM(CASE WHEN {LEAD_DRAFT_PIPE_COND_SQL} THEN COALESCE(l.custom_expected_revenue, 0) ELSE 0 END) as draft_pipe_v,
+            SUM(CASE WHEN {LEAD_EXISTING_COND_SQL} THEN 1 ELSE 0 END) as existing_c,
+            SUM(CASE WHEN {LEAD_EXISTING_COND_SQL} AND l.custom_lead_category = 'Enquiry' THEN 1 ELSE 0 END) as ex_enq_c,
+            SUM(CASE WHEN {LEAD_EXISTING_COND_SQL} AND {LEAD_DRAFT_PIPE_COND_SQL} THEN 1 ELSE 0 END) as ex_draft_c,
+            SUM(CASE WHEN {LEAD_EXISTING_COND_SQL} AND l.custom_lead_category = 'Pipeline' THEN 1 ELSE 0 END) as ex_pipe_c,
+            SUM(CASE WHEN {LEAD_EXISTING_COND_SQL} AND l.custom_lead_category = 'Order' THEN 1 ELSE 0 END) as ex_ord_c,
+            SUM(CASE WHEN {LEAD_EXISTING_COND_SQL} AND l.custom_lead_category = 'Lost Enquiry' THEN 1 ELSE 0 END) as ex_lenq_c,
+            SUM(CASE WHEN {LEAD_EXISTING_COND_SQL} AND l.custom_lead_category = 'Lost Pipeline' THEN 1 ELSE 0 END) as ex_lpipe_c
         FROM `tabLead` l
         {where_lead}{where_lead_creation}
     """, params, as_dict=1)
@@ -3191,6 +3561,8 @@ def get_tabular_dashboard_data(from_date=None, to_date=None, user=None, industry
         lt["lpipe_v"] = float(alc.get("lpipe_v") or 0.0)
         lt["draft_pipe_c"] = int(alc.get("draft_pipe_c") or 0)
         lt["draft_pipe_v"] = float(alc.get("draft_pipe_v") or 0.0)
+        for k in ("existing_c", "ex_enq_c", "ex_draft_c", "ex_pipe_c", "ex_ord_c", "ex_lenq_c", "ex_lpipe_c"):
+            lt[k] = int(alc.get(k) or 0)
 
     ct = {"o": 0, "c": 0, "e": 0}
     for c in sorted_contacts:
@@ -3198,13 +3570,466 @@ def get_tabular_dashboard_data(from_date=None, to_date=None, user=None, industry
         ct["c"] += c["c"]
         ct["e"] += c["e"]
 
+    if basis == "status":
+        # Current status, dated from the history: the category columns already count
+        # each lead once in its CURRENT category on the date it moved there
+        # (lead_action_date). Leads Generated must count leads by their CREATION date,
+        # so add created_c / created_ex_c per row from a creation-date query.
+        if is_user_grouping:
+            c_label, c_sort, c_group = p_label_lead, p_sort_lead, p_group_lead
+        else:
+            c_label, c_sort, c_group = period_sql_for("DATE(l.creation)", period_type)
+        c_date = " AND DATE(l.creation) BETWEEN %(sd)s AND %(ed)s " if (from_date and to_date) else ""
+        created_rows = frappe.db.sql(f"""
+            SELECT {c_label} as label, {c_sort} as f_sort, {p_user_lead} as grp_user,
+                   DATE_FORMAT(l.creation, '%%Y-%%m') as ym_num,
+                   MIN(DATE(l.creation)) as row_from_date, MAX(DATE(l.creation)) as row_to_date,
+                   COUNT(*) as created_c, SUM(CASE WHEN {LEAD_EXISTING_COND_SQL} THEN 1 ELSE 0 END) as created_ex_c
+            FROM `tabLead` l {where_lead} {c_date}
+            GROUP BY {c_group}
+        """, params, as_dict=1)
+        by_label = {r["label"]: r for r in sorted_leads}
+        for c in created_rows:
+            row = by_label.get(c.label)
+            if not row:
+                row = {"label": c.label, "f_sort": str(c.f_sort), "m_num": str(c.ym_num or c.label or ''),
+                       "grp_user": str(c.get("grp_user") or ''),
+                       "row_from_date": str(c.row_from_date) if c.row_from_date else '',
+                       "row_to_date": str(c.row_to_date) if c.row_to_date else '',
+                       "enq_c": 0, "enq_v": 0.0, "pipe_c": 0, "pipe_v": 0.0, "ord_c": 0, "ord_v": 0.0,
+                       "lenq_c": 0, "lenq_v": 0.0, "lpipe_c": 0, "lpipe_v": 0.0,
+                       "draft_pipe_c": 0, "draft_pipe_v": 0.0,
+                       "conv_bc_to_lead": 0, "conv_lead_to_order": 0, "convert_to": 0}
+                sorted_leads.append(row)
+                by_label[c.label] = row
+            else:
+                widen_row_span(row, c.row_from_date, c.row_to_date)
+            row["created_c"], row["created_ex_c"] = int(c.created_c or 0), int(c.created_ex_c or 0)
+        for row in sorted_leads:
+            row.setdefault("created_c", 0)
+            row.setdefault("created_ex_c", 0)
+        sorted_leads.sort(key=lambda x: x["f_sort"])
+        tot = frappe.db.sql(f"""
+            SELECT COUNT(*) as c, SUM(CASE WHEN {LEAD_EXISTING_COND_SQL} THEN 1 ELSE 0 END) as ex
+            FROM `tabLead` l {where_lead} {c_date}
+        """, params, as_dict=1)[0]
+        lt["created_c"], lt["created_ex_c"] = int(tot.c or 0), int(tot.ex or 0)
+
+    if basis == "history":
+        sorted_leads, lt = _history_lead_rows(from_date, to_date, where_lead.replace(" WHERE l.docstatus < 2 ", "", 1),
+                                              params, period_type, is_user_grouping, bc_conv_filter, conv_params)
+
     return {
         "group_by": "user" if is_user_grouping else "period",
+        "basis": basis if basis in ("history", "created", "status") else "stage",
         "leads": sorted_leads,
         "lead_totals": lt,
         "contacts": sorted_contacts,
         "contact_totals": ct
     }
+
+def _history_performance(from_date, to_date, lead_cond, params, period_type, with_team):
+    """Lead Performance on the history basis: Existing / New = leads created in the
+    period; Draft / Submitted / Order / Lost = leads that got there in the period."""
+    summ = _lead_history_summary(from_date, to_date, lead_cond, params, period_type)
+
+    def shape(m):
+        return {"total": m["created"], "existing": m["existing"], "new": m["created"] - m["existing"],
+                "enquiry_c": 0, "draft_c": m["draft_c"], "draft_v": m["draft_v"],
+                "submitted_c": m["submitted_c"], "submitted_v": m["submitted_v"],
+                "order_c": m["order_c"], "order_v": m["order_v"],
+                "lost_enquiry_c": m["lost_enquiry_c"], "lost_pipeline_c": m["lost_pipeline_c"]}
+
+    periods = [{"key": b["key"], "label": b["label"], "from_date": b["from_date"], "to_date": b["to_date"]}
+               for b in summ["buckets"]]
+    team = []
+    if with_team:
+        names = {u.name: (u.full_name or u.name) for u in frappe.get_all(
+            "User", filters={"name": ["in", summ["owners"] or [""]]}, fields=["name", "full_name"])}
+        for o in summ["owners"]:
+            team.append({"user": o, "full_name": names.get(o) or o or "Unassigned",
+                         "periods": {b["key"]: shape(summ["cell"][(b["key"], o)])
+                                     for b in summ["buckets"] if (b["key"], o) in summ["cell"]},
+                         "grand": shape(summ["owner"][o])})
+        team.sort(key=lambda x: x["full_name"].lower())
+    return {"basis": "history", "from_date": from_date, "to_date": to_date, "period_type": period_type,
+            "periods": periods, "total": {b["key"]: shape(summ["bucket"][b["key"]]) for b in summ["buckets"]},
+            # Distinct leads over the whole range: a lead that moved in two periods counts once
+            "grand": shape(summ["total"]), "team": team}
+
+
+@frappe.whitelist()
+def get_lead_monthly_performance(from_date=None, to_date=None, user=None, industry=None, source=None,
+                                 period_type="monthly", fiscal_year=None, period=None, month=None, basis=None, **kwargs):
+    """Lead performance by period (Admin Review): one row per day / week / month (the
+    Lead section's breakup interval) for the leads CREATED in it, within the Lead
+    section's period filter. Each row splits those leads Existing / New and by the stage
+    they are in now (Enquiry, Draft / Submitted Pipeline, Order, Lost). Returned for the
+    whole team and per salesperson (lead owner)."""
+    from_date, to_date = parse_period_and_dates(period, fiscal_year, from_date, to_date, month=month)
+    is_head = "DAC CRM Head" in frappe.get_roles()
+    effective_user = user if (is_head and user) else (None if (is_head and not user) else frappe.session.user)
+
+    params = {"sd": from_date, "ed": to_date, "usr": effective_user}
+    where = " WHERE l.docstatus < 2 "
+    if from_date and to_date:
+        where += " AND DATE(l.creation) BETWEEN %(sd)s AND %(ed)s "
+    if effective_user:
+        where += " AND l.lead_owner = %(usr)s "
+    where += build_in_clause(as_filter_list(industry), "ind", "l.industry", params)
+    where += build_in_clause(as_filter_list(source), "src", "l.source", params)
+
+    if basis == "history":
+        return _history_performance(from_date, to_date, where.replace(" WHERE l.docstatus < 2 ", "", 1)
+                                    .replace(" AND DATE(l.creation) BETWEEN %(sd)s AND %(ed)s ", "", 1),
+                                    params, period_type, is_head and not effective_user)
+
+    p_label, p_sort, p_group = period_sql_for("l.creation", period_type)
+    stage = f"({LEAD_STAGE_SQL})"
+    metrics = f"""
+               COUNT(*) as total,
+               SUM(CASE WHEN {LEAD_EXISTING_COND_SQL} THEN 1 ELSE 0 END) as existing,
+               SUM(CASE WHEN {stage} = 'enquiry' THEN 1 ELSE 0 END) as enquiry_c,
+               SUM(CASE WHEN {stage} = 'enquiry' THEN COALESCE(l.custom_expected_revenue, 0) ELSE 0 END) as enquiry_v,
+               SUM(CASE WHEN {stage} = 'draft' THEN 1 ELSE 0 END) as draft_c,
+               SUM(CASE WHEN {stage} = 'draft' THEN COALESCE(l.custom_expected_revenue, 0) ELSE 0 END) as draft_v,
+               SUM(CASE WHEN {stage} = 'submitted' THEN 1 ELSE 0 END) as submitted_c,
+               SUM(CASE WHEN {stage} = 'submitted' THEN COALESCE(l.custom_expected_revenue, 0) ELSE 0 END) as submitted_v,
+               SUM(CASE WHEN {stage} = 'order' THEN 1 ELSE 0 END) as order_c,
+               SUM(CASE WHEN {stage} = 'order' THEN COALESCE(l.custom_po_value, 0) ELSE 0 END) as order_v,
+               SUM(CASE WHEN {stage} = 'lost_enquiry' THEN 1 ELSE 0 END) as lost_enquiry_c,
+               SUM(CASE WHEN {stage} = 'lost_pipeline' THEN 1 ELSE 0 END) as lost_pipeline_c"""
+
+    # Whole team, one row per bucket; its MIN / MAX dates are what a row click lists
+    bucket_rows = frappe.db.sql(f"""
+        SELECT {p_label} as label, {p_sort} as bkey,
+               MIN(DATE(l.creation)) as from_date, MAX(DATE(l.creation)) as to_date, {metrics}
+        FROM `tabLead` l {where}
+        GROUP BY {p_group} ORDER BY bkey
+    """, params, as_dict=1)
+    owner_rows = frappe.db.sql(f"""
+        SELECT COALESCE(l.lead_owner, '') as sales_person, {p_sort} as bkey, {metrics}
+        FROM `tabLead` l {where}
+        GROUP BY COALESCE(l.lead_owner, ''), {p_group}
+    """, params, as_dict=1)
+
+    keys = ("total", "existing", "new", "enquiry_c", "enquiry_v", "draft_c", "draft_v", "submitted_c", "submitted_v",
+            "order_c", "order_v", "lost_enquiry_c", "lost_pipeline_c")
+
+    def metrics_of(r):
+        out = {k: (flt(r.get(k) or 0) if k.endswith("_v") else int(r.get(k) or 0)) for k in keys if k != "new"}
+        out["new"] = out["total"] - out["existing"]
+        return out
+
+    periods = [{"key": str(r.bkey), "label": r.label, "from_date": str(r.from_date), "to_date": str(r.to_date)}
+               for r in bucket_rows]
+    total = {str(r.bkey): metrics_of(r) for r in bucket_rows}
+
+    # Every category split Existing / New: total[period]["split"] = {"existing": {...}, "new": {...}}
+    split_rows = frappe.db.sql(f"""
+        SELECT {p_sort} as bkey, CASE WHEN {LEAD_EXISTING_COND_SQL} THEN 1 ELSE 0 END as is_existing, {metrics}
+        FROM `tabLead` l {where}
+        GROUP BY {p_group}, is_existing
+    """, params, as_dict=1)
+    for r in split_rows:
+        t = total.get(str(r.bkey))
+        if t is not None:
+            t.setdefault("split", {})["existing" if r.is_existing else "new"] = metrics_of(r)
+
+    team = {}
+    for r in owner_rows:
+        team.setdefault(r.sales_person, {})[str(r.bkey)] = metrics_of(r)
+    names = {u.name: (u.full_name or u.name) for u in frappe.get_all(
+        "User", filters={"name": ["in", list(team) or [""]]}, fields=["name", "full_name"])}
+    team_rows = sorted(({"user": u, "full_name": names.get(u) or u or "Unassigned", "periods": m}
+                        for u, m in team.items()), key=lambda x: x["full_name"].lower())
+
+    return {"from_date": from_date, "to_date": to_date, "period_type": period_type,
+            "periods": periods, "total": total,
+            "team": team_rows if (is_head and not effective_user) else []}
+
+
+@frappe.whitelist()
+def export_lead_performance_excel(**kwargs):
+    """Excel of Lead Performance by Period (same filters as the table): sheet 1 = one row
+    per period, sheet 2 = one row per salesperson per period (head only)."""
+    from io import BytesIO
+    from openpyxl import Workbook
+    from openpyxl.styles import Alignment, Font, PatternFill
+
+    require_crm_head()   # Excel downloads are for CRM Heads only
+    kwargs.pop("cmd", None)
+    data = get_lead_monthly_performance(**kwargs)
+    periods = data.get("periods") or []
+
+    head = ["Leads Created", "Existing", "New", "Enquiry", "Enquiry Value", "Pipeline - Draft", "Draft Value",
+            "Pipeline - Submitted", "Submitted Value", "Order", "Order Value", "Lost Enquiry", "Lost Pipeline"]
+
+    def values(m):
+        return [m.get("total", 0), m.get("existing", 0), m.get("new", 0), m.get("enquiry_c", 0),
+                round(m.get("enquiry_v", 0)), m.get("draft_c", 0), round(m.get("draft_v", 0)),
+                m.get("submitted_c", 0), round(m.get("submitted_v", 0)), m.get("order_c", 0),
+                round(m.get("order_v", 0)), m.get("lost_enquiry_c", 0), m.get("lost_pipeline_c", 0)]
+
+    def summed(ms):
+        out = {}
+        for m in ms:
+            for k, v in m.items():
+                if isinstance(v, (int, float)):
+                    out[k] = out.get(k, 0) + (v or 0)
+        return out
+
+    wb = Workbook()
+    bold, fill = Font(bold=True, color="FFFFFF"), PatternFill("solid", fgColor="3498DB")
+
+    def style(ws, widths):
+        for c in ws[1]:
+            c.font, c.fill = bold, fill
+            c.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
+        for i, w in enumerate(widths, 1):
+            ws.column_dimensions[ws.cell(1, i).column_letter].width = w
+        for row in ws.iter_rows(min_row=2):
+            for c in row[1:]:
+                if isinstance(c.value, (int, float)) and "Value" in str(ws.cell(1, c.column).value):
+                    c.number_format = "#,##0"
+        ws.freeze_panes = "B2"
+
+    ws = wb.active
+    ws.title = "By Period"
+    ws.append(["Period", "Type"] + head)
+
+    def part(m, kind):
+        return (m.get("split") or {}).get(kind) or {}
+    for p in periods:
+        m = data["total"].get(p["key"], {})
+        ws.append([p["label"], "Existing"] + values(part(m, "existing")))
+        ws.append([p["label"], "New"] + values(part(m, "new")))
+        ws.append([p["label"], "Total"] + values(m))
+        for c in ws[ws.max_row]:
+            c.font = Font(bold=True)
+    all_m = [data["total"].get(p["key"], {}) for p in periods]
+    ws.append(["All periods", "Existing"] + values(summed(part(m, "existing") for m in all_m)))
+    ws.append(["All periods", "New"] + values(summed(part(m, "new") for m in all_m)))
+    # History basis sends distinct-lead totals ("grand"); summing rows would count a lead twice
+    ws.append(["All periods", "Total"] + values(data.get("grand") or summed(all_m)))
+    for c in ws[ws.max_row]:
+        c.font = Font(bold=True)
+    style(ws, [34, 10] + [14] * len(head))
+
+    if data.get("team"):
+        ws2 = wb.create_sheet("By Salesperson")
+        ws2.append(["Salesperson", "Period"] + head)
+        for person in data["team"]:
+            pm = person.get("periods") or {}
+            for p in periods:
+                if (pm.get(p["key"]) or {}).get("total"):
+                    ws2.append([person["full_name"], p["label"]] + values(pm[p["key"]]))
+            ws2.append([person["full_name"], "Total"] + values(person.get("grand") or summed(pm.get(p["key"], {}) for p in periods)))
+            for c in ws2[ws2.max_row]:
+                c.font = Font(bold=True)
+        style(ws2, [22, 34] + [14] * len(head))
+
+    buf = BytesIO()
+    wb.save(buf)
+    frappe.response["filename"] = "Lead Performance {0}.xlsx".format(frappe.utils.nowdate())
+    frappe.response["filecontent"] = buf.getvalue()
+    frappe.response["type"] = "binary"
+
+
+@frappe.whitelist()
+def get_team_overview(period=None, fiscal_year=None, from_date=None, to_date=None, month=None, **kwargs):
+    """Team Overview (Admin Review 2, top): one row per salesperson for the period.
+    Leads = leads CREATED in the period (lead owner), New / Existing (Duplicate Lead), and
+    the category they are in now. Activities = Event Activities COMPLETED in the period
+    (assigned to), on Leads / Contacts, split Visit / Follow-up by activity type, plus the
+    distinct Leads / Contacts they covered. Pending = open / overdue activities now (not
+    tied to the period). A head sees the whole team; anyone else only their own row."""
+    from_date, to_date = parse_period_and_dates(period, fiscal_year, from_date, to_date, month=month)
+    is_head = "DAC CRM Head" in frappe.get_roles()
+    params = {"sd": from_date, "ed": to_date, "usr": frappe.session.user}
+    lead_user = "" if is_head else " AND l.lead_owner = %(usr)s "
+    act_user = "" if is_head else " AND ea.assigned_to = %(usr)s "
+    lead_date = " AND DATE(l.creation) BETWEEN %(sd)s AND %(ed)s " if (from_date and to_date) else ""
+    act_date = (" AND DATE(COALESCE(ea.ends_on, ea.actual_checked_out_at, ea.actual_visit_at, ea.modified)) "
+                "BETWEEN %(sd)s AND %(ed)s ") if (from_date and to_date) else ""
+    stage = f"({LEAD_STAGE_SQL})"
+
+    leads = frappe.db.sql(f"""
+        SELECT COALESCE(l.lead_owner, '') as person,
+               COUNT(*) as created,
+               SUM(CASE WHEN {LEAD_EXISTING_COND_SQL} THEN 1 ELSE 0 END) as existing,
+               SUM(CASE WHEN {stage} = 'enquiry' THEN 1 ELSE 0 END) as enquiry,
+               SUM(CASE WHEN {stage} IN ('draft', 'submitted') THEN 1 ELSE 0 END) as pipeline,
+               SUM(CASE WHEN {stage} IN ('draft', 'submitted') THEN COALESCE(l.custom_expected_revenue, 0) ELSE 0 END) as pipeline_v,
+               SUM(CASE WHEN {stage} = 'order' THEN 1 ELSE 0 END) as orders,
+               SUM(CASE WHEN {stage} = 'order' THEN COALESCE(l.custom_po_value, 0) ELSE 0 END) as orders_v,
+               SUM(CASE WHEN {stage} IN ('lost_enquiry', 'lost_pipeline') THEN 1 ELSE 0 END) as lost
+        FROM `tabLead` l
+        WHERE l.docstatus < 2 {lead_date} {lead_user}
+        GROUP BY COALESCE(l.lead_owner, '')
+    """, params, as_dict=1)
+
+    ref = "ea.reference_type IN ('Lead', 'Business Contacts') AND IFNULL(ea.reference_name, '') != ''"
+    ref_key = "CONCAT(ea.reference_type, '::', ea.reference_name)"
+
+    def act_rows(extra=""):
+        return frappe.db.sql(f"""
+            SELECT COALESCE(ea.assigned_to, '') as person,
+                   SUM(CASE WHEN {ACTIVITY_VISIT_COND_SQL} THEN 1 ELSE 0 END) as visits,
+                   SUM(CASE WHEN {ACTIVITY_FOLLOWUP_COND_SQL} THEN 1 ELSE 0 END) as followups,
+                   COUNT(DISTINCT {ref_key}) as orgs
+            FROM `tabEvent Activity` ea
+            WHERE ea.docstatus < 2 AND ea.status = 'Completed' AND {ref} {act_date} {act_user} {extra}
+            GROUP BY COALESCE(ea.assigned_to, '')
+        """, params, as_dict=1)
+    acts = act_rows()
+
+    today_str = today()
+    pending = frappe.db.sql(f"""
+        SELECT COALESCE(ea.assigned_to, '') as person, COUNT(*) as open_c,
+               SUM(CASE WHEN DATE(COALESCE(ea.ends_on, ea.starts_on)) < %(td)s THEN 1 ELSE 0 END) as overdue
+        FROM `tabEvent Activity` ea
+        WHERE ea.docstatus < 2 AND ea.status = 'Open' {act_user}
+        GROUP BY COALESCE(ea.assigned_to, '')
+    """, dict(params, td=today_str), as_dict=1)
+
+    keys = ("created", "existing", "new", "enquiry", "pipeline", "pipeline_v", "orders", "orders_v", "lost",
+            "visits", "followups", "orgs", "open_c", "overdue")
+    rows = {}
+
+    def row(person):
+        return rows.setdefault(person, {k: 0 for k in keys})
+    for r in leads:
+        x = row(r.person)
+        for k in ("created", "existing", "enquiry", "pipeline", "orders", "lost"):
+            x[k] = int(r.get(k) or 0)
+        x["pipeline_v"], x["orders_v"] = flt(r.pipeline_v), flt(r.orders_v)
+        x["new"] = x["created"] - x["existing"]
+    for r in acts:
+        x = row(r.person)
+        x["visits"], x["followups"], x["orgs"] = int(r.visits or 0), int(r.followups or 0), int(r.orgs or 0)
+    for r in pending:
+        x = row(r.person)
+        x["open_c"], x["overdue"] = int(r.open_c or 0), int(r.overdue or 0)
+
+    names = {u.name: (u.full_name or u.name) for u in frappe.get_all(
+        "User", filters={"name": ["in", list(rows) or [""]]}, fields=["name", "full_name"])}
+    out = [dict(v, user=k, full_name=names.get(k) or k or "Unassigned") for k, v in rows.items()]
+    out.sort(key=lambda r: (-(r["created"] + r["visits"] + r["followups"]), r["full_name"].lower()))
+
+    total = {k: sum(r[k] for r in out) for k in keys}
+    # Leads / Contacts covered must be distinct across the team, not summed
+    team_orgs = frappe.db.sql(f"""
+        SELECT COUNT(DISTINCT {ref_key}) FROM `tabEvent Activity` ea
+        WHERE ea.docstatus < 2 AND ea.status = 'Completed' AND {ref} {act_date} {act_user}
+    """, params)[0][0]
+    total["orgs"] = int(team_orgs or 0)
+    # Dates a click should list (All Time has none; lists then use the widest range)
+    return {"rows": out, "total": total, "from_date": from_date or "2000-01-01", "to_date": to_date or today_str,
+            "is_head": is_head}
+
+
+@frappe.whitelist()
+def export_team_overview_excel(**kwargs):
+    """Excel of the Team Overview (same filters)."""
+    from io import BytesIO
+    from openpyxl import Workbook
+    from openpyxl.styles import Alignment, Font, PatternFill
+    require_crm_head()   # Excel downloads are for CRM Heads only
+    kwargs.pop("cmd", None)
+    data = get_team_overview(**kwargs)
+    head = ["Salesperson", "New Leads", "Existing-customer Leads", "Leads Created", "Now: Enquiry", "Now: Pipeline",
+            "Pipeline Value", "Now: Order", "Order Value", "Now: Lost", "Visits Done", "Follow-ups Done",
+            "Leads / Contacts Covered", "Open Activities (now)", "Overdue (now)"]
+
+    def vals(name, r):
+        return [name, r["new"], r["existing"], r["created"], r["enquiry"], r["pipeline"], round(r["pipeline_v"]),
+                r["orders"], round(r["orders_v"]), r["lost"], r["visits"], r["followups"], r["orgs"], r["open_c"], r["overdue"]]
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "Team Overview"
+    ws.append(head)
+    for r in data["rows"]:
+        ws.append(vals(r["full_name"], r))
+    ws.append(vals("Team Total", data["total"]))
+    for c in ws[1]:
+        c.font, c.fill = Font(bold=True, color="FFFFFF"), PatternFill("solid", fgColor="3498DB")
+        c.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
+    for c in ws[ws.max_row]:
+        c.font = Font(bold=True)
+    for i in range(1, len(head) + 1):
+        ws.column_dimensions[ws.cell(1, i).column_letter].width = 24 if i == 1 else 14
+    for row in ws.iter_rows(min_row=2):
+        for c in row:
+            if "Value" in str(ws.cell(1, c.column).value):
+                c.number_format = "#,##0"
+    ws.freeze_panes = "B2"
+    buf = BytesIO()
+    wb.save(buf)
+    frappe.response["filename"] = "Team Overview {0}.xlsx".format(frappe.utils.nowdate())
+    frappe.response["filecontent"] = buf.getvalue()
+    frappe.response["type"] = "binary"
+
+
+@frappe.whitelist()
+def export_lead_table_excel(**kwargs):
+    """Excel of the Admin Review 2 lead table (same filters): one row per period or per
+    team member, Leads Created (New / Existing / Total) then each category with value."""
+    from io import BytesIO
+    from openpyxl import Workbook
+    from openpyxl.styles import Alignment, Font, PatternFill
+    require_crm_head()   # Excel downloads are for CRM Heads only
+    kwargs.pop("cmd", None)
+    data = get_tabular_dashboard_data(**kwargs)
+    by_user = data.get("group_by") == "user"
+    movement = data.get("basis") == "history"
+    head = ["Team Member" if by_user else "Period", "Existing-customer Leads", "New Leads", "Total Leads Generated",
+            "Enquiry", "Enquiry Value", "Pipeline - Draft", "Draft Value", "Pipeline - Submitted", "Submitted Value",
+            "Order", "Order (PO) Value", "Lost Enquiry", "Lost Enquiry Value", "Lost Pipeline", "Lost Pipeline Value",
+            "Contact -> Lead", "Lead -> Order"]
+
+    def vals(label, r):
+        if r.get("created_c") is not None:      # current-status view: by creation date
+            created, ex = int(r.get("created_c") or 0), int(r.get("created_ex_c") or 0)
+        else:
+            created = sum(int(r.get(k) or 0) for k in ("enq_c", "pipe_c", "ord_c", "lenq_c", "lpipe_c"))
+            ex = int(r.get("existing_c") or 0)
+        return [label, ex, created - ex, created,
+                (int(r.get("enq_only_c") or 0) if movement else int(r.get("enq_c") or 0) - int(r.get("draft_pipe_c") or 0)),
+                round(flt(r.get("enq_only_v")) if movement else flt(r.get("enq_v")) - flt(r.get("draft_pipe_v"))),
+                int(r.get("draft_pipe_c") or 0), round(flt(r.get("draft_pipe_v"))),
+                int(r.get("pipe_c") or 0), round(flt(r.get("pipe_v"))),
+                int(r.get("ord_c") or 0), round(flt(r.get("ord_v"))),
+                int(r.get("lenq_c") or 0), round(flt(r.get("lenq_v"))),
+                int(r.get("lpipe_c") or 0), round(flt(r.get("lpipe_v"))),
+                int(r.get("conv_bc_to_lead") or 0), int(r.get("conv_lead_to_order") or 0)]
+    def drop_enquiry(row):
+        return row   # Enquiry columns in both modes (movement: created or reopened)
+    wb = Workbook()
+    ws = wb.active
+    ws.title = {"history": "Leads (what happened)", "status": "Leads (current status)"}.get(data.get("basis"), "Leads (created date)")
+    ws.append(drop_enquiry(head))
+    for r in data.get("leads") or []:
+        ws.append(drop_enquiry(vals(r.get("label"), r)))
+    ws.append(drop_enquiry(vals("Total", data.get("lead_totals") or {})))
+    for c in ws[1]:
+        c.font, c.fill = Font(bold=True, color="FFFFFF"), PatternFill("solid", fgColor="3498DB")
+        c.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
+    for c in ws[ws.max_row]:
+        c.font = Font(bold=True)
+    for i in range(1, len(head) + 1):
+        ws.column_dimensions[ws.cell(1, i).column_letter].width = 34 if i == 1 else 14
+    for row in ws.iter_rows(min_row=2):
+        for c in row:
+            if "Value" in str(ws.cell(1, c.column).value):
+                c.number_format = "#,##0"
+    ws.freeze_panes = "B2"
+    buf = BytesIO()
+    wb.save(buf)
+    frappe.response["filename"] = "Leads {0}.xlsx".format(frappe.utils.nowdate())
+    frappe.response["filecontent"] = buf.getvalue()
+    frappe.response["type"] = "binary"
+
 
 @frappe.whitelist()
 def get_event_activity_breakup_data(from_date=None, to_date=None, user=None, period_type="monthly", reference_type="All", activity_basis="completed", fiscal_year=None, period=None, month=None, group_by="period", **kwargs):
@@ -3331,10 +4156,13 @@ def get_event_activity_breakup_data(from_date=None, to_date=None, user=None, per
                 CONCAT(ea.reference_type, '::', ea.reference_name) AS ref_key,
                 CASE WHEN {ACTIVITY_VISIT_COND_SQL} THEN 1 ELSE 0 END AS is_visit,
                 CASE WHEN {ACTIVITY_FOLLOWUP_COND_SQL} THEN 1 ELSE 0 END AS is_fu,
-                CASE WHEN {ACTIVITY_EXISTING_COND_SQL} THEN 1 ELSE 0 END AS is_exist
+                CASE WHEN {ACTIVITY_EXISTING_COND_SQL} THEN 1 ELSE 0 END AS is_exist,
+                {activity_class_sql()} AS ref_class
          FROM `tabEvent Activity` ea
          LEFT JOIN `tabBusiness Contacts` bc
-                ON bc.name = ea.reference_name AND ea.reference_type = 'Business Contacts') t
+                ON bc.name = ea.reference_name AND ea.reference_type = 'Business Contacts'
+         LEFT JOIN `tabLead` ld
+                ON ld.name = ea.reference_name AND ea.reference_type = 'Lead') t
     """
     cov_buckets = {
         "visit_new": "is_visit = 1 AND is_exist = 0",
@@ -3347,6 +4175,14 @@ def get_event_activity_breakup_data(from_date=None, to_date=None, user=None, per
         "visit_cont": "is_visit = 1 AND reference_type = 'Business Contacts'",
         "fu_lead": "is_fu = 1 AND reference_type = 'Lead'",
         "fu_cont": "is_fu = 1 AND reference_type = 'Business Contacts'",
+        # Visits & Follow-ups section: split by who it was for (new Lead / new Contact /
+        # existing customer, see activity_class_sql)
+        "visit_cls_lead": "is_visit = 1 AND ref_class = 'lead'",
+        "visit_cls_contact": "is_visit = 1 AND ref_class = 'contact'",
+        "visit_cls_existing": "is_visit = 1 AND ref_class = 'existing'",
+        "fu_cls_lead": "is_fu = 1 AND ref_class = 'lead'",
+        "fu_cls_contact": "is_fu = 1 AND ref_class = 'contact'",
+        "fu_cls_existing": "is_fu = 1 AND ref_class = 'existing'",
     }
     cov_parts = [
         "COUNT(DISTINCT ref_key) as uniq_total",
@@ -3356,12 +4192,18 @@ def get_event_activity_breakup_data(from_date=None, to_date=None, user=None, per
     for key, cond in cov_buckets.items():
         cov_parts.append(f"SUM(CASE WHEN {cond} THEN 1 ELSE 0 END) as {key}_c")
         cov_parts.append(f"COUNT(DISTINCT CASE WHEN {cond} THEN ref_key END) as {key}_u")
+    for cls in ACTIVITY_CLASSES:
+        cov_parts.append(f"SUM(CASE WHEN ref_class = '{cls}' THEN 1 ELSE 0 END) as cls_{cls}_c")
+        cov_parts.append(f"COUNT(DISTINCT CASE WHEN ref_class = '{cls}' THEN ref_key END) as cls_{cls}_u")
     for idx in range(len(categories)):
         cov_parts.append(f"COUNT(DISTINCT CASE WHEN category = %(cat_{idx})s AND reference_type = 'Lead' THEN ref_key END) as cat_{idx}_ulead")
         cov_parts.append(f"COUNT(DISTINCT CASE WHEN category = %(cat_{idx})s AND reference_type = 'Business Contacts' THEN ref_key END) as cat_{idx}_ucont")
         cov_parts.append(f"COUNT(DISTINCT CASE WHEN category = %(cat_{idx})s THEN ref_key END) as cat_{idx}_utotal")
         cov_parts.append(f"COUNT(DISTINCT CASE WHEN category = %(cat_{idx})s AND is_exist = 0 THEN ref_key END) as cat_{idx}_unew")
         cov_parts.append(f"COUNT(DISTINCT CASE WHEN category = %(cat_{idx})s AND is_exist = 1 THEN ref_key END) as cat_{idx}_uexist")
+        for cls in ACTIVITY_CLASSES:
+            cov_parts.append(f"SUM(CASE WHEN category = %(cat_{idx})s AND ref_class = '{cls}' THEN 1 ELSE 0 END) as cat_{idx}_{cls}_c")
+            cov_parts.append(f"COUNT(DISTINCT CASE WHEN category = %(cat_{idx})s AND ref_class = '{cls}' THEN ref_key END) as cat_{idx}_{cls}_u")
     cov_sql = ",\n".join(cov_parts)
 
     def coverage_of(r):
@@ -3371,6 +4213,9 @@ def get_event_activity_breakup_data(from_date=None, to_date=None, user=None, per
         for key in cov_buckets:
             cov[f"{key}_c"] = int(r.get(f"{key}_c") or 0)
             cov[f"{key}_u"] = int(r.get(f"{key}_u") or 0)
+        for cls in ACTIVITY_CLASSES:
+            cov[f"cls_{cls}_c"] = int(r.get(f"cls_{cls}_c") or 0)
+            cov[f"cls_{cls}_u"] = int(r.get(f"cls_{cls}_u") or 0)
         return cov
 
     def unique_cats_of(r):
@@ -3378,7 +4223,9 @@ def get_event_activity_breakup_data(from_date=None, to_date=None, user=None, per
                       "ucont": int(r.get(f"cat_{idx}_ucont") or 0),
                       "utotal": int(r.get(f"cat_{idx}_utotal") or 0),
                       "unew": int(r.get(f"cat_{idx}_unew") or 0),
-                      "uexist": int(r.get(f"cat_{idx}_uexist") or 0)}
+                      "uexist": int(r.get(f"cat_{idx}_uexist") or 0),
+                      **{f"{cls}_c": int(r.get(f"cat_{idx}_{cls}_c") or 0) for cls in ACTIVITY_CLASSES},
+                      **{f"{cls}_u": int(r.get(f"cat_{idx}_{cls}_u") or 0) for cls in ACTIVITY_CLASSES}}
                 for idx, cat in enumerate(categories)}
 
     cov_rows = frappe.db.sql(f"""
@@ -3397,6 +4244,40 @@ def get_event_activity_breakup_data(from_date=None, to_date=None, user=None, per
     cov_tot = cov_tot[0] if cov_tot else {}
     for cat, u in unique_cats_of(cov_tot).items():
         category_totals[cat].update(u)
+
+    # Created: activities CREATED in the period (any status), bucketed by created date
+    # the same way. Rows that only have created activities are added.
+    done_expr, made_expr = "COALESCE(ends_on, actual_checked_out_at, actual_visit_at, modified)", "COALESCE(created_on, creation)"
+    cr_label, cr_sort, cr_group = (x.replace(done_expr, made_expr) for x in (cp_label, cp_sort, cp_group))
+    cr_filter = base_filter + (f" AND DATE({made_expr}) BETWEEN %(sd)s AND %(ed)s " if (from_date and to_date) else "")
+    created_rows = frappe.db.sql(f"""
+        SELECT {cr_label} as period_label, {cr_sort} as sort_key, {cp_user} as grp_user,
+               COUNT(*) as created_c, COUNT(DISTINCT ref_key) as created_u,
+               MIN(DATE({made_expr})) as cfrom, MAX(DATE({made_expr})) as cto
+        FROM {cov_source} {cr_filter}
+        GROUP BY {cr_group}
+    """, params, as_dict=1)
+    by_key = {(str(a["period_label"]), a["grp_user"]): a for a in activities}
+    for c in created_rows:
+        k = (str(c.period_label), str(c.get("grp_user") or ""))
+        a = by_key.get(k)
+        if not a:
+            a = {"period_label": c.period_label, "sort_key": str(c.sort_key), "grp_user": k[1],
+                 "row_from_date": "", "row_to_date": "", "lead_cnt": 0, "contact_cnt": 0, "total_completed": 0,
+                 "categories": {cat: dict({"total": 0, "lead": 0, "cont": 0}, **unique_cats_of({})[cat]) for cat in categories},
+                 "coverage": coverage_of({})}
+            activities.append(a)
+            by_key[k] = a
+        a["created_c"], a["created_u"] = int(c.created_c or 0), int(c.created_u or 0)
+        a["created_from"], a["created_to"] = str(c.cfrom or ""), str(c.cto or "")
+    for a in activities:
+        a.setdefault("created_c", 0)
+        a.setdefault("created_u", 0)
+        a.setdefault("created_from", "")
+        a.setdefault("created_to", "")
+    activities.sort(key=lambda a: str(a["sort_key"]))
+    ct_row = frappe.db.sql(f"SELECT COUNT(*) as c, COUNT(DISTINCT ref_key) as u FROM {cov_source} {cr_filter}",
+                           params, as_dict=1)[0]
 
     # 5 Specific Event Activity Number Card calculations
     today_str = frappe.utils.today()
@@ -3485,7 +4366,8 @@ def get_event_activity_breakup_data(from_date=None, to_date=None, user=None, per
             "open_total_count": open_total_count,
             "lead_noact_count": lead_noact_count,
             "cont_noact_count": cont_noact_count,
-            "coverage": coverage_of(cov_tot)
+            "coverage": coverage_of(cov_tot),
+            "created_c": int(ct_row.c or 0), "created_u": int(ct_row.u or 0)
         }
     }
 
@@ -3529,7 +4411,8 @@ def get_card_detail_records(card_type, from_date=None, to_date=None, user=None, 
     user_cond_lead = " AND l.lead_owner = %(usr)s " if effective_user else ""
     user_cond_cont = " AND assign_to = %(usr)s " if effective_user else ""
     scope_cond_lead = (build_in_clause(industry_list, "ind", "l.industry", params)
-                       + build_in_clause(source_list, "src", "l.source", params))
+                       + build_in_clause(source_list, "src", "l.source", params)
+                       + lead_kind_sql(kwargs.get("lead_kind")))
     scope_cond_cont = (build_in_clause(industry_list, "ind", "industry", params)
                        + build_in_clause(source_list, "src", "source", params))
 
@@ -3566,8 +4449,13 @@ def get_card_detail_records(card_type, from_date=None, to_date=None, user=None, 
             r["doctype"] = "Business Contacts"
 
     # ---- LEAD cards ----
-    elif card_type in ("l_enq", "l_pipe", "l_ord", "l_lenq", "l_lpipe", "conv_lead", "l_draft_pipe", "l_enq_only"):
+    elif card_type in ("l_enq", "l_pipe", "l_ord", "l_lenq", "l_lpipe", "conv_lead", "l_draft_pipe", "l_enq_only", "l_pipe_all", "l_created") or card_type.startswith("lc_"):
         cat_map = {
+            "l_created": None,
+            "lc_all": None, "lc_existing": None, "lc_new": None, "lc_enquiry": "Enquiry",
+            "lc_draft": "Enquiry", "lc_submitted": "Pipeline", "lc_order": "Order",
+            "lc_lost_enquiry": "Lost Enquiry", "lc_lost_pipeline": "Lost Pipeline",
+            "l_pipe_all": "Pipeline",
             "l_enq": "Enquiry",
             "l_draft_pipe": "Enquiry",
             "l_enq_only": "Enquiry",
@@ -3577,8 +4465,16 @@ def get_card_detail_records(card_type, from_date=None, to_date=None, user=None, 
             "l_lpipe": "Lost Pipeline",
             "conv_lead": "Order"
         }
-        cat = cat_map[card_type]
+        cat = cat_map.get(card_type)       # lc_ex_* / lc_nw_* filter by stage, not by this
         params["cat"] = cat
+        hist = None
+        if kwargs.get("basis") == "history" and card_type in LEAD_HISTORY_CARD_STAGE:
+            # History basis: the leads behind the count (event in range), whatever their stage now
+            hist_stage = LEAD_HISTORY_CARD_STAGE[card_type]
+            hist = _history_lead_names(hist_stage, from_date, to_date, user_cond_lead + scope_cond_lead, params)
+            if not hist:
+                return {"records": [], "card_type": card_type}
+            params["hist_names"] = tuple(hist)
 
         lead_action_date = f"""
             CASE
@@ -3593,11 +4489,45 @@ def get_card_detail_records(card_type, from_date=None, to_date=None, user=None, 
                 )
             END
         """
-        if card_type == "conv_lead":
+        stage_date = lead_action_date          # Moved On: when the lead entered its stage
+        if kwargs.get("basis") == "created":
+            lead_action_date = "DATE(l.creation)"
+        if card_type == "l_created":
+            cat_cond = ""
+            lead_date_cond = " AND DATE(l.creation) BETWEEN %(sd)s AND %(ed)s " if (from_date and to_date) else ""
+        elif card_type == "conv_lead":
             # Conversion view: leads whose FIRST Order transition lands in range,
             # matching how get_tabular_dashboard_data counts them.
             cat_cond = f" AND {LEAD_ORDER_COND_SQL} "
             lead_date_cond = (f" AND ({LEAD_ORDER_CONV_DATE_SQL}) BETWEEN %(sd)s AND %(ed)s "
+                              if (from_date and to_date) else "")
+        elif card_type.startswith("lc_"):
+            # Month-wise table: leads CREATED in the range, by the stage they are in now.
+            # lc_ex_<stage> / lc_nw_<stage> narrow it to existing-customer / new leads.
+            stage = card_type[3:]
+            kind_cond = ""
+            if stage[:3] in ("ex_", "nw_"):
+                kind_cond = f" AND {'' if stage[:3] == 'ex_' else 'NOT '}{LEAD_EXISTING_COND_SQL} "
+                stage = stage[3:]
+            if stage == "all":
+                cat_cond = ""
+            elif stage in ("pipeline", "lost"):
+                cat_cond = (f" AND ({LEAD_STAGE_SQL}) IN ('draft', 'submitted') " if stage == "pipeline"
+                            else f" AND ({LEAD_STAGE_SQL}) IN ('lost_enquiry', 'lost_pipeline') ")
+            elif stage == "existing":
+                cat_cond = f" AND {LEAD_EXISTING_COND_SQL} "
+            elif stage == "new":
+                cat_cond = f" AND NOT {LEAD_EXISTING_COND_SQL} "
+            else:
+                params["stage"] = stage
+                cat_cond = f" AND ({LEAD_STAGE_SQL}) = %(stage)s "
+            cat_cond += kind_cond
+            lead_date_cond = " AND DATE(l.creation) BETWEEN %(sd)s AND %(ed)s " if (from_date and to_date) else ""
+        elif card_type == "l_pipe_all":
+            # One Pipeline list: quotation submitted (category Pipeline) or still a draft
+            # (Draft Pipeline). Each lead is dated by its own stage, as in the table.
+            cat_cond = f" AND (l.custom_lead_category = 'Pipeline' OR ({LEAD_DRAFT_PIPE_COND_SQL})) "
+            lead_date_cond = (f" AND ({lead_action_date}) BETWEEN %(sd)s AND %(ed)s "
                               if (from_date and to_date) else "")
         elif card_type in ("l_draft_pipe", "l_enq_only"):
             # Enquiry split in two: only a draft quotation (Draft Pipeline) / the rest.
@@ -3610,6 +4540,8 @@ def get_card_detail_records(card_type, from_date=None, to_date=None, user=None, 
             cat_cond = " AND l.custom_lead_category = %(cat)s "
             lead_date_cond = (f" AND ({lead_action_date}) BETWEEN %(sd)s AND %(ed)s "
                               if (from_date and to_date) else "")
+        if hist is not None:
+            cat_cond, lead_date_cond = " AND l.name IN %(hist_names)s ", ""
 
         records = frappe.db.sql(f"""
             SELECT l.name, l.lead_name, l.company_name as company,
@@ -3628,7 +4560,25 @@ def get_card_detail_records(card_type, from_date=None, to_date=None, user=None, 
                     ORDER BY ends_on DESC LIMIT 1) as last_completed_notes,
                    (SELECT COUNT(q.name) FROM `tabQuotation` q
                     WHERE q.docstatus < 2 AND (q.party_name = l.name OR q.custom_lead_id = l.name)) as quotation_count,
-                   l.custom_expected_closure_date as closure_date
+                   l.custom_expected_closure_date as closure_date,
+                   DATE_FORMAT(({stage_date}), '%%d-%%b-%%Y') as moved_on,
+                   CASE WHEN l.custom_lead_category = 'Pipeline' THEN 'Submitted'
+                        WHEN {LEAD_DRAFT_PIPE_COND_SQL} THEN 'Draft' END as quotation_state,
+                   CASE l.custom_lead_category
+                        WHEN 'Lost Enquiry' THEN l.custom_lost_enquiry_reason
+                        WHEN 'Lost Pipeline' THEN l.custom_lost_pipeline_reason END as lost_reason,
+                   CASE l.custom_lead_category
+                        WHEN 'Lost Enquiry' THEN l.custom_lost_enquiry_description
+                        WHEN 'Lost Pipeline' THEN l.custom_lost_pipeline_description END as lost_description,
+                   CASE WHEN {LEAD_EXISTING_COND_SQL} THEN 1 ELSE 0 END as is_existing,
+                   (SELECT COALESCE(NULLIF(q.order_lost_reason, ''),
+                                    (SELECT GROUP_CONCAT(lr.lost_reason SEPARATOR ', ') FROM `tabQuotation Lost Reason Detail` lr
+                                     WHERE lr.parent = q.name))
+                    FROM `tabQuotation` q
+                    WHERE (q.custom_lead_id = l.name OR q.party_name = l.name) AND q.docstatus < 2 AND q.status = 'Lost'
+                    ORDER BY q.modified DESC LIMIT 1) as q_lost_reason,
+                   l.custom_lost_enquiry_reason as le_reason, l.custom_lost_enquiry_description as le_desc,
+                   l.custom_lost_pipeline_reason as lp_reason, l.custom_lost_pipeline_description as lp_desc
             FROM `tabLead` l
             WHERE l.docstatus < 2
               {cat_cond}
@@ -3637,6 +4587,21 @@ def get_card_detail_records(card_type, from_date=None, to_date=None, user=None, 
         """, params, as_dict=1)
         for r in records:
             r["doctype"] = "Lead"
+            # Lost reason missing on the Lead (marked lost without the prompt): fall back to
+            # the lost quotation's reason when there is one
+            if r.get("category") in ("Lost Enquiry", "Lost Pipeline") and not r.get("lost_reason") and r.get("q_lost_reason"):
+                r["lost_reason"] = "{0} (from quotation)".format(r.q_lost_reason)
+            if hist is not None and r.name in hist:
+                # Moved On = the date of the event counted; lost reason by the event, since
+                # the lead may have been reopened since
+                ev_date, q_state = hist[r.name]
+                r["moved_on"] = getdate(ev_date).strftime("%d-%b-%Y") if ev_date else r.get("moved_on")
+                if q_state:
+                    r["quotation_state"] = q_state
+                if hist_stage == "lost_enquiry":
+                    r["lost_reason"], r["lost_description"] = r.le_reason, r.le_desc
+                elif hist_stage == "lost_pipeline":
+                    r["lost_reason"], r["lost_description"] = r.lp_reason, r.lp_desc
 
     # ---- ACTIVITY cards ----
     elif card_type in ("ea_overdue", "ea_today", "ea_lead_noact", "ea_cont_noact", "ea_open"):
@@ -3768,7 +4733,10 @@ def get_activity_detail_records(category=None, category_group=None, from_date=No
 
     params = {"sd": from_date, "ed": to_date, "usr": effective_user}
 
-    base_filter = " WHERE ea.docstatus < 2 AND ea.status = 'Completed' "
+    # date_basis="created": activities CREATED in the range, any status (Team Activity's
+    # Created column); otherwise activities COMPLETED in the range
+    by_created = kwargs.get("date_basis") == "created"
+    base_filter = " WHERE ea.docstatus < 2 " if by_created else " WHERE ea.docstatus < 2 AND ea.status = 'Completed' "
     if effective_user:
         base_filter += " AND ea.assigned_to = %(usr)s "
     if reference_type == "Lead & Contact":
@@ -3780,7 +4748,8 @@ def get_activity_detail_records(category=None, category_group=None, from_date=No
         base_filter += " AND ea.reference_type = %(ref_type)s "
 
     if from_date and to_date:
-        base_filter += " AND DATE(COALESCE(ea.ends_on, ea.actual_checked_out_at, ea.actual_visit_at, ea.modified)) BETWEEN %(sd)s AND %(ed)s "
+        base_filter += (" AND DATE(COALESCE(ea.created_on, ea.creation)) BETWEEN %(sd)s AND %(ed)s " if by_created else
+                        " AND DATE(COALESCE(ea.ends_on, ea.actual_checked_out_at, ea.actual_visit_at, ea.modified)) BETWEEN %(sd)s AND %(ed)s ")
 
     if cat_name and cat_name != "All":
         params["cat"] = cat_name
@@ -3792,6 +4761,12 @@ def get_activity_detail_records(category=None, category_group=None, from_date=No
         base_filter += f" AND {ACTIVITY_VISIT_COND_SQL} "
     elif kind == "followup":
         base_filter += f" AND {ACTIVITY_FOLLOWUP_COND_SQL} "
+    ref_class = kwargs.get("ref_class")
+    if ref_class in ACTIVITY_CLASSES:
+        params["ref_class"] = ref_class
+        base_filter += f" AND {activity_class_sql('l', 'bc')} = %(ref_class)s "
+    elif ref_class == "any":            # any of the three (leaves out no-reference activities)
+        base_filter += f" AND {activity_class_sql('l', 'bc')} != '' "
     client = kwargs.get("client")
     if client == "existing":
         base_filter += f" AND {ACTIVITY_EXISTING_COND_SQL} "
@@ -3829,7 +4804,7 @@ def get_activity_detail_records(category=None, category_group=None, from_date=No
         LEFT JOIN `tabLead` l ON l.name = ea.reference_name AND ea.reference_type = 'Lead'
         LEFT JOIN `tabBusiness Contacts` bc ON bc.name = ea.reference_name AND ea.reference_type = 'Business Contacts'
         {base_filter}
-        ORDER BY ea.ends_on DESC LIMIT 1000
+        ORDER BY ea.ends_on DESC LIMIT 5000
     """, params, as_dict=1)
 
     for r in records:
