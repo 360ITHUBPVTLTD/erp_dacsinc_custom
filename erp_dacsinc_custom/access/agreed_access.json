@@ -23,7 +23,7 @@
    "Business Contacts": [
     "",
     "",
-    "VNEDO",
+    "VNEO",
     "VNED",
     "V",
     "V",
@@ -118,7 +118,7 @@
    "Event Activity": [
     "",
     "",
-    "VNEDO",
+    "VNEO",
     "VNED",
     "",
     "",
@@ -156,7 +156,7 @@
    "Item Price": [
     "VNE",
     "VNE",
-    "VNED",
+    "VNE",
     "V",
     "V",
     "V",
@@ -194,7 +194,7 @@
    "Lead": [
     "",
     "",
-    "VNEDO",
+    "VNEO",
     "VNED",
     "",
     "",
@@ -611,7 +611,6 @@
    ]
   },
   "letters": "VNESCDO",
-  "note": "Role Permission Manager \u00b7 Administrator: POS Admin \u00b7 Quotation: VNEO \u2192 VNESO",
   "roles": [
    "Accounts Executive",
    "Accounts Manager",
@@ -633,10 +632,10 @@
   ],
   "saved_by": "Administrator",
   "saved_by_name": "Administrator",
-  "saved_on": "2026-10-16 18:07:57.098341",
-  "version": 37
+  "saved_on": "2026-10-21 18:24:44.283361",
+  "version": 38
  },
- "fingerprint": "8e3a158ff423c1270646e4636a4d7b4c2ccf62f3",
+ "fingerprint": "9a0cc914203982ee89e5df4cab81146fe3f03f3c",
  "tab_access": {
   "cells": {
    "Embroidery Transfers": [
@@ -1187,25 +1186,6 @@
     "",
     "A",
     "A",
-    "",
-    ""
-   ],
-   "Finance \u203a Returns / Notes": [
-    "",
-    "",
-    "",
-    "",
-    "",
-    "",
-    "",
-    "",
-    "",
-    "",
-    "",
-    "",
-    "",
-    "",
-    "",
     "",
     ""
    ]
