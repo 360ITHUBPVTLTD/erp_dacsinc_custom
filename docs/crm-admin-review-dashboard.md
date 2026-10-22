@@ -14,52 +14,225 @@ Saving the workspace in developer mode overwrites it with the current database s
 
 This page covers the reporting rules that the code can't explain by itself.
 
-## Draft Pipeline (Lead table)
+## Counting basis of the Lead section: view switch
 
-- **What it is:** an Enquiry lead with at least one **draft** quotation (`docstatus = 0`)
-  and no submitted one. The quotation is linked by `party_name` or `custom_lead_id`.
-  Submitting a quotation is what moves a lead to Pipeline (`custom_script.py`, Quotation
-  on_submit), so these leads are one step away from Pipeline.
-- **Display only.** The lead's stored category stays Enquiry. Admin Review 2 shows Draft
-  Pipeline as its own stage, between Enquiry and Pipeline, and **takes these leads out of
-  Enquiry**, so each lead is counted once. Enquiry shown = `enq_c - draft_pipe_c`
-  (`enqOnlyC` / `enqOnlyV` in the block script). The same split applies to the cards,
-  the table and the category / trend charts.
-- The backend's `enq_c` still includes them, because other blocks that read it (the
-  original Admin Review) don't know about Draft Pipeline. A block that shows Draft
-  Pipeline must subtract it from Enquiry itself.
-- It uses Enquiry's date basis (`DATE(l.creation)`), so a lead stays in the same period
-  row as it would under Enquiry.
-- SQL: `LEAD_DRAFT_PIPE_COND_SQL`. Fields: `draft_pipe_c` / `draft_pipe_v` (expected
-  revenue) on each row and on `lead_totals` of `get_tabular_dashboard_data`, and
-  `draft_pipeline` {total, value} from `get_crm_analytics_breakdowns`. Drilldowns:
-  `get_card_detail_records` with `card_type="l_draft_pipe"` (Draft Pipeline) or
-  `"l_enq_only"` (Enquiry without them).
+The Lead section has a view switch (`#l_basis_filter`, sent as `basis`) with two options:
 
-## Visits & Follow-ups (Team Activity section)
+| View | Rows / columns | Example: DAC-LEAD-0710 (created 25-Oct-2025, Pipeline 25-Oct, Lost Pipeline 27-Jan-2026) |
+|---|---|---|
+| **Current status (date moved)**, the default (`status`) | Each lead **once**, in its **current category**, on the date it moved into that category, taken from `custom_lead_status_change_history` (`lead_action_date`; Enquiry / Draft leads by creation date). Leads Generated (Existing / New / Total) = leads **created** in the period. | 25-Oct row: Leads Generated 1, no category; 27-Jan row: Lost Pipeline 1 |
+| **Leads created & status now** (`created`) | Leads created in the period, split by the category they are in **today**. | 25-Oct row: Leads Generated 1, Lost Pipeline 1 |
 
-This section sits under the activity matrix and is worded as plain sentences. It uses
-the same filters as the matrix, **including the Count filter**, so every number in it
-is in one unit:
+In both views a lead's column always matches the category on the lead record. Popups
+show Created On, Moved On (the date it entered its current category) and Category Now.
 
-| Count filter | Card headline | Card split | Type table columns |
-|---|---|---|---|
-| All Activities | "479 visits done" | Leads / Contacts = activities (`<bucket>_lead_c` / `_cont_c`) | Activities Done · Lead Activities · Contact Activities (`lead` / `cont`) |
-| Unique Leads / Contacts | "295 different Leads / Contacts visited" | Leads / Contacts reached (`<bucket>_lead_u` / `_cont_u`) | Leads / Contacts · Unique Leads · Unique Contacts (`ulead` / `ucont`) |
+- **Current status details:** the category columns are the original
+  `get_tabular_dashboard_data` counting (current category, dated by its latest move into
+  it). `basis="status"` adds a creation-date query, so each row gets `created_c` /
+  `created_ex_c` for Leads Generated (merged by row label, with `lead_totals` the same).
+  Popups use the default lead lists (`l_enq_only`, `l_draft_pipe`, `l_pipe`, `l_ord`,
+  `l_lenq`, `l_lpipe`) and the creation-date lists (`l_created`, `lc_ex_all`,
+  `lc_nw_all`). Verified: every listed lead's category equals its column, and no lead
+  appears in two columns of a row.
+- **"What happened" (`basis="history"`)** is still implemented, but the block no longer
+  offers it. It confused users, because a lead appeared where it was at the time rather
+  than in its category today.
+- **History basis details (not offered in the block):** every step of a lead, with its exact time, comes
+  from `_lead_history_events`: created; first quotation (Draft, which has no status
+  row); and history rows → Enquiry (reopened) / Pipeline / Order / Lost Enquiry / Lost
+  Pipeline. History rows older than the lead are ignored, because
+  `create_duplicate_lead` copies the original's history.
+  - **In each row, a lead is counted once in the category columns: the last status it
+    reached in that period**, by time (`_history_scope_add`, `_history_stage_sets`; ties
+    on the same timestamp go to the later step).
+  - Leads Generated separately counts the leads created in the period.
+  - Example: DAC-LEAD-0710 was created at 15:29, quoted at 15:40 and moved to Pipeline at
+    15:42 on 25-Oct-2025, then lost on 27-Jan-2026. It counts on 25-Oct as Leads
+    Generated 1 / Submitted 1 (not also as Enquiry), and on 27-Jan as Lost Pipeline.
+  - So a row's category columns add up to the leads that moved in that period, and no
+    lead is counted twice. The Total row applies the same rule over the whole range.
+  - Popups use the same rule (`_history_lead_names`). Moved On is the date of the
+    counted step. The **Category Now** column shows the lead's category today, so "it
+    was in Pipeline that month, it's Lost Pipeline now" is visible in the list.
+  - The New / Existing split (`existing_c`) and the "Existing n" badges (`ex_*`) work as
+    in Created date.
+- **Created date details:** `basis="created"` swaps `lead_action_date` for
+  `DATE(l.creation)` in `get_tabular_dashboard_data` and the lead branch of
+  `get_card_detail_records`. Leads Created = Enquiry + Pipeline + Order + Lost.
+- The one-line explanation above the cards (`#l_basis_note`) changes with the switch. The Excel
+  follows the switch, and its sheet is named after the mode.
+- **Other blocks:** the original Admin Review block and the charts call without `basis`,
+  so they keep the old "current category, dated by its latest move" counting.
 
-- **Leads and Contacts only.** Every total here is Leads + Contacts, like the matrix's
-  Lead / Contact columns. The few activities on a Customer or with no reference are
-  left out, so the cards show 479 visits rather than the 482 in `visit_c`. Clicking a
-  total opens `get_activity_detail_records` with `reference_type="Lead & Contact"`,
-  which filters to those two types, so the list matches.
-- **By Activity Type** lists each type with anything to show, tagged Visit or Follow-up
-  (from `visit_categories`). Visits come first, busiest first.
-- **Every number opens its list,** in the matching view: the plain activity list, or
-  the list grouped one row per Lead / Contact.
-- The block stylesheet forces `.dac-clickable-cell` to 14px blue with `!important`, so
-  this section sets its own size and colour with inline `!important`.
+## Pipeline = Draft + Submitted (Lead table)
 
-The matrix has no Total Completed column on Admin Review 2.
+- **Draft Pipeline lead:** an Enquiry lead with at least one **draft** quotation
+  (`docstatus = 0`) and no submitted one. The quotation is linked by `party_name` or
+  `custom_lead_id`. SQL: `LEAD_DRAFT_PIPE_COND_SQL`. Submitting the quotation is what
+  moves the lead to category Pipeline (`custom_script.py`, Quotation on_submit).
+- **One Pipeline card and one Pipeline column.** Pipeline shown = Submitted (category
+  Pipeline) + Draft. The card adds a line "Draft *x* · Submitted *y*". The draft leads
+  come out of Enquiry, so Enquiry shown = `enq_c - draft_pipe_c`, and each lead is
+  counted once (`enqOnlyC` / `pipeAllC` in the block script). The category and trend
+  charts use the same merge (`mergeDraftIntoPipeline`). The lead's stored category stays
+  Enquiry until the quotation is submitted.
+- **Backend:** `enq_c` / `pipe_c` keep their plain meaning, because other blocks (the
+  original Admin Review) read them. `draft_pipe_c` / `draft_pipe_v` come from
+  `get_tabular_dashboard_data` (on each row and on `lead_totals`), and `draft_pipeline`
+  {total, value} from `get_crm_analytics_breakdowns`. Draft leads use Enquiry's date
+  basis (`DATE(l.creation)`).
+- **Pipeline popup:** `get_card_detail_records(card_type="l_pipe_all")` lists both kinds,
+  each with `quotation_state` (Draft / Submitted). The popup shows a Quotation column
+  and All / Draft / Submitted buttons. `l_draft_pipe` and `l_enq_only` (Enquiry without
+  drafts) still exist.
+
+## Lead popups: lost reason, Moved On
+
+- The **Lost Enquiry** and **Lost Pipeline** lists show Lost Reason and Lost
+  Description, taken by category: `custom_lost_enquiry_reason` / `_description` for
+  Lost Enquiry, `custom_lost_pipeline_reason` / `_description` for Lost Pipeline
+  (`lost_reason` / `lost_description` on the records).
+- Every lead list shows **Created On** and **Moved On** (`moved_on`), the date the lead
+  entered its current stage. This is the same `lead_action_date` that decides which
+  table row the lead is counted in.
+- The Lost Reason column wraps (max 220px) instead of stretching the table.
+- **Where the reason comes from:** the Lead's lost fields, which the form's Lost workflow
+  prompt (`workflow.js`, required) and `mark_lead_lost_backend` fill. If those are empty,
+  the lost quotation's `order_lost_reason` / Lost Reasons is shown, marked "(from
+  quotation)". If there is still nothing, the popup says **Not recorded**. As of Oct
+  2026, 31 Lost Enquiry and 7 Lost Pipeline leads have no reason anywhere: they were marked
+  lost by a path that skipped the prompt. The history table's `reason` field is never
+  filled.
+
+## One lead table + Lead Type filter (Lead section)
+
+The Lead section has **one table**, collapsed by default (Show Breakup). The separate Lead Performance and
+Team Comparison tables were merged into it. One line per period (Daily / Weekly /
+Monthly), or per team member with **Breakup: By Team Member**:
+
+**Month | Total Leads Generated (Existing, New, Total) | Enquiry | Pipeline with Value (Draft, Submitted) | Order (count & PO value) | Lost Enquiry | Lost Pipeline | Conversions (Contact → Lead, Lead → Order)**
+
+This is laid out like the client's sheet. Each value sits under its count in the same
+cell, and the Excel has the same column order.
+
+- **Leads Created** uses the created-date basis above. Existing = repeat leads for an
+  existing customer (`LEAD_EXISTING_COND_SQL`, made with Duplicate Lead), and New =
+  every other lead. `existing_c` comes on each row and on `lead_totals` of
+  `get_tabular_dashboard_data`. The New / Existing cells open `lc_nw_all` / `lc_ex_all`.
+- **Existing markers:** with Lead Type = All, each category count that includes
+  existing-customer leads shows a small **"Existing n"** under it (click it to list just
+  those, via `opts.override.lead_kind`). Per-category counts are `ex_enq_c` (includes
+  drafts), `ex_draft_c`, `ex_pipe_c`, `ex_ord_c`, `ex_lenq_c` and `ex_lpipe_c` on each row
+  and on `lead_totals`.
+- **Lead popups** have a **New / Existing** column (`is_existing`). It's named that
+  because "Lead Type" is already the HOT / WARM / COLD field.
+- **Lead Type filter** (`#l_kind_filter`, sent as `lead_kind` = `new` / `existing`) narrows
+  everything in the section: cards, table, Lead → Order conversions, popups
+  (`get_card_detail_records` adds it to `scope_cond_lead`) and the Excel. Helper:
+  `lead_kind_sql`.
+- **Download Excel** (`export_lead_table_excel`, same arguments) gives one row per table
+  line with counts and values in separate columns.
+- `get_lead_monthly_performance` and `export_lead_performance_excel` are still in the
+  code, but no block uses them now.
+
+## Team Overview: removed
+
+A per-salesperson Team Overview was built and then removed, because the lead table (By
+Team Member) and the Team Activity table already show the same figures.
+`get_team_overview` and `export_team_overview_excel` are still in `custom_lead.py`, but
+no block uses them. Two helpers it introduced stay in use. `openDrilldownModal(...,
+opts)` takes `opts.override` (args replacing the section filters) and
+`opts.userDisp` / `opts.dateDisp`. `openActivityCategoryModal` takes `opts.exactUser`.
+
+## Creating an existing-customer lead (Lead list)
+
+The Lead list has a **+ Lead for Existing Customer** button (`public/js/lead_list.js`)
+for anyone who can create Leads. You pick the Customer, and the dialog shows which
+earlier lead will be copied (`get_existing_customer_lead_source`: the latest Order lead
+with that `custom_lead_customer`, else the lead the Customer was made from). **Create
+Lead** runs `create_existing_customer_lead`, which calls the same `create_duplicate_lead`
+as the form's Duplicate Lead button. So the new lead starts as Enquiry, has Duplicated
+Lead ticked and carries the Customer ID, and counts as **Existing**. If the customer
+has no earlier lead, a new Lead form opens pre-filled (company, Customer ID, Duplicated
+Lead, source "Existing Customer", mobile / email when the Customer has them), and the
+user completes the mandatory fields.
+
+**Access:** `_check_customer_lead_access` requires Lead create permission and read
+access to the picked Customer. A DAC CRM user reads only the customers they own (Customer
+DocPerm "if owner"), so a pasted Customer ID from someone else's book is refused ("not
+assigned to you"), both in the preview and on create. `create_duplicate_lead` is no
+longer `allow_guest`. It needs a signed-in user with Lead create permission who can open
+the source lead.
+
+## Roles and access
+
+Hiding something in the page is not a control; every rule below is enforced on the server.
+
+- **DAC CRM** (not Head): every lead and activity endpoint uses `effective_user`, so a
+  user sees only their own leads (lead owner) and activities (assigned to), even if they
+  ask for another user. "Breakup: By Team Member" is refused. All lead and activity
+  popups are limited the same way.
+- **Excel downloads** (`export_lead_table_excel`, `export_lead_performance_excel`,
+  `export_team_overview_excel`) call `require_crm_head()`. The Download Excel button is
+  hidden for non-heads.
+- **New Lead for Existing Customer / Duplicate Lead:** see the section above.
+- Verified on 2026-10-22 as a DAC CRM user (asm1) against each endpoint, inside a
+  rolled-back transaction.
+
+## Loading indicators
+
+While a section's data loads (Contacts, Leads, Lead Performance, Team Activity, Target
+vs Actual), its box dims and shows a "Loading…" badge: `setLoading(anchor, on)`, cleared
+in `frappe.call`'s `always`. It's counted, so two requests in one section don't clear it
+early. Lead and activity popups use Frappe's freeze overlay while their list loads.
+
+## Team Activity: one table
+
+Team Activity has a main table, collapsed by default (Show Breakup), and under it the
+always-visible **Visits & Follow-ups** section (see below). The table has one line per
+period, or per team member with Breakup: By Team Member.
+
+**Period | Created | Completed | Lead | Contact | Existing Customer | Visits | Follow-ups | Visit types / Follow-up types (each Lead / Contact / Existing)**
+
+- **Created** = activities **created** in the period (`COALESCE(created_on, creation)`,
+  any status). `created_c` / `created_u` come on each row and on `totals`, bucketed with the
+  same label expressions using the created date, and rows that only have created
+  activities are added. Popup: `get_activity_detail_records(date_basis="created")`; its
+  last column shows Status (Open / Completed with date / Cancelled).
+- **Completed** and every column after it count activities **completed** in the period.
+- **Lead / Contact / Existing Customer** are one class per activity
+  (`activity_class_sql`): Existing = a Contact at status Existing Customer, an
+  existing-customer Lead (`LEAD_EXISTING_COND_SQL`, made with Duplicate Lead), or a
+  Customer. Lead and Contact = the new ones. Lead + Contact + Existing = Completed,
+  apart from activities with no reference (4 of 1410 all time). Data: `coverage.cls_*`
+  and per category `lead_c` / `contact_c` / `existing_c` (plus `_u`). Popups:
+  `ref_class=lead|contact|existing`. The Entity filter hides the Lead or Contact
+  sub-columns; Existing always shows.
+- **Visits / Follow-ups** are `coverage` `visit_*` / `fu_*` (Leads and Contacts, limited
+  to the Entity filter). Activity types are grouped under Visit types / Follow-up types
+  (`visit_categories`), and types with nothing in the period are left out.
+- **The Count filter switches the whole table:** activities (`_c`) or unique
+  Leads / Contacts (`_u`). Popups open in the matching view.
+
+### Visits & Follow-ups section
+
+This section always shows under the table (`renderVisitsFollowups`). It has two cards,
+VISITS and FOLLOW-UPS, each reading "*N* visits done" with the split **Leads · Contacts
+· Existing Customer**, and a **By Activity Type** table: Activity Type | Counts as
+(Visit / Follow-up) | Activities Done | Lead | Contact | Existing Customer.
+
+- The split uses the same classes as the table (`activity_class_sql`): `coverage`
+  `visit_cls_*` / `fu_cls_*`, and per category `lead_*` / `contact_*` / `existing_*`.
+  Totals are the three classes added up, so activities with no reference are left out.
+- It follows the Count filter (activities or unique Leads / Contacts), the period and
+  the Entity filter. Types with nothing in the period are hidden.
+- Every number opens the activity audit with `kind` and `ref_class`. For a total,
+  `ref_class="any"` means any of the three classes.
+- **By Team Member:** with Breakup: By Team Member (head only), a table above By Activity
+  Type shows one row per salesperson, plus a Team Total, with Visits and Follow-ups, each
+  Total / Lead / Contact / Existing Customer. It uses the per-user rows' `coverage`, the
+  rows add up to the Team Total, and clicks pass the member as `user` with `exactUser`.
+  The Team Member filter narrows the whole section to one person.
 
 - **Visit vs Follow-up is decided by activity type alone.** Visit types are listed in
   `ACTIVITY_VISIT_CATEGORIES`: Visit, Field Visit, the Offline … Meeting types, Initial
