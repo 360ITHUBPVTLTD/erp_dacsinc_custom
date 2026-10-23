@@ -1667,20 +1667,31 @@ the chart of accounts and with how Receive / Pay works.
 
 Rows with an outstanding amount get **Receive** (Receivables) or **Pay** (Payables) when the
 user may create and submit Payment Entries (`can_pay`) and may act on that sub-tab
-(`guard_act("accounts", receivables|supplier|jobber)`). The prompt shows **two amounts kept in
-step**: *Amount settled on this invoice / bill* (what the payment clears, deductions included) and
-*Amount credited in bank / cash* (Receive) or *Amount paid to supplier* (Pay). Receive: credited =
-settled − bank charges − TDS − write-off; Pay: paid to supplier = settled − TDS − write-off, and
-bank charges come on top from our bank. Changing the settled amount or a deduction recalculates the
-bank amount; changing the bank amount recalculates the settled amount. A live sum shows it, e.g.
-"9,950 credited + 50 bank charges = 10,000 settled". The server still receives the bank amount as
-`amount`. It also asks: payment date, mode of
+(`guard_act("accounts", receivables|supplier|jobber)`). The user types the **Total amount** (what the payment settles on the invoice / bill; defaults to
+the outstanding, **Full outstanding** fills it) and the deductions in ③; the **Actual amount received
+in bank / cash** (Receive: total − bank charges − TDS − write-off) or **paid to supplier** (Pay: total −
+TDS − write-off; bank charges come on top from our bank) is **calculated and read-only**. One direction
+only — nothing the user typed is rewritten (two typed boxes that rewrote each other confused users).
+The live box reads Total − deductions = received. With deductions the total can be at most the
+outstanding (flagged, refused on Review); a total alone above it is an advance; deductions as large as
+the total are refused. The server receives the bank amount as `amount`. It also asks: payment date, mode of
 payment (shows the account it posts to), reference no / date (required when the mode's
-account is a Bank account), and optional deductions with their accounts — bank charges (Card
-modes default to Card Swipe Bank Charges), TDS (TDS Receivable / TDS Payable), and a small
-difference written off. A live box shows what settles on the invoice, what moves through bank /
+account is a Bank account), and optional deductions with their accounts — bank charges (the account
+follows the mode: a card mode → Card Swipe Bank Charges, any other → Bank Charges, unless the user
+picked one by hand), TDS (TDS Receivable / TDS Payable), and a small difference written off. A live box shows what settles on the invoice, what moves through bank /
 cash, and what stays outstanding or becomes an advance. **Review** opens a confirmation with
 every value and the ledger lines; it submits only after the tick box.
+
+**Payment Entry form layout** (for entries made by hand — New › Receive / Pay, one cheque for several
+invoices): `custom/payment_entry.json` reorders it with the `field_order` Property Setter Customize Form
+writes, plus three section labels — Type of Payment (Payment Type, **Mode of Payment** | Posting Date;
+Series and Company — one company — sit in the folded More Information) → Payment From / To (Party, Party Name, **Party Balance** | bank accounts, contact) →
+Amount → **Cheque / Reference** (No + Date, moved up from the bottom) → **Invoices / Orders Settled**
+(Get Outstanding Invoices, references) → **Allocation** → Deductions or Loss → then, folded: Accounts
+(filled from the mode), Taxes, GST Details, Accounting Dimensions, More Information. No field, rule or
+ERPNext logic changed — order and labels only. A saved entry has a **Print Receipt** (Receive) / **Print
+Voucher** (Pay) / **Print Transfer** button (`public/js/payment_entry.js`) opening Payment Receipt DAC
+(`dacs_print_url`), the same PDF as the 🖨 under an invoice's payments.
 
 **One prompt, two places.** `public/js/payment_prompt.js` (`of_payment_prompt`, its CSS injected
 once) is loaded on demand by Finance's Receive / Pay and by the Sales Invoice / Purchase Invoice
@@ -2008,13 +2019,23 @@ row (`of_docstatus_pills`) directly above its table.
 
 ## Print right after creating (`public/js/print_prompt.js`)
 
-Loaded on every desk page (`app_include_js`). After a **Sales Invoice** or **Purchase Order /
-Subcontract PO** is submitted, after an **Uniform Embroidery Transfer** is first saved, and after
-every **Embroidery Work Order** created from the PO's Full Piece / Panel dashboards, the Sales
-Order's Send to Embroidery, or the Embroidery Transfers tab, the user is asked "… is created. Do
-you want to print it now?". Yes opens the same PDF as the Print buttons (`dacs_print_url`: work
-orders in "Embroidery Work Order Print Format", POs in "Purchase Order Print Format", others in
-their default format). The Embroidery work order tables (Full Piece / Panel) have a
+Loaded on every desk page (`app_include_js`). The user is asked "… is created. Do you want to
+print it now?" when the paper has to go with the goods or the bill:
+- a **Sales Invoice** or an ordinary **Purchase Order** is submitted (a **subcontracted** PO is
+  not — what goes to the jobber is its Subcontracting Order);
+- a **Subcontracting Order** is created by the PO's send-raw-material dialog
+  (`create_subcontracting_docs`, which inserts and submits it) or submitted from its own form —
+  printed in "Subcontracting Order Print Format 3", DAC Letter Header, as Order Flow's `of_print_sco`;
+- an **Uniform Embroidery Transfer** is first saved;
+- an **Embroidery Work Order** is created from the PO's Full Piece dashboard, the Sales Order's Send
+  to Embroidery or the Embroidery Transfers tab;
+- a **Panel** Embroidery Work Order reaches **Step 2 — Sent to Panel Jobber** or **Step 4 — Returned
+  to Jobber (Closed)** (the PO's panel dialog and Order Flow › Job Work › Embroidery - Panel), when
+  the panels leave us — not at Step 1 (Initialize Batch), when they have only come in.
+
+Yes opens the same PDF as the Print buttons (`dacs_print_url`: work orders in "Embroidery Work Order
+Print Format" (it shows the panel jobber), POs in "Purchase Order Print Format", others in their
+default format). The Embroidery work order tables (Full Piece / Panel) have a
 **Notes** column showing the full notes (`of_ewo_notes_html`: one line per entry, the date of
 each "• <date time>: Status changed…" entry in bold; the box scrolls past ~7 lines), and Embroidery Transfers rows have a
 Print button.

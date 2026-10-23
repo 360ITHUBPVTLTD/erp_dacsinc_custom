@@ -4603,6 +4603,8 @@ class OrderFlow {
                 }).then(() => {
                     frappe.show_alert({message: __('Sent to Jobber'), color: 'green'});
                     this.refresh(true);
+                    // the Embroidery Work Order goes with the panels (same as the PO's panel dialog)
+                    if (window.dacs_print_prompt) window.dacs_print_prompt('Embroidery Work Order', name, __('Embroidery Work Order'));
                 });
             }
         });
@@ -4679,6 +4681,8 @@ class OrderFlow {
                 }).then(() => {
                     frappe.show_alert({message: __('Job closed'), color: 'green'});
                     this.refresh(true);
+                    // finished panels go back to the subcontract jobber with the Embroidery Work Order
+                    if (window.dacs_print_prompt) window.dacs_print_prompt('Embroidery Work Order', name, __('Embroidery Work Order'));
                 });
             }
         });

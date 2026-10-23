@@ -33,11 +33,13 @@ app_include_js = [
     "/assets/erp_dacsinc_custom/js/workflow.js?v=1.0.7",
     "/assets/erp_dacsinc_custom/js/toogle.js?v=1.0.5",
     # "Print it now?" after creating SI / PO / embroidery documents (MOM 8 Oct 2026)
-    "/assets/erp_dacsinc_custom/js/print_prompt.js?v=1.0.2",
+    "/assets/erp_dacsinc_custom/js/print_prompt.js?v=1.0.3",
     # POS store requests board + dialogs (workspace block and Material Request form) — bump ?v= on change
     "/assets/erp_dacsinc_custom/js/pos_requests_board.js?v=1.0.6",
     # Overall discount skips items ticked "Exclude from Overall Discount" (overall_discount.py)
-    "/assets/erp_dacsinc_custom/js/overall_discount.js?v=1.0.1"
+    "/assets/erp_dacsinc_custom/js/overall_discount.js?v=1.0.1",
+    # Workspace shortcuts without a count filter are not counted (single DocTypes have no table)
+    "/assets/erp_dacsinc_custom/js/shortcut_count_fix.js?v=1.0.0"
 ]
 
 app_include_css = [
@@ -421,9 +423,15 @@ doc_events = {
         "on_cancel": "erp_dacsinc_custom.bom_events.on_cancel"
     },
     "Purchase Receipt": {
+        # service line of a job-work receipt: the account its Subcontracting Receipt credited (job_work.py)
+        "before_validate": "erp_dacsinc_custom.job_work.match_subcontracting_receipt_account",
         # no second draft for the same source line (draft_guard.py)
         "before_insert": "erp_dacsinc_custom.draft_guard.guard_duplicate_draft",
-        "validate": "erp_dacsinc_custom.procurement_purpose.set_procurement_purpose",
+        "validate": [
+            "erp_dacsinc_custom.procurement_purpose.set_procurement_purpose",
+            # a service line has no warehouse (job_work.py) — no "No accounting entries…" message
+            "erp_dacsinc_custom.job_work.clear_service_line_warehouse",
+        ],
         # a return sends stock back out; cancelling takes the received stock away (stock_hold.py)
         "before_submit": "erp_dacsinc_custom.stock_hold.guard_return",
         "before_cancel": "erp_dacsinc_custom.stock_hold.guard_cancel",
@@ -632,6 +640,8 @@ doc_events = {
         "on_trash": "erp_dacsinc_custom.so_embroidery.guard_linked_embroidery",
     },
     "Subcontracting Receipt": {
+        # ITC-04: the challans (Send to Subcontractor) its goods went out on (job_work.py)
+        "before_validate": "erp_dacsinc_custom.job_work.fill_itc04_references",
         # no second draft for the same source line (draft_guard.py)
         "before_insert": "erp_dacsinc_custom.draft_guard.guard_duplicate_draft",
         "before_submit": "erp_dacsinc_custom.stock_hold.guard_return",

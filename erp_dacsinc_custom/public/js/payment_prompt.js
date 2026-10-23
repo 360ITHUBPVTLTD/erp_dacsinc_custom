@@ -20,6 +20,7 @@
 .of-pay-dialog .form-section:first-child { border-top: 0; }
 .of-pay-dialog .help-box, .of-pay-dialog .frappe-control .help-box { font-size: 11px !important; color: var(--text-muted); margin-top: 3px; }
 .of-pay-dialog [data-fieldname="mode_of_payment"] select { font-weight: 600; }
+.of-pay-quick-note { font-size: 11px; color: var(--text-muted); margin: 3px 0 8px; }
 
 .of-pay-head { border-radius: 10px; padding: 10px 12px; display: grid; gap: 8px; margin-bottom: 2px; }
 .of-pay-head.is-in  { background: linear-gradient(135deg, rgba(39,174,96,.10), rgba(39,174,96,.03)); border: 1px solid rgba(39,174,96,.25); }
@@ -40,7 +41,8 @@
 .of-pay-head__note { font-size: 12px; color: var(--text-muted); }
 
 .of-pay-dialog [data-fieldname="settle_amount"] input { font-size: 15px !important; font-weight: 700; height: 34px !important; font-variant-numeric: tabular-nums; }
-.of-pay-dialog [data-fieldname="amount"] input { font-size: 13px !important; font-weight: 600; height: 32px !important; font-variant-numeric: tabular-nums; }
+.of-pay-dialog [data-fieldname="amount"] input { font-size: 15px !important; font-weight: 700; height: 34px !important; font-variant-numeric: tabular-nums; }
+.of-pay-dialog [data-fieldname="amount"] .control-value { font-size: 15px; font-weight: 700; color: var(--of-green, #1e7e34); background: var(--subtle-fg); border-radius: 6px; padding: 6px 10px; font-variant-numeric: tabular-nums; }
 .of-pay-quick { margin: -4px 0 10px; border: 1px dashed var(--of-blue, #2490ef); background: transparent; color: var(--of-blue, #2490ef);
     border-radius: 14px; padding: 3px 10px; font-size: 11.5px; font-weight: 600; cursor: pointer; }
 .of-pay-quick .fa { display: none; }
@@ -124,18 +126,19 @@ function of_payment_prompt(doctype, name, on_done, opts) {
             size: 'large',
             fields: [
                 { fieldtype: 'HTML', fieldname: 'head' },
-                // ① How much — the settled amount (big), the bank amount under it, live summary beside.
+                // ① How much — the user types the TOTAL this payment clears on the invoice / bill;
+                // charges / TDS / write-off go in ③; the actual bank / cash amount is calculated from
+                // them and read-only. One direction only: nothing the user typed is ever rewritten.
                 { fieldtype: 'Section Break', label: receive ? __('① How much is received') : __('① How much is paid') },
-                // Two amounts, kept in step (sync below): what this payment clears on the invoice,
-                // and what actually moves through the bank / cash after the deductions.
                 { fieldtype: 'Float', precision: 2, fieldname: 'settle_amount', reqd: 1, default: d.outstanding,
-                  label: receive ? __('Amount settled on this invoice') : __('Amount settled on this bill'),
-                  description: receive ? __('Includes any bank charges, TDS or write-off below.') : __('Includes any TDS or write-off below.') },
+                  label: receive ? __('Total amount (settled on this invoice)') : __('Total amount (settled on this bill)'),
+                  description: receive ? __('The whole amount this payment clears — including any bank charges, TDS or write-off in ③.')
+                                       : __('The whole amount this payment clears — including any TDS or write-off in ③.') },
                 { fieldtype: 'HTML', fieldname: 'quick' },
-                { fieldtype: 'Float', precision: 2, fieldname: 'amount', reqd: 1, default: d.outstanding,
-                  label: receive ? __('Amount credited in bank / cash') : __('Amount paid to supplier'),
-                  description: receive ? __('Calculated for you — change it if the bank shows a different figure.')
-                                       : __('Calculated for you. Bank charges are extra, from your bank.') },
+                { fieldtype: 'Float', precision: 2, fieldname: 'amount', read_only: 1, default: d.outstanding,
+                  label: receive ? __('Actual amount received in bank / cash') : __('Actual amount paid to supplier'),
+                  description: receive ? __('Calculated: total − bank charges − TDS − write-off. Check it against the bank statement.')
+                                       : __('Calculated: total − TDS − write-off. Bank charges are extra, from your bank.') },
                 { fieldtype: 'Column Break' },
                 { fieldtype: 'HTML', fieldname: 'summary' },
                 // ② How — mode (only modes ticked "Show in Payment Entry", payment_modes.py), date, reference.
@@ -172,24 +175,15 @@ function of_payment_prompt(doctype, name, on_done, opts) {
             primary_action: (v) => review(v),
         });
 
-        // Keep "settled" and "credited / paid" in step: change the settled amount or a deduction →
-        // the bank amount follows; change the bank amount → the settled amount follows.
-        let syncing = false;
+        // What the deductions add to the settled amount (bank charges paid by us are extra, not a cut).
         const cut = (v) => receive ? flt(v.bank_charges) + flt(v.tds_amount) + flt(v.write_off_amount)
                                    : flt(v.tds_amount) + flt(v.write_off_amount);
-        const sync = (from) => {
-            if (syncing) return;
-            syncing = true;
-            const v = dlg.get_values(true) || {};
-            if (from === 'amount') dlg.set_value('settle_amount', flt(flt(v.amount) + cut(v), 2));
-            else dlg.set_value('amount', flt(Math.max(0, flt(v.settle_amount) - cut(v)), 2));
-            setTimeout(() => { syncing = false; paint(); }, 50);
-        };
 
         const calc = () => {
             const v = dlg.get_values(true) || {};
-            const amount = flt(v.amount), charges = flt(v.bank_charges), tds = flt(v.tds_amount), wo = flt(v.write_off_amount);
-            const settled = receive ? amount + charges + tds + wo : amount + tds + wo;
+            const charges = flt(v.bank_charges), tds = flt(v.tds_amount), wo = flt(v.write_off_amount);
+            const settled = flt(v.settle_amount, 2);
+            const amount = flt(settled - cut(v), 2);              // the read-only actual amount
             const bank = receive ? amount : amount + charges;
             return { v, amount, charges, tds, wo, settled, bank,
                      allocated: Math.min(settled, d.outstanding),
@@ -198,6 +192,8 @@ function of_payment_prompt(doctype, name, on_done, opts) {
 
         const paint = () => {
             const c = calc();
+            // the read-only actual amount follows the total and the deductions
+            if (flt(dlg.get_value('amount'), 2) !== Math.max(c.amount, 0)) dlg.set_value('amount', Math.max(c.amount, 0));
             const is_bank = c.mode && c.mode.account_type === 'Bank';
             dlg.set_df_property('reference_no', 'reqd', is_bank ? 1 : 0);
             dlg.set_df_property('reference_date', 'reqd', is_bank ? 1 : 0);
@@ -210,26 +206,31 @@ function of_payment_prompt(doctype, name, on_done, opts) {
             // Deductions folded unless something is in them.
             if ((c.charges || c.tds || c.wo) && dlg.fields_dict.sec_deductions && dlg.fields_dict.sec_deductions.is_collapsed
                 && dlg.fields_dict.sec_deductions.is_collapsed()) dlg.fields_dict.sec_deductions.collapse(false);
-            const full = Math.abs(flt(c.v.settle_amount) - d.outstanding) < 0.005;
+            const full = Math.abs(c.settled - d.outstanding) < 0.005;
             dlg.fields_dict.quick.$wrapper.find('.of-pay-quick').toggleClass('is-on', full);
 
-            const state = c.remaining > 0.004
+            const deducted = c.tds || c.wo || (receive && c.charges);
+            const state = c.amount <= 0 && flt(c.v.settle_amount) > 0
+                ? { cls: 'part', icon: 'exclamation-triangle', text: __('The deductions are as much as the total — check the amounts in ③') }
+                : c.remaining > 0.004
                 ? { cls: 'part', icon: 'adjust', text: __('Part payment — {0} still outstanding', [money(c.remaining)]) }
+                : (c.remaining < -0.004 && deducted)
+                ? { cls: 'part', icon: 'exclamation-triangle', text: __('Total is {0} more than the outstanding — with deductions it can be at most the outstanding (click Full outstanding)', [money(-c.remaining)]) }
                 : (c.remaining < -0.004
                     ? { cls: 'adv', icon: 'plus-circle', text: __('{0} extra — kept as advance for {1}', [money(-c.remaining), pp_esc(d.party_name || d.party)]) }
                     : { cls: 'full', icon: 'check-circle', text: receive ? __('Invoice fully settled') : __('Bill fully settled') });
             const line = (label, val, sign, cls) => `<div class="of-pay-sum__row ${cls || ''}"><span><i>${sign || ''}</i> ${label}</span><b>${money(val)}</b></div>`;
             const rows = receive ? [
-                line(__('Credited in bank / cash'), c.amount, '', ''),
-                c.charges ? line(__('Bank charges'), c.charges, '+', 'is-cut') : '',
-                c.tds ? line(__('TDS'), c.tds, '+', 'is-cut') : '',
-                c.wo ? line(__('Written off'), c.wo, '+', 'is-cut') : '',
-                line(__('Settled on the invoice'), c.settled, '=', 'is-total'),
+                line(__('Total settled on the invoice'), c.settled, '', ''),
+                c.charges ? line(__('Bank charges'), c.charges, '−', 'is-cut') : '',
+                c.tds ? line(__('TDS'), c.tds, '−', 'is-cut') : '',
+                c.wo ? line(__('Written off'), c.wo, '−', 'is-cut') : '',
+                line(__('Received in bank / cash'), c.amount, '=', 'is-total'),
             ] : [
-                line(__('Paid to supplier'), c.amount, '', ''),
-                c.tds ? line(__('TDS cut by us'), c.tds, '+', 'is-cut') : '',
-                c.wo ? line(__('Written off'), c.wo, '+', 'is-cut') : '',
-                line(__('Settled on the bill'), c.settled, '=', 'is-total'),
+                line(__('Total settled on the bill'), c.settled, '', ''),
+                c.tds ? line(__('TDS cut by us'), c.tds, '−', 'is-cut') : '',
+                c.wo ? line(__('Written off'), c.wo, '−', 'is-cut') : '',
+                line(__('Paid to supplier'), c.amount, '=', 'is-total'),
             ];
             dlg.fields_dict.summary.$wrapper.html(`
                 <div class="of-pay-sum ${receive ? 'is-in' : 'is-out'}">
@@ -264,19 +265,27 @@ function of_payment_prompt(doctype, name, on_done, opts) {
                 </div>
                 ${d.tds_on_invoice ? `<div class="of-pay-head__note">${__('TDS already deducted on the bill')}: ${money(d.tds_on_invoice)}</div>` : ''}
             </div>`);
+        // One click: the total = the whole outstanding.
         dlg.fields_dict.quick.$wrapper.html(`<button type="button" class="of-pay-quick"><i class="fa fa-check"></i> ${__('Full outstanding')} ${money(d.outstanding)}</button>`);
         dlg.fields_dict.quick.$wrapper.on('click', '.of-pay-quick', () => { dlg.set_value('settle_amount', d.outstanding); });
         if (!(d.modes || []).length) {
             dlg.fields_dict.mode_info.$wrapper.html(`<div class="of-pay-modeinfo is-empty">${__('No Mode of Payment is ticked "Show in Payment Entry" (with an account for {0}).', [pp_esc(d.company)])}</div>`);
         }
-        ['settle_amount', 'amount', 'bank_charges', 'tds_amount', 'write_off_amount', 'mode_of_payment'].forEach(f => {
+        ['settle_amount', 'bank_charges', 'tds_amount', 'write_off_amount', 'mode_of_payment'].forEach(f => {
             dlg.fields_dict[f].$input && dlg.fields_dict[f].$input.on('input change', () => setTimeout(paint, 0));
-            if (f === 'mode_of_payment') return;
-            dlg.fields_dict[f].df.onchange = () => sync(f === 'amount' ? 'amount' : 'settle');
+            if (f !== 'mode_of_payment') dlg.fields_dict[f].df.onchange = paint;
         });
+        // Bank charges ledger follows the mode: a card mode → Card Swipe Bank Charges, any other →
+        // Bank Charges. An account the user chose by hand is left alone.
+        let auto_charges_acc = d.defaults.bank_charges_account || '';
         dlg.fields_dict.mode_of_payment.df.onchange = () => {
             const m = mode_by_name[dlg.get_value('mode_of_payment')];
-            if (m && /card/i.test(m.name) && d.defaults.card_charges_account) dlg.set_value('bank_charges_account', d.defaults.card_charges_account);
+            const want = (m && /card/i.test(m.name) && d.defaults.card_charges_account) || d.defaults.bank_charges_account || '';
+            const cur = dlg.get_value('bank_charges_account') || '';
+            if (want && cur !== want && (!cur || cur === auto_charges_acc)) {
+                auto_charges_acc = want;
+                dlg.set_value('bank_charges_account', want);
+            }
             paint();
         };
         dlg.show();
@@ -286,7 +295,8 @@ function of_payment_prompt(doctype, name, on_done, opts) {
             const c = calc();
             const is_bank = c.mode && c.mode.account_type === 'Bank';
             if (!c.mode) return frappe.msgprint(__('Choose the Mode of Payment.'));
-            if (c.amount <= 0) return frappe.msgprint(__('Enter the amount.'));
+            if (flt(v.settle_amount) <= 0) return frappe.msgprint(__('Enter the total amount.'));
+            if (c.amount <= 0) return frappe.msgprint(__('The bank charges / TDS / write-off are as much as the total — the actual amount would be nothing.'));
             if (is_bank && (!v.reference_no || !v.reference_date)) return frappe.msgprint(__('Enter the Reference No (UTR / cheque no) and Reference Date.'));
             if (c.charges && !v.bank_charges_account) return frappe.msgprint(__('Choose the Bank Charges Account.'));
             if (c.tds && !v.tds_account) return frappe.msgprint(__('Choose the TDS Account.'));
@@ -356,7 +366,7 @@ function of_payment_prompt(doctype, name, on_done, opts) {
                     </div>
                     ${crow(__('Against'), `${pp_esc(doctype)} ${pp_esc(name)}`)}
                     ${v.reference_no ? crow(__('Reference'), `${pp_esc(v.reference_no)} · ${frappe.datetime.str_to_user(v.reference_date)}`) : ''}
-                    ${crow(receive ? __('Credited in bank / cash') : __('Paid to supplier'), money(c.amount))}
+                    ${crow(receive ? __('Received in bank / cash') : __('Paid to supplier'), money(c.amount))}
                     ${c.charges ? crow(__('Bank Charges'), money(c.charges), 'is-cut') : ''}
                     ${c.tds ? crow(__('TDS'), money(c.tds), 'is-cut') : ''}
                     ${c.wo ? crow(__('Write Off'), money(c.wo), 'is-cut') : ''}
