@@ -326,6 +326,7 @@ doc_events = {
         "validate": "erp_dacsinc_custom.custom_lead.validate_lead"
     },
     "Quotation": {
+        "before_validate": "erp_dacsinc_custom.tax_category.set_document_tax_category",
         "before_insert": "erp_dacsinc_custom.custom_script.before_insert",
         "after_insert": "erp_dacsinc_custom.custom_script.after_insert_quotation",
         "on_update": "erp_dacsinc_custom.custom_script.on_update_quotation",
@@ -337,7 +338,10 @@ doc_events = {
     "Sales Invoice": {
         # no second draft for the same source line (draft_guard.py)
         "before_insert": "erp_dacsinc_custom.draft_guard.guard_duplicate_draft",
-        "before_validate": "erp_dacsinc_custom.custom_script.lock_item_rate_to_sales_order_early",
+        "before_validate": [
+            "erp_dacsinc_custom.custom_script.lock_item_rate_to_sales_order_early",
+            "erp_dacsinc_custom.tax_category.set_document_tax_category",
+        ],
         "validate": [
             "erp_dacsinc_custom.custom_script.lock_item_rate_to_sales_order",
             "erp_dacsinc_custom.custom_script.guard_si_items_locked_to_pick_list",
@@ -381,13 +385,19 @@ doc_events = {
         "on_update_after_submit": "erp_dacsinc_custom.so_share.share_with_lead_owner",
         "on_trash": "erp_dacsinc_custom.custom_script.sales_order_on_trash",
         "before_insert": "erp_dacsinc_custom.custom_script.sales_order_before_insert",
-       "before_validate": "erp_dacsinc_custom.custom_script.sales_order_before_insert",
+       "before_validate": [
+            "erp_dacsinc_custom.custom_script.sales_order_before_insert",
+            "erp_dacsinc_custom.tax_category.set_document_tax_category",
+        ],
        "validate": "erp_dacsinc_custom.custom_script.validate_non_zero_rate"
     },
     "Delivery Note": {
         # no second draft for the same source line (draft_guard.py)
         "before_insert": "erp_dacsinc_custom.draft_guard.guard_duplicate_draft",
-        "before_validate": "erp_dacsinc_custom.custom_script.lock_item_rate_to_sales_order_early",
+        "before_validate": [
+            "erp_dacsinc_custom.custom_script.lock_item_rate_to_sales_order_early",
+            "erp_dacsinc_custom.tax_category.set_document_tax_category",
+        ],
         "validate": [
             "erp_dacsinc_custom.custom_script.lock_item_rate_to_sales_order",
             "erp_dacsinc_custom.custom_script.guard_dn_items_locked_to_pick_list",
@@ -431,7 +441,10 @@ doc_events = {
     "Address": {
         # its Customers / Suppliers without a primary address get this one (party_address.py)
         "after_insert": "erp_dacsinc_custom.party_address.on_address_save",
-        "on_update": "erp_dacsinc_custom.party_address.on_address_save",
+        "on_update": [
+            "erp_dacsinc_custom.party_address.on_address_save",
+            "erp_dacsinc_custom.tax_category.address_on_update",
+        ],
     },
     "Role Profile": {
         # its access-sheet flag ticked / unticked locally → access/flagged_profiles.json
@@ -449,7 +462,10 @@ doc_events = {
         ],
         "after_insert": "erp_dacsinc_custom.custom_customer.customer_after_insert",
         # POS Store / Industry / Merchandiser User: only the roles in Admin Settings › Customer
-        "validate": "erp_dacsinc_custom.custom_customer.guard_protected_customer_fields",
+        "validate": [
+            "erp_dacsinc_custom.custom_customer.guard_protected_customer_fields",
+            "erp_dacsinc_custom.tax_category.customer_validate",
+        ],
         "on_update": "erp_dacsinc_custom.custom_customer.update_customer_sharing"
     },
     "Purchase Order": {
