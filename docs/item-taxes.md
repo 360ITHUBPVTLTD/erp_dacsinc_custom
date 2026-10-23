@@ -46,6 +46,32 @@ document stays In-State / Out-State.
 - The Item form allows a template only once per Tax Category: one Exempted row each for In-State and
   Out-State.
 
+## Tax Category: always In-State or Out-State (`tax_category.py`)
+
+The rows above exist only for Tax Category **In-State** and **Out-State**, and ERPNext picks a line's
+template only from rows of the document's Tax Category. A blank or wrong category leaves the line
+without a template, and it is then taxed at the **header** template's rate — an SEZ invoice for a
+5% item went out at 18% IGST (SINV-26-00035: the customer had no Tax Category). India Compliance
+picks the right GST template but never sets the category; ERPNext copies it from the Customer.
+
+- **Quotation / Sales Order / Delivery Note / Sales Invoice drafts** (`before_validate`): the Tax
+  Category is set by India Compliance's own test — **Out-State** for SEZ / Overseas or a place of
+  supply in another state than the company GSTIN, else **In-State**. Lines with no Item Tax Template,
+  or one not valid for that category, get the item's first valid row (ERPNext's
+  `get_item_tax_template`: price slab and Exempted kept — a line set to Exempted stays Exempted); a
+  header GST template of the other category is swapped for the matching one. An alert says what
+  changed. On the form ERPNext's own Tax Category change re-picks templates too, but only on lines
+  that already have one — the save rule covers empty lines.
+- **Customer** (validate) and **Address** (on_update → its customers): Out-State for SEZ / Overseas,
+  an address outside India, or a billing state (address GSTIN, else customer GSTIN, else address
+  state) other than the company's; else In-State. New customers default to In-State (Property
+  Setter) and are corrected when their address is saved.
+- Reverse Charge / Registered Composition categories are chosen on purpose and never changed;
+  returns made against an invoice keep the invoice's category.
+- `patches/customer_tax_category.py` corrected existing customers on migrate (dated comment on each;
+  list in bench `docs/files/customer_tax_category_fix.xlsx`, with a second sheet of customers whose
+  GSTIN state and address state disagree — data to check, not changed).
+
 ## Imported GST text
 
 Items imported with the GST as text (`0.18`, `18`, `GST 18% - IND%`) are not template names; a Taxes
