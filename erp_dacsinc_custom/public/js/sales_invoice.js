@@ -93,6 +93,13 @@ frappe.ui.form.on('Sales Invoice', {
 				dacs_print_copies('Sales Invoice', frm.doc.name, { is_return: cint(frm.doc.is_return), docstatus: frm.doc.docstatus })
 			).css({ 'background-color': '#000', 'color': '#fff' });
 		}
+		// A new invoice opened directly: fetch the customer's delivered, not-yet-billed Delivery
+		// Note lines — what Order Flow › Pending DN/SI invoices (public/js/invoice_fetch.js).
+		if (frm.is_new() && !cint(frm.doc.is_return) && frappe.model.can_create('Sales Invoice')) {
+			frm.add_custom_button(__('Fetch Pending to Bill'), () =>
+				frappe.require('/assets/erp_dacsinc_custom/js/invoice_fetch.js', () => window.dacs_fetch_pending_to_bill(frm))
+			).addClass('btn-primary');
+		}
 		// The Receive Payment prompt (public/js/payment_prompt.js — the same one as Order Flow ›
 		// Finance) in place of ERPNext's Create › Payment.
 		if (frm.doc.docstatus === 1 && !cint(frm.doc.is_return) && flt(frm.doc.outstanding_amount) > 0 && frappe.model.can_create('Payment Entry')) {
@@ -178,7 +185,7 @@ if (typeof window.dacs_load_return_actions !== 'function') {
 		} else if (frm.meta.default_print_format === ret_pf) {
 			frm.meta.default_print_format = frm.meta._dacs_default_print_format || null;
 		}
-		if (!cint(frm.doc.is_return)) return;
+		if (!cint(frm.doc.is_return)) { $(frm.layout.wrapper).find('.dacs-rp').remove(); return; }
 		frappe.require('/assets/erp_dacsinc_custom/js/return_actions.js', () => window.dacs_return_actions(frm));
 	};
 }

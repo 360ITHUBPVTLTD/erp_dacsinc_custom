@@ -79,6 +79,8 @@ doctype_js = {
 	"BOM": "public/js/bom.js",
 	"Sales Invoice": "public/js/sales_invoice.js",
 	"Delivery Note": "public/js/delivery_note.js",
+	# Purchase Return: Debit Note status + "Make Debit Note" (return_goods.py)
+	"Purchase Receipt": "public/js/purchase_receipt.js",
 	"Pick List": "public/js/pick_list.js",
 	"Customer": "public/js/customer.js",
 	# job work is received from the Sub PO ("Receive Finished Goods"), not from the SCO
@@ -347,8 +349,16 @@ doc_events = {
             # stock held for another Sales Order can't go out (stock_hold.py)
             "erp_dacsinc_custom.stock_hold.guard_sales_invoice",
         ],
-        "before_cancel": "erp_dacsinc_custom.stock_hold.guard_cancel",
-        "on_submit": "erp_dacsinc_custom.custom_script.update_pick_lists_on_stock_si_submit",
+        "before_cancel": [
+            # a Credit Note's own Sales Return goes first (return_goods.py)
+            "erp_dacsinc_custom.return_goods.on_note_cancel",
+            "erp_dacsinc_custom.stock_hold.guard_cancel",
+        ],
+        "on_submit": [
+            "erp_dacsinc_custom.custom_script.update_pick_lists_on_stock_si_submit",
+            # Credit Note ticked "Update Stock (return the goods)": make + submit the Sales Return
+            "erp_dacsinc_custom.return_goods.on_note_submit",
+        ],
         "on_update": "erp_dacsinc_custom.order_flow_api.broadcast_order_flow_change",
         "on_cancel": [
             "erp_dacsinc_custom.custom_script.update_pick_lists_on_stock_si_cancel",
@@ -517,9 +527,16 @@ doc_events = {
     "Purchase Invoice": {
         # no second draft for the same source line (draft_guard.py)
         "before_insert": "erp_dacsinc_custom.draft_guard.guard_duplicate_draft",
+        # Debit Note: received qty follows qty, or later Debit Notes are refused (return_goods.py)
+        "before_validate": "erp_dacsinc_custom.return_goods.sync_debit_note_received_qty",
         "validate": "erp_dacsinc_custom.custom_script.validate_non_zero_rate",
         "before_submit": "erp_dacsinc_custom.stock_hold.guard_return",
-        "before_cancel": "erp_dacsinc_custom.stock_hold.guard_cancel",
+        "before_cancel": [
+            "erp_dacsinc_custom.return_goods.on_note_cancel",
+            "erp_dacsinc_custom.stock_hold.guard_cancel",
+        ],
+        # Debit Note ticked "Update Stock (send the goods back)": make + submit the Purchase Return
+        "on_submit": "erp_dacsinc_custom.return_goods.on_note_submit",
         "on_update": "erp_dacsinc_custom.order_flow_api.broadcast_order_flow_change",
         "on_cancel": "erp_dacsinc_custom.order_flow_api.broadcast_order_flow_change",
     },

@@ -206,8 +206,8 @@ const OF_TABLE_FILTERS = {
     'accounts.supplier': [['status', 'status', 'inv', 'Payment'], ['goods', 'select', OF_GOODS('received'), 'Receipt'], ['supplier', 'link', 'Supplier']],
     'accounts.jobber': [['status', 'status', 'inv', 'Payment'], ['goods', 'select', OF_GOODS('received'), 'Receipt'], ['supplier', 'link', 'Supplier', 'Jobber']],
     // Finance › Returns / Notes (order_flow_api._accounts_notes)
-    'accounts.notes': [['kind', 'select', [['credit', 'Credit Notes (sales returns)'], ['debit', 'Debit Notes (purchase returns)']], 'Type'],
-        ['next', 'select', [['refund', 'Credit / refund pending'], ['draft', 'Draft — to submit'], ['settled', 'Settled', 1]], 'Status'],
+    // Type (kind) is chosen with the Credit / Debit Notes buttons above the table (of_notes_kind_bar)
+    'accounts.notes': [['next', 'select', [['refund', 'Credit / refund pending'], ['draft', 'Draft — to submit'], ['settled', 'Settled', 1]], 'Status'],
         ['party', 'link', 'Customer', 'Customer / Supplier']],
     'uniform': [['status', 'mirror', '#of-uniform-status', 'Status']],
     'logistics': [['lr', 'select', [['missing', 'LR No. missing'], ['filled', 'LR No. filled', 1]], 'LR No.'],
@@ -1407,6 +1407,17 @@ class OrderFlow {
             const $b = $(e.currentTarget);
             window.dacs_print_copies($b.data('doctype'), String($b.data('name')),
                 { is_return: cint($b.data('isReturn')), docstatus: cint($b.data('docstatus')) });
+        });
+        // The other half of a return (return_goods.py): open the note / return in a new tab and let
+        // its form make the missing document straight away (dacs_goods_status reads this note).
+        this.$body.on('click', '.of-notes-kind', (e) => {
+            this.set_table_filter('accounts.notes', 'kind', String($(e.currentTarget).data('kind') || ''));
+        });
+        this.$body.on('click', '.of-make-goods-btn', (e) => {
+            const $b = $(e.currentTarget);
+            const dt = $b.data('doctype'), name = String($b.data('name'));
+            try { localStorage.setItem(`dacs_make:${dt}:${name}`, String(Date.now())); } catch (err) { /* no storage */ }
+            window.open(`/app/${frappe.router.slug(dt)}/${encodeURIComponent(name)}`, '_blank');
         });
         this.$body.on('click', '.of-pay-link', (e) => {
             const $b = $(e.currentTarget);
@@ -5557,7 +5568,7 @@ class OrderFlow {
                     of_docstatus_pills('accounts', 'jobber', jobs_env.docstatus_counts, this.docstatus_filter.accounts.jobber) + this.table_filters_html('accounts.jobber'))}
             </div>
             <div id="of-acc-sec-notes" class="${subtab !== 'notes' ? 'of-hidden' : ''}">
-                ${of_card('Returns / Notes — Credit Notes & Debit Notes', 'undo', `
+                ${of_card('Returns / Notes — Credit Notes & Debit Notes', 'undo', `${of_notes_kind_bar((this.table_filters['accounts.notes'] || {}).kind || '', m)}${of_goods_waiting_html(notes_env.goods_waiting)}
                     <table class="of-table">
                         <thead><tr><th style="min-width:170px;">Note</th><th style="min-width:150px;">Customer / Supplier</th>
                             <th style="min-width:150px;">Against invoice</th><th style="min-width:200px;">Items returned</th><th>Date</th>
@@ -7355,6 +7366,54 @@ function of_payments_dialog(invoice, payments, currency) {
     d.show();
 }
 
+// Returns / Notes: All · Credit Notes (customers) · Debit Notes (suppliers) — sets the table's
+// "kind" filter (order_flow_api._accounts_notes); each with its own New button.
+function of_notes_kind_bar(kind, m) {
+    const tab = (k, icon, label, n) => `<button class="of-notes-kind${kind === k ? ' is-active' : ''}" data-kind="${k}">
+        <i class="fa fa-${icon}"></i> ${label}${n !== null ? ` <span class="of-notes-kind__n">${n}</span>` : ''}</button>`;
+    const cn = flt_of(m.notes_credit_count), dn = flt_of(m.notes_debit_count);
+    const new_btn = kind === 'credit' && frappe.model.can_create('Sales Invoice')
+        ? `<a class="of-btn of-btn--primary" href="/app/sales-invoice/new?is_return=1" target="_blank" title="${__('Direct Credit Note — not from an invoice (e.g. a service item). From an invoice: open it › Create › Return / Credit Note')}"><i class="fa fa-plus"></i> ${__('New Credit Note')}</a>`
+        : kind === 'debit' && frappe.model.can_create('Purchase Invoice')
+        ? `<a class="of-btn of-btn--primary" href="/app/purchase-invoice/new?is_return=1" target="_blank" title="${__('Direct Debit Note — not from a bill. From a bill: open it › Create › Return / Debit Note')}"><i class="fa fa-plus"></i> ${__('New Debit Note')}</a>` : '';
+    return `<div class="of-notes-kinds">
+        ${tab('', 'list', __('All'), cn + dn)}
+        ${tab('credit', 'user', __('Credit Notes — customers'), cn)}
+        ${tab('debit', 'truck', __('Debit Notes — suppliers'), dn)}
+        <span style="margin-left:auto;">${new_btn}</span>
+    </div>`;
+}
+
+// Goods side of a note (return_goods.note_goods): has the stock come back?
+function of_goods_chip(g) {
+    if (!g || !g.status) return '';
+    const m = {
+        done: ['is-done', 'check', __('Stock returned')], self: ['is-done', 'check', __('Stock returned')],
+        draft: ['is-wait', 'clock-o', __('Return in draft')], pending: ['is-miss', 'exclamation-triangle', __('Stock not returned')],
+        unlinked: ['is-wait', 'question', __('Stock not returned')], none: ['is-none', 'minus', __('No stock item')],
+    }[g.status];
+    if (!m) return '';
+    return `<div class="of-goods-chip ${m[0]}" title="${of_esc(g.text || '')}"><i class="fa fa-${m[1]}"></i> ${of_esc(m[2])}</div>`;
+}
+
+// Sales / Purchase Returns (goods back) still waiting for their Credit / Debit Note
+// (return_goods.goods_credit "pending") — above the notes table, each with Make Credit / Debit Note.
+function of_goods_waiting_html(list) {
+    if (!list || !list.length) return '';
+    return `<div class="of-goods-waiting"><b><i class="fa fa-exclamation-triangle"></i> ${__('{0} return(s) with the goods back but no Credit / Debit Note yet', [list.length])}</b>
+        ${list.map(r => {
+            const sales = r.doctype === 'Delivery Note';
+            const slug = sales ? 'delivery-note' : 'purchase-receipt';
+            const can = frappe.model.can_create(sales ? 'Sales Invoice' : 'Purchase Invoice');
+            return `<div class="of-goods-waiting__row">
+                <a href="/app/${slug}/${encodeURIComponent(r.name)}" target="_blank" style="font-weight:600;">${of_esc(r.name)}</a>
+                <span class="of-micro text-muted">${sales ? __('Sales Return') : __('Purchase Return')} · ${of_esc(r.party_name || '')} · ${of_date(r.posting_date)}</span>
+                ${can ? `<button class="of-btn of-btn--primary of-make-goods-btn" data-doctype="${r.doctype}" data-name="${of_esc(r.name)}">
+                    <i class="fa fa-file-text-o"></i> ${sales ? __('Make Credit Note') : __('Make Debit Note')}</button>` : ''}
+            </div>`;
+        }).join('')}</div>`;
+}
+
 // The Returns / Notes summary card (a sub-tab, like the other three).
 function of_notes_kcard(m, active, total) {
     const credit = flt_of(m.notes_customer_credit), owed = flt_of(m.notes_supplier_refund);
@@ -7397,7 +7456,12 @@ function of_note_row_html(n, can_pay) {
             title="${__('Payment Reconciliation: set this credit off against their unpaid invoices / bills')}"><i class="fa fa-exchange"></i> ${__('Adjust')}</button>`;
     const refund = can_pay ? `<button class="of-btn ${n.next !== 'adjust' ? (cn ? 'of-btn--warning' : 'of-btn--success') : ''} of-refund-btn" data-doctype="${n.doctype}" data-name="${of_esc(n.name)}">
             <i class="fa fa-${cn ? 'reply' : 'inr'}"></i> ${cn ? __('Refund') : __('Receive refund')}</button>` : '';
-    const actions = n.effect === 'credit' ? (n.next === 'adjust' ? adjust + refund : refund + adjust) : '';
+    const g = n.goods || {};
+    const goods_btn = g.status === 'pending' && n.docstatus == 1 && frappe.model.can_create(cn ? 'Delivery Note' : 'Purchase Receipt')
+        ? `<button class="of-btn of-btn--danger of-make-goods-btn" data-doctype="${n.doctype}" data-name="${of_esc(n.name)}"
+            title="${__('Make the {0} for the items not yet back — only what is missing', [cn ? __('Sales Return') : __('Purchase Return')])}">
+            <i class="fa fa-cubes"></i> ${cn ? __('Sales Return') : __('Purchase Return')}</button>` : '';
+    const actions = goods_btn + (n.effect === 'credit' ? (n.next === 'adjust' ? adjust + refund : refund + adjust) : '');
     return `<tr class="of-doc-row">
         <td><i class="fa fa-caret-right of-doc-items-toggle" data-doctype="${n.doctype}" data-docname="${of_esc(n.name)}" data-docstatus="${n.docstatus}" style="cursor:pointer;margin-right:4px;color:var(--text-light);"></i>
             <a href="/app/${slug}/${encodeURIComponent(n.name)}" target="_blank" style="font-weight:700;">${of_esc(n.name)}</a>
@@ -7408,7 +7472,7 @@ function of_note_row_html(n, can_pay) {
         <td style="text-align:left;">${items_html}</td>
         <td class="of-meta">${of_date(n.posting_date)}</td>
         <td style="font-weight:700;color:${cn ? 'var(--of-red)' : 'var(--of-green)'};">${of_money(Math.abs(flt_of(n.grand_total)), n.currency)}</td>
-        <td>${effect}</td>
+        <td>${effect}${of_goods_chip(g)}</td>
         <td style="text-align:left;"><div class="of-micro" style="font-weight:600;color:var(--text-color);margin-bottom:5px;">${of_esc(n.next_text || '')}</div>
             <div class="of-po-actions">${actions}<button class="of-btn of-print-copies-btn" data-doctype="${n.doctype}" data-name="${of_esc(n.name)}" data-is-return="1" data-docstatus="${n.docstatus}"
                 title="${cn ? __('Print the Credit Note') : __('Print the Debit Note')} — ${__('choose the copy')}"><i class="fa fa-print"></i></button><a class="of-btn" href="/app/${slug}/${encodeURIComponent(n.name)}" target="_blank"><i class="fa fa-external-link"></i> ${__('Open')}</a></div></td>

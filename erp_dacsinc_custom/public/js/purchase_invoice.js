@@ -277,7 +277,7 @@ if (typeof window.dacs_load_return_actions !== 'function') {
         } else if (frm.meta.default_print_format === ret_pf) {
             frm.meta.default_print_format = frm.meta._dacs_default_print_format || null;
         }
-        if (!cint(frm.doc.is_return)) return;
+        if (!cint(frm.doc.is_return)) { $(frm.layout.wrapper).find('.dacs-rp').remove(); return; }
         frappe.require('/assets/erp_dacsinc_custom/js/return_actions.js', () => window.dacs_return_actions(frm));
     };
 }

@@ -462,6 +462,12 @@
     background: #e0a800;
     color: #fff !important;
 }
+.of-btn--danger {
+    background: #c0392b; border-color: #c0392b; color: #fff;
+}
+.of-btn--danger:hover {
+    background: #a93226; border-color: #a93226; color: #fff;
+}
 
 .of-btn--info {
     background: var(--of-info);
@@ -1910,6 +1916,21 @@ td > .of-action-btn {
 .of-pay-table td, .of-pay-table th { font-size: 12px; vertical-align: middle !important; }
 .of-pay-tag { font-size: 9.5px; padding: 0 5px; border-radius: 8px; background: var(--bg-color, #fff); border: 1px solid var(--border-color); color: var(--text-muted); }
 
+/* Returns / Notes: Credit / Debit sub-tabs (of_notes_kind_bar) */
+.of-notes-kinds { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin-bottom: 8px; }
+.of-notes-kind { border: 1px solid var(--border-color); background: var(--card-bg, #fff); border-radius: 16px; padding: 4px 12px;
+    font-size: 12px; font-weight: 600; color: var(--text-muted); cursor: pointer; }
+.of-notes-kind.is-active { background: var(--of-blue, #2490ef); border-color: var(--of-blue, #2490ef); color: #fff; }
+.of-notes-kind__n { display: inline-block; min-width: 18px; padding: 0 5px; border-radius: 9px; background: rgba(0,0,0,.08); font-size: 11px; text-align: center; }
+.of-notes-kind.is-active .of-notes-kind__n { background: rgba(255,255,255,.25); }
+/* Returns: goods side (of_goods_chip, of_goods_waiting_html — return_goods.py) */
+.of-goods-chip { display: inline-block; margin-top: 5px; font-size: 10.5px; font-weight: 700; padding: 2px 8px; border-radius: 10px; white-space: nowrap; }
+.of-goods-chip.is-done { background: #e6f4ea; color: #1e7e34; }
+.of-goods-chip.is-miss { background: #fdecea; color: #b03a2e; }
+.of-goods-chip.is-wait { background: #fff1e0; color: #b35900; }
+.of-goods-chip.is-none { background: var(--subtle-fg); color: var(--text-muted); }
+.of-goods-waiting { margin-bottom: 8px; padding: 8px 10px; border: 1px solid #f5c2c7; background: #fff5f5; border-radius: 6px; font-size: 12px; color: #b03a2e; }
+.of-goods-waiting__row { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-top: 5px; color: var(--text-color); }
 /* Finance › Returns / Notes (of_note_row_html, of_notes_kcard, of_return_chips) */
 .of-ret-chips { display: flex; flex-direction: column; align-items: center; gap: 3px; margin-top: 4px; }
 .of-ret-chip { display: inline-flex; align-items: center; gap: 4px; font-size: 10.5px; font-weight: 600; padding: 1px 7px; border-radius: 10px;

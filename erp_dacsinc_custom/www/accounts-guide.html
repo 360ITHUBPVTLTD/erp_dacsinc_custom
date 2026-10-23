@@ -352,6 +352,7 @@
         <li>Click the arrow next to an invoice to see its items. Check the <b>customer, items, rate, GST and total</b>.</li>
         <li>Click <b>Submit</b> on the row, read the summary, tick the box and confirm.</li>
       </ol>
+      <div class="tip"><b>Opened a new Sales Invoice yourself?</b> Click <b>Fetch Pending to Bill</b>, choose the customer, tick the delivered lines (or a whole Delivery Note) and <b>Get Items</b> — the same lines Pending DN/SI would bill. Goods picked but not delivered yet need their Delivery Note first.</div>
       <div class="acc"><b>In the accounts:</b> the customer now owes the invoice total (₹11,800 for ₹10,000 + ₹1,800 GST). Our sales go up by ₹10,000, and ₹1,800 GST is due to the government.</div>
       <p class="wr"><b>ERPNext writes</b> (example figures):</p>
       <div class="ledger"><div class="t">Sales Invoice <small>₹10,000 + GST 18% (same state)</small></div><table><tr><th>Account</th><th class="num">Debit</th><th class="num">Credit</th></tr><tr><td>Debtors - IND (the customer)</td><td class="num">11,800.00</td><td class="num"></td></tr><tr><td>Sales - IND</td><td class="num"></td><td class="num">10,000.00</td></tr><tr><td>Output Tax CGST - IND</td><td class="num"></td><td class="num">900.00</td></tr><tr><td>Output Tax SGST - IND</td><td class="num"></td><td class="num">900.00</td></tr></table></div>
@@ -541,7 +542,7 @@
         <tr><td>We sent goods back to a supplier / jobber</td><td><b>Purchase Return</b><br><small>Purchase Receipt › Create › Purchase Return</small></td><td><b>Debit Note</b><br><small>Purchase Invoice › Create › Return / Debit Note</small></td><td>We owe the supplier less</td></tr>
         <tr><td>Price cut / discount after the bill, service not given — no goods move</td><td>—</td><td><b>Credit Note (direct)</b> / <b>Debit Note (direct)</b> — see <a href="#t-directnote">below</a></td><td>Customer owes less / we owe less</td></tr>
       </table></div>
-      <div class="tip"><b>Invoice made with "Update Stock" (direct bill, no Delivery Note)?</b> Then its Credit Note also has Update Stock ticked and brings the goods back itself — no separate Sales Return.</div>
+      <div class="tip"><b>Invoice made with "Update Stock" (direct bill, no Delivery Note)?</b> Then its Credit Note also has Update Stock ticked and brings the goods back itself — no separate Sales Return. <b>Invoice made from a Delivery Note</b> (the usual way)? Its Credit Note <b>cannot</b> move stock (ERPNext hides Update Stock there) — the goods come back only with the Sales Return. You don't have to remember: the note shows <b>Stock not returned</b> with the button until it is done.</div>
       <div class="note"><b>Where returns show:</b> <b>Order Flow › Finance › Returns / Notes</b> lists every Credit and Debit Note with what it did and what is left to do. The invoice lists show a red <span class="pill p-red">↩ note ₹</span> chip on the invoice it was made against. Returns are <b>never</b> counted as deliveries, invoices or receipts on the Sales Tracker.</div>
     </section>
 
@@ -553,6 +554,8 @@
         <li>Delete the rows that did not come back. In <b>Qty</b> type how many came back — type <b>2</b> and it becomes <b>-2</b> (return quantities are always negative). Item and rate stay as on the invoice; ERPNext refuses more than was invoiced.</li>
         <li>In <b>Remarks</b> write the <b>reason</b> (e.g. "2 shirts size M — wrong size"). It prints on the Credit Note and can be changed even after submit.</li>
         <li><b>Save › Submit</b>. Then see <a href="#t-afterreturn">what happens to the invoice</a> — sometimes you still have one step.</li>
+        <li><b>Goods coming back now?</b> Tick <b>Update Stock (return the goods)</b> on the Credit Note (and the warehouse, if not the one they left from). Submitting the note then makes and submits the Sales Return too — one step.</li>
+        <li><b>Goods not back yet?</b> Leave it unticked. The submitted Credit Note says <b>📦 Goods: Stock not returned</b> and has a red <b>Make Sales Return</b> button (also on Finance › Returns / Notes). It makes the Sales Return with exactly the items and qty of the note — the store picks the warehouse and submits. Started from the Sales Return instead? It has <b>Make Credit Note</b>, made against the original invoice.</li>
         <li>To print: <b>Print Credit Note</b> on the form (Original / Duplicate / Triplicate / Quadruplicate / All 4), or 🖨 on its row in Finance › Returns / Notes.</li>
       </ol>
       <div class="acc"><b>In the accounts:</b> the stock and its cost come back, the customer owes us less, and our sales and GST payable go down.</div>
@@ -570,6 +573,7 @@
         <li>Keep the same items and quantities (negative, like on the Credit Note). If the supplier sent their own credit note, type its number and date in <b>Supplier Invoice No / Date</b>.</li>
         <li><b>Remarks</b>: the reason (e.g. "10 m fabric — colour mismatch"). <b>Save › Submit</b>.</li>
         <li>Print: <b>Print</b> › <b>Debit Note DAC</b>, or 🖨 on its row in Finance › Returns / Notes — send it to the supplier.</li>
+        <li>Goods not sent back yet? The Debit Note shows <b>Stock not returned</b> with <b>Make Purchase Return</b> (same items and qty, from the Purchase Receipt).</li>
       </ol>
       <div class="acc"><b>In the accounts:</b> the stock goes down, we owe the supplier less, and the GST we claim on those goods goes down.</div>
       <p class="wr"><b>ERPNext writes</b> (goods ₹2,000 + GST ₹360 returned):</p>

@@ -4227,11 +4227,12 @@ def _accounts_notes(days, search, scope, page, page_size, docstatus):
                 IF(pi.remarks LIKE 'Against Supplier Invoice %%', NULL, NULLIF(TRIM(pi.remarks), 'No Remarks')) AS remarks
             FROM {pi_from} WHERE {' AND '.join(c)}"""
 
-    def union(si_cond, pi_cond):
+    def union(si_cond, pi_cond, kinds=None):
         parts = []
-        if kind in ("", "credit"):
+        k = kind if kinds is None else kinds
+        if k in ("", "credit"):
             parts.append(select_si(si_cond))
-        if kind in ("", "debit"):
+        if k in ("", "debit"):
             parts.append(select_pi(pi_cond))
         return " UNION ALL ".join(parts) if parts else select_si(si_cond + ["1 = 0"])
 
@@ -4255,13 +4256,33 @@ def _accounts_notes(days, search, scope, page, page_size, docstatus):
     _describe_notes(env["rows"])
     _attach_creator_names(env["rows"])
 
+    # The goods side (return_goods.py): each note's Sales / Purchase Return status, and the
+    # submitted Sales / Purchase Returns in the date range still waiting for their note.
+    from erp_dacsinc_custom.return_goods import goods_credit, note_goods
+    for dt in ("Sales Invoice", "Purchase Invoice"):
+        names = [r.name for r in env["rows"] if r.doctype == dt]
+        if names:
+            g = note_goods(dt, names)
+            for r in env["rows"]:
+                if r.doctype == dt:
+                    r["goods"] = g.get(r.name)
+    waiting = []
+    for gdt, party in (("Delivery Note", "customer_name"), ("Purchase Receipt", "supplier_name")):
+        rets = frappe.get_all(gdt, filters=[["is_return", "=", 1], ["docstatus", "=", 1],
+                                            ["posting_date", ">=", params["from_date"]], ["posting_date", "<", params["to_next"]]],
+                              fields=["name", "posting_date", party + " AS party_name", "grand_total"], order_by="posting_date desc", limit=200)
+        st = goods_credit(gdt, [r.name for r in rets])
+        waiting += [dict(r, doctype=gdt, text=st[r.name]["text"]) for r in rets if (st.get(r.name) or {}).get("status") == "pending"
+                    and kind in ("", "credit" if gdt == "Delivery Note" else "debit")]
+    env["goods_waiting"] = waiting
+
     # Card figures: notes still to act on, and the money still to move, over the whole date range
     agg = frappe.db.sql(f"""SELECT kind,
             SUM(docstatus = 0) AS drafts,
             SUM(docstatus = 1 AND outstanding_amount < -0.005) AS refund_count,
             SUM(IF(docstatus = 1 AND outstanding_amount < -0.005, -outstanding_amount, 0)) AS refund_due,
             COUNT(*) AS total
-        FROM ({union(si_c, pi_c)}) x GROUP BY kind""", params, as_dict=1)
+        FROM ({union(si_c, pi_c, "")}) x GROUP BY kind""", params, as_dict=1)
     a = {r.kind: r for r in agg}
     cn, dn = a.get("credit_note") or {}, a.get("debit_note") or {}
     env["metrics"] = {

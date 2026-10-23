@@ -1610,6 +1610,12 @@ show a "↩ note" chip on the invoice instead. The **New** bar above the cards s
 Reconciliation and Bank Reconciliation. Full rules: `docs/returns.md`. Its visibility comes from
 Admin Settings `of_sub_accounts_notes_roles` / `_act_roles` (the access sheet row "Finance ›
 Returns / Notes"; seeded from Receivables by `patches/finance_notes_subtab_roles.py`).
+Inside it, **All · Credit Notes — customers · Debit Notes — suppliers** buttons (`of_notes_kind_bar`;
+they set the table's `kind` filter, counts over both kinds) — the Credit / Debit sub-tabs, each with its
+own **New Credit / Debit Note** (direct) button and only its own waiting returns.
+Each note also shows whether its goods are back (Goods chip, **Sales / Purchase Return** button),
+and a red strip above the table lists Sales / Purchase Returns still waiting for their Credit / Debit
+Note — `return_goods.py`, see `docs/returns.md` › Goods and money kept together.
 Every Finance row (the three invoice lists and Returns / Notes) has a 🖨 **Print** button that asks
 which copy (Original … Quadruplicate, All 4) — `print_prompt.dacs_print_copies`, the same choice and
 formats as the form's "Print Sales Invoice"; a return prints as its Credit / Debit Note.
@@ -1756,15 +1762,19 @@ describes the fields.
 India Compliance owns `transporter` / `lr_no`, so this app never edits their
 Custom Field records: "editable after submit" (also on `transporter_name` /
 `gst_transporter_id`, which change with the Transporter), the "LR No" label,
-and their position on the form — moved to where the old LR Number sat,
-after "No of Boxes / Bundles" and before Signed Copy — are **Property
-Setters** (incl. the `field_order` one Customize Form writes), exported with
-the app in `custom/sales_invoice.json` (`sync_on_migrate`). The old custom
-**LR Number** (`custom_lr_number`) and **Proof of Delivery**
-(`custom_proof_of_delivery`) fields were removed on 2026-09-25 (no invoice
-had a value in either) and are no longer in `fixtures` or
-`create_logistics_fields`, so a migrate does not bring them back. (The
-Purchase Order's own `custom_lr_number` is a different field and stays.)
+the form layout and **no default on Transport Receipt Date** (`lr_date` — India Compliance
+defaults it to today; it is typed by hand) are **Property Setters** (incl. the `field_order` one
+Customize Form writes), exported with the app in `custom/sales_invoice.json` (`sync_on_migrate`).
+
+Form layout (2026-10-23): India Compliance's **Transporter Info** section is moved from More Info to
+the Details tab, right above Accounting Dimensions (collapsible; opens by itself when filled), in three
+columns — *Transporter*: Transporter, Transporter Name, GST Transporter ID, LR No, Transport Receipt
+Date, Distance · *Vehicle*: Mode of Transport, GST Vehicle Type, Vehicle No, Driver, Driver Name ·
+*Packing & proof*: No of Boxes / Bundles, Number of Cartons, Signed Copy, Proof of Delivery (the
+column break is the app's `custom_column_break_4msba`, which used to make a fourth column in the top
+section). The old custom **LR Number** (`custom_lr_number`) was removed on 2026-09-25 and is no longer
+in `fixtures` or `create_logistics_fields`. (The Purchase Order's own `custom_lr_number` is a
+different field and stays.)
 
 - **What puts an invoice on the list** (Open): `docstatus = 1` AND both
   **LR No** and **Signed Copy** blank. No date filter by default — a
