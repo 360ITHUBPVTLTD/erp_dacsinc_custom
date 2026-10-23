@@ -30,6 +30,30 @@ disabled flag.
   Customers' TDS → TDS Receivable (asset). The Receive / Pay prompt follows this
   (`dashboard_payment._supplier_tds_account`) and refuses non-TDS / non-expense ledgers.
 - **EMI**: principal to the loan (HDFC Car Loan), interest to Interest on Emi (Car Loan).
+- **Job work (stitching) received but not billed** — a liability under Stock Liabilities
+  (`patches/job_work_received_not_billed.py`, 2026-10-23), the job-work twin of Stock Received But Not
+  Billed. It is the expense account of the job-work service item (Stitching Charges › Item Defaults),
+  so ERPNext's Subcontracting Receipt credits the stitching it adds to the finished goods' stock value
+  there, and the jobber's Purchase Invoice debits it:
+
+  | Document | Dr | Cr |
+  |---|---|---|
+  | Send raw material to the jobber (Stock Entry) | — (VV Puram and Jobbers Warehouse are both Stock In Hand) | — |
+  | Subcontracting Receipt (5 shirts: RM 643.75 + stitching 1,165) | Stock In Hand 1,808.75 | Stock In Hand 643.75 (RM used) · Job Work Received But Not Billed 1,165 |
+  | Service Purchase Receipt (Stitching Charges) | — (a service: no stock, no warehouse) | — |
+  | Jobber's Purchase Invoice | Job Work Received But Not Billed 1,165 · Input GST | Creditors |
+
+  Its balance is job work received and not yet billed by the jobber — check it against Purchase
+  Flow › To Bill. Before this, the service item had no expense account and both sides went to Cost of
+  Goods Sold: profit looked higher and the amount owed to the jobber showed nowhere until the bill.
+  Receipts made before keep COGS on their lines and their bills debit COGS, so they net to zero.
+  `job_work.match_subcontracting_receipt_account` (Purchase Receipt before_validate) gives a service
+  Purchase Receipt made from a Subcontracting Receipt the account that receipt actually credited —
+  ERPNext copies it from the PO line, which on an older PO is COGS — so the bill always clears what the
+  receipt booked. `job_work.clear_service_line_warehouse` (Purchase Receipt validate, after ERPNext's
+  own fill-in) clears the warehouse on non-stock, non-asset lines — ERPNext fills it from the PO line /
+  item default and then reported every such line as "No accounting entries for the following
+  warehouses: VV Puram - IND". A new job-work service item needs the same expense account.
 
 ## Not changed (needs the CA)
 

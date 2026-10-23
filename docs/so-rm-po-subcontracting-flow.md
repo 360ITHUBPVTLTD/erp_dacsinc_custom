@@ -1898,12 +1898,29 @@ was already raised — for an MR source, that the request already exists and
 this order covers the balance still to order against it — rather than
 leaving that to be inferred from an item table and a document id.
 
+### Accounting of a job-work receipt
+
+The stitching cost goes into the finished goods' stock value on the Subcontracting Receipt and waits
+in **Job Work Received But Not Billed** (a liability) until the jobber's Purchase Invoice clears it —
+see `docs/chart-of-accounts.md` › Rules. The service Purchase Receipt itself posts nothing, and its
+service line carries no warehouse (`job_work.clear_service_line_warehouse`), so ERPNext's "No
+accounting entries for the following warehouses" message no longer appears.
+
+**GST ITC-04:** every Subcontracting Receipt names the challans its goods went out on — the "Send
+to Subcontractor" Stock Entries — in India Compliance's *Original Document References* table.
+`job_work.fill_itc04_references` (before_validate) fills it with India Compliance's own suggestion
+(`get_relevant_references`, what its "Fetch Original Document Reference" button does), so its
+warning "Please Select Original Document Reference for ITC-04 Reporting" no longer appears;
+`patches/itc04_subcontracting_receipt_references.py` filled the receipts submitted before.
+
 ### "Add Subcontract Item" (manual entry)
 
 A small dialog (`show_add_subcontract_item_dialog` in `purchase_order.js`,
 server-built by `build_subcontract_item_row`) for manually adding one
 subcontracted row: Service Item → Finished Good → BOM → Qty, each a real
-searchable Link field.
+searchable Link field. The row it adds replaces the empty row a new PO starts with
+(`po_drop_blank_items`, as the other add-item dialogs do) — before, that blank row stayed on top and
+had to be deleted by hand before saving.
 
 Core ERPNext's own `fg_item` trigger (`erpnext/buying/.../purchase_order.js`)
 only auto-fills anything when a **Subcontracting BOM** record exists for

@@ -424,6 +424,8 @@ function show_add_subcontract_item_dialog(frm) {
                 freeze_message: __('Adding item…'),
                 callback: (r) => {
                     if (!r.message) return;
+                    // a new PO starts with one empty row — drop it, like the other add-item dialogs
+                    po_drop_blank_items(frm);
                     frm.add_child('items', r.message);
                     refresh_field('items');
                     frm.dirty();
@@ -1217,13 +1219,20 @@ function show_panel_process_dashboard(frm) {
             dialog.$wrapper.find('.modal-dialog').css("max-width", "1100px");
             dialog.show();
 
-            // Internal Helper Function to run the Backend update
+            // Internal Helper Function to run the Backend update. The steps where the panels leave
+            // us — Step 2 (to the panel jobber) and Step 4 (back to the subcontract jobber) — ask to
+            // print the Embroidery Work Order (it goes with the goods); Step 1 doesn't.
+            const PRINT_AT = ['Sent to Panel Jobber', 'Returned to Jobber (Closed)'];
             const run_update = (name, stage, note, supplier = null) => {
                 frappe.call({
                     method: "erp_dacsinc_custom.purchase_order.update_panel_process_stage",
                     args: { name: name, next_stage: stage, notes: note, panel_jobber: supplier },
                     freeze: true,
-                    callback: () => { dialog.hide(); frm.reload_doc(); setTimeout(() => show_panel_process_dashboard(frm), 800); }
+                    callback: (r) => {
+                        if (r.exc) return;
+                        dialog.hide(); frm.reload_doc(); setTimeout(() => show_panel_process_dashboard(frm), 800);
+                        if (PRINT_AT.includes(stage) && window.dacs_print_prompt) dacs_print_prompt("Embroidery Work Order", name, __("Embroidery Work Order"));
+                    }
                 });
             };
 
@@ -1298,7 +1307,7 @@ function show_panel_process_dashboard(frm) {
                                     frappe.show_alert({ message: __('Batch Initialized Successfully'), indicator: 'green' });
                                     frm.reload_doc();
                                     setTimeout(() => show_panel_process_dashboard(frm), 800);
-                                    if (window.dacs_print_prompt) dacs_print_prompt("Embroidery Work Order", r.message, __("Embroidery Work Order"));
+                                    // no print here: the panels have only come in — it is asked at Step 2 / Step 4
                                 }
                             }
                         });
@@ -2791,6 +2800,11 @@ async function show_stock_check_dialog(frm, materials, linked_subcontracting_doc
                                 indicator: 'green'
                             }, 5);
                             frm.refresh();
+                            // the Subcontracting Order is what goes to the jobber — ask to print it now
+                            // (a subcontracted PO is not asked on its own submit; print_prompt.js)
+                            if (r.message.sco_name && window.dacs_print_prompt) {
+                                dacs_print_prompt("Subcontracting Order", r.message.sco_name, __("Subcontracting Order"));
+                            }
                         } else if (r.exc) {
                             frappe.show_alert({
                                 message: __("Error creating documents: {0}", [r.exc]),

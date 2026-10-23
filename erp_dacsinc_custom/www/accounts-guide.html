@@ -366,15 +366,15 @@
       <ol class="steps">
         <li>Go to <b>Order Flow › Finance › Receivables</b>. Find the invoice with the search box or the <b>Customer</b> filter.</li>
         <li>Click <b>Receive</b> on that invoice. (On the invoice itself, the same button is <b>Receive Payment</b>.)</li>
-        <li><b>Amount settled on this invoice</b>: how much of the invoice this payment clears. Paid in full? Click <b>Full outstanding</b>.</li>
+        <li><b>Total amount</b>: how much of the invoice this payment clears, deductions included. Paid in full? Click <b>Full outstanding</b>.</li>
         <li><b>Mode of Payment</b>: NEFT, Cheque, Cash, UPI… For a bank payment, type the <b>UTR / cheque number</b> and its <b>date</b>.</li>
-        <li>Bank cut charges, or the customer cut TDS? Open <b>③ Bank charges, TDS, write-off</b> and type them in.</li>
-        <li>Check the box on the right: <b>"Into bank"</b> must match your bank statement.</li>
+        <li>Bank cut charges, or the customer cut TDS? Open <b>③ Bank charges, TDS, write-off</b> and type them in. The bank charges account follows the mode (card → Card Swipe Bank Charges).</li>
+        <li><b>Actual amount received in bank / cash</b> is calculated for you (total − charges − TDS − write-off) and can't be typed. Check it against the bank statement; if it differs, the total or a deduction is wrong.</li>
         <li>Click <b>Review</b>, read it once, tick the box, click <b>Submit Payment</b>.</li>
       </ol>
       <h3>Which numbers to type</h3>
       <div class="scroll"><table>
-        <tr><th>What happened (invoice ₹11,800)</th><th>Settled</th><th>Deductions</th><th>"Into bank" shows</th><th>Invoice becomes</th></tr>
+        <tr><th>What happened (invoice ₹11,800)</th><th>Total — you type</th><th>Deductions (③)</th><th>Actual received (calculated)</th><th>Invoice becomes</th></tr>
         <tr><td>Paid in full</td><td class="num">11,800</td><td>—</td><td class="num">11,800</td><td><span class="pill p-green">Paid</span></td></tr>
         <tr><td>Customer cut ₹200 TDS; bank cut ₹20</td><td class="num">11,800</td><td>TDS 200 · Bank charges 20</td><td class="num">11,580</td><td><span class="pill p-green">Paid</span></td></tr>
         <tr><td>Paid only part</td><td class="num">5,000</td><td>—</td><td class="num">5,000</td><td><span class="pill p-orange">Partly Paid</span> (6,800 left)</td></tr>
@@ -403,7 +403,7 @@
       <div class="ledger"><div class="t">Purchase Receipt (by the store) <small>goods worth ₹50,000 arrived</small></div><table><tr><th>Account</th><th class="num">Debit</th><th class="num">Credit</th></tr><tr><td>Stock In Hand - IND</td><td class="num">50,000.00</td><td class="num"></td></tr><tr><td>Stock Received But Not Billed - IND</td><td class="num"></td><td class="num">50,000.00</td></tr></table></div>
       <div class="ledger"><div class="t">Purchase Invoice (by you) <small>bill ₹50,000 + GST ₹9,000</small></div><table><tr><th>Account</th><th class="num">Debit</th><th class="num">Credit</th></tr><tr><td>Stock Received But Not Billed - IND</td><td class="num">50,000.00</td><td class="num"></td></tr><tr><td>Input Tax CGST - IND</td><td class="num">4,500.00</td><td class="num"></td></tr><tr><td>Input Tax SGST - IND</td><td class="num">4,500.00</td><td class="num"></td></tr><tr><td>Creditors - IND (the supplier)</td><td class="num"></td><td class="num">59,000.00</td></tr></table></div>
       <p class="muted">"Stock Received But Not Billed" is a waiting account: the receipt puts ₹50,000 on its credit side, and the bill takes it off on the debit side, back to zero.</p>
-      <div class="tip"><b>Jobber's bill?</b> Same steps. It then appears under <b>Jobber Payables</b> on the Finance tab.</div>
+      <div class="tip"><b>Jobber's bill?</b> Same steps — make it from the jobber's Purchase Receipt (Purchase Flow › To Bill). It then appears under <b>Jobber Payables</b> on the Finance tab. When the stitched goods came in, the stitching cost went into their stock value and is waiting in <b>Job Work Received But Not Billed</b>; the jobber's bill clears it (Dr Job Work Received But Not Billed, Cr the jobber). The stitching line on that Purchase Receipt has no warehouse — it is a service, not stock.</div>
     </section>
 
     <section id="t-pay">
@@ -411,13 +411,13 @@
       <ol class="steps">
         <li>Go to <b>Order Flow › Finance › Supplier Payables</b> (or <b>Jobber Payables</b>) and find the bill.</li>
         <li>Click <b>Pay</b>. (On the bill itself, the button is <b>Make Payment</b>.)</li>
-        <li><b>Amount settled on this bill</b>: how much of the bill this payment clears (<b>Full outstanding</b> for all of it).</li>
+        <li><b>Total amount</b>: how much of the bill this payment clears (<b>Full outstanding</b> for all of it). TDS / write-off go in ③; <b>Actual amount paid to supplier</b> is calculated (total − TDS − write-off).</li>
         <li>Choose the <b>Mode of Payment</b>, then type the <b>UTR / cheque number and date</b>.</li>
         <li>Our bank took charges? Type them in <b>Bank charges</b>. TDS from the supplier: see the note below.</li>
         <li><b>Review</b> › tick › <b>Submit Payment</b>.</li>
       </ol>
       <div class="scroll"><table>
-        <tr><th>What happened (bill ₹59,000)</th><th>Settled</th><th>Deductions</th><th>Supplier gets</th><th>Out of our bank</th></tr>
+        <tr><th>What happened (bill ₹59,000)</th><th>Total — you type</th><th>Deductions (③)</th><th>Supplier gets (calculated)</th><th>Out of our bank</th></tr>
         <tr><td>Paid in full</td><td class="num">59,000</td><td>—</td><td class="num">59,000</td><td class="num">59,000</td></tr>
         <tr><td>We cut ₹1,000 TDS</td><td class="num">59,000</td><td>TDS 1,000</td><td class="num">58,000</td><td class="num">58,000</td></tr>
         <tr><td>Our bank took ₹15 charges</td><td class="num">59,000</td><td>Bank charges 15</td><td class="num">59,000</td><td class="num">59,015</td></tr>

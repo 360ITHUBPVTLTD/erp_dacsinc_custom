@@ -6,4 +6,13 @@ frappe.ui.form.on('Payment Entry', {
             filters: { enabled: 1, custom_show_in_payment_entry: 1 },
         }));
     },
+    // Print the receipt / voucher (Payment Receipt DAC — print_prompt.js › dacs_print_url),
+    // the same PDF as the 🖨 under an invoice's payments on Order Flow › Finance.
+    refresh(frm) {
+        if (frm.is_new()) return;
+        const label = frm.doc.payment_type === 'Receive' ? __('Print Receipt')
+            : frm.doc.payment_type === 'Pay' ? __('Print Voucher') : __('Print Transfer');
+        frm.add_custom_button(label, () => window.open(dacs_print_url('Payment Entry', frm.doc.name), '_blank'))
+            .css({ 'background-color': '#000', 'color': '#fff' });
+    },
 });

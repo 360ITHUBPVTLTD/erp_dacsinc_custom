@@ -12,6 +12,8 @@
 		"Uniform Embroidery Transfer": {},
 		// Receipt (Receive) / Voucher (Pay) / Internal Transfer — print_format/payment_receipt_dac
 		"Payment Entry": { format: "Payment Receipt DAC" },
+		// Same print as Order Flow › Job Work (of_print_sco)
+		"Subcontracting Order": { format: "Subcontracting Order Print Format 3", no_letterhead: 1, letterhead: "DAC Letter Header" },
 	};
 	// A Purchase Invoice return prints as a Debit Note (copies too); an ordinary one, its default.
 	const RETURN_FORMATS = { "Purchase Invoice": "Debit Note DAC", "Sales Invoice": "Credit Note DAC" };
@@ -30,7 +32,7 @@
 			if (opts.print_all) url += "&print_all=1";
 			else if (opts.copy_name) url += `&copy_name=${encodeURIComponent(opts.copy_name)}`;
 		}
-		if (f.no_letterhead) url += `&no_letterhead=1&letterhead=${encodeURIComponent("No Letterhead")}`;
+		if (f.no_letterhead) url += `&no_letterhead=1&letterhead=${encodeURIComponent(f.letterhead || "No Letterhead")}`;
 		return url;
 	};
 
@@ -95,10 +97,17 @@
 		onload: set_new_return,
 		on_submit(frm) { dacs_print_prompt("Sales Invoice", frm.doc.name); },
 	});
+	// A subcontracted PO is not printed on submit: what goes to the jobber is its Subcontracting
+	// Order — asked when that is created (purchase_order.js, the send-raw-material dialog) or
+	// submitted from its own form.
 	frappe.ui.form.on("Purchase Order", {
 		on_submit(frm) {
-			dacs_print_prompt("Purchase Order", frm.doc.name, frm.doc.is_subcontracted ? __("Subcontract PO") : __("Purchase Order"));
+			if (cint(frm.doc.is_subcontracted)) return;
+			dacs_print_prompt("Purchase Order", frm.doc.name, __("Purchase Order"));
 		},
+	});
+	frappe.ui.form.on("Subcontracting Order", {
+		on_submit(frm) { dacs_print_prompt("Subcontracting Order", frm.doc.name, __("Subcontracting Order")); },
 	});
 	// Not submittable: asked once, when it is first saved.
 	frappe.ui.form.on("Uniform Embroidery Transfer", {
