@@ -70,8 +70,15 @@ frappe.ui.form.on('Delivery Note', {
 	},
 	refresh: function(frm) {
 		frm.trigger('make_linked_rows_read_only');
-		// Create menu: Sales Invoice, Sales Return and Credit Note stay (the billing / return flow).
-		dacs_hide_create_buttons(frm, ['Shipment', 'Installation Note', 'Delivery Trip', 'Packing Slip', 'Quality Inspection(s)']);
+		// Create menu: Sales Invoice and Sales Return stay (the billing / return flow). On a Sales
+		// Return, ERPNext's "Credit Note" is replaced by "Make Credit Note" (return_goods.py): that
+		// one is made from the original invoice, so it is against it (GST, the invoice's balance).
+		dacs_hide_create_buttons(frm, ['Shipment', 'Installation Note', 'Delivery Trip', 'Packing Slip', 'Quality Inspection(s)']
+			.concat(cint(frm.doc.is_return) ? ['Credit Note'] : []));
+		$(frm.layout.wrapper).find('.dacs-rp').remove();
+		if (cint(frm.doc.is_return) && !frm.is_new()) {
+			frappe.require('/assets/erp_dacsinc_custom/js/return_actions.js', () => window.dacs_goods_status(frm));
+		}
 	},
 	make_linked_rows_read_only: function(frm) {
 		if (frm.fields_dict.items && frm.fields_dict.items.grid) {

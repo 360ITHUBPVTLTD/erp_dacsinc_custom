@@ -15,6 +15,49 @@ treated as what it is — never as a delivery, invoice or receipt, never as prog
 Goods and money are separate documents: a customer return needs the Sales Return (stock) **and**
 the Credit Note (money); a supplier return the Purchase Return **and** the Debit Note.
 
+## Goods and money kept together (`return_goods.py`)
+
+An invoice billed **from a Delivery Note / Purchase Receipt** cannot move stock: ERPNext hides
+Update Stock on it and on its notes (`depends_on: every item has no dn_detail / pr_detail`;
+"Stock cannot be updated against Delivery Note"), so its Credit / Debit Note never brings goods
+back — only the Sales / Purchase Return does. (A direct bill made with Update Stock passes it to
+its note, which then returns the goods itself.) Update Stock is therefore **not** made the default.
+
+The two halves are matched line by line through the original DN / PR line both point to
+(note `dn_detail` / `pr_detail`; return `dn_detail` / `purchase_receipt_item`; a note made from a
+return's line is resolved to the original and counts as linked to that return). Per original line the
+notes' qty and the returns' qty are **paired**: first the pairs that belong together — a return made
+for a note (`custom_against_note` on the Delivery Note / Purchase Receipt) or the return a note names
+(`custom_goods_return` on the invoice) — then what is left, oldest first. One note's return never
+covers another note's shortfall. Rule (agreed 2026-10-23): **never blocks**.
+
+**Two ways to bring the goods back** on a note billed from a DN / PR:
+- **Tick "Update Stock (return the goods)"** (`custom_return_goods`, shown only on such a note; with
+  *Return to / from Warehouse*, default **VV Puram - IND**; cleared = where they were delivered from / received into).
+  ERPNext's own Update Stock can't be used there. On **Submit**, `on_note_submit` makes the Sales /
+  Purchase Return from the original DN / PR for this note's lines and qty and submits it (as part of
+  the note, permissions ignored like ERPNext's Update Stock) — original cost, the DN / PR knows, no
+  double return. Its name goes into the note's *Sales / Purchase Return* field. **Cancelling** the note
+  cancels that return first (`on_note_cancel`).
+- **Leave it unticked** — the note shows *Stock not returned* with **Make Sales / Purchase Return**.
+
+A direct note (no DN / PR behind it) keeps ERPNext's own Update Stock. On ordinary (non-return)
+Sales / Purchase Invoices **Update Stock is read-only** (Property Setter `read_only_depends_on:
+!is_return`) — set by the system (direct-bill / POS), never ticked by hand.
+
+**Debit Note received qty** (`sync_debit_note_received_qty`, before validate): ERPNext maps a Debit
+Note line's received qty as everything still returnable and doesn't change it when Qty is edited, so
+a Debit Note for 12 of 120 recorded 120 as returned and refused every later Debit Note on that line.
+Received qty now follows qty. (PINV-26-00007, made before this, still carries -120: a data fix.)
+
+| On | Shows (one panel above the form: 💰 Money and 📦 Goods, each with its buttons) | Button while missing |
+|---|---|---|
+| Credit / Debit Note form | 📦 Goods: back in stock (with the return no.) / return in draft / **not returned** / returned by the note (Update Stock) / returned on Submit (ticked, draft) / no stock item / not linked | **Make Sales Return** / **Make Purchase Return** — from the original DN / PR, only the lines and qty still missing (`make_goods_return`) |
+| Sales / Purchase Return form | 💰 Money: note made / draft / **not made** / goods never invoiced (no note needed) | **Make Credit Note** / **Make Debit Note** — from the **original invoice** (`make_note_from_goods`), so it is against that invoice. ERPNext's own Create › Credit / Debit Note on a return is removed: it makes a note not linked to the invoice (GSTR-1 needs the original invoice; the invoice's balance would not go down). |
+| Order Flow › Finance › Returns / Notes | a Goods chip under Effect, the Sales / Purchase Return button; above the table a red strip listing submitted returns still waiting for their note | the button opens the note / return in a new tab, which makes the missing document straight away (a one-minute `dacs_make:<doctype>:<name>` key in localStorage) |
+
+A second return for goods already returned is refused ("Stock returned — …").
+
 ## Settlement (ERPNext v15)
 
 A return made against an invoice reduces **that invoice's** outstanding (its own outstanding stays
@@ -29,7 +72,8 @@ then it carries its **own negative outstanding**:
 
 ## Where it shows
 
-- **Order Flow › Finance › Returns / Notes** (sub-tab; `order_flow_api._accounts_notes`,
+- **Order Flow › Finance › Returns / Notes** (sub-tab, split into All / Credit Notes — customers /
+  Debit Notes — suppliers; `order_flow_api._accounts_notes`,
   `_describe_notes`): every Credit and Debit Note with type chip, party, the invoice it is against
   (its status and what is still due on it) or "Direct", the items returned (qty × rate = amount; ▸
   opens all), date, amount, **effect** (Draft / Customer credit ₹ / Supplier owes us ₹ / Reduced
@@ -60,7 +104,9 @@ then it carries its **own negative outstanding**:
 
 - **Credit / Debit Note form** (`public/js/return_actions.js`): no "Receive Payment" / "Make
   Payment"; an intro saying what it did; **Refund to Customer** / **Receive Refund from Supplier**
-  and **Adjust (Payment Reconciliation)** while it carries a credit.
+  and **Adjust (Payment Reconciliation)** while it carries a credit; the goods status and
+  **Make Sales / Purchase Return** (above). Sales / Purchase Return forms (`delivery_note.js`,
+  `purchase_receipt.js`): the money status and **Make Credit / Debit Note**.
 - **Returned qty is editable** on a Credit Note and a Sales Return DN although the lines are linked
   (`si_field_locked` / `dn_field_locked`; server: `custom_script._revert_pick_list_locked_fields`
   skips qty on returns); typing 2 becomes -2. Item, rate, warehouse stay as the original. ERPNext
