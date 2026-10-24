@@ -11,8 +11,8 @@ jobber showed nowhere. Same idea as "Stock Received But Not Billed" for goods:
                                                                     Cr Job Work Received But Not Billed (service)
     Jobber's Purchase Invoice  Dr Job Work Received But Not Billed  Dr Input GST   Cr Creditors
 
-Per company that uses a service item on subcontracted Purchase Orders: the account is created
-under Stock Liabilities and set as that service item's expense account (Item Default — written
+Per company that uses a service item on subcontracted Purchase Orders whose service item has no
+expense account yet: the account is created under Stock Liabilities and set as its expense account (Item Default — written
 directly: saving the Item would also rebuild its tax rows and item prices). Receipts made before
 keep Cost of Goods Sold on their lines, and their bills (made from those receipts) debit the same,
 so they still net to zero. Idempotent; a dated comment on the account and the item.
@@ -31,6 +31,12 @@ def execute():
 	for u in usage:
 		if frappe.db.get_value("Item", u.item_code, "is_stock_item"):
 			continue   # the finished good / a stock line — only the service item carries the cost
+		current = frappe.db.get_value("Item Default", {"parent": u.item_code, "parenttype": "Item", "company": u.company}, "expense_account")
+		if current:
+			# already has its own account (on live: ERPNext's "Service Received But Not Billed") — the
+			# same role; nothing to create or change
+			print(f"job_work_received_not_billed: {u.item_code} ({u.company}) already uses {current} — left as it is")
+			continue
 		account = _ensure_account(u.company)
 		if not account:
 			continue

@@ -70,8 +70,10 @@ show Created On, Moved On (the date it entered its current category) and Categor
   (`docstatus = 0`) and no submitted one. The quotation is linked by `party_name` or
   `custom_lead_id`. SQL: `LEAD_DRAFT_PIPE_COND_SQL`. Submitting the quotation is what
   moves the lead to category Pipeline (`custom_script.py`, Quotation on_submit).
-- **One Pipeline card and one Pipeline column.** Pipeline shown = Submitted (category
-  Pipeline) + Draft. The card adds a line "Draft *x* · Submitted *y*". The draft leads
+- **One Pipeline card** (Pipeline shown = Submitted, category Pipeline, + Draft) with
+  two clickable **sub-cards, Draft and Submitted**, each with count and value. A sub-card
+  opens `l_draft_pipe` / `l_pipe` (`event.stopPropagation`). The rest of the card opens
+  `l_pipe_all`. The table has separate Pipeline · Draft and Pipeline · Submitted columns. The draft leads
   come out of Enquiry, so Enquiry shown = `enq_c - draft_pipe_c`, and each lead is
   counted once (`enqOnlyC` / `pipeAllC` in the block script). The category and trend
   charts use the same merge (`mergeDraftIntoPipeline`). The lead's stored category stays

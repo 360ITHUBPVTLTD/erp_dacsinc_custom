@@ -30,9 +30,12 @@ disabled flag.
   Customers' TDS → TDS Receivable (asset). The Receive / Pay prompt follows this
   (`dashboard_payment._supplier_tds_account`) and refuses non-TDS / non-expense ledgers.
 - **EMI**: principal to the loan (HDFC Car Loan), interest to Interest on Emi (Car Loan).
-- **Job work (stitching) received but not billed** — a liability under Stock Liabilities
-  (`patches/job_work_received_not_billed.py`, 2026-10-23), the job-work twin of Stock Received But Not
-  Billed. It is the expense account of the job-work service item (Stitching Charges › Item Defaults),
+- **Job work (stitching) received but not billed** — a liability under Stock Liabilities, the job-work
+  twin of Stock Received But Not Billed. **On live it is ERPNext's own "Service Received But Not Billed
+  - IND"**, already set on Stitching Charges there; `patches/job_work_received_not_billed.py` creates
+  "Job Work Received But Not Billed" only where the service item has no expense account (the local copy).
+  Below, "Job Work Received But Not Billed" stands for whichever it is. It is the expense account of the
+  job-work service item (Stitching Charges › Item Defaults),
   so ERPNext's Subcontracting Receipt credits the stitching it adds to the finished goods' stock value
   there, and the jobber's Purchase Invoice debits it:
 

@@ -1878,11 +1878,39 @@ def make_quotation_custom(source_name, target_doc=None):
     if lead and lead.custom_lead_customer and lead.custom_duplicated_lead:
         doc.quotation_to = "Customer"
         doc.party_name = lead.custom_lead_customer
-        
+
         # Optional: Fetch and set the Customer Name for display purposes
         doc.customer_name = frappe.db.get_value("Customer", lead.custom_lead_customer, "customer_name")
+        _use_customer_contact_and_address(doc, lead.custom_lead_customer)
 
     return doc
+
+
+def _use_customer_contact_and_address(doc, customer):
+    """The standard mapper filled the LEAD's contact / address. ERPNext refuses to save a Quotation to a
+    Customer whose contact or address is not linked to that customer ("Contact Person does not belong to
+    …"), so keep each one only if it is also linked to the customer, else use the customer's default."""
+    from frappe.contacts.doctype.address.address import get_address_display, get_default_address
+    from frappe.contacts.doctype.contact.contact import get_contact_details, get_default_contact
+
+    def linked(doctype, name):
+        return name and frappe.db.exists("Dynamic Link", {"parenttype": doctype, "parent": name,
+            "link_doctype": "Customer", "link_name": customer})
+
+    if not linked("Contact", doc.get("contact_person")):
+        doc.contact_person = get_default_contact("Customer", customer)
+        for field in ("contact_display", "contact_email", "contact_mobile", "contact_phone"):
+            doc.set(field, None)
+        if doc.contact_person:
+            doc.update({k: v for k, v in get_contact_details(doc.contact_person).items() if doc.meta.has_field(k)})
+
+    for field, display in (("customer_address", "address_display"), ("shipping_address_name", "shipping_address")):
+        if doc.get(field) and not linked("Address", doc.get(field)):
+            doc.set(field, None)
+            doc.set(display, None)
+    if not doc.get("customer_address"):
+        doc.customer_address = get_default_address("Customer", customer)
+        doc.address_display = get_address_display(doc.customer_address) if doc.customer_address else None
 
 import datetime
 
