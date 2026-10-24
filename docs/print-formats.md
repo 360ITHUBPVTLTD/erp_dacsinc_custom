@@ -49,3 +49,12 @@ One Payment Entry, however many invoices it settles:
 
 Printed from the Payment Entry form (default format) and from the 🖨 in the "N payments" window of an
 invoice on Order Flow › Finance.
+
+## Quotation PDF ("Quotation print format 7Apr")
+
+DB-only print format (not shipped in the app) used by `custom_script.download_quotation_pdf`, with letter
+head "DAC Letter Header quotation". All content is one Custom HTML block. Keep no empty HTML block after
+it: an empty block still renders a row, and on the server — which has no Arial, so the PDF uses the
+wider DejaVu Sans — a quotation that just fills page 1 then got a second page holding only the letter
+head (`patches/quotation_print_format_blank_page.py` removed it). Check page breaks with DejaVu Sans,
+not with a local Arial / Helvetica.
