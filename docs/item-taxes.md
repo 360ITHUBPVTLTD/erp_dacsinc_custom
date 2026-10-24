@@ -48,7 +48,10 @@ document stays In-State / Out-State.
   (`getdate(None)`), so a Quotation / Order / Invoice dated before today found no template: the line
   and the Item Tax Template dropdown stayed empty. Every row therefore has Valid From 2023-01-01. All
   rows share that date, so ERPNext's sort by Valid From keeps them in order. A document dated before
-  2023 gets no item template.
+  2023 gets no item template. `patches/item_tax_valid_from.py` dated the existing rows on migrate (one
+  SQL update, a dated comment per item) and saved again the drafts left with empty lines; a draft that
+  can't be saved (e.g. a disabled item on it) is printed for fixing by hand. Submitted documents are
+  not changed.
 - The Item form allows a template only once per Tax Category: one Exempted row each for In-State and
   Out-State.
 
