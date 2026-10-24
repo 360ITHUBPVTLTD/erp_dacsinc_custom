@@ -20,7 +20,8 @@ With a slab (alternate GST and amount both set):
 | In-State, Out-State | Exempted - IND | – | 9,999,999 |
 
 Without a slab: In-State and Out-State rows with the GST rate, then In-State and Out-State
-`Exempted - IND` rows, none with a range. `Non-GST - IND` items get no rows. An item whose GST rate
+`Exempted - IND` rows, none with a range.
+Every row has **Valid From 2023-01-01** (`TAX_VALID_FROM`). `Non-GST - IND` items get no rows. An item whose GST rate
 is itself `Exempted - IND` (e.g. Khadi, an exempt supply) gets just its In-State / Out-State rows — the
 extra Exempted rows would repeat the template, which the Item form refuses.
 
@@ -43,6 +44,11 @@ document stays In-State / Out-State.
   Exempted rows therefore carry the full range, and the upper GST rows carry 9,999,999 rather than 0
   (0 counts as "no range" — and the Item form rejects a minimum above the maximum, so an item built
   with 0 could not be saved again).
+- A row with a price range but no Valid From is treated as valid from **today**
+  (`getdate(None)`), so a Quotation / Order / Invoice dated before today found no template: the line
+  and the Item Tax Template dropdown stayed empty. Every row therefore has Valid From 2023-01-01. All
+  rows share that date, so ERPNext's sort by Valid From keeps them in order. A document dated before
+  2023 gets no item template.
 - The Item form allows a template only once per Tax Category: one Exempted row each for In-State and
   Out-State.
 
@@ -76,7 +82,7 @@ picks the right GST template but never sets the category; ERPNext copies it from
 
 Items imported with the GST as text (`0.18`, `18`, `GST 18% - IND%`) are not template names; a Taxes
 table built from them would not save. `normalize_gst_template` turns them into the template name
-(`GST 18% - IND`) first. An item saved before the Exempted rows existed gets them on its next save.
+(`GST 18% - IND`) first. An item saved before the Exempted rows or the Valid From existed gets them on its next save.
 
 ## Prices on save
 
