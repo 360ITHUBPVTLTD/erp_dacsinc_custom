@@ -126,7 +126,9 @@ def item_before_save(doc, method):
 
     # An item saved before the Exempted rows existed gets them on its next save.
     if not tax_changed and doc.custom_tax_rate and doc.custom_tax_rate != "Non-GST - IND":
-        tax_changed = not any(t.item_tax_template == EXEMPTED_TAX_TEMPLATE for t in doc.get("taxes") or [])
+        taxes = doc.get("taxes") or []
+        tax_changed = (not any(t.item_tax_template == EXEMPTED_TAX_TEMPLATE for t in taxes)
+            or any(not t.valid_from for t in taxes))
 
     # 2. Update Tax Table ONLY if fields changed
     if tax_changed:
@@ -360,6 +362,9 @@ def get_bom_data_for_item(item_code):
 # Item form rejects a minimum above the maximum).
 EXEMPTED_TAX_TEMPLATE = "Exempted - IND"
 SLAB_UPPER_LIMIT = 9999999
+# ERPNext reads a row with a price range but no Valid From as valid from TODAY, so a
+# back-dated Quotation / Order / Invoice found no template. Every row carries this date.
+TAX_VALID_FROM = "2023-01-01"
 
 
 def normalize_gst_template(value):
@@ -425,6 +430,9 @@ def update_tax_child(doc):
                         for category in ["In-State", "Out-State"]:
                             doc.append("taxes", {"tax_category": category,
                                 "item_tax_template": EXEMPTED_TAX_TEMPLATE})
+
+        for row in doc.get("taxes"):
+            row.valid_from = TAX_VALID_FROM
 
     except Exception as e:
         frappe.log_error(title="Error in update_tax_child", message=frappe.get_traceback())
