@@ -40,3 +40,4 @@ erp_dacsinc_custom.patches.job_work_received_not_billed
 erp_dacsinc_custom.patches.itc04_subcontracting_receipt_references
 erp_dacsinc_custom.patches.item_tax_valid_from
 erp_dacsinc_custom.patches.quotation_rate_as_price_list
+erp_dacsinc_custom.patches.quotation_zero_price_list_rate

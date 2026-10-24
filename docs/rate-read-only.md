@@ -41,4 +41,6 @@ below) or a margin (Rate above, e.g. Price List 10, Rate 375 → margin 365).
 `patches/quotation_rate_as_price_list.py` corrected the draft Quotations on migrate: Price List Rate =
 Rate, discount and margin 0, Rate and totals unchanged, a dated comment on each (list in bench
 `docs/files/quotation_discount_fix.xlsx`). Lines at Rate 0, header (additional) discounts and
-submitted Quotations were left as they are.
+submitted Quotations were left as they are. Lines with a typed Rate but Price List Rate 0 (an item
+with no price) had no discount or margin, so `patches/quotation_zero_price_list_rate.py` set their
+Price List Rate to the Rate the same way.
