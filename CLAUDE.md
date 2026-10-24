@@ -20,6 +20,8 @@ previously-buggy edge cases — are documented in `docs/`:
   Store Manager (Customer › POS Store).
 - `docs/quotation-sharing.md` — a Quotation shared with a DAC CRM user can be submitted by them
   (share grants Submit; the Lead's Enquiry → Pipeline update doesn't need Lead access).
+- `docs/lead-quotation.md` — Quotation from a Lead of an existing customer: switched to the customer, and
+  the Lead's contact / address replaced by the customer's (else "Contact Person does not belong to …").
 - `docs/sales-order-sharing.md` — Sales Orders shared with their Lead Owner.
 - `docs/master-data-protection.md` — Customer / Supplier / Item Price: who views,
   pick-only users (no list, no form), no export / print / report, master reports.
