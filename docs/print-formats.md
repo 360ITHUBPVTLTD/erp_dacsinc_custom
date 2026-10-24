@@ -58,3 +58,10 @@ it: an empty block still renders a row, and on the server — which has no Arial
 wider DejaVu Sans — a quotation that just fills page 1 then got a second page holding only the letter
 head (`patches/quotation_print_format_blank_page.py` removed it). Check page breaks with DejaVu Sans,
 not with a local Arial / Helvetica.
+
+## Tax / charge rows only when not 0
+
+Every DAC print format prints a tax or charge row (SGST, Freight and Forwarding, Packing Charges, …)
+only when its amount is not 0: `{% for tax in doc.taxes if tax.tax_amount %}`, or an `if` on
+`tax_amount` inside the loop. Keep this in new formats. ERPNext's own "Return POS Invoice" and
+"Point of Sale" formats are left as shipped.
