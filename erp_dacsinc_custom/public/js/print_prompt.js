@@ -14,6 +14,8 @@
 		"Payment Entry": { format: "Payment Receipt DAC" },
 		// one amount for several parties (doctype Bulk Payment)
 		"Bulk Payment": { format: "Bulk Payment Receipt" },
+		// the supplier's bill (print_format/purchase_invoice_dac); a return prints as Debit Note DAC
+		"Purchase Invoice": { format: "Purchase Invoice DAC", copies: 1 },
 		// Same print as Order Flow › Job Work (of_print_sco)
 		"Subcontracting Order": { format: "Subcontracting Order Print Format 3", no_letterhead: 1, letterhead: "DAC Letter Header" },
 	};

@@ -10,10 +10,11 @@ the desk.
 | **Sales invoice Print Format 4** | Sales Invoice | the invoice layout (a builder format; its item table is a Custom HTML block that leaves out freight / packing / insurance lines — they print in the totals, `docs/charges.md`). Its file carries the site's version and its own `modified`, so migrate leaves the site copy as it is. |
 | **Sales Invoice Multi Copy Master** | Sales Invoice | Format 4 once per copy with its label. A return hands over to Credit Note DAC. |
 | **Credit Note DAC** / **Debit Note DAC** | Sales / Purchase Invoice returns | see `docs/returns.md` › Printing |
+| **Purchase Invoice DAC** | Purchase Invoice (form › Print Purchase Invoice, with the copy choice; a return prints as Debit Note DAC) | the supplier's bill: supplier, their bill no. / date, due date, our PO and receipt numbers, items, GST summary, totals, remarks — the Debit Note's layout |
 | **Payment Receipt DAC** | Payment Entry (default print format, `custom/payment_entry.json`) | Payment Receipt / Payment Voucher / Internal Transfer ; notes "Part of Bulk Payment …" |
 | **Bulk Payment Receipt** | Bulk Payment (default) | one receipt / payment advice for the whole amount: parties, invoices, set-off, Payment Entry per party — see `docs/bulk-payment.md` |
 | **Sales Order Print Format 3** | Sales Order (default; form button with "DAC Letter Header") | Format 4's layout for an order |
-| **Purchase Order Print Format** | Purchase Order (default; Print PO / Order Flow, no letter head) | its own company header (bordered box) + Format 4's layout |
+| **Purchase Order Print Format** | Purchase Order (default; Print PO on a submitted PO, on a saved draft of a normal PO, and in Order Flow; no letter head) | its own company header (bordered box) + Format 4's layout |
 | **Subcontracting Order Print Format 3** | Subcontracting Order (Print SCO / Order Flow, no letter head) | Goods Issue Note: issue and receivable tables |
 | **Proforma Invoice Quotation** | Quotation (default) | proforma invoice |
 | **Delivery Note Version 3** / **Delivery Note Without Amount Version 3** | Delivery Note › Custom Print › With / Without Amount (`public/js/delivery_note.js`, document's letter head) | Format 4's layout, with / without rates and totals |
@@ -86,7 +87,8 @@ content — item lines (long names count extra), address lines, HSN codes, tax l
 supplied items — with weights fitted to measured documents (each format's estimate never exceeds the
 real free space of any measured document, and no 2-page document passes the threshold, +8 mm safety).
 A longer document prints as plain flow (no blank rows); `.dacs-fill-wrap` is `display: none` unless the
-box shows it. Credit / Debit Note and the two older challans use `min-height` boxes (they behave there).
+box shows it. Credit / Debit Note and the two older challans use `min-height` boxes (they behave there); Purchase Invoice DAC
+switches to a fixed height when its item lines (long names count extra) are at most 11, else plain flow.
 Box heights (mm) are measured per format on a 1-page document: the largest that stays one page, less 1.
 
 Measured 28-Oct-2026 on the recent documents of each format: every 1-page document stays one page, the
@@ -96,6 +98,16 @@ re-measuring the box height and the estimate's weights (render the recent docume
 The form button used to come from a DB Client Script "sales invoice Form new" (no All 4 choice);
 `patches/si_print_button_to_app.py` disables that script (only while its sole live code is that
 button) and the button now lives in `public/js/sales_invoice.js`.
+
+## Checking a site (`print_check.py`)
+
+After a deploy: `bench --site <site> execute erp_dacsinc_custom.print_check.run` (read-only). It lists every
+print format shipped in this app — OK when the site's copy is the app's version (its `modified` not older than
+the file's), OLD / MISSING otherwise, with the markup it carries (blank rows, discount columns, margins) —
+prints the latest documents of each format to count their pages, and reports the "DAC Letter Header" box, the
+old Delivery Note Client Script and whether the two print patches ran (a patch run by hand, not by migrate,
+shows NOT RUN). A format left OLD is loaded with `frappe.reload_doc('erp_dacsinc_custom', 'print_format',
+'<folder>', force=1)`. Print formats that live only in the database (not in this app) are not checked or changed.
 
 ## Payment Receipt DAC
 

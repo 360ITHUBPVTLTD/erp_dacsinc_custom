@@ -716,6 +716,23 @@ frappe.ui.form.on('Purchase Order', {
             });
         }
 
+        // A saved draft of a normal PO prints too (to check or send it before submitting); a submitted one
+        // gets the same button above, with the SCO / job-work buttons.
+        if (frm.doc.docstatus === 0 && !frm.is_new() && !frm.doc.is_subcontracted) {
+            frm.add_custom_button(__('Print PO'), () => {
+                window.open(
+                    `/api/method/frappe.utils.print_format.download_pdf` +
+                    `?doctype=${encodeURIComponent('Purchase Order')}` +
+                    `&name=${encodeURIComponent(frm.doc.name)}` +
+                    `&format=${encodeURIComponent('Purchase Order Print Format')}` +
+                    `&no_letterhead=1` +
+                    `&letterhead=${encodeURIComponent('No Letterhead')}` +
+                    `&settings=%7B%7D` +
+                    `&_lang=en`
+                );
+            }).css({ 'color': '#555' });
+        }
+
         if (frm.is_new()) {
             frm.add_custom_button(__('Fetch Pending Sales Orders'), () => {
                 const is_subcontracted = frm.doc.is_subcontracted || 0;
