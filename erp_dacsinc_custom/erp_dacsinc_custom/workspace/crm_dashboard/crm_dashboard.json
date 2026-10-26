@@ -9,12 +9,12 @@
    "label": "Lead Source"
   }
  ],
- "content": "[{\"id\":\"M9YIIvhtv4\",\"type\":\"header\",\"data\":{\"text\":\"<span class=\\\"h4\\\">CRM Dashboard</span>\",\"col\":12}},{\"id\":\"_0mSHMczB6\",\"type\":\"custom_block\",\"data\":{\"custom_block_name\":\"Greeting Message\",\"col\":12}},{\"id\":\"BFxLcdYkTc\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Lead\",\"col\":3}},{\"id\":\"JfcFpRlwR4\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Quotation\",\"col\":3}},{\"id\":\"leLnkyONde\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Lead Report\",\"col\":3}},{\"id\":\"8wJ5hFUzL8\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Advanced Lead Report\",\"col\":3}},{\"id\":\"FqnLk4X0zE\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Sales Order\",\"col\":3}},{\"id\":\"MzWkmbTRhx\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Contacts\",\"col\":3}},{\"id\":\"_3RTmB-BwW\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Task\",\"col\":3}},{\"id\":\"vniT0b8jNW\",\"type\":\"custom_block\",\"data\":{\"custom_block_name\":\"CRM Dashboard Admin Review 2\",\"col\":12}},{\"id\":\"l-nbZ-e0Xv\",\"type\":\"custom_block\",\"data\":{\"custom_block_name\":\"Today follow Up based on category\",\"col\":12}},{\"id\":\"gZPDs6SjBI\",\"type\":\"chart\",\"data\":{\"chart_name\":\"Incoming Leads\",\"col\":6}},{\"id\":\"LTuvp3-zYb\",\"type\":\"chart\",\"data\":{\"chart_name\":\"Lead Source\",\"col\":6}}]",
+ "content": "[{\"id\":\"M9YIIvhtv4\",\"type\":\"header\",\"data\":{\"text\":\"<span class=\\\"h4\\\">CRM Dashboard</span>\",\"col\":12}},{\"id\":\"_0mSHMczB6\",\"type\":\"custom_block\",\"data\":{\"custom_block_name\":\"Greeting Message\",\"col\":12}},{\"id\":\"BFxLcdYkTc\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Lead\",\"col\":3}},{\"id\":\"JfcFpRlwR4\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Quotation\",\"col\":3}},{\"id\":\"leLnkyONde\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Lead Report\",\"col\":3}},{\"id\":\"8wJ5hFUzL8\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Advanced Lead Report\",\"col\":3}},{\"id\":\"FqnLk4X0zE\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Sales Order\",\"col\":3}},{\"id\":\"MzWkmbTRhx\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Contacts\",\"col\":3}},{\"id\":\"_3RTmB-BwW\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Task\",\"col\":3}},{\"id\":\"vniT0b8jNW\",\"type\":\"custom_block\",\"data\":{\"custom_block_name\":\"CRM Dashboard Admin Review 3\",\"col\":12}},{\"id\":\"l-nbZ-e0Xv\",\"type\":\"custom_block\",\"data\":{\"custom_block_name\":\"Today follow Up based on category\",\"col\":12}},{\"id\":\"gZPDs6SjBI\",\"type\":\"chart\",\"data\":{\"chart_name\":\"Incoming Leads\",\"col\":6}},{\"id\":\"LTuvp3-zYb\",\"type\":\"chart\",\"data\":{\"chart_name\":\"Lead Source\",\"col\":6}}]",
  "creation": "2025-09-11 12:37:12.602023",
  "custom_blocks": [
   {
-   "custom_block_name": "CRM Dashboard Admin Review 2",
-   "label": "CRM Dashboard Admin Review 2"
+   "custom_block_name": "CRM Dashboard Admin Review 3",
+   "label": "CRM Dashboard Admin Review 3"
   },
   {
    "custom_block_name": "Greeting Message",
@@ -30,12 +30,12 @@
  "for_user": "",
  "hide_custom": 0,
  "icon": "",
- "idx": 21,
+ "idx": 22,
  "indicator_color": "",
  "is_hidden": 0,
  "label": "CRM Dashboard",
  "links": [],
- "modified": "2026-10-10 18:32:40.746989",
+ "modified": "2026-10-23 10:32:56.713719",
  "modified_by": "Administrator",
  "module": "Erp Dacsinc Custom",
  "name": "CRM Dashboard",
