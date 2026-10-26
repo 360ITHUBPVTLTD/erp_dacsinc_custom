@@ -53,7 +53,22 @@ never made first; "Make Debit Note" on a Purchase Return only matters for return
 
 A direct note (no DN / PR behind it) keeps ERPNext's own Update Stock. On ordinary (non-return)
 Sales / Purchase Invoices **Update Stock is read-only** (Property Setter `read_only_depends_on:
-!is_return`) — set by the system (direct-bill / POS), never ticked by hand.
+!is_return`) — set by the system, never ticked by hand.
+
+**Sales Invoice — set on every save of a draft** (`si_stock.set_update_stock`, before validate; the field
+shows why): a **direct** invoice — no stock line from a Delivery Note (a counter / POS-style sale, billed
+straight from a Sales Order or Pick List) — **ticks** it, so the goods leave the warehouse with the
+invoice (a line without a warehouse gets Set Warehouse, the item's default, else Stock Settings'); an
+invoice **from Delivery Notes** **unticks** it (the DN moved the goods); **DN lines and direct lines
+together are refused** (part would go out twice or not at all — bill them separately or make a DN
+first); only service / charge lines → unticked. Product bundles count as stock.
+
+**POS payment on the Sales Invoice form**: with *Include Payment (POS)* ticked, the payment rows (Cash /
+Card / UPI per store), Cash/Bank Account, Paid Amount and the change fields sit on the **Details** tab right
+below the POS tick, in an open section "POS Payment (Cash / Card / UPI)" (field order + Property Setters
+in `custom/sales_invoice.json`; ERPNext keeps them on the Payments tab, folded). Shown only for POS. Returns and POS
+invoices keep their own choice. Tested: direct → stock −1 from VV Puram on submit; from DN-26-00024 →
+unticked; mixed → refused; freight only → unticked.
 
 **Debit Note received qty** (`sync_debit_note_received_qty`, before validate): ERPNext maps a Debit
 Note line's received qty as everything still returnable and doesn't change it when Qty is edited, so

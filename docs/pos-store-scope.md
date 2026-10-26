@@ -583,6 +583,25 @@ On the order summary's **Email Receipt** (`PastOrderSummary` patched in
   "address — dd-mm-yyyy hh:mm", one line per send, latest first. A comment on the
   invoice says who it went to and from which account.
 
+## Print formats (POS Profile › Print Format)
+
+Three formats, one per paper; each counter's POS Profile picks the one for its printer (the emailed PDF
+uses the same). A4 and A5 are **POS Invoice Version 2's template** — same header (the store's own address
+and GSTIN from the Address linked to the bill's warehouse, Landline), walk-in line, columns, totals and terms
+— set to the paper size, with blank item rows down to the page bottom (docs/print-formats.md › Blank rows).
+They are built from Version 2's html, so a change to the receipt's layout is made there and carried over.
+
+| Format | Paper | Fill |
+|---|---|---|
+| **POS Invoice A4** | A4 | short bills fill the page (up to about 22 item lines); a longer bill continues on the next sheet |
+| **POS Invoice A5** | A5 (half A4) | bills up to about 10 item lines fill the half page; longer ones continue on a second sheet |
+| **POS Invoice Version 2** | thermal roll / receipt | no blank rows (a roll has no page bottom) |
+
+Price List Rate and Discount Amount print only on a bill with a discount (all three formats). Paper size and
+margins are in each format (`page-size` for the PDF, `@page` for the browser's print from the POS screen). The
+fill is measured for the PDF; a browser's own print margins can differ, so print one bill from the POS screen
+when a counter switches format.
+
 ## POS paperwork: POS flags, transfer approval, closing report (`pos_notify.py`)
 
 **Created by POS User** (read-only check, exported in `custom/material_request.json` /

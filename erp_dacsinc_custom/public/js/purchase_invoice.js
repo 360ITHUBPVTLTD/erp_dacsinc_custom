@@ -3,6 +3,12 @@ frappe.ui.form.on('Purchase Invoice', {
     // the discount instead. ERPNext's own refresh flips it back to editable on rows without a
     // Purchase Receipt when Buying Settings > Maintain Same Rate is on, so keep it locked here.
     setup: function(frm) {
+        // A line typed onto a bill can only be a Service item — goods come from their Purchase Receipt
+        // (purchase_bill.guard_direct_goods refuses them on save). Returns pick from the original bill.
+        frm.set_query('item_code', 'items', (doc) => cint(doc.is_return) ? { query: 'erpnext.controllers.queries.item_query', filters: { is_purchase_item: 1 } } : {
+            query: 'erpnext.controllers.queries.item_query',
+            filters: { is_purchase_item: 1, item_group: ['descendants of (inclusive)', 'Service'] },
+        });
         const grid = frm.fields_dict.items && frm.fields_dict.items.grid;
         if (!grid || grid.__dacs_rate_locked) return;
         grid.__dacs_rate_locked = true;

@@ -147,7 +147,7 @@ const OF_STATUS_OPTIONS = {
     po: [['not_received', 'Not received'], ['partly_received', 'Partly received'], ['fully_received', 'Fully received'],
          ['not_billed', 'Not billed'], ['partly_billed', 'Partly billed'], ['fully_billed', 'Fully billed', 1],
          ['overdue', 'Overdue (past expected date)']],
-    receipt: [['to_bill', 'To bill'], ['completed', 'Billed (completed)', 1], ['returns', 'Returns']],
+    receipt: [['to_bill', 'To bill'], ['completed', 'Billed (completed)', 1], ['returns', '↩ Returns (goods sent back)']],
     mr: [['pending', 'Pending (not ordered)'], ['partly_ordered', 'Partly ordered'], ['ordered', 'Fully ordered'],
          ['partly_received', 'Partly received'], ['received', 'Fully received', 1]],
     ewo: [['not_received', 'Nothing received yet'], ['partly_received', 'Partly received'], ['fully_received', 'Fully received', 1]],
@@ -2066,6 +2066,16 @@ class OrderFlow {
                         });
                     });
                 }
+            } else if (action === 'make_purchase_invoice_from_pr' && btn.data('pr')) {
+                // the bill from the receipt: ERPNext's make_purchase_invoice (returned qty left out),
+                // plus the supplier's bill no / date the receipt recorded
+                preview_and_open_mapped_doc({
+                    method: 'erp_dacsinc_custom.purchase_order.make_purchase_invoice_custom',
+                    source_name: String(btn.data('pr')),
+                    freeze_message: __('Creating Purchase Invoice…'),
+                    preview_title: __('Review Purchase Invoice'),
+                    confirm_label: __('Create Purchase Invoice')
+                });
             } else if (action === 'make_purchase_invoice' && po) {
                 preview_and_open_mapped_doc({
                     method: 'erpnext.buying.doctype.purchase_order.purchase_order.make_purchase_invoice',
@@ -4442,42 +4452,44 @@ class OrderFlow {
                 </td>
             </tr>`).join('');
 
-        const bill_rows = pos_need_bill.map(p => `
+        // To Bill: Purchase Receipts not (fully) billed — the supplier's bill is made from the receipt
+        const bill_rows = pos_need_bill.map(p => {
+            const ret = flt_of(p.returned_qty);
+            const part = flt_of(p.per_billed) > 0.01;
+            return `
             <tr class="of-doc-row">
-                <td><i class="fa fa-caret-right of-doc-items-toggle" data-doctype="Purchase Order" data-docname="${of_esc(p.name)}" data-docstatus="${p.docstatus}" style="cursor:pointer;margin-right:4px;color:var(--text-light);"></i>
-                    <a href="/app/purchase-order/${encodeURIComponent(p.name)}" target="_blank" style="font-weight:700;">${of_esc(p.name)}</a>
-                    ${of_order_confirmation_html(p)}
+                <td><i class="fa fa-caret-right of-doc-items-toggle" data-doctype="Purchase Receipt" data-docname="${of_esc(p.name)}" data-docstatus="${p.docstatus}" style="cursor:pointer;margin-right:4px;color:var(--text-light);"></i>
+                    <a href="/app/purchase-receipt/${encodeURIComponent(p.name)}" target="_blank" style="font-weight:700;">${of_esc(p.name)}</a>
+                    <div class="of-micro">${of_date(p.posting_date)}</div>
                     ${of_creator_html(p)}</td>
                 <td style="text-align:left;">
                     <a href="/app/supplier/${encodeURIComponent(p.supplier)}" target="_blank" style="font-weight:600;">${of_esc(p.supplier_name || p.supplier || '')}</a>
-                </td>
+                    ${p.custom_supplier_invoice_no ? `<div class="of-micro">${__('Supplier bill')} <b>${of_esc(p.custom_supplier_invoice_no)}</b>${p.custom_supplier_invoice_date ? ' · ' + of_date(p.custom_supplier_invoice_date) : ''}</div>` : ''}
+                    ${p.supplier_delivery_note ? `<div class="of-micro text-muted">${__('Challan')} ${of_esc(p.supplier_delivery_note)}</div>` : ''}</td>
+                <td>${of_po_links(p.purchase_orders)}</td>
                 <td>${of_so_links(p.sales_orders)}
                     ${p.so_customer_names ? `<div class="of-micro text-muted">${of_esc(p.so_customer_names)}</div>` : ''}</td>
-                <td class="of-meta">${of_date(p.transaction_date)}
-                    <div class="of-micro">exp ${of_date(p.schedule_date)}</div></td>
-                <td>${of_po_lr_html(p)}</td>
-                <td>${of_qty(p.qty)}</td>
-                <td>${of_qty(p.received_qty, flt_of(p.received_qty) > 0 ? 'pos' : null)}
-                    ${of_status_chip(p.per_received)}</td>
-                <td>${of_money(p.grand_total, p.currency)}</td>
+                <td>${p.lr_no ? `${of_esc(p.lr_no)}${p.lr_date ? `<div class="of-micro">${of_date(p.lr_date)}</div>` : ''}` : '—'}</td>
+                <td>${of_qty(p.qty, 'pos')}
+                    ${ret > 0 ? `<div class="of-micro" style="color:#b03a2e;">↩ ${of_qty(ret)} ${__('returned')}</div>` : ''}</td>
+                <td>${of_money(p.to_bill_value, p.currency)}
+                    <div class="of-micro text-muted">${__('before tax')}${part ? ' · ' + __('{0}% billed', [Math.round(flt_of(p.per_billed))]) : ''}</div></td>
                 <td>${of_doc_status(p.status)}</td>
                 <td>
                     <div class="of-po-actions">
                         ${p.draft_invoice ? `
                             <a class="of-btn of-btn--warning" href="/app/purchase-invoice/${encodeURIComponent(p.draft_invoice)}" target="_blank" style="font-weight:700;">
-                                <i class="fa fa-external-link"></i> Open Draft (${p.draft_invoice})
+                                <i class="fa fa-external-link"></i> ${__('Open Draft')} (${of_esc(p.draft_invoice)})
                             </a>
                         ` : `
-                            <button class="of-btn of-btn--primary of-action-btn" data-action="make_purchase_invoice" data-po="${p.name}">
-                                <i class="fa fa-file-text-o"></i> Create Invoice
+                            <button class="of-btn of-btn--primary of-action-btn" data-action="make_purchase_invoice_from_pr" data-pr="${of_esc(p.name)}">
+                                <i class="fa fa-file-text-o"></i> ${__('Create Invoice')}
                             </button>
                         `}
-                        <button class="of-btn of-po-print-btn" data-name="${of_esc(p.name)}" title="${__('Print Purchase Order')}">
-                            <i class="fa fa-print"></i>
-                        </button>
                     </div>
                 </td>
-            </tr>`).join('');
+            </tr>`;
+        }).join('');
 
         const rc_rows = rcs.map(r => {
             const open_doctype = (r.doctype === 'Subcontracting Receipt' && r.linked_pr) ? 'Purchase Receipt' : r.doctype;
@@ -4518,9 +4530,10 @@ class OrderFlow {
                     meta: `${flt_of((data.metrics || {}).open_pos)} ${__('waiting for receipt')} · ${of_money((data.metrics || {}).total_ordered || 0)} ${__('ordered')}`,
                     ds: pos_env.docstatus_counts })}
                 ${of_tabcard({ sub: 'receipt', active: subtab === 'receipt', icon: 'inbox', tone: 'green', title: __('Receipts'),
-                    value: flt_of(rcs_env.total), value_label: __('receipts'), ds: rcs_env.docstatus_counts })}
+                    value: flt_of(rcs_env.total), value_label: __('receipts'), ds: rcs_env.docstatus_counts,
+                    meta: flt_of(rcs_env.return_count) ? `↩ ${flt_of(rcs_env.return_count)} ${flt_of(rcs_env.return_count) === 1 ? __('return') : __('returns')} — ${__('Billing › Returns')}` : '' })}
                 ${of_tabcard({ sub: 'bill', active: subtab === 'bill', icon: 'calculator', tone: 'orange', title: __('To Bill'),
-                    value: flt_of(bill_env.total), value_label: __('POs'), meta: __('fully received, supplier bill not entered') })}
+                    value: flt_of(bill_env.total), value_label: __('receipts'), meta: __('goods received, supplier bill not entered') })}
             </div>
 
             <!-- Subtab Sections -->
@@ -4551,11 +4564,11 @@ class OrderFlow {
             </div>
 
             <div id="of-pur-sec-bill" class="${subtab !== 'bill' ? 'of-hidden' : ''}">
-                ${of_card('Purchase Orders (Fully Received, Pending Invoice)', 'calculator', `
+                ${of_card(__('Purchase Receipts to bill — enter the supplier\'s bill from the receipt'), 'calculator', `
                     <table class="of-table">
-                        <thead><tr><th style="min-width:170px;">Purchase Order</th><th style="min-width:150px;">Supplier</th>
-                            <th>Sales Order</th><th>Dates</th><th>LR Number</th><th>Ordered</th><th>Received</th><th>Amount</th><th>Status</th><th>Action</th></tr></thead>
-                        <tbody>${bill_rows || of_empty_row(10)}</tbody>
+                        <thead><tr><th style="min-width:170px;">Purchase Receipt</th><th style="min-width:170px;">Supplier / their bill</th>
+                            <th>Against PO</th><th>Sales Order</th><th>LR</th><th>Received</th><th>To bill</th><th>Status</th><th>Action</th></tr></thead>
+                        <tbody>${bill_rows || of_empty_row(9)}</tbody>
                     </table>`, null, of_pagination_html('purchase', 'bill', bill_env), this.table_filters_html('purchase.bill'))}
             </div>`;
     }

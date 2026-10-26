@@ -1,4 +1,4 @@
-# Print formats (Sales Invoice copies, Credit / Debit Notes, Payment Receipt)
+# Print formats (Sales Invoice copies, orders, delivery notes, Credit / Debit Notes, receipts)
 
 All of these are **app print formats** (`erp_dacsinc_custom/print_format/<name>/<name>.json`,
 Standard = Yes): migrate loads a file whenever its `modified` is newer than the site's copy, so a
@@ -7,11 +7,24 @@ the desk.
 
 | Format | For | What it prints |
 |---|---|---|
-| **Sales invoice Print Format 4** | Sales Invoice | the invoice layout (a builder format). Its file carries the site's version and its own `modified`, so migrate leaves the site copy as it is. |
+| **Sales invoice Print Format 4** | Sales Invoice | the invoice layout (a builder format; its item table is a Custom HTML block that leaves out freight / packing / insurance lines — they print in the totals, `docs/charges.md`). Its file carries the site's version and its own `modified`, so migrate leaves the site copy as it is. |
 | **Sales Invoice Multi Copy Master** | Sales Invoice | Format 4 once per copy with its label. A return hands over to Credit Note DAC. |
 | **Credit Note DAC** / **Debit Note DAC** | Sales / Purchase Invoice returns | see `docs/returns.md` › Printing |
 | **Payment Receipt DAC** | Payment Entry (default print format, `custom/payment_entry.json`) | Payment Receipt / Payment Voucher / Internal Transfer ; notes "Part of Bulk Payment …" |
 | **Bulk Payment Receipt** | Bulk Payment (default) | one receipt / payment advice for the whole amount: parties, invoices, set-off, Payment Entry per party — see `docs/bulk-payment.md` |
+| **Sales Order Print Format 3** | Sales Order (default; form button with "DAC Letter Header") | Format 4's layout for an order |
+| **Purchase Order Print Format** | Purchase Order (default; Print PO / Order Flow, no letter head) | its own company header (bordered box) + Format 4's layout |
+| **Subcontracting Order Print Format 3** | Subcontracting Order (Print SCO / Order Flow, no letter head) | Goods Issue Note: issue and receivable tables |
+| **Proforma Invoice Quotation** | Quotation (default) | proforma invoice |
+| **Delivery Note Version 3** / **Delivery Note Without Amount Version 3** | Delivery Note › Custom Print › With / Without Amount (`public/js/delivery_note.js`, document's letter head) | Format 4's layout, with / without rates and totals |
+| **Delivery Note Print Format with Amount** / **without Amount** | Delivery Note (default in the Print menu, no letter head) | the older challan layout with its own header |
+| **Embroidery Work Order Print Format** / **… 2** | Embroidery Work Order (format 1 from the buttons, no letter head) | jobber work order |
+| **POS Invoice A4** / **POS Invoice A5** / **POS Invoice Version 2** | POS Invoice (POS Profile › Print Format) | the POS template (Version 2) on A4 / A5 with blank rows to the page bottom, or the roll receipt — `docs/pos-store-scope.md` › Print formats |
+
+The Delivery Note buttons came from a DB Client Script "Delivery Note" whose two buttons both opened the
+without-amount format; `patches/dn_print_buttons_to_app.py` disables it (only while its live code is just
+those buttons). Letter head "DAC Letter Header" is put in the same bordered box as "DAC Letter Header
+quotation" by `patches/letter_head_border.py` (styling only; its own text stays).
 
 ## Copies (Original / Duplicate / Triplicate / Quadruplicate)
 
@@ -26,6 +39,59 @@ letter head and heading (with the copy chip) in `<div id="header-html">`. In a P
 *first* `#header-html` as the page header for **every** page and deletes the others
 (`frappe/utils/pdf.py › prepare_header_footer`) — so all four pages read "ORIGINAL". The master
 renames that block to `class="dacs-copy-head"` so each copy keeps its own header in the page body.
+
+## Uniform layout (all the formats above)
+
+**Sizes:** heading strip 12pt title + 9pt No / Date (the copy chip on the right where there is one),
+party / header details 8.5pt, items and totals 9pt, grand total 10pt, amount in words 8.5pt, bank line
+8pt, terms 7.5pt, signature 8.5pt with a ~11 mm signing gap.
+
+**Item columns:** Price List Rate and Discount (Credit / Debit Note: List Rate, Disc.) print only when the
+document has a discount — a line with a discount amount, or a rate below its price list rate; otherwise the
+table shows only Rate. A markup (rate above the list price) is not a discount. Each item table starts with
+`dacs_disc` (Jinja) and, without a discount, carries class `dacs-nodisc`, which hides the `.dacs-d` header,
+value and `<col>` cells — in the blank rows too (their cell count drops by the same number). All amounts are
+right-aligned. POS Invoice Version 2 (and the A4 / A5 bills built from it) has always worked this way.
+
+**Page margins:** wkhtmltopdf takes the page margins from a `.print-format { … }` rule
+(`frappe/utils/pdf.py › get_print_format_styles`); the Print Format's Margin fields are used only by
+WeasyPrint. With the page-number footer present and no bottom margin set, wkhtmltopdf drops the top
+margin (content at the page edge), so formats that draw their header in the page body (Format 4, Credit
+/ Debit Note, the challans, receipts, Embroidery 1) set **both** top and bottom (10 mm), with a
+`@media print` rule keeping that margin off the page's own box. **Builder formats** whose letter head /
+heading is the PDF page header (Sales Order 3, Purchase Order, Subcontracting Order 3, Proforma,
+Delivery Note Version 3, Embroidery 2) must **not** carry that rule — it squeezes the page header out
+(no letter head on the PDF). The letter head's own gaps are tightened in CSS (the Letter Head record is
+shared). Terms written in the editor carry Quill's `height: 100%`, padding and scroll bars; every format
+resets them (`.ql-editor`), or the terms box stretches to the page and shows scroll arrows.
+
+**Header details (Format 4):** only the detail rows with a value print (a pair keeps its filled half; an
+empty row is left out), so the header box is as tall as what it holds.
+
+## Blank rows instead of empty space
+
+The item table is followed, inside a `.dacs-items-box`, by a `.dacs-fill-wrap`: a table of 60 empty
+rows with the same columns, clipped. A **page box** — the page made a vertical (legacy `-webkit-box`)
+box of the printable height, the items section stretching — gives the clipped rows exactly the space
+left, so the item table runs down to the totals whatever the header, address, items or terms take.
+No JavaScript runs in the PDF, so nothing is counted.
+
+wkhtmltopdf's legacy box has two traps, which shape how it is used:
+- `min-height` on the box is ignored on some documents (blank space left); a fixed `height` is honoured.
+- On a document longer than one page the box spoils page breaking (gaps, overlapping blocks).
+
+So on the builder formats and Format 4 the box (with a fixed height) is switched on **only when the
+document surely fits on one page**: a Jinja estimate of the free space at the page bottom (mm) from the
+content — item lines (long names count extra), address lines, HSN codes, tax lines, terms / notes length,
+supplied items — with weights fitted to measured documents (each format's estimate never exceeds the
+real free space of any measured document, and no 2-page document passes the threshold, +8 mm safety).
+A longer document prints as plain flow (no blank rows); `.dacs-fill-wrap` is `display: none` unless the
+box shows it. Credit / Debit Note and the two older challans use `min-height` boxes (they behave there).
+Box heights (mm) are measured per format on a 1-page document: the largest that stays one page, less 1.
+
+Measured 28-Oct-2026 on the recent documents of each format: every 1-page document stays one page, the
+short ones end 1–11 mm above the page footer. Changing a font size, padding or a block's height means
+re-measuring the box height and the estimate's weights (render the recent documents, `pdfinfo` for pages).
 
 The form button used to come from a DB Client Script "sales invoice Form new" (no All 4 choice);
 `patches/si_print_button_to_app.py` disables that script (only while its sole live code is that

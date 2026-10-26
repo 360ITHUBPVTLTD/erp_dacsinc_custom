@@ -43,6 +43,8 @@ previously-buggy edge cases — are documented in `docs/`:
 - `docs/bulk-payment.md` — the one Receive / Pay prompt (Finance › New, invoice rows, SI / PI forms): one
   invoice, many of one party, many parties (a Bulk Payment, one Payment Entry each) or an advance;
   deductions, cancel / delete / amend rules, receipt.
+- `docs/charges.md` — freight / packing / insurance as item lines at the goods' GST rate: the charge items
+  (patch), "Add charges" on sales and purchase drafts, why not tax-template rows.
 - `docs/rate-read-only.md` — item Rate is read-only on Quotation / SO / SI / PO / PI; users change
   the Price List Rate and the discount.
 - `docs/overall-discount.md` — overall (Additional) discount on Quotation / SO / DN / SI /
