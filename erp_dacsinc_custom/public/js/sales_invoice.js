@@ -100,12 +100,12 @@ frappe.ui.form.on('Sales Invoice', {
 				frappe.require('/assets/erp_dacsinc_custom/js/invoice_fetch.js', () => window.dacs_fetch_pending_to_bill(frm))
 			).addClass('btn-primary');
 		}
-		// The Receive Payment prompt (public/js/payment_prompt.js — the same one as Order Flow ›
+		// The Receive Payment prompt (public/js/bulk_payment.js — the same one as Order Flow ›
 		// Finance) in place of ERPNext's Create › Payment.
 		if (frm.doc.docstatus === 1 && !cint(frm.doc.is_return) && flt(frm.doc.outstanding_amount) > 0 && frappe.model.can_create('Payment Entry')) {
 			frm.add_custom_button(__('Receive Payment'), () => {
-				frappe.require('/assets/erp_dacsinc_custom/js/payment_prompt.js', () =>
-					of_payment_prompt('Sales Invoice', frm.doc.name, () => frm.reload_doc(), { from_form: 1 }));
+				frappe.require('/assets/erp_dacsinc_custom/js/bulk_payment.js', () =>
+					dacs_pay_invoice('Sales Invoice', frm.doc.name, () => frm.reload_doc(), { from_form: 1 }));
 			}).addClass('btn-primary');
 		}
 	},

@@ -1410,6 +1410,17 @@ class OrderFlow {
         });
         // The other half of a return (return_goods.py): open the note / return in a new tab and let
         // its form make the missing document straight away (dacs_goods_status reads this note).
+        // Receive / Pay (Finance › New): the one payment prompt — one or many invoices, one or many
+        // parties, or an advance (public/js/bulk_payment.js).
+        this.$body.on('click', '.of-je-new-btn', () => {
+            frappe.require('/assets/erp_dacsinc_custom/js/journal_prompt.js',
+                () => dacs_journal_prompt({ on_done: () => this.refresh(true) }));
+        });
+        this.$body.on('click', '.of-pay-new-btn', (e) => {
+            const type = String($(e.currentTarget).data('type'));
+            frappe.require('/assets/erp_dacsinc_custom/js/bulk_payment.js',
+                () => dacs_payment_dialog({ payment_type: type, on_done: () => this.refresh(true) }));
+        });
         this.$body.on('click', '.of-notes-kind', (e) => {
             this.set_table_filter('accounts.notes', 'kind', String($(e.currentTarget).data('kind') || ''));
         });
@@ -1434,10 +1445,12 @@ class OrderFlow {
                 party_type: $b.data('partyType'), party: String($b.data('party')) });
             window.open(`/app/payment-reconciliation?${q.toString()}`, '_blank');
         });
+        // Receive / Pay on an invoice row: the same prompt, starting with that invoice (more of the
+        // party's invoices, or other parties, can be added there).
         this.$body.on('click', '.of-pay-btn', (e) => {
             const $b = $(e.currentTarget);
-            frappe.require('/assets/erp_dacsinc_custom/js/payment_prompt.js',
-                () => of_payment_prompt($b.data('doctype'), String($b.data('name')), () => this.refresh(true)));
+            frappe.require('/assets/erp_dacsinc_custom/js/bulk_payment.js',
+                () => dacs_pay_invoice($b.data('doctype'), String($b.data('name')), () => this.refresh(true)));
         });
         this.$body.on('change', '#of-scope', (e) => { this.scope = e.target.value; this.reset_all_pagination(); this.refresh(true); });
         this.$body.on('change', '#of-days',  (e) => {
@@ -7483,22 +7496,15 @@ function of_note_row_html(n, can_pay) {
     </tr>`;
 }
 
-// Finance only: the entries the accounts team starts by hand. Each opens a new form in a new tab;
-// a Payment Entry made here can settle several invoices at once (choose the party, then
-// "Get Outstanding Invoices"). Only what the user may create is shown.
+// Finance only: the entries the accounts team starts by hand — Receive / Pay open the payment prompt,
+// the rest a new form in a new tab. Only what the user may create is shown.
 function of_fin_new_bar() {
     const can = (dt) => frappe.model.can_create(dt);
     const read = (dt) => frappe.model.can_read(dt);
     const q = (o) => '?' + Object.entries(o).map(([k, v]) => `${encodeURIComponent(k)}=${encodeURIComponent(v)}`).join('&');
     const items = [
-        can('Payment Entry') && ['/app/payment-entry/new' + q({ payment_type: 'Receive', party_type: 'Customer' }), 'arrow-down', __('Receive (Payment Entry)'),
-            __('Money from a customer — choose the customer, then Get Outstanding Invoices to settle several invoices at once')],
-        can('Payment Entry') && ['/app/payment-entry/new' + q({ payment_type: 'Pay', party_type: 'Supplier' }), 'arrow-up', __('Pay (Payment Entry)'),
-            __('Money to a supplier / jobber — choose the supplier, then Get Outstanding Invoices to pay several bills at once')],
         can('Payment Entry') && ['/app/payment-entry/new' + q({ payment_type: 'Internal Transfer' }), 'exchange', __('Internal Transfer'),
             __('Between our own accounts: cash deposit, bank to bank')],
-        can('Journal Entry') && ['/app/journal-entry/new', 'book', __('Journal Entry'),
-            __('Adjustments with no other document: bank charges, TDS deposit, corrections')],
         can('Sales Invoice') && ['/app/sales-invoice/new' + q({ is_return: 1 }), 'undo', __('Credit Note (direct)'),
             __('A return / allowance to a customer not made from an invoice (e.g. a service item). From an invoice: open it › Create › Return / Credit Note')],
         can('Purchase Invoice') && ['/app/purchase-invoice/new' + q({ is_return: 1 }), 'undo', __('Debit Note (direct)'),
@@ -7508,9 +7514,19 @@ function of_fin_new_bar() {
         read('Bank Reconciliation Tool') && ['/app/bank-reconciliation-tool', 'university', __('Bank Reconciliation'),
             __('Match the bank statement with the entries')],
     ].filter(Boolean);
-    if (!items.length) return '';
+    // Receive / Pay: the one payment prompt (public/js/bulk_payment.js) — one invoice, several of one
+    // party, several parties (a Bulk Payment, one Payment Entry each), or an advance.
+    const bulk = can('Payment Entry')
+        ? `<button class="of-btn of-btn--primary of-pay-new-btn" data-type="Receive" title="${of_esc(__('Money from customers: one or many invoices, one or many customers, or an advance'))}"><i class="fa fa-arrow-down"></i> ${__('Receive')}</button>
+           <button class="of-btn of-btn--primary of-pay-new-btn" data-type="Pay" title="${of_esc(__('Money to suppliers / jobbers: one or many bills, one or many suppliers, or an advance'))}"><i class="fa fa-arrow-up"></i> ${__('Pay')}</button>`
+        : '';
+    // Journal Entry: a short prompt with ready-made patterns (public/js/journal_prompt.js)
+    const je = can('Journal Entry')
+        ? `<button class="of-btn of-je-new-btn" title="${of_esc(__('Adjustments with no other document: bank charges, cash deposit, expense, TDS deposit, write-off, corrections'))}"><i class="fa fa-book"></i> ${__('Journal Entry')}</button>`
+        : '';
+    if (!items.length && !bulk && !je) return '';
     return `<div class="of-fin-new">
-        <span class="of-fin-new__label"><i class="fa fa-plus"></i> ${__('New')}</span>
+        <span class="of-fin-new__label"><i class="fa fa-plus"></i> ${__('New')}</span>${bulk}${je}
         ${items.map(([href, icon, label, title]) => `<a class="of-btn of-fin-new__btn" href="${href}" target="_blank" title="${of_esc(title)}"><i class="fa fa-${icon}"></i> ${of_esc(label)}</a>`).join('')}
     </div>`;
 }

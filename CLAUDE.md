@@ -40,6 +40,9 @@ previously-buggy edge cases — are documented in `docs/`:
   rewritten), Credit / Debit Note and Payment Receipt formats; all shipped as app print formats.
 - `docs/invoice-fetch.md` — "Fetch Pending to Bill" on a Sales Invoice opened directly: the
   customer's delivered, not-yet-billed Delivery Note lines (credit notes not netted off).
+- `docs/bulk-payment.md` — the one Receive / Pay prompt (Finance › New, invoice rows, SI / PI forms): one
+  invoice, many of one party, many parties (a Bulk Payment, one Payment Entry each) or an advance;
+  deductions, cancel / delete / amend rules, receipt.
 - `docs/rate-read-only.md` — item Rate is read-only on Quotation / SO / SI / PO / PI; users change
   the Price List Rate and the discount.
 - `docs/overall-discount.md` — overall (Additional) discount on Quotation / SO / DN / SI /

@@ -1663,26 +1663,43 @@ imported first (Bank Statement Import). **Help:** our
 accounts in plain words, "Stuck? Do this", a checklist and a glossary — with a search box. Keep its ledger names and examples in step with
 the chart of accounts and with how Receive / Pay works.
 
-## Finance tab: Receive / Pay from the row (`dashboard_payment.py`)
+## Finance tab: Receive / Pay (the payment prompt)
 
-Rows with an outstanding amount get **Receive** (Receivables) or **Pay** (Payables) when the
-user may create and submit Payment Entries (`can_pay`) and may act on that sub-tab
-(`guard_act("accounts", receivables|supplier|jobber)`). The user types the **Total amount** (what the payment settles on the invoice / bill; defaults to
-the outstanding, **Full outstanding** fills it) and the deductions in ③; the **Actual amount received
-in bank / cash** (Receive: total − bank charges − TDS − write-off) or **paid to supplier** (Pay: total −
-TDS − write-off; bank charges come on top from our bank) is **calculated and read-only**. One direction
-only — nothing the user typed is rewritten (two typed boxes that rewrote each other confused users).
-The live box reads Total − deductions = received. With deductions the total can be at most the
-outstanding (flagged, refused on Review); a total alone above it is an advance; deductions as large as
-the total are refused. The server receives the bank amount as `amount`. It also asks: payment date, mode of
-payment (shows the account it posts to), reference no / date (required when the mode's
-account is a Bank account), and optional deductions with their accounts — bank charges (the account
-follows the mode: a card mode → Card Swipe Bank Charges, any other → Bank Charges, unless the user
-picked one by hand), TDS (TDS Receivable / TDS Payable), and a small difference written off. A live box shows what settles on the invoice, what moves through bank /
-cash, and what stays outstanding or becomes an advance. **Review** opens a confirmation with
-every value and the ledger lines; it submits only after the tick box.
+One prompt for every payment against invoices / bills — `public/js/bulk_payment.js`
+(`dacs_payment_dialog`, `dacs_pay_invoice`), server `doctype/bulk_payment/bulk_payment.py › make_payment`;
+full description in `docs/bulk-payment.md`. Opened from:
 
-**Payment Entry form layout** (for entries made by hand — New › Receive / Pay, one cheque for several
+- **New › Receive / Pay** (top of Finance; needs Payment Entry create) — empty: pick the parties;
+- an invoice / bill row's **Receive** / **Pay** (outstanding > 0, `can_pay`) — starts with that party and
+  that invoice at its outstanding; more invoices of the party, or other parties, can be added;
+- the Sales / Purchase Invoice form's **Receive Payment** / **Make Payment** (replaces ERPNext's
+  Create › Payment, removed there) — the same, `from_form=1`.
+
+From Order Flow the server also checks the Finance tab and the sub-tab of each party
+(`guard_act("accounts", receivables|supplier|jobber)`); from the form, Payment Entry create + submit
+(as Create › Payment). One party → one Payment Entry (several invoices, any extra = advance, no
+invoice = advance); several parties → a Bulk Payment (one Payment Entry each).
+
+**New › Journal Entry** opens a prompt (`public/js/journal_prompt.js`, server `journal_prompt.py`) instead
+of the full form, in three columns: **1 What kind of entry?** — grouped patterns, each showing its
+"Dr … · Cr …": Bank & cash (bank charges, OD interest, cash deposited / withdrawn, bank-to-bank),
+Expenses & salary (expense paid in cash / from bank, salary due, salary paid, depreciation), Taxes (TDS
+paid, GST paid — CGST / SGST / IGST lines, PF / ESIC paid, TDS cut by a customer), Customers & suppliers
+(write off a customer's / supplier's small balance, set-off when a customer is also a supplier), Loans &
+advances (staff advance, loan received / repaid), Other; ledgers come from the company (default bank /
+cash, Bank Charges, Interest on OD, Basic Salary, Payroll Payable, Depreciation, TDS Payable / Receivable,
+PF, Output GST, Write Off, Debtors / Creditors) and lines to choose are filtered (expense, bank, TDS,
+liability, asset). **2 Debit and credit lines** — a legend (Dr: money / asset comes in, expense booked,
+we owe less; Cr: money / asset goes out, income earned, we owe more), then per line account, party (only
+Debtors / Creditors; the type follows the account), Debit (blue) or Credit (amber) — a line is one or the
+other — and what it does in words from the account's root / account type ("money goes out of YES BANK",
+"expense booked", "we owe the supplier less"…). **3 Details** — Amount (fills both sides of a two-line
+entry; GST paid is typed per line), entry type, date, cheque / UTR (bank / contra only), remark (follows
+the pattern unless the user wrote one). **4 Balance check** — Total Debit, Total Credit, Difference,
+"Balance on the last line". It opens on *Other — I'll fill the lines* (two empty lines). Review lists the lines with their effect; **Submit** (Journal Entry submit
+permission) or **Save as Draft**. ERPNext's own Journal Entry checks apply; the full form is linked.
+
+**Payment Entry form layout** (for entries opened by hand from Accounting › Payment Entry, several
 invoices): `custom/payment_entry.json` reorders it with the `field_order` Property Setter Customize Form
 writes, plus three section labels — Type of Payment (Payment Type, **Mode of Payment** | Posting Date;
 Series and Company — one company — sit in the folded More Information) → Payment From / To (Party, Party Name, **Party Balance** | bank accounts, contact) →
@@ -1693,43 +1710,20 @@ ERPNext logic changed — order and labels only. A saved entry has a **Print Rec
 Voucher** (Pay) / **Print Transfer** button (`public/js/payment_entry.js`) opening Payment Receipt DAC
 (`dacs_print_url`), the same PDF as the 🖨 under an invoice's payments.
 
-**One prompt, two places.** `public/js/payment_prompt.js` (`of_payment_prompt`, its CSS injected
-once) is loaded on demand by Finance's Receive / Pay and by the Sales Invoice / Purchase Invoice
-form's **Receive Payment** / **Make Payment** button (submitted, outstanding > 0, user may create
-Payment Entries), which replaces ERPNext's Create › Payment (removed there). From the form
-(`from_form=1`) the server checks read on the invoice and Payment Entry create + submit — as
-Create › Payment does — instead of the Finance tab rules.
-
-**Deduction accounts.** Defaults: Bank Charges - IND (Card Swipe Bank Charges for a card mode),
-Write Off = the company's write-off account; TDS on Receive = TDS Receivable, on Pay = the account on
-the supplier's Tax Withholding Category for the company, else TDS on Contract for a jobber, else
-TDS Payable (`_supplier_tds_account`). The account boxes list only expense ledgers (bank charges,
-write-off) and TDS ledgers (name contains "TDS", Asset / Liability), and `record_payment` refuses any
-other (`_deduction_account_ok`), so a deduction can't land in Sales, Debtors or a bank.
+**Deduction accounts** (bank charges, TDS, write-off — `docs/bulk-payment.md`): Bank Charges - IND
+(Card Swipe Bank Charges for a card mode), Write Off = the company's write-off account; TDS on Receive
+= TDS Receivable, on Pay = the supplier's Tax Withholding Category account, else TDS on Contract for a
+jobber, else TDS Payable (`dashboard_payment._supplier_tds_account`). Only expense ledgers (bank
+charges, write-off) and TDS ledgers are accepted (`_deduction_account_ok`).
 
 **Modes offered** (`payment_modes.py`): only Modes of Payment ticked **Show in Payment Entry**
 (`custom_show_in_payment_entry`, created after migrate; the first time, the enabled modes no POS
-Profile uses are ticked). The prompt's Mode of Payment dropdown lists only those, the Payment
-Entry form's Mode of Payment link is filtered to them (`public/js/payment_entry.js`), and
-`record_payment` refuses any other — so POS counter / store modes stay out of Payment Entries.
+Profile uses are ticked). The prompt lists only those, the Payment Entry form's Mode of Payment
+link is filtered to them (`public/js/payment_entry.js`), and the server refuses any other — so POS
+counter / store modes stay out of Payment Entries.
 
-**Layout** (`.of-pay-*` CSS; green for Receive, orange for Pay): a header card
-(party, invoice / bill no, Invoice total · Outstanding · Due tiles, "overdue" tag); **① How much** —
-the settled amount large, a "Full outstanding ₹…" button, the bank amount under it, and beside them
-a live summary card (amount into / out of the bank in large type, the + lines, = settled,
-outstanding before → after, and Part payment / Fully settled / Advance); **② Payment details** —
-Mode of Payment (dropdown of the ticked modes), the account it posts to, payment date, and Reference No / Date
-shown only for a bank mode; **③ Bank charges, TDS, write-off** and **Remarks** fold away (③ opens
-by itself when a value is in it). The confirmation is a receipt: the bank amount large, the lines
-under it, the ledger entries folded, then the warning and the tick box.
-
-`record_payment` builds the entry with ERPNext's `get_payment_entry` (as Create › Payment
-does), sets the amounts and deduction rows, and inserts + submits as the user. Deductions are
-always posted as debits, so: Receive — all positive (Dr Bank, Dr charges / TDS / write-off,
-Cr Debtors with the total); Pay — bank charges positive, TDS and write-off negative (Dr
-Creditors, Dr charges, Cr Bank amount + charges, Cr TDS Payable / write-off). Deductions may not
-take the settlement past the outstanding; only the amount itself may, and the excess stays on
-the entry as an advance. Numbers in the prompt are Float fields (see the `flt` note below).
+The refund prompt on returns (`public/js/payment_prompt.js › of_refund_prompt`,
+`dashboard_payment.record_refund`) is separate — see `docs/returns.md`.
 
 **`flt` note.** `public/js/sales_order.js` used to define a top-level `function flt` (plain
 `parseFloat`). Loaded as a script on the Sales Order form and on this page, it replaced

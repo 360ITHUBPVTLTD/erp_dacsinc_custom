@@ -33,7 +33,11 @@ app_include_js = [
     "/assets/erp_dacsinc_custom/js/workflow.js?v=1.0.7",
     "/assets/erp_dacsinc_custom/js/toogle.js?v=1.0.5",
     # "Print it now?" after creating SI / PO / embroidery documents (MOM 8 Oct 2026)
-    "/assets/erp_dacsinc_custom/js/print_prompt.js?v=1.0.3",
+    "/assets/erp_dacsinc_custom/js/print_prompt.js?v=1.0.4",
+    # All · Normal · Returns on the SI / DN / PI / PR lists (called by their *_list.js)
+    "/assets/erp_dacsinc_custom/js/return_list_toggle.js?v=1.0.0",
+    # outstanding balance on the Customer / Supplier lists (called by their *_list.js)
+    "/assets/erp_dacsinc_custom/js/party_balance_list.js?v=1.0.5",
     # POS store requests board + dialogs (workspace block and Material Request form) — bump ?v= on change
     "/assets/erp_dacsinc_custom/js/pos_requests_board.js?v=1.0.6",
     # Overall discount skips items ticked "Exclude from Overall Discount" (overall_discount.py)
@@ -84,7 +88,9 @@ doctype_js = {
 	# Purchase Return: Debit Note status + "Make Debit Note" (return_goods.py)
 	"Purchase Receipt": "public/js/purchase_receipt.js",
 	"Pick List": "public/js/pick_list.js",
-	"Customer": "public/js/customer.js",
+	# Account Summary at the top of the form (public/js/party_summary.js, party_balance.py)
+	"Customer": ["public/js/customer.js", "public/js/party_summary.js"],
+	"Supplier": "public/js/party_summary.js",
 	# job work is received from the Sub PO ("Receive Finished Goods"), not from the SCO
 	"Subcontracting Order": "public/js/subcontracting_order.js"
 }
@@ -95,7 +101,14 @@ doctype_list_js = {
 	"Item": "public/js/item_list.js",
 	"BOM": "public/js/bom_list.js",
 	"Customer": "public/js/customer_list.js",
-	"Warehouse": "public/js/warehouse_list.js"
+	"Warehouse": "public/js/warehouse_list.js",
+	# All · Normal · Returns buttons (public/js/return_list_toggle.js)
+	"Sales Invoice": "public/js/sales_invoice_list.js",
+	"Delivery Note": "public/js/delivery_note_list.js",
+	"Purchase Invoice": "public/js/purchase_invoice_list.js",
+	"Purchase Receipt": "public/js/purchase_receipt_list.js",
+	# outstanding balance on each row (public/js/party_balance_list.js)
+	"Supplier": "public/js/supplier_list.js",
 }
 
 # Svg Icons
@@ -266,6 +279,10 @@ has_permission = {
 # Hook on document methods and events
 
 doc_events = {
+    "Unreconcile Payment": {
+        # not on a Bulk Payment's Payment Entry (bulk_payment.py)
+        "before_submit": "erp_dacsinc_custom.erp_dacsinc_custom.doctype.bulk_payment.bulk_payment.unreconcile_before_submit",
+    },
     # A Quotation shared with a DAC CRM user can be submitted by them (quotation_sharing.py)
     "DocShare": {
         "after_insert": "erp_dacsinc_custom.quotation_sharing.grant_submit_on_quotation_share",
@@ -273,6 +290,9 @@ doc_events = {
     },
     # Finance tab: another user's payment changes outstanding amounts — tell open dashboards
     "Payment Entry": {
+        # an entry made by a Bulk Payment is cancelled with it, not on its own (bulk_payment.py)
+        "before_cancel": "erp_dacsinc_custom.erp_dacsinc_custom.doctype.bulk_payment.bulk_payment.payment_entry_before_cancel",
+        "on_trash": "erp_dacsinc_custom.erp_dacsinc_custom.doctype.bulk_payment.bulk_payment.payment_entry_on_trash",
         "on_submit": "erp_dacsinc_custom.order_flow_api.broadcast_order_flow_change",
         "on_cancel": "erp_dacsinc_custom.order_flow_api.broadcast_order_flow_change",
     },
@@ -358,6 +378,8 @@ doc_events = {
         "before_cancel": [
             # a Credit Note's own Sales Return goes first (return_goods.py)
             "erp_dacsinc_custom.return_goods.on_note_cancel",
+            # paid by a Bulk Payment: cancel that first (bulk_payment.py)
+            "erp_dacsinc_custom.erp_dacsinc_custom.doctype.bulk_payment.bulk_payment.invoice_before_cancel",
             "erp_dacsinc_custom.stock_hold.guard_cancel",
         ],
         "on_submit": [
@@ -431,6 +453,8 @@ doc_events = {
             "erp_dacsinc_custom.procurement_purpose.set_procurement_purpose",
             # a service line has no warehouse (job_work.py) — no "No accounting entries…" message
             "erp_dacsinc_custom.job_work.clear_service_line_warehouse",
+            # a Purchase Return only from the Debit Note (return_goods.py)
+            "erp_dacsinc_custom.return_goods.guard_purchase_return_from_note",
         ],
         # a return sends stock back out; cancelling takes the received stock away (stock_hold.py)
         "before_submit": "erp_dacsinc_custom.stock_hold.guard_return",
@@ -557,6 +581,8 @@ doc_events = {
         "before_submit": "erp_dacsinc_custom.stock_hold.guard_return",
         "before_cancel": [
             "erp_dacsinc_custom.return_goods.on_note_cancel",
+            # paid by a Bulk Payment: cancel that first (bulk_payment.py)
+            "erp_dacsinc_custom.erp_dacsinc_custom.doctype.bulk_payment.bulk_payment.invoice_before_cancel",
             "erp_dacsinc_custom.stock_hold.guard_cancel",
         ],
         # Debit Note ticked "Update Stock (send the goods back)": make + submit the Purchase Return

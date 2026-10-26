@@ -101,3 +101,60 @@ because screens and the mobile app read their settings as the signed-in user.
 - Server code reads it with `get_single_value` / `get_cached_doc`, which this doesn't touch.
 - Never give Write just to make a screen or the app work: Write lets the role change the
   dashboard tabs, final approvers and recipients for everyone.
+
+## Outstanding balance on the Customer / Supplier lists
+
+**Account Summary on the Customer / Supplier form** — only for **Admin, System Manager, Accounts
+Executive, Accounts Manager** (`party_balance.FINANCE_ROLES`; the server returns nothing to anyone else,
+the section is hidden, and the list pill is not drawn). Custom HTML field `custom_account_summary` in
+its own section at the top (`custom/customer.json` / `supplier.json`); `public/js/party_summary.js`;
+data `party_balance.get_party_summary` and `party_statement.py`.
+
+- Top bar: the position in words ("Advance with us ₹…", "Customer owes us ₹…") and the buttons —
+  Receive / Make Payment (the payment prompt, `docs/bulk-payment.md`), **Print Statement**, Ledger
+  (General Ledger report), Ageing (Receivable / Payable), Refresh.
+- Always open: the top bar and the **Money** cards (and the Adjust note). **Sales Orders**, **Documents**
+  and **Advances & recent payments** are folding sections — Documents open by default, the other two shut; each header keeps its key
+  figures (open / to deliver / to bill; unpaid / overdue; advance / last payment). Open / shut is
+  remembered per user and browser (localStorage); Documents load only when first opened.
+- Cards, four per row (2 / 1 on narrow screens):
+  - **Money** (with this year's billed and received / paid in its heading): Net balance (Dr / Cr, made up
+    as unpaid − advance ± other entries; credit limit), Unpaid (count, next due date), Overdue, Advance /
+    credit not adjusted (advances and notes).
+  - **Sales Orders / Purchase Orders** (`party_balance._order_status`): Draft / awaiting approval (by the
+    Sales Order Workflow state), Open orders (by status: To Deliver and Bill, To Bill, …), **To deliver /
+    To receive** (value still to go, per item: pending qty × rate, with tax) and **To bill** (delivered /
+    received but not invoiced: delivered qty × rate − billed amount, with tax); completed count and a
+    link to the order list. In the Documents › Orders view a draft order shows its approval state.
+- **Documents** — chips Unpaid · All invoices · Paid · Credit notes · Sales Orders (supplier: bills,
+  debit notes, Purchase Orders) with a date range (Unpaid ignores the dates; ageing chips there). A row
+  opens to its chain: Quotation → Sales Order → Delivery → Invoice and the payments / notes / journal
+  entries set against it; an order opens to its deliveries, invoices (still due, payments) and
+  advances against it (`party_statement.get_party_documents`, first 100). A note's set-off Journal Entry
+  is not listed again when the note itself is.
+- Advances / notes waiting, and the last 8 payments with their receipt print.
+- **Print Statement**: period (this financial year, last 12 / 3 / 1 months, or dates), with or
+  without letter head → `party_statement.statement_pdf`: the default Letter Head (as the receipts),
+  party with GSTIN and address, opening balance, every ledger voucher (type, document, details —
+  return against, bill / PO no, payment mode / ref and the invoices it paid), debit, credit, running
+  balance Dr / Cr, period totals, closing balance in figures and words, signature.
+
+When an advance / credit and unpaid invoices exist together a warning says so, with **Adjust
+against invoices**: choose the credits (oldest used first) and how much goes on each invoice (spread
+oldest due first by itself, editable; left after / fully / part paid shown). `party_balance.adjust_advances`
+builds ERPNext's own **Payment Reconciliation** (unreconciled entries, allocation rows built as its
+`allocate_entries` does, then `reconcile()`), so the posting is exactly that tool's: the Payment
+Entry gets the invoice as a reference, the invoice's outstanding drops, credit notes are set off
+with their standard Journal Entry. Needs write on Payment Reconciliation (Accounts User / Manager).
+
+Each row of the Customer and Supplier list views shows what is outstanding with that party
+(`party_balance.get_party_balances`, `public/js/party_balance_list.js`, wired by `customer_list.js` /
+`supplier_list.js`): a short red pill **"₹ due · n Inv"** (customer) / **"₹ to pay · n Bills"** (supplier — the
+count of unpaid submitted invoices / bills) with a red
+**!** when any invoice / bill is past its due date, or a green **"₹ advance"** when the balance is the
+other way; nothing at zero. It sits in the right-hand strip in place of the "last updated" time, so
+the columns keep their width; the tooltip gives the exact amount, the number of unpaid invoices /
+bills and how many are overdue. The figure is the ERPNext **Party Balance** — the party's ledger
+balance (GL Entries, not cancelled, for the user's company): unpaid invoices net of credit / debit
+notes, advances and adjustments. Shown only to users who may read the party **and** its invoices
+(Sales Invoice for customers, Purchase Invoice for suppliers); one query per page of rows.
