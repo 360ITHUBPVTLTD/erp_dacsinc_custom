@@ -348,6 +348,18 @@
 					me.prepare_app_defaults(res.message);
 				},
 				primary_action_label: __("Submit"),
+				// a way out without opening a shift (the first opening can't be dismissed otherwise)
+				secondary_action_label: __("Back"),
+				secondary_action: () => {
+					dialog.hide();
+					if (me.__dacs_switching) return;
+					if (window.history.length > 1) window.history.back();
+					else frappe.set_route("pos");
+				},
+			});
+			// leaving the POS page by any route closes it, so it never stays over another page
+			frappe.router.on("change", () => {
+				if (dialog.display && frappe.get_route()[0] !== "point-of-sale") dialog.hide();
 			});
 			dialog.show();
 			// only the store's cash rows: no adding, uploading or removing rows
@@ -402,16 +414,21 @@
 			return out;
 		};
 
-		// Search also by barcode (Item › Barcodes; the server sends them as `barcodes`).
-		// Same order as the screen's own search: loaded items first, then the server.
-		// An exact barcode (e.g. a scan) shows just that item, so auto-add still works.
+		// Item search. Only the first 500 items (alphabetical) are loaded into the screen, so a
+		// search there alone misses everything after them. Matches among the loaded items show at
+		// once; the server (pos_brand_filter.get_conditions: every word in code, name, barcode,
+		// brand, item group, description) then adds the rest. An exact barcode (a scan) shows
+		// just that item, so auto-add still works.
 		Sel.filter_items = function ({ search_term = "" } = {}) {
 			const term = search_term.toLowerCase().trim();
+			const seq = (this.__dacs_search_seq = (this.__dacs_search_seq || 0) + 1);
 			if (!term) {
-				this.render_item_list(this.all_items || []);
+				this.items = this.all_items || [];
+				this.render_item_list(this.items);
 				return;
 			}
 			const tokens = term.split(/\s+/).filter(Boolean);
+			let local = [];
 			if (this.all_items) {
 				const exact = this.all_items.filter(it => (it.barcodes || []).concat(it.barcode || [])
 					.some(b => String(b).toLowerCase() === term));
@@ -423,7 +440,7 @@
 				}
 				const scored = this.all_items.reduce((acc, item) => {
 					const codes = (item.barcodes || []).concat(item.barcode || []).join(" ");
-					const pool = `${item.item_code} ${item.item_name} ${codes}`.toLowerCase();
+					const pool = `${item.item_code} ${item.item_name} ${codes} ${item.description || ""}`.toLowerCase();
 					if (tokens.every(t => pool.includes(t))) {
 						let score = 0;
 						const code = item.item_code.toLowerCase();
@@ -435,16 +452,19 @@
 					}
 					return acc;
 				}, []);
-				if (scored.length > 0) {
-					scored.sort((a, b) => b.score - a.score);
-					this.items = scored.map(s => s.item);
-					this.render_item_list(this.items);
-					this.perform_auto_add_logic && this.perform_auto_add_logic();
-					return;
+				scored.sort((a, b) => b.score - a.score);
+				local = scored.map(s => s.item);
+				if (local.length) {
+					this.items = local;
+					this.render_item_list(local);
 				}
 			}
-			this.get_items({ search_term: term }).then(({ message }) => {
-				this.render_item_list((message && message.items) || []);
+			this.get_items({ search_term: term, page_length: 100 }).then(({ message }) => {
+				if (seq !== this.__dacs_search_seq) return;  // a newer search is running
+				const seen = new Set(local.map(i => i.item_code));
+				const merged = local.concat(((message && message.items) || []).filter(i => !seen.has(i.item_code)));
+				this.items = merged;
+				this.render_item_list(merged);
 				this.perform_auto_add_logic && this.perform_auto_add_logic();
 			});
 		};
