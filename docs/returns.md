@@ -32,7 +32,9 @@ for a note (`custom_against_note` on the Delivery Note / Purchase Receipt) or th
 covers another note's shortfall. Rule (agreed 2026-10-23): **never blocks**.
 
 **Two ways to bring the goods back** on a note billed from a DN / PR:
-- **Tick "Update Stock (return the goods)"** (`custom_return_goods`, shown only on such a note; with
+- **Tick "Update Stock (return the goods)"** (`custom_return_goods`, shown only on such a note, **on by
+  default** — untick it when the goods have not come back yet; on a direct note it is hidden and does
+  nothing, and `on_note_submit` stays silent when there is nothing to return; with
   *Return to / from Warehouse*, default **VV Puram - IND**; cleared = where they were delivered from / received into).
   ERPNext's own Update Stock can't be used there. On **Submit**, `on_note_submit` makes the Sales /
   Purchase Return from the original DN / PR for this note's lines and qty and submits it (as part of
@@ -40,6 +42,14 @@ covers another note's shortfall. Rule (agreed 2026-10-23): **never blocks**.
   double return. Its name goes into the note's *Sales / Purchase Return* field. **Cancelling** the note
   cancels that return first (`on_note_cancel`).
 - **Leave it unticked** — the note shows *Stock not returned* with **Make Sales / Purchase Return**.
+
+**Supplier returns only from the Purchase Invoice** (rule, 2026-10-26): a Purchase Return must be made
+from its Debit Note — the Update Stock tick or Make Purchase Return, which mark it with the note
+(`custom_against_note`). Any other Purchase Return is refused on save
+(`return_goods.guard_purchase_return_from_note`), and the Purchase Receipt's Create menu no longer
+offers Purchase Return, Landed Cost Voucher, Make Stock Entry or Retention Stock Entry
+(`public/js/purchase_receipt.js`) — only Purchase Invoice. (So on the supplier side the goods half is
+never made first; "Make Debit Note" on a Purchase Return only matters for returns made before.)
 
 A direct note (no DN / PR behind it) keeps ERPNext's own Update Stock. On ordinary (non-return)
 Sales / Purchase Invoices **Update Stock is read-only** (Property Setter `read_only_depends_on:
@@ -99,6 +109,11 @@ then it carries its **own negative outstanding**:
 - **Logistics**: Credit Notes are not in the LR / signed-copy backlog.
 - **Purchase Flow / Job Work › Receipts**: a return row shows "↩ Return" with the qty returned; a
   submitted return counts as done (not "open").
+
+- **List views** of Sales Invoice, Delivery Note, Purchase Invoice and Purchase Receipt have
+  **All · Normal · Returns** buttons (`public/js/return_list_toggle.js`, wired by each
+  `*_list.js`, extending ERPNext's own list settings): a standard list filter on Is Return (0 / 1 /
+  none), so it combines with the other filters and shows in the Filters bar.
 
 ## Forms
 

@@ -1,8 +1,8 @@
 """Which Modes of Payment are offered for Payment Entries.
 
 Mode of Payment › "Show in Payment Entry" (custom_show_in_payment_entry). Only ticked modes are
-offered in the Payment Entry form's Mode of Payment and in Order Flow › Finance › Receive / Pay
-(dashboard_payment), and record_payment refuses any other. The POS modes ("Cash - Counter 3",
+offered in the Payment Entry form's Mode of Payment and in the Receive / Pay prompt
+(doctype/bulk_payment), which refuses any other (so do the refund prompt, dashboard_payment). The POS modes ("Cash - Counter 3",
 "UPI - VV Puram", …) stay out by leaving them unticked; POS itself never reads this flag.
 """
 

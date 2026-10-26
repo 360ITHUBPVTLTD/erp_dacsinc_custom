@@ -12,6 +12,8 @@
 		"Uniform Embroidery Transfer": {},
 		// Receipt (Receive) / Voucher (Pay) / Internal Transfer — print_format/payment_receipt_dac
 		"Payment Entry": { format: "Payment Receipt DAC" },
+		// one amount for several parties (doctype Bulk Payment)
+		"Bulk Payment": { format: "Bulk Payment Receipt" },
 		// Same print as Order Flow › Job Work (of_print_sco)
 		"Subcontracting Order": { format: "Subcontracting Order Print Format 3", no_letterhead: 1, letterhead: "DAC Letter Header" },
 	};

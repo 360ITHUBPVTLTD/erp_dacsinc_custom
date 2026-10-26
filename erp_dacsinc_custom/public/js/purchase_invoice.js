@@ -19,7 +19,7 @@ frappe.ui.form.on('Purchase Invoice', {
     
     refresh: function(frm) {
         clean_up_get_items_buttons(frm);
-        // The Make Payment prompt (public/js/payment_prompt.js — the same one as Order Flow ›
+        // The Make Payment prompt (public/js/bulk_payment.js — the same one as Order Flow ›
         // Finance) in place of ERPNext's Create › Payment, which is removed (added after async
         // calls, so removed again a few times).
         const drop_payment = () => frm.remove_custom_button(__('Payment'), __('Create'));
@@ -29,8 +29,8 @@ frappe.ui.form.on('Purchase Invoice', {
         dacs_load_return_actions(frm);
         if (frm.doc.docstatus === 1 && !cint(frm.doc.is_return) && flt(frm.doc.outstanding_amount) > 0 && frappe.model.can_create('Payment Entry')) {
             frm.add_custom_button(__('Make Payment'), () => {
-                frappe.require('/assets/erp_dacsinc_custom/js/payment_prompt.js', () =>
-                    of_payment_prompt('Purchase Invoice', frm.doc.name, () => frm.reload_doc(), { from_form: 1 }));
+                frappe.require('/assets/erp_dacsinc_custom/js/bulk_payment.js', () =>
+                    dacs_pay_invoice('Purchase Invoice', frm.doc.name, () => frm.reload_doc(), { from_form: 1 }));
             }).addClass('btn-primary');
         }
         

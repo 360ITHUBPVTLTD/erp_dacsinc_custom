@@ -10,7 +10,8 @@ the desk.
 | **Sales invoice Print Format 4** | Sales Invoice | the invoice layout (a builder format). Its file carries the site's version and its own `modified`, so migrate leaves the site copy as it is. |
 | **Sales Invoice Multi Copy Master** | Sales Invoice | Format 4 once per copy with its label. A return hands over to Credit Note DAC. |
 | **Credit Note DAC** / **Debit Note DAC** | Sales / Purchase Invoice returns | see `docs/returns.md` › Printing |
-| **Payment Receipt DAC** | Payment Entry (default print format, `custom/payment_entry.json`) | Payment Receipt / Payment Voucher / Internal Transfer |
+| **Payment Receipt DAC** | Payment Entry (default print format, `custom/payment_entry.json`) | Payment Receipt / Payment Voucher / Internal Transfer ; notes "Part of Bulk Payment …" |
+| **Bulk Payment Receipt** | Bulk Payment (default) | one receipt / payment advice for the whole amount: parties, invoices, set-off, Payment Entry per party — see `docs/bulk-payment.md` |
 
 ## Copies (Original / Duplicate / Triplicate / Quadruplicate)
 

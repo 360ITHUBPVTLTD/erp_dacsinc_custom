@@ -346,7 +346,10 @@ def on_note_submit(doc, method=None):
 		return
 	st = note_goods(doc.doctype, [doc.name]).get(doc.name) or {}
 	if st.get("status") != "pending" or not st.get("missing"):
-		frappe.msgprint(_("No goods returned by this note: {0}").format(st.get("text") or ""), indicator="orange", alert=True)
+		# ticked by default: a direct note (no stock item / not billed from a DN-PR) or goods already
+		# returned by hand need nothing — only a draft return made elsewhere is worth a word
+		if st.get("status") == "draft":
+			frappe.msgprint(st.get("text") or "", indicator="orange", alert=True)
 		return
 	made = []
 	for ret in _goods_returns_for(doc.doctype, doc.name, st["missing"]):
@@ -389,3 +392,17 @@ def sync_debit_note_received_qty(doc, method=None):
 		if flt(row.received_qty) != flt(row.qty):
 			row.received_qty = row.qty
 			row.rejected_qty = 0
+
+
+def guard_purchase_return_from_note(doc, method=None):
+	"""Rule (2026-10-26): a supplier return is made from the Purchase Invoice — the Debit Note's
+	"Update Stock (send the goods back)" tick or its "Make Purchase Return" button, both of which mark
+	the Purchase Return with the note (custom_against_note). A Purchase Return made any other way
+	(the Purchase Receipt's own Create › Purchase Return — hidden — the list, an import) is refused,
+	so goods never go back to a supplier without the bill being corrected with them."""
+	if doc.doctype != "Purchase Receipt" or not cint(doc.get("is_return")) or doc.get("custom_against_note"):
+		return
+	frappe.throw(_("A Purchase Return is made from the supplier's Purchase Invoice: open the bill › Create › "
+				   "Return / Debit Note, keep \"Update Stock (send the goods back)\" ticked and submit — the Purchase "
+				   "Return is made with it. (Or, on a submitted Debit Note, use Make Purchase Return.)"),
+				 title=_("Return from the Purchase Invoice"))
