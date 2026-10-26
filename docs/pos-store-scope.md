@@ -263,6 +263,30 @@ in Admin Settings › Customer (Admin to begin with), System Manager and Adminis
 
 ## Point of Sale screen (`public/js/pos_page_extend.js`, `pos_walkin.py`)
 
+**Item search** (`pos_brand_filter.get_conditions` / `_ranked_codes`, `Sel.filter_items`):
+- **Every typed word must match**, in any order and anywhere: item code, name, description,
+  brand, item group, any barcode, and any field added in POS Settings › **POS Search Fields**
+  (add fields there; no code change). So "svp soc", "soc svp" and "svp xxl" all find
+  SVP BLUE SOCKS. ERPNext searched the whole text as one phrase in code and name only.
+- **It searches all the store's items** (its brands / item groups), not just the first 500 the
+  screen loads. Matches among the loaded items show at once; the server then adds the rest.
+- **Best first**:
+  1. code or name equal to the text
+  2. code starting with it
+  3. name starting with it
+  4. a word of the name starting with it
+  5. anywhere in code / name
+  6. brand / group / description / barcode only
+
+  Alphabetical within each.
+- **Up to 60 server results** (`SEARCH_LIMIT`; each costs a price and stock lookup, about
+  0.1–0.6 s). Typing more narrows it.
+- **An exact barcode** (a scan) shows just that item, so auto-add still works. Serial and
+  batch numbers still go through ERPNext's own exact lookup.
+
+**Opening dialog: Back.** The first-opening dialog can't be dismissed (a shift is needed to
+sell), so it has a **Back** button. It also closes itself when you leave the POS page.
+
 Added through `page_js` on `point-of-sale`. ERPNext's files are untouched. The script
 patches the Point of Sale classes once `point-of-sale.bundle.js` has loaded, before the
 screen is built.
