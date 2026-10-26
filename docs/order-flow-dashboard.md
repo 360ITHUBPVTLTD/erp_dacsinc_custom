@@ -371,10 +371,16 @@ order already shipped.
   units (e.g. `picked_qty=300, delivered_qty=300` for one batch of 300 read
   as "600 covered" out of a 500 qty order, i.e. "fully picked", when in
   fact nothing is currently sitting picked-and-undelivered). The fix:
-  `undelivered_picked_qty = sum(max(0, min(qty, picked_qty) - delivered_qty))`
-  across the order's items, and the `ready_to_deliver` stage (whether the
-  "Ready for Delivery" or "Partially Ready for Delivery" variant) is only
-  returned when that's actually positive. Otherwise the function falls
+  `undelivered_picked_qty` = Σ (picked − delivered) over the lines of the order's
+  **Open / Partly Delivered Pick Lists** — the same lists Create Delivery Note works
+  from — and the `ready_to_deliver` stage (whether the "Ready for Delivery" or
+  "Partially Ready for Delivery" variant) is only returned when that's actually
+  positive (its target is the first such Pick List). Not the order's own
+  `picked_qty − delivered_qty`: a Sales Return lowers `delivered_qty` but never
+  `picked_qty`, so returned goods read as picked-and-waiting —
+  SAL-ORD-2026-00209 (two returns, all Pick Lists Completed) showed "Partially
+  Ready for Delivery" and its button said "No submitted Pick List found"; it now
+  shows "Stock Arrived — Create Pick List — Partial Delivery". Otherwise the function falls
   through to whatever the real current blocker is — an open PO, an open
   MR, or a brand-new shortfall needing one raised — exactly the surface
   the Sales Order's own Item Stock & Action Plan widget already shows.
@@ -1526,7 +1532,7 @@ form's own toolbar button (`public/js/purchase_order.js`'s refresh handler
 - **Purchase Flow** (`get_purchase_flow` filters to
   `is_subcontracted = 0` — every row here is a plain PO): the button always
   prints the Purchase Order itself, format "Purchase Order Print Format"
-  (`of_print_po`). Shown on both the PO and To Bill sub-tabs.
+  (`of_print_po`). Shown on the PO sub-tab.
 - **Job Work** (`get_jobwork_flow` filters to `is_subcontracted = 1` —
   every row here is subcontracted): a subcontracted PO has no print of its
   own — its Subcontracting Order carries the real quantities/rates — so the
@@ -1542,9 +1548,47 @@ Both helpers build the same `frappe.utils.print_format.download_pdf` URL
 (doctype, name, format, `no_letterhead=1`, letterhead, `_lang=en`) the form
 buttons use, so a PO or SCO prints identically from either place.
 
+## Purchase Flow / Job Work: which receipts are "open"
+
+A receipt is **open while it is not fully billed** (status not Completed / Closed / Cancelled), whatever its
+Sales Order's status — the customer side can be delivered and billed while the supplier's or jobber's bill
+is still pending (e.g. PR-26-00081 on a Completed SO). Both tabs' Receipts lists use this. In Purchase
+Flow's Receipts list, **returns** (goods sent back to the supplier) are kept apart: they are not in the
+normal list and show only under **Billing › ↩ Returns (goods sent back)**; the Receipts card shows how
+many there are ("↩ 1 return — Billing › Returns").
+
+## Purchase Flow tab: To Bill — bills are made from the Purchase Receipt
+
+**To Bill** lists submitted **Purchase Receipts** with something still to bill (`get_purchase_flow` ›
+`bill_orders`: not a return, `per_billed` < 100, not fully returned / Return Issued, not subcontracted,
+received in the date range; search on receipt, supplier, PO, Sales Order, supplier bill no; the
+Supplier filter). Oldest first. Each row: receipt (date, creator), supplier with **their bill no / date**
+(`custom_supplier_invoice_no` / `_date` from the receipt) and challan, the POs, Sales Order, LR (from the
+receipt), qty received with **↩ returned** qty, **To bill** — Σ (qty − returned) × rate − billed, before
+tax — with % billed when part billed, status, and **Create Invoice** (or **Open Draft** when a draft bill
+already has the receipt's lines).
+
+Create Invoice maps with `purchase_order.make_purchase_invoice_custom` — ERPNext's
+`purchase_receipt.make_purchase_invoice` (the lines carry `purchase_receipt` / `pr_detail`; returned qty
+is left out) plus the supplier's bill no / date from the receipt — through the same review preview as
+other mapped documents. **Why from the receipt, not the PO:** the receipt booked Dr Stock / Cr *Stock
+Received But Not Billed*; a bill linked to the receipt clears that ledger (Dr Stock Received But Not
+Billed, Dr Input GST / Cr Creditors) and turns the receipt Completed. Goods sent back before billing go
+on a Purchase Return against the receipt (`docs/returns.md`) and are simply not billed; after billing,
+a Debit Note. A supplier without a GSTIN cannot be charged GST (India Compliance refuses the bill) —
+fix the Supplier master first.
+
+**Direct bills — Service items only** (`purchase_bill.guard_direct_goods`, Purchase Invoice validate): a line
+of an item outside the item group **Service** (and its sub-groups) must come from a Purchase Receipt; a
+goods line typed onto a bill, or billed from the PO without a receipt, is refused with the rows named.
+Service items (freight / packing / insurance charges, job work, other services) may be billed directly,
+alone or added to a bill made from a receipt. Returns (Debit Notes) and opening invoices are not checked;
+the bill's item picker offers only Service items (`public/js/purchase_invoice.js`). PINV-26-00009 (goods
+billed without a receipt before this rule) was left as it is.
+
 ## Purchase Flow tab: LR Number column
 
-The PO and To Bill sub-tabs (`get_purchase_flow` / `purchase_html`) show an
+The PO sub-tab (`get_purchase_flow` / `purchase_html`) shows an
 **LR Number** column (with its date underneath, `of_po_lr_html`) reading
 `custom_lr_number` / `custom_lr_date` directly off the Purchase Order —
 this is the receiving side's own LR (Lorry Receipt) pair of fields, a
@@ -2006,9 +2050,7 @@ row (`of_docstatus_pills`) directly above its table.
   `''`/anything else leaves the query exactly as it was before this filter
   existed (both docstatuses mixed together).
 - **Deliberately not applied everywhere**: Purchase Flow's "To Bill"
-  sub-tab requires `per_received >= 100`, which a Draft PO can never
-  satisfy (nothing can be received against an unsubmitted PO) — it is
-  already implicitly Submitted-only, so no pill was added there. The Pick
+  sub-tab lists only submitted Purchase Receipts, so no pill there. The Pick
   Lists tab was considered and explicitly left out for now.
 
 ## Print right after creating (`public/js/print_prompt.js`)

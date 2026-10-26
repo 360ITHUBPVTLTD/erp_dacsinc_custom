@@ -80,6 +80,12 @@ frappe.ui.form.on('Sales Invoice', {
 	},
 	refresh: function(frm) {
 		frm.trigger('make_linked_rows_read_only');
+		// Update Stock is set on save (si_stock.py): direct invoice ticks it, from Delivery Notes unticks it
+		if (!cint(frm.doc.is_return)) {
+			frm.set_df_property('update_stock', 'description', frm.doc.docstatus === 0
+				? __('Set on save — ticked for a direct invoice (the goods leave the warehouse with it), unticked when billed from Delivery Notes.')
+				: (cint(frm.doc.update_stock) ? __('Stock went out with this invoice.') : __('Stock went out with the Delivery Note.')));
+		}
 		si_remove_get_items_buttons(frm);
 		// Create menu: Return / Credit Note stays. Payment is the "Receive Payment" button below.
 		dacs_hide_create_buttons(frm, ['Payment Request', 'Invoice Discounting', 'Maintenance Schedule',

@@ -2622,10 +2622,20 @@ def _compute_primary_stage_info(order):
         # the Sales Order's own Item Stock & Action Plan widget already
         # showed as a Shortfall) was hidden behind a stage that implied
         # "just deliver it".
-        undelivered_picked_qty = sum(
-            max(0, min(flt(i.qty), flt(i.picked_qty)) - flt(i.delivered_qty))
-            for i in so_items
-        )
+        # "Picked and not yet delivered" is what still sits on an Open / Partly Delivered Pick List
+        # (its lines' picked − delivered) — the very lists Create Delivery Note works from. The order's
+        # own picked_qty − delivered_qty counted goods a customer RETURNED (a Sales Return lowers
+        # delivered_qty, never picked_qty) as picked-and-waiting: SAL-ORD-2026-00209 read "Partially
+        # Ready for Delivery" with all its Pick Lists Completed, and the button found nothing.
+        open_pl_rows = frappe.db.sql("""
+            SELECT pl.name, GREATEST(IFNULL(pli.picked_qty, 0) - IFNULL(pli.delivered_qty, 0), 0) AS left_qty
+            FROM `tabPick List Item` pli JOIN `tabPick List` pl ON pl.name = pli.parent
+            WHERE pli.sales_order = %s AND pl.docstatus = 1 AND pl.status IN ('Open', 'Partly Delivered')
+        """, order["name"], as_dict=True)
+        undelivered_picked_qty = sum(flt(r.left_qty) for r in open_pl_rows)
+        open_pls = list(dict.fromkeys(r.name for r in open_pl_rows if flt(r.left_qty) > 0.001))
+        if open_pls:
+            pl_name = open_pls[0]
         total_delivered_qty = sum(flt(i.delivered_qty) for i in so_items)
         total_picked_or_delivered = total_delivered_qty + undelivered_picked_qty
         is_fully_picked = (total_picked_or_delivered >= total_qty) if total_qty > 0 else False
@@ -3323,37 +3333,49 @@ def get_purchase_flow(days=120, search=None, scope="open", merchandiser=None,
     purchase_orders["docstatus_counts"] = po_docstatus_counts
     purchase_orders["filter_options"] = _filter_options("purchase.po", [(_po_from_join, po_list_conditions)], params, {"supplier": ("po.supplier", "Supplier"), "customer": ("so.customer", "Customer")})
 
-    # "To Bill" sub-tab: fully-received POs still waiting on a Purchase
-    # Invoice — same base filters as purchase_orders, plus the bill-status
-    # condition, as its own independently-paginated list rather than a
-    # client-side .filter() over whichever PO page happens to be loaded.
-    bill_conditions = conditions + ["po.per_received >= 100", "po.per_billed < 100"]
-    _add_party_filter(bill_conditions, params, supplier="po.supplier", list_key="purchase.bill")
-    bill_filter_options = _filter_options("purchase.bill", [(_po_from_join, bill_conditions)], params,
-                                          {"supplier": ("po.supplier", "Supplier")})
+    # "To Bill" sub-tab: submitted Purchase Receipts with something still to bill — the supplier's bill
+    # is made from the receipt (ERPNext's standard: the bill's lines carry purchase_receipt / pr_detail,
+    # so it clears Stock Received But Not Billed and the receipt turns Completed). Goods sent back on a
+    # Purchase Return against the receipt are not billed (ERPNext's make_purchase_invoice leaves out the
+    # returned qty); a fully returned receipt is not listed. Its own independently-paginated list.
+    bill_conditions = ["pr.docstatus = 1", "IFNULL(pr.is_return, 0) = 0", "pr.per_billed < 99.99",
+                       "IFNULL(pr.per_returned, 0) < 99.99",
+                       "pr.status NOT IN ('Closed', 'Cancelled', 'Return Issued')", "IFNULL(pr.is_subcontracted, 0) = 0",
+                       "pr.posting_date >= %(from_date)s AND pr.posting_date < %(to_next)s", _NOT_DISABLED_SO]
+    if search:
+        for idx, word in enumerate(search.strip().split()):
+            params[f"qb_{idx}"] = f"%{word}%"
+            bill_conditions.append(f"(pr.name LIKE %(qb_{idx})s OR pr.supplier LIKE %(qb_{idx})s OR sup.supplier_name LIKE %(qb_{idx})s"
+                                   f" OR pri.purchase_order LIKE %(qb_{idx})s OR pri.sales_order LIKE %(qb_{idx})s"
+                                   f" OR IFNULL(pr.custom_supplier_invoice_no, '') LIKE %(qb_{idx})s)")
+    if is_scoped_to_own_customers("purchase"):
+        bill_conditions.append(_merch_scope_so())
+    _add_party_filter(bill_conditions, params, supplier="pr.supplier", list_key="purchase.bill")
+    _bill_from_join = """`tabPurchase Receipt Item` pri
+        JOIN `tabPurchase Receipt` pr ON pr.name = pri.parent
+        LEFT JOIN `tabSupplier` sup ON sup.name = pr.supplier
+        LEFT JOIN `tabSales Order` so ON so.name = pri.sales_order
+        LEFT JOIN `tabCustomer` cust ON cust.name = so.customer"""
+    bill_filter_options = _filter_options("purchase.bill", [(_bill_from_join, bill_conditions)], params,
+                                          {"supplier": ("pr.supplier", "Supplier")})
     bill_orders = _paged_query(f"""
-        SELECT po.name, po.transaction_date, po.schedule_date, po.status, po.docstatus,
-               po.supplier, sup.supplier_name, po.is_subcontracted, po.currency,
-               po.per_received, po.per_billed, po.grand_total,
-               po.order_confirmation_no, po.order_confirmation_date, po.owner,
-               po.custom_lr_number, po.custom_lr_date,
-               GROUP_CONCAT(DISTINCT poi.sales_order ORDER BY poi.sales_order SEPARATOR ', ') AS sales_orders,
+        SELECT pr.name, pr.posting_date, pr.status, pr.docstatus, pr.supplier, sup.supplier_name,
+               pr.currency, pr.grand_total, pr.per_billed, pr.per_returned, pr.owner,
+               pr.custom_supplier_invoice_no, pr.custom_supplier_invoice_date, pr.supplier_delivery_note,
+               pr.lr_no, pr.lr_date,
+               GROUP_CONCAT(DISTINCT pri.purchase_order ORDER BY pri.purchase_order SEPARATOR ', ') AS purchase_orders,
+               GROUP_CONCAT(DISTINCT pri.sales_order ORDER BY pri.sales_order SEPARATOR ', ') AS sales_orders,
                GROUP_CONCAT(DISTINCT so.customer_name ORDER BY so.customer_name SEPARATOR ', ') AS so_customer_names,
-               COUNT(DISTINCT poi.item_code) AS item_count,
-               SUM(CASE WHEN po.is_subcontracted = 1 THEN poi.fg_item_qty ELSE poi.qty END) AS qty,
-               SUM(poi.received_qty) AS received_qty
-        FROM `tabPurchase Order Item` poi
-        JOIN `tabPurchase Order` po ON po.name = poi.parent
-        LEFT JOIN `tabSupplier` sup ON sup.name = po.supplier
-        LEFT JOIN `tabSales Order` so ON so.name = poi.sales_order
-        LEFT JOIN `tabCustomer` cust ON cust.name = so.customer
+               COUNT(DISTINCT pri.item_code) AS item_count,
+               SUM(pri.qty) AS qty, SUM(IFNULL(pri.returned_qty, 0)) AS returned_qty,
+               SUM(GREATEST((pri.qty - IFNULL(pri.returned_qty, 0)) * pri.rate - IFNULL(pri.billed_amt, 0), 0)) AS to_bill_value
+        FROM {_bill_from_join}
         WHERE {' AND '.join(bill_conditions)}
-        GROUP BY po.name, po.transaction_date, po.schedule_date, po.status, po.docstatus,
-                 po.supplier, sup.supplier_name, po.is_subcontracted, po.currency,
-                 po.per_received, po.per_billed, po.grand_total,
-                 po.order_confirmation_no, po.order_confirmation_date, po.owner,
-                 po.custom_lr_number, po.custom_lr_date
-        ORDER BY po.transaction_date DESC, po.name DESC
+        GROUP BY pr.name, pr.posting_date, pr.status, pr.docstatus, pr.supplier, sup.supplier_name,
+                 pr.currency, pr.grand_total, pr.per_billed, pr.per_returned, pr.owner,
+                 pr.custom_supplier_invoice_no, pr.custom_supplier_invoice_date, pr.supplier_delivery_note,
+                 pr.lr_no, pr.lr_date
+        ORDER BY pr.posting_date ASC, pr.name ASC
     """, params, bill_page, bill_page_size)
 
     mr_conditions = ["mr.docstatus < 2", "mr.transaction_date >= %(from_date)s AND mr.transaction_date < %(to_next)s", _NOT_DISABLED_SO]
@@ -3376,11 +3398,15 @@ def get_purchase_flow(days=120, search=None, scope="open", merchandiser=None,
     _add_party_filter(scr_conditions, params, supplier="scr.supplier", list_key="purchase.receipt")
     _add_status_filter(pr_conditions, "purchase.receipt", "pr")
     _add_status_filter(scr_conditions, "purchase.receipt", "scr")
+    # returns (goods sent back) are kept apart: listed only under Billing › Returns
+    if cstr(_tf("purchase.receipt").get("status")) != "returns":
+        pr_conditions.append("IFNULL(pr.is_return, 0) = 0")
+        scr_conditions.append("IFNULL(scr.is_return, 0) = 0")
     if scope == "open":
-        pr_conditions.append("pr.status NOT IN ('Completed', 'Cancelled', 'Return')")  # a submitted return is done
-        pr_conditions.append("(pri.sales_order IS NULL OR pri.sales_order = '' OR so.status NOT IN ('Closed', 'Completed', 'Cancelled'))")
-        scr_conditions.append("scr.status NOT IN ('Completed', 'Cancelled', 'Return')")
-        scr_conditions.append("(poi.sales_order IS NULL OR poi.sales_order = '' OR so.status NOT IN ('Closed', 'Completed', 'Cancelled'))")
+        # a receipt is open while it is not fully billed — whatever its Sales Order's status (the customer
+        # side can be delivered and billed while the supplier's / jobber's bill is still pending)
+        pr_conditions.append("pr.status NOT IN ('Completed', 'Cancelled', 'Closed', 'Return')")  # a submitted return is done
+        scr_conditions.append("scr.status NOT IN ('Completed', 'Cancelled', 'Closed', 'Return')")
     elif scope == "mine":
         pr_conditions.append("pr.owner = %(me)s")
         scr_conditions.append("scr.owner = %(me)s")
@@ -3443,6 +3469,11 @@ def get_purchase_flow(days=120, search=None, scope="open", merchandiser=None,
         ORDER BY posting_date DESC
     """, params, receipt_page, receipt_page_size)
     receipts["docstatus_counts"] = receipt_docstatus_counts
+    receipts["return_count"] = cint(frappe.db.sql("""SELECT
+        (SELECT COUNT(*) FROM `tabPurchase Receipt` WHERE docstatus = 1 AND IFNULL(is_return, 0) = 1
+            AND IFNULL(is_subcontracted, 0) = 0 AND posting_date >= %(from_date)s AND posting_date < %(to_next)s)
+        + (SELECT COUNT(*) FROM `tabSubcontracting Receipt` WHERE docstatus = 1 AND IFNULL(is_return, 0) = 1
+            AND posting_date >= %(from_date)s AND posting_date < %(to_next)s)""", params)[0][0])
     receipts["filter_options"] = _filter_options("purchase.receipt", [(_pr_from_join, pr_conditions), (_scr_from_join, scr_conditions)],
                                                  params, {"supplier": ("sup.name", "Supplier")})
 
@@ -3462,8 +3493,14 @@ def get_purchase_flow(days=120, search=None, scope="open", merchandiser=None,
 
     for p in purchase_orders["rows"]:
         p["draft_invoice"] = po_draft_pi.get(p.name)
+    pr_draft_pi = {d.purchase_receipt: d.name for d in frappe.db.sql("""
+        SELECT pii.purchase_receipt, pi.name
+        FROM `tabPurchase Invoice Item` pii
+        JOIN `tabPurchase Invoice` pi ON pi.name = pii.parent
+        WHERE pi.docstatus = 0 AND IFNULL(pii.purchase_receipt, '') != ''
+    """, as_dict=1)}
     for p in bill_orders["rows"]:
-        p["draft_invoice"] = po_draft_pi.get(p.name)
+        p["draft_invoice"] = pr_draft_pi.get(p.name)
 
     po_agg = frappe.db.sql(f"""
         SELECT
@@ -3721,10 +3758,10 @@ def get_jobwork_flow(days=180, search=None, scope="open", merchandiser=None,
     _add_status_filter(scr_conditions, "jobwork.receipt", "scr")
 
     if scope == "open":
-        pr_conditions.append("pr.status NOT IN ('Completed', 'Cancelled', 'Return')")  # a submitted return is done
-        pr_conditions.append("(pri.sales_order IS NULL OR pri.sales_order = '' OR so.status NOT IN ('Closed', 'Completed', 'Cancelled'))")
-        scr_conditions.append("scr.status NOT IN ('Completed', 'Cancelled', 'Return')")
-        scr_conditions.append("(poi.sales_order IS NULL OR poi.sales_order = '' OR so.status NOT IN ('Closed', 'Completed', 'Cancelled'))")
+        # a receipt is open while it is not fully billed — whatever its Sales Order's status (the customer
+        # side can be delivered and billed while the supplier's / jobber's bill is still pending)
+        pr_conditions.append("pr.status NOT IN ('Completed', 'Cancelled', 'Closed', 'Return')")  # a submitted return is done
+        scr_conditions.append("scr.status NOT IN ('Completed', 'Cancelled', 'Closed', 'Return')")
     elif scope == "mine":
         pr_conditions.append("pr.owner = %(me)s")
         scr_conditions.append("scr.owner = %(me)s")

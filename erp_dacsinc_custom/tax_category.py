@@ -16,6 +16,14 @@ Two rules:
   for that category, get the item's first valid row (ERPNext's get_item_tax_template — price slab
   and Exempted rows respected); a GST template of the other category is swapped for the matching one.
 
+Purchases the same way (Purchase Order / Receipt / Invoice drafts, Supplier, Address): the supplier's
+state (its GSTIN on the document, else the Supplier's GSTIN, else its address) against the company's
+GSTIN state — same state In-State (CGST + SGST), another state / SEZ / Overseas Out-State (IGST); the
+Purchase Taxes and Charges Template of the other category is swapped for this one, keeping the amounts
+typed on its non-GST rows. Without this an out-of-state supplier's bill kept "Input GST In-state" (the
+default template; new Suppliers default to In-State) and India Compliance refused it: "Cannot charge
+CGST/SGST for inter-state supplies".
+
 Other categories (Reverse Charge, Registered Composition) are chosen on purpose and left alone; so
 are returns made against an invoice (they copy it).
 """
@@ -26,6 +34,7 @@ from frappe.utils import cint, cstr
 
 AUTO = ("", "In-State", "Out-State")
 SALES = ("Quotation", "Sales Order", "Delivery Note", "Sales Invoice")
+PURCHASE = ("Purchase Order", "Purchase Receipt", "Purchase Invoice")
 
 
 def _company_state_code(company=None):
@@ -73,16 +82,54 @@ def customer_validate(doc, method=None):
 
 
 def address_on_update(doc, method=None):
-	"""An address saved: its customers' Tax Category follows it (their primary / billing address)."""
+	"""An address saved: its customers' / suppliers' Tax Category follows it (their primary / billing address)."""
 	for link in doc.get("links") or []:
-		if link.link_doctype != "Customer" or not link.link_name:
+		if link.link_doctype not in ("Customer", "Supplier") or not link.link_name:
 			continue
-		cur = frappe.db.get_value("Customer", link.link_name, "tax_category")
+		cur = frappe.db.get_value(link.link_doctype, link.link_name, "tax_category")
 		if cstr(cur) not in AUTO:
 			continue
-		want = customer_tax_category(link.link_name)
+		want = customer_tax_category(link.link_name) if link.link_doctype == "Customer" else supplier_tax_category(link.link_name)
 		if want and want != cstr(cur):
-			frappe.db.set_value("Customer", link.link_name, "tax_category", want, update_modified=False)
+			frappe.db.set_value(link.link_doctype, link.link_name, "tax_category", want, update_modified=False)
+
+
+# ── Supplier ──────────────────────────────────────────────────────────────────────────────────
+
+def supplier_tax_category(supplier, gst_category=None, gstin=None):
+	"""In-State / Out-State for a supplier, or None when it can't be told. State: its GSTIN, else its
+	primary / billing address (GSTIN, then state); Overseas / SEZ / an address abroad is Out-State."""
+	s = frappe.db.get_value("Supplier", supplier, ["gst_category", "gstin", "supplier_primary_address"], as_dict=1) or frappe._dict()
+	gst_category = gst_category or s.gst_category
+	if gst_category in ("SEZ", "Overseas"):
+		return "Out-State"
+	state = cstr(gstin or s.gstin)[:2]
+	if not state:
+		address = s.supplier_primary_address
+		if not address:
+			rows = frappe.db.sql("""SELECT a.name FROM `tabAddress` a JOIN `tabDynamic Link` dl ON dl.parent = a.name
+				WHERE dl.link_doctype = 'Supplier' AND dl.link_name = %s AND dl.parenttype = 'Address' AND a.disabled = 0
+				ORDER BY a.is_primary_address DESC, a.address_type = 'Billing' DESC, a.creation LIMIT 1""", supplier)
+			address = rows[0][0] if rows else None
+		if address:
+			a = frappe.db.get_value("Address", address, ["gst_state_number", "gstin", "country"], as_dict=1) or {}
+			if a.get("country") and a.country != "India":
+				return "Out-State"
+			state = cstr(a.get("gstin"))[:2] or cstr(a.get("gst_state_number"))
+	home = _company_state_code()
+	if not state or not home:
+		return None
+	return "In-State" if state == home else "Out-State"
+
+
+def supplier_validate(doc, method=None):
+	if cstr(doc.tax_category) not in AUTO:
+		return
+	want = supplier_tax_category(doc.name, doc.gst_category, doc.get("gstin")) if not doc.is_new() \
+		else ("Out-State" if doc.gst_category in ("SEZ", "Overseas") else (
+			("In-State" if cstr(doc.get("gstin"))[:2] == _company_state_code() else "Out-State") if doc.get("gstin") else None))
+	if want and want != doc.tax_category:
+		doc.tax_category = want
 
 
 # ── Sales documents ───────────────────────────────────────────────────────────────────────────
@@ -104,14 +151,34 @@ def _document_tax_category(doc):
 	return "Out-State" if cstr(pos)[:2] != cstr(doc.company_gstin)[:2] else "In-State"
 
 
+def _purchase_tax_category(doc):
+	"""The supplier's state against the company's: on the document (India Compliance's supplier_gstin /
+	supplier address), else the Supplier master."""
+	if doc.get("gst_category") in ("SEZ", "Overseas"):
+		return "Out-State"
+	home = cstr(doc.get("company_gstin"))[:2] or _company_state_code(doc.company)
+	state = cstr(doc.get("supplier_gstin"))[:2]
+	if not state and doc.get("supplier_address"):
+		a = frappe.db.get_value("Address", doc.supplier_address, ["gst_state_number", "gstin", "country"], as_dict=1) or {}
+		if a.get("country") and a.country != "India":
+			return "Out-State"
+		state = cstr(a.get("gstin"))[:2] or cstr(a.get("gst_state_number"))
+	if not state:
+		return supplier_tax_category(doc.supplier) if doc.get("supplier") else None
+	if not home:
+		return None
+	return "In-State" if state == home else "Out-State"
+
+
 def set_document_tax_category(doc, method=None):
-	if doc.doctype not in SALES or cint(doc.docstatus) != 0:
+	if doc.doctype not in SALES + PURCHASE or cint(doc.docstatus) != 0:
 		return
 	if cint(doc.get("is_return")) and doc.get("return_against"):
 		return
 	if cstr(doc.get("tax_category")) not in AUTO:
 		return
-	want = _document_tax_category(doc)
+	purchase = doc.doctype in PURCHASE
+	want = _purchase_tax_category(doc) if purchase else _document_tax_category(doc)
 	if not want:
 		return
 	changed = cstr(doc.tax_category) != want
@@ -135,19 +202,33 @@ def set_document_tax_category(doc, method=None):
 			row.item_tax_rate = get_item_tax_map(doc.company, tpl, as_json=True)
 			fixed.append(row.idx)
 
-	# the header GST template of the other category → the one for this category
-	master = "Sales Taxes and Charges Template"
+	# the header GST template of the other category → the one for this category (the default one when
+	# several exist); amounts typed on its non-GST rows (freight, packing…) are kept
+	master = "Purchase Taxes and Charges Template" if purchase else "Sales Taxes and Charges Template"
 	cur_cat = frappe.db.get_value(master, doc.taxes_and_charges, "tax_category") if doc.get("taxes_and_charges") else None
+	swapped = None
 	if cur_cat in ("In-State", "Out-State") and cur_cat != want:
-		new = frappe.db.get_value(master, {"company": doc.company, "tax_category": want, "disabled": 0}, "name")
+		new = frappe.db.get_value(master, {"company": doc.company, "tax_category": want, "disabled": 0}, "name",
+								  order_by="is_default desc, name asc")
 		if new:
 			from erpnext.controllers.accounts_controller import get_taxes_and_charges
+			typed = {t.account_head: t for t in doc.get("taxes") or []
+					 if t.charge_type == "Actual" and (t.tax_amount or t.get("base_tax_amount"))}
 			doc.taxes_and_charges = new
 			doc.set("taxes", [])
 			for t in get_taxes_and_charges(master, new) or []:
+				old = typed.pop(t.get("account_head"), None)
+				if old:
+					t["tax_amount"] = old.tax_amount
 				doc.append("taxes", t)
+			for old in typed.values():
+				doc.append("taxes", {k: old.get(k) for k in ("charge_type", "account_head", "description", "tax_amount",
+					"cost_center", "category", "add_deduct_tax", "included_in_print_rate") if old.get(k) is not None})
+			swapped = new
 
-	if changed or fixed:
-		frappe.msgprint(_("Tax Category set to {0} (place of supply){1}").format(
-			want, _(" — GST template re-picked on line(s) {0}").format(", ".join(map(str, fixed))) if fixed else ""),
+	if changed or fixed or swapped:
+		frappe.msgprint(_("Tax Category set to {0} ({1}){2}{3}").format(
+			want, _("supplier's state") if purchase else _("place of supply"),
+			_(" — taxes template {0}").format(swapped) if swapped else "",
+			_(" — GST template re-picked on line(s) {0}").format(", ".join(map(str, fixed))) if fixed else ""),
 			indicator="blue", alert=True)

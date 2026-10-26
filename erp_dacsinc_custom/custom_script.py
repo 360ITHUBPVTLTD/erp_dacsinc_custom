@@ -113,7 +113,7 @@ def item_before_save(doc, method):
         doc.set(field, normalize_gst_template(doc.get(field)))
 
     # 1. Check if any tax-related field has changed
-    tax_fields = ["custom_tax_rate", "custom_alternative_gst_", "custom_alternative_amount"]
+    tax_fields = ["custom_tax_rate", "custom_alternative_gst_", "custom_alternative_amount", "custom_charge_item"]
     tax_changed = False
 
     if not doc_before:
@@ -361,6 +361,7 @@ def get_bom_data_for_item(item_code):
 # up to SLAB_UPPER_LIMIT (an upper limit of 0 counts as "no range", and the
 # Item form rejects a minimum above the maximum).
 EXEMPTED_TAX_TEMPLATE = "Exempted - IND"
+CHARGE_TAX_TEMPLATES = ("GST 5% - IND", "GST 12% - IND", "GST 18% - IND", "GST 28% - IND", EXEMPTED_TAX_TEMPLATE)
 SLAB_UPPER_LIMIT = 9999999
 # ERPNext reads a row with a price range but no Valid From as valid from TODAY, so a
 # back-dated Quotation / Order / Invoice found no template. Every row carries this date.
@@ -386,6 +387,17 @@ def update_tax_child(doc):
     try:
         # Clear existing taxes
         doc.set("taxes", [])
+
+        if doc.get("custom_charge_item"):
+            # freight / packing / insurance billed with goods take the goods' rate (docs/charges.md):
+            # every GST rate is listed, so the line keeps whichever one is chosen; 5% first (the default)
+            for template in CHARGE_TAX_TEMPLATES:
+                if frappe.db.exists("Item Tax Template", template):
+                    for category in ["In-State", "Out-State"]:
+                        doc.append("taxes", {"tax_category": category, "item_tax_template": template})
+            for row in doc.get("taxes"):
+                row.valid_from = TAX_VALID_FROM
+            return
 
         tax_rate = doc.custom_tax_rate  # Primary GST template
         alt_tax = doc.get("custom_alternative_gst_") # Slab GST template

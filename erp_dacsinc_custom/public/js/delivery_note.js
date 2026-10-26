@@ -70,6 +70,18 @@ frappe.ui.form.on('Delivery Note', {
 	},
 	refresh: function(frm) {
 		frm.trigger('make_linked_rows_read_only');
+		// Custom Print › With Amount / Without Amount (docs/print-formats.md), with the document's letter head.
+		// Moved here from the DB Client Script "Delivery Note" (patches/dn_print_buttons_to_app.py), whose
+		// buttons both opened the without-amount format.
+		if (!frm.is_new()) {
+			[['With Amount', 'Delivery Note Version 3'], ['Without Amount', 'Delivery Note Without Amount Version 3']]
+				.forEach(([label, format]) => frm.add_custom_button(__(label), () => window.open(
+					'/api/method/frappe.utils.print_format.download_pdf?'
+					+ `doctype=${encodeURIComponent(frm.doctype)}&name=${encodeURIComponent(frm.doc.name)}`
+					+ `&format=${encodeURIComponent(format)}&no_letterhead=0`
+					+ (frm.doc.letter_head ? `&letterhead=${encodeURIComponent(frm.doc.letter_head)}` : '')
+					+ `&_lang=${encodeURIComponent((frappe.boot && frappe.boot.lang) || 'en')}`), __('Custom Print')));
+		}
 		// Create menu: Sales Invoice and Sales Return stay (the billing / return flow). On a Sales
 		// Return, ERPNext's "Credit Note" is replaced by "Make Credit Note" (return_goods.py): that
 		// one is made from the original invoice, so it is against it (GST, the invoice's balance).

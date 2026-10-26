@@ -43,7 +43,9 @@ app_include_js = [
     # Overall discount skips items ticked "Exclude from Overall Discount" (overall_discount.py)
     "/assets/erp_dacsinc_custom/js/overall_discount.js?v=1.0.1",
     # Workspace shortcuts without a count filter are not counted (single DocTypes have no table)
-    "/assets/erp_dacsinc_custom/js/shortcut_count_fix.js?v=1.0.0"
+    "/assets/erp_dacsinc_custom/js/shortcut_count_fix.js?v=1.0.0",
+    # "Add charges": freight / packing / insurance lines at the goods' GST rate (docs/charges.md)
+    "/assets/erp_dacsinc_custom/js/charges.js?v=1.0.1"
 ]
 
 app_include_css = [
@@ -363,6 +365,8 @@ doc_events = {
         "before_validate": [
             "erp_dacsinc_custom.custom_script.lock_item_rate_to_sales_order_early",
             "erp_dacsinc_custom.tax_category.set_document_tax_category",
+            # direct invoice ticks Update Stock; from Delivery Notes unticks it (si_stock.py)
+            "erp_dacsinc_custom.si_stock.set_update_stock",
         ],
         "validate": [
             "erp_dacsinc_custom.custom_script.lock_item_rate_to_sales_order",
@@ -446,7 +450,11 @@ doc_events = {
     },
     "Purchase Receipt": {
         # service line of a job-work receipt: the account its Subcontracting Receipt credited (job_work.py)
-        "before_validate": "erp_dacsinc_custom.job_work.match_subcontracting_receipt_account",
+        "before_validate": [
+            "erp_dacsinc_custom.job_work.match_subcontracting_receipt_account",
+            # In-State / Out-State from the supplier's state, the right GST template (tax_category.py)
+            "erp_dacsinc_custom.tax_category.set_document_tax_category",
+        ],
         # no second draft for the same source line (draft_guard.py)
         "before_insert": "erp_dacsinc_custom.draft_guard.guard_duplicate_draft",
         "validate": [
@@ -500,6 +508,10 @@ doc_events = {
         ],
         "on_update": "erp_dacsinc_custom.custom_customer.update_customer_sharing"
     },
+    # Tax Category follows the supplier's GSTIN / address (tax_category.py)
+    "Supplier": {
+        "validate": "erp_dacsinc_custom.tax_category.supplier_validate",
+    },
     "Purchase Order": {
         # no second draft for the same source line (draft_guard.py)
         "before_insert": "erp_dacsinc_custom.draft_guard.guard_duplicate_draft",
@@ -507,7 +519,11 @@ doc_events = {
         # validate_from_warehouse — it clears a source warehouse that merely
         # equals the target, which is the form a stale Material Request value
         # arrives in and the only form ERPNext would reject anyway.
-        "before_validate": "erp_dacsinc_custom.custom_script.clear_po_from_warehouse_when_same_as_target",
+        "before_validate": [
+            "erp_dacsinc_custom.custom_script.clear_po_from_warehouse_when_same_as_target",
+            # In-State / Out-State from the supplier's state, the right GST template (tax_category.py)
+            "erp_dacsinc_custom.tax_category.set_document_tax_category",
+        ],
         "validate": [
             "erp_dacsinc_custom.custom_script.validate_non_zero_rate",
             # Merchandiser User: Subcontract POs only (custom_script)
@@ -576,8 +592,16 @@ doc_events = {
         # no second draft for the same source line (draft_guard.py)
         "before_insert": "erp_dacsinc_custom.draft_guard.guard_duplicate_draft",
         # Debit Note: received qty follows qty, or later Debit Notes are refused (return_goods.py)
-        "before_validate": "erp_dacsinc_custom.return_goods.sync_debit_note_received_qty",
-        "validate": "erp_dacsinc_custom.custom_script.validate_non_zero_rate",
+        "before_validate": [
+            "erp_dacsinc_custom.return_goods.sync_debit_note_received_qty",
+            # In-State / Out-State from the supplier's state, the right GST template (tax_category.py)
+            "erp_dacsinc_custom.tax_category.set_document_tax_category",
+        ],
+        "validate": [
+            "erp_dacsinc_custom.custom_script.validate_non_zero_rate",
+            # goods only from a Purchase Receipt; Service items may be billed directly (purchase_bill.py)
+            "erp_dacsinc_custom.purchase_bill.guard_direct_goods",
+        ],
         "before_submit": "erp_dacsinc_custom.stock_hold.guard_return",
         "before_cancel": [
             "erp_dacsinc_custom.return_goods.on_note_cancel",

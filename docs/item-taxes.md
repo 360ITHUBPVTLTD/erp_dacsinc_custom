@@ -81,6 +81,27 @@ picks the right GST template but never sets the category; ERPNext copies it from
   list in bench `docs/files/customer_tax_category_fix.xlsx`, with a second sheet of customers whose
   GSTIN state and address state disagree — data to check, not changed).
 
+### Purchases (Purchase Order / Receipt / Invoice, Supplier)
+
+The same rule on the buying side — before this an out-of-state supplier's document kept **Input GST
+In-state** (the default template; new Suppliers default to In-State) and India Compliance refused the
+bill: *"Cannot charge CGST/SGST for inter-state supplies"*.
+
+- **Drafts** (`before_validate`): Tax Category from the **supplier's state** — the document's supplier
+  GSTIN, else its supplier address, else the Supplier master — against the company GSTIN state: same
+  state **In-State** (CGST + SGST), another state / SEZ / Overseas **Out-State** (IGST). The Purchase
+  Taxes and Charges Template of the other category is swapped for this one (the default one first),
+  keeping amounts typed on its non-GST rows (freight, packing…); line GST templates re-picked as on sales.
+  A bill made from a receipt therefore comes out right even when the receipt / PO carried the wrong
+  template (PR-26-00083, ADARSH SYNTHETICS, Rajasthan: bill → Out-State, IGST).
+- **Supplier** (validate) and **Address** (on_update → its suppliers): Out-State for SEZ / Overseas, an
+  address abroad, or a GSTIN / address state other than the company's; else In-State.
+- `patches/supplier_tax_category.py` corrects existing suppliers on migrate (dated comment on each; on the
+  local copy: IP Designs, Tone N Textile).
+- Nothing in the app hard-codes a purchase template. Submitted receipts with the wrong template were not
+  changed — GST on a receipt is not posted (it is posted by the bill), and no submitted bill was wrong.
+
+
 ## Imported GST text
 
 Items imported with the GST as text (`0.18`, `18`, `GST 18% - IND%`) are not template names; a Taxes
