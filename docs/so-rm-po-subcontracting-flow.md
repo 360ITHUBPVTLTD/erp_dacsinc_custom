@@ -449,7 +449,12 @@ Header: "Raw material to make N of <item>" and one pill (worst row first):
 "All RM in stock — ready for Subcontract PO". Under it the FG card:
 Ordered · Delivered · Still to Cover · Free Finished Stock · **To Make**
 (`fg_pending_to_cover`, `fg_free_stock`, `fg_shortfall` from the server —
-To Make = Still to Cover − Free Finished Stock).
+To Make = Still to Cover − Free Finished Stock). Still to Cover = Ordered − Delivered − this line's
+picks (submitted **and draft**) − embroidery sent; Free Finished Stock = stock − every pick (this line's
+submitted and draft picks, other rows', other orders') − earmarks − embroidery held. A pick of this line
+comes off both, never only one: leaving the draft pick in "free" counted those pieces twice (SO-00148
+Beige Apron: 9 in stock all on this line's draft Pick List, 1 still to cover → the RM table said "Nothing
+to make", the row said Shortfall 1 / RM Short).
 
 | Column | Means |
 | --- | --- |
@@ -493,6 +498,12 @@ Raw Materials takes the primary slot instead. Where the caller already owns
 the primary action (the draft-Pick-List branch, whose primary is "Submit
 Pick List"), neither is marked primary — that branch passes
 `allow_primary = false`, unchanged.
+
+Once every material that is not on the shelf is **already requested** — its shortfall is 0 because a
+Material Request / PO covers it (the RM table's "Requested", nothing To Request) — the cell shows
+**"RM requested — waiting for stock · Subcontract PO when it arrives"** instead, with no Request Raw
+Material button (pressing it again only told the user it was already requested). The Subcontract PO
+stays blocked until the material physically arrives; no override (`so_buy_btn`).
 
 ### A second, partial Subcontract PO was wrongly blocked as "RM Not in Stock"
 

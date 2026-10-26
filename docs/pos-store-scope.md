@@ -140,6 +140,11 @@ has no status and is unaffected, including a POS Admin's own requests.
   - HO and admins without POS Admin are refused, so ERPNext's Submit can't get around it
     either;
   - the rows can't take the request past its qty.
+- **Items with a BOM can be requested.** The Material Request rule "has a BOM … not requested via
+  Material Request" (`custom_script.validate_material_request_no_bom_items`) is skipped for a
+  POS request (Created by POS User) that is against no Sales Order. It moves finished stock
+  from VV Puram to a store, so nothing is bought or produced. Every other Material Request
+  keeps the rule, including a POS one with a Sales Order link.
 - **Warehouse Incharge** has **View** on Material Request in the access sheet, for this.
   A user whose Material Request access is View only, through an approver role, sees
   only POS store requests (`pos_request.material_request_query` /

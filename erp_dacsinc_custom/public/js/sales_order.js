@@ -5699,6 +5699,17 @@ function so_buy_btn(d, so_name_arg, item_arg, qty, primary, pair_key) {
     // distinction matters once an earlier, partial Subcontract PO already
     // exists for part of it.
     if (!so_rm_physically_in_stock(d, qty)) {
+        // Every material that is not on the shelf yet is already requested (MR / PO covers it —
+        // the RM table's "Requested", nothing left To Request): say so instead of offering
+        // "Request Raw Material" again. The Subcontract PO stays blocked until the stock arrives.
+        const rm_rows = ((d.rm_procurement_status || {}).rm_items_status) || [];
+        const missing = rm_rows.filter(rm => flt(rm.rm_available_stock, 2) < flt(flt(qty) * flt(rm.rm_qty_per_fg || 0), 2));
+        if (missing.length && missing.every(rm => flt(rm.rm_shortfall_total || 0) <= 0.0005)) {
+            return `<div class="so-action__note" style="color:var(--so-blue);font-weight:600;"
+                title="${esc('All raw material for this line is requested (Material Request / Purchase Order) — nothing left to request. The Subcontract PO opens when it arrives in stock. See the Raw Material table below.')}">
+                <i class="fa fa-clock-o"></i> RM requested — waiting for stock</div>
+                <div class="so-action__note" style="color:var(--text-muted);font-size:11px;">${__('Subcontract PO when it arrives')}</div>`;
+        }
         // "PO Blocked" on its own is a dead end — it says what cannot be done
         // and leaves the user to work out the next move. What actually
         // unblocks this line is requesting the missing raw material, so offer

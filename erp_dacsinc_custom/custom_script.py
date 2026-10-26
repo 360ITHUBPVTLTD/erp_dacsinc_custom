@@ -3512,12 +3512,16 @@ def get_item_stock_details_bulk(item_bom_pairs, sales_order_name):
         # (pending_fg_for_so); leaving them in "available" as well counted the
         # same units twice. Confirmed live on SO-00141 Beige T Shirt: 149 in
         # stock, 143 picked for other orders, 6 picked for this one — 0 free,
-        # 34 still to make; the RM table said 28. A draft pick of this line is
-        # still this line's stock (pending doesn't subtract it), so it stays.
+        # 34 still to make; the RM table said 28. The same holds for a DRAFT
+        # pick of this line: pending_fg_for_so below subtracts it too, so it
+        # comes off here as well. Leaving it in counted those units twice —
+        # SO-00148 Beige Apron: 10 ordered, 9 in stock all on this line's draft
+        # Pick List → still to cover 1, "free" 9, To Make 0 / "Not Needed",
+        # while the row said Shortfall 1 / RM Short.
         truly_available_fg = max(0, total_available_stock - picked_for_others_qty
                                  - draft_qty_for_others - rm_earmarked_qty - embroidery_held_qty
-                                 - picked_sub_undelivered - picked_submitted_other_rows
-                                 - picked_draft_other_rows)
+                                 - picked_sub_undelivered - picked_draft_qty_so
+                                 - picked_submitted_other_rows - picked_draft_other_rows)
         # Qty already picked for THIS order (draft or submitted Pick List) counts as produced/staged:
         # any quantity for which a Pick List is created should not have raw material calculated for it
         # or be demanded for production/subcontracting.
@@ -9604,7 +9608,14 @@ def validate_material_request_no_bom_items(doc, method):
     this order" decision back to "has a BOM" before this validation ever
     runs. Only a standalone MR with no Sales Order behind it falls back to
     the Item master, for lack of any more specific answer.
+
+    Not for a POS store request (Created by POS User, pos_request.py) that is against no
+    Sales Order: it moves finished stock from the supply warehouse to a store — nothing is
+    bought or produced, so whether the item has a BOM doesn't matter.
     """
+    if frappe.utils.cint(doc.get("custom_is_pos_request")) and not any(
+            row.get("sales_order") or row.get("sales_order_item") for row in doc.items):
+        return
     for row in doc.items:
         if row.sales_order_item:
             so_bom_no = frappe.db.get_value("Sales Order Item", row.sales_order_item, "bom_no")
