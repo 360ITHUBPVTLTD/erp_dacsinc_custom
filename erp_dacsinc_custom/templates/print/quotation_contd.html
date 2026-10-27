@@ -1,0 +1,7 @@
+{#- Page header part of "Proforma Invoice Quotation" / "Quotation print format 7Apr" (their print_heading_template
+    block sets dacs_label and includes this): the document no. / date on every page after the first, top right
+    above the letter head (takes no room). Page 1 has them in its heading; the page header is the same on every
+    page, so the line is only made invisible on page 1, from the page number the PDF engine passes
+    (docs/print-formats.md › Page header and page numbers) -#}
+<div class="dacs-contd" style="position: absolute; top: 3mm; right: 0; font-size: 8pt; text-align: right;">{{ dacs_label }} No: <strong>{{ doc.name }}</strong> &nbsp;|&nbsp; Date: <strong>{{ frappe.utils.formatdate(doc.transaction_date) }}</strong> &nbsp;(continued)</div>
+<script>(function () { var m = /[?&]page=(\d+)/.exec(window.location.search); if (!m || m[1] === '1') { var e = document.getElementsByClassName('dacs-contd'); for (var i = 0; i < e.length; i++) e[i].style.visibility = 'hidden'; } })();</script>

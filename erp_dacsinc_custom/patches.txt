@@ -46,4 +46,4 @@ erp_dacsinc_custom.patches.charge_items
 erp_dacsinc_custom.patches.supplier_tax_category
 erp_dacsinc_custom.patches.letter_head_border
 erp_dacsinc_custom.patches.dn_print_buttons_to_app
-erp_dacsinc_custom.patches.quotation_print_format_7apr_header
+erp_dacsinc_custom.patches.quotation_print_format_7apr_header #2026-10-27 shared body with blank rows

@@ -1,0 +1,296 @@
+{#- dacs-font: one font on every server — Liberation Sans (Arial's letter widths) shipped in the app
+    (public/fonts), so a print measures and looks the same on local and live (docs/print-formats.md › Font) -#}
+{%- set dacs_base = frappe.utils.get_url() -%}
+<style>
+@font-face { font-family: 'Arial'; src: url('{{ dacs_base }}/assets/erp_dacsinc_custom/fonts/LiberationSans-Regular.ttf') format('truetype'); font-weight: normal; font-style: normal; }
+@font-face { font-family: 'Arial'; src: url('{{ dacs_base }}/assets/erp_dacsinc_custom/fonts/LiberationSans-Bold.ttf') format('truetype'); font-weight: bold; font-style: normal; }
+@font-face { font-family: 'Arial'; src: url('{{ dacs_base }}/assets/erp_dacsinc_custom/fonts/LiberationSans-Italic.ttf') format('truetype'); font-weight: normal; font-style: italic; }
+@font-face { font-family: 'Arial'; src: url('{{ dacs_base }}/assets/erp_dacsinc_custom/fonts/LiberationSans-BoldItalic.ttf') format('truetype'); font-weight: bold; font-style: italic; }
+body, body * { font-family: Arial !important; }
+/* uniform top margin: the PDF page header (letter head, or the format's own company / store header) starts
+   10mm from the top of the paper on every format (Frappe's header template pulls a letter head to the edge) */
+body[onload] .wrapper > :first-child { margin-top: -7.5mm !important; }
+</style>
+<style>
+.dacs-pf { font-family: Arial; font-size: 8.5pt; }
+.dacs-pf table.dacs-items { font-size: 9pt; }
+
+table { width:100%; border-collapse:collapse; page-break-inside: auto; }
+
+th, td {
+  border:1px solid #000;
+  padding:3px 5px;
+  vertical-align:top;
+}
+
+th { background:#eee; }
+
+.right { text-align:right; }
+.center { text-align:center; }
+
+/* Prevent row breaking and keep tables together where possible */
+tr { page-break-inside: avoid; page-break-after: auto; }
+.keep-together { page-break-inside: avoid; }
+
+.no-border td { border:none; padding:2px 4px; }
+</style>
+
+{#- Shared body of "Proforma Invoice Quotation" and "Quotation print format 7Apr" (each sets dacs_title, dacs_gstin
+    and includes this file). docs/print-formats.md › Blank rows.
+    Page box only when the document surely fits on one page: estimated free space (mm) at the page bottom without
+    blank rows — weights fitted to measured quotations (never above the real free space). Lines are counted per
+    line break (descriptions and terms are often written one entry per line). -#}
+{%- set dacs_nl = namespace(fl=0, fa=0, tl=0) -%}
+{%- for it in (doc.get('items') or []) -%}
+{%- set nm = namespace(n=0) -%}
+{%- for p in (it.item_name or '').replace('<br />', '\n').replace('<br/>', '\n').replace('<br>', '\n').split('\n') if p | striptags | trim -%}{%- set nm.n = nm.n + 1 + (p | striptags | trim | length) // 45 -%}{%- endfor -%}
+{%- set dacs_nl.fl = dacs_nl.fl + ([nm.n, 1] | max) -%}
+{%- for p in (it.description or '').replace('<br />', '\n').replace('<br/>', '\n').replace('<br>', '\n').replace('</p>', '\n').replace('</div>', '\n').replace('</li>', '\n').split('\n') if p | striptags | trim -%}{%- set dacs_nl.fl = dacs_nl.fl + 1 + (p | striptags | trim | length) // 45 -%}{%- endfor -%}
+{%- endfor -%}
+{%- for fld in ["address_display", "shipping_address_display", "shipping_address", "supplier_address_display", "billing_address_display", "dispatch_address"] if doc.get(fld) is string -%}{%- for p in doc.get(fld).split('<br>') if p | striptags | trim -%}{%- set dacs_nl.fa = dacs_nl.fa + 1 + (p | striptags | trim | length) // 50 -%}{%- endfor -%}{%- endfor -%}
+{%- for p in (doc.terms or '').replace('<br />', '\n').replace('<br/>', '\n').replace('<br>', '\n').replace('</p>', '\n').replace('</div>', '\n').replace('</li>', '\n').split('\n') if p | striptags | trim -%}{%- set dacs_nl.tl = dacs_nl.tl + 1 + (p | striptags | trim | length) // 95 -%}{%- endfor -%}
+{%- set dacs_n = (doc.get('items') or []) | length -%}
+{%- set dacs_hsn = (doc.get('items') or []) | map(attribute='gst_hsn_code') | select | unique | list | length -%}
+{%- set dacs_free = (101.5 if dacs_gstin else 105.6) - 5 * dacs_nl.fl - 3 * dacs_n - 4.5 * dacs_hsn - 4.5 * dacs_nl.fa -%}
+{#- out of the measured range (more item lines, items, HSN codes, address or terms lines, a longer name than any
+    measured quotation): plain flow — the estimate is not trusted there, and a wrong fixed page height would
+    squeeze the item rows under the totals. Threshold: the free space under the box (16.3 / 19.3mm) + 8mm -#}
+{%- if dacs_free >= (24.3 if dacs_gstin else 27.3) and dacs_nl.fl <= 17 and dacs_n <= 6 and dacs_hsn <= 4 and dacs_nl.fa <= 7 and dacs_nl.tl <= 8 and ((doc.get('customer_name') or '') | length) <= 68 and not ((doc.get('notes') or '') | striptags | trim) %}<style>
+/* Page box (docs/print-formats.md › Blank rows): the page is a vertical box of at least the printable height
+   (224mm: the largest height that stays one page, 237mm, less 13mm); the items part stretches into the space left and
+   its blank rows — a clipped table of empty rows after the items — fill it. Content taller than the page flows
+   on to the next page; the box never shrinks it. */
+.print-format .page-break { display: -webkit-box; -webkit-box-orient: vertical; height: 224mm; /* dacs page height */ }
+.print-format .page-break > .section-break[data-label="Items"] { -webkit-box-flex: 1; display: -webkit-box; -webkit-box-orient: vertical; }
+.print-format .page-break > .section-break[data-label="Items"] > .column-break { -webkit-box-flex: 1; float: none; display: -webkit-box; -webkit-box-orient: vertical; }
+.print-format .page-break > .section-break[data-label="Items"] > .column-break > div:first-child { -webkit-box-flex: 1; display: -webkit-box; -webkit-box-orient: vertical; }
+.dacs-items-box { -webkit-box-flex: 1; display: -webkit-box; -webkit-box-orient: vertical; }
+.dacs-fill-wrap { -webkit-box-flex: 1; height: 0; overflow: hidden; display: block !important; }
+.dacs-pf { display: -webkit-box; -webkit-box-orient: vertical; -webkit-box-flex: 1; }
+.dacs-pf .dacs-items-box { -webkit-box-flex: 1; }
+</style>{%- endif %}
+<div class="dacs-pf">
+<!-- TITLE -->
+<div style="text-align: center; margin: 0 0 5px 0; line-height: 1.2;">
+    <b style="font-size: 12pt; letter-spacing: 0.5px;">{{ dacs_title }}</b><br>
+    <span style="font-size: 9pt;">No: {{ doc.name }} | Date: {{ frappe.utils.formatdate(doc.transaction_date) }}</span>
+</div>
+
+<!-- EXECUTIVE DETAILS FETCH -->
+{% set exec_name = "" %}
+{% set exec_mobile = "" %}
+
+{% if doc.custom_lead_owner %}
+    {% set emp = frappe.db.get_value("Employee", {"user_id": doc.custom_lead_owner}, ["employee_name", "custom_office_no"], as_dict=True) %}
+    {% if emp %}
+        {% set exec_name = emp.employee_name %}
+        {% set exec_mobile = emp.custom_office_no %}
+    {% else %}
+        {% set usr = frappe.db.get_value("User", doc.custom_lead_owner, ["full_name", "mobile_no"], as_dict=True) %}
+        {% if usr %}
+            {% set exec_name = usr.full_name %}
+            {% set exec_mobile = usr.mobile_no %}
+        {% endif %}
+    {% endif %}
+
+{% elif doc.quotation_to == "Customer" and doc.party_name %}
+    {% set customer = frappe.get_doc("Customer", doc.party_name) %}
+
+    {% if customer.sales_team and customer.sales_team|length > 0 %}
+
+        {% set ns = namespace(top_sales_person="", top_percentage=-1) %}
+
+        {% for row in customer.sales_team %}
+            {% if row.sales_person and (row.allocated_percentage or 0) > ns.top_percentage %}
+                {% set ns.top_sales_person = row.sales_person %}
+                {% set ns.top_percentage = row.allocated_percentage or 0 %}
+            {% endif %}
+        {% endfor %}
+
+        {% if ns.top_sales_person %}
+            {% set emp = frappe.db.get_value("Employee", {"employee_name": ns.top_sales_person}, ["employee_name", "custom_office_no"], as_dict=True) %}
+
+            {% if emp %}
+                {% set exec_name = emp.employee_name %}
+                {% set exec_mobile = emp.custom_office_no %}
+            {% endif %}
+        {% endif %}
+
+    {% endif %}
+{% endif %}
+
+<!-- CUSTOMER DETAILS -->
+<table style="margin-top:5px; font-size: 8.5pt;">
+<tr>
+<td style="width:50%;">
+    <b>M/s. {{ doc.customer_name }}</b><br>
+    {{ doc.address_display or "" }}<br>
+    Phone: {{ doc.contact_mobile or "" }}<br>
+    <b>Contact:</b> {{ doc.contact_person or "" }}
+    {%- if dacs_gstin %}<br>
+    <b>GSTIN:</b> {{ doc.billing_address_gstin or "" }}{% endif %}
+</td>
+<td style="width:50%;">
+    <b>Valid Till:</b> {{ doc.get_formatted("valid_till") }}<br>
+    {% if exec_name %}
+        <b>Executive Name:</b> {{ exec_name or ""}}<br>
+        <b>Executive No:</b> {{ exec_mobile or "" }}<br>
+    {% endif %}
+</td>
+</tr>
+</table>
+
+<!-- ITEMS -->
+{#- Price List Rate and Discount print only when a line has a discount (a price below its list price);
+    otherwise only Rate (docs/print-formats.md) -#}
+{%- set dd = namespace(on=false) -%}
+{%- for it in doc.items -%}{%- if (it.discount_amount or 0) | float > 0.005 or ((it.price_list_rate or 0) | float | abs - (it.rate or 0) | float | abs) > 0.005 -%}{%- set dd.on = true -%}{%- endif -%}{%- endfor -%}
+{%- set dacs_disc = dd.on -%}
+<style>.dacs-nodisc .dacs-d { display: none; }</style>
+<div class="dacs-items-box">
+<table class="dacs-items{{ '' if dacs_disc else ' dacs-nodisc' }}" style="margin-top:5px; table-layout: fixed;">
+<colgroup><col style="width: 4%;"><col><col style="width: 10%;"><col style="width: 7%;"><col class="dacs-d" style="width: 11%;"><col style="width: 11%;"><col style="width: 9%;"><col style="width: 13%;"></colgroup>
+<tr>
+<th style="width:4%;">Sl</th>
+<th>Description of Goods</th>
+<th style="width:10%;">HSN/SAC</th>
+<th style="width:7%;">Qty</th>
+<th style="width:11%;" class="dacs-d right">Price List Rate</th>
+<th style="width:11%;" class="right">Rate</th>
+<th style="width:9%;">Tax%</th>
+<th style="width:13%;" class="right">Amount</th>
+</tr>
+
+{% for item in doc.items %}
+<tr>
+<td class="center">{{ loop.index }}</td>
+<td>
+<b>{{ item.item_name }}</b><br>
+{{ item.description or "" }}
+</td>
+<td>{{ item.gst_hsn_code or item.item_code }}</td>
+<td class="center">{{ item.qty }}</td>
+<td class="dacs-d right">{{ "{:,.2f}".format(item.price_list_rate or 0) }}</td>
+<td class="right">{{ "{:,.2f}".format(item.rate) }}</td>
+{%- set gr = (item.igst_rate or 0) + (item.cgst_rate or 0) + (item.sgst_rate or 0) -%}
+{%- if not gr and item.item_tax_template %}{%- set gr = frappe.db.get_value("Item Tax Template", item.item_tax_template, "gst_rate") or 0 -%}{%- endif %}
+<td class="center">{{ "{:g}".format(gr | float) }}%</td>
+<td class="right">
+{{ "{:,.2f}".format(item.amount) }}
+</td>
+</tr>
+{% endfor %}
+</table>
+<div class="dacs-fill-wrap">
+<table class="dacs-items{{ '' if dacs_disc else ' dacs-nodisc' }}" style="table-layout: fixed; margin: -1px 0 0 0;">
+<colgroup><col style="width: 4%;"><col><col style="width: 10%;"><col style="width: 7%;"><col class="dacs-d" style="width: 11%;"><col style="width: 11%;"><col style="width: 9%;"><col style="width: 13%;"></colgroup>
+<tbody>
+{%- for i in range(60) %}<tr>{%- for c in range((8) - (0 if dacs_disc else 1)) %}<td>&nbsp;</td>{%- endfor %}</tr>{%- endfor %}
+</tbody>
+</table>
+</div>
+</div>
+
+<!-- COMBINED SUMMARY + HSN TAX SUMMARY -->
+<table style="margin-top:5px; page-break-inside: avoid; border-collapse:collapse;" border="1">
+<tr>
+<!-- LEFT COLUMN: TOTALS, HSN TAX SUMMARY, WORDS -->
+<td style="width:58%; padding:5px; vertical-align:top;">
+    <div style="display:flex; justify-content:space-between; font-size:9pt; margin-bottom:4px;">
+        <span><b>Total Items:</b> {{ doc.items|length }}</span>
+        <span><b>Total Qty:</b> {{ doc.total_qty }}</span>
+    </div>
+
+    <!-- HSN TAX SUMMARY TABLE -->
+    <div style="margin-top:3px;">
+        <b style="font-size:8.5pt;">Tax Summary (HSN/SAC):</b>
+        <table style="width:100%; border-collapse:collapse; margin-top:2px; font-size:8pt;" border="1">
+        <thead>
+        <tr style="background:#eee;">
+        <th style="padding:2px; text-align:center;">HSN/SAC</th>
+        <th style="padding:2px; text-align:right;">Taxable Val</th>
+        <th style="padding:2px; text-align:right;">Tax Amt</th>
+        </tr>
+        </thead>
+        <tbody>
+        {% set hsn_groups = doc.items | groupby('gst_hsn_code') %}
+        {% for hsn_code, group_items in hsn_groups %}
+            {% set hsn_display = hsn_code or group_items[0].item_code or "N/A" %}
+            {% set taxable_val = group_items | sum(attribute='amount') %}
+            {% set ns = namespace(tax_amt=0) %}
+            {% for item in group_items %}
+                {% set item_tax = (item.igst_amount or 0) + (item.cgst_amount or 0) + (item.sgst_amount or 0) + (item.tax_amount or 0) %}
+                {% if item_tax == 0 and doc.total and doc.total > 0 and (doc.total_taxes_and_charges or (doc.grand_total - doc.total)) %}
+                    {% set total_taxes = doc.total_taxes_and_charges or (doc.grand_total - doc.total) %}
+                    {% set item_tax = (item.amount / doc.total) * total_taxes %}
+                {% endif %}
+                {% set ns.tax_amt = ns.tax_amt + item_tax %}
+            {% endfor %}
+        <tr>
+        <td style="padding:2px; text-align:center;">{{ hsn_display }}</td>
+        <td style="padding:2px; text-align:right;">{{ "{:,.2f}".format(taxable_val) }}</td>
+        <td style="padding:2px; text-align:right;">{{ "{:,.2f}".format(ns.tax_amt) }}</td>
+        </tr>
+        {% endfor %}
+        </tbody>
+        </table>
+    </div>
+
+    <div style="margin-top:5px; font-size:8.5pt;">
+        <b>Amount in Words:</b> {{ frappe.utils.money_in_words(doc.rounded_total or doc.grand_total) }}
+    </div>
+</td>
+
+<!-- RIGHT COLUMN: TOTALS -->
+<td style="width:42%; padding:5px; vertical-align:top;">
+<table class="no-border" style="font-size:9pt; width:100%;">
+<tr>
+<td>Sub Total</td>
+<td class="right">{{ "{:,.2f}".format(doc.total) }}</td>
+</tr>
+{% for tax in doc.taxes if tax.tax_amount %}
+<tr>
+<td>{{ tax.account_head.split(' - ')[0] }}</td>
+<td class="right">{{ "{:,.2f}".format(tax.tax_amount) }}</td>
+</tr>
+{% endfor %}
+<tr>
+<td>Round Off</td>
+<td class="right">{{ "{:,.2f}".format(doc.rounding_adjustment or 0) }}</td>
+</tr>
+<tr style="border-top:1px solid #000;">
+<td><b>Grand Total</b></td>
+<td class="right" style="font-size:10pt;"><b>₹ {{ "{:,.2f}".format(doc.rounded_total or doc.grand_total) }}</b></td>
+</tr>
+</table>
+</td>
+</tr>
+</table>
+
+<!-- BANK DETAILS (SINGLE LINE) -->
+<table style="width:100%; margin-top:5px; border-collapse:collapse;" border="1">
+<tr>
+<td style="padding:4px 8px; font-size:8pt;">
+<b>Bank Details:</b> 
+{% set company_doc = frappe.get_doc("Company", doc.company) %}
+{% for d in company_doc.bank_details_for_printing %}
+    <b>{{ d.print_label }}:</b> {{ d.print_value }}{% if not loop.last %} &nbsp;|&nbsp; {% endif %}
+{% endfor %}
+</td>
+</tr>
+</table>
+
+<!-- TERMS + SIGNATURE -->
+<table class="keep-together" style="width:100%; margin-top:5px; border-collapse:collapse;" border="1">
+<tr>
+<td style="width:68%; padding:6px; vertical-align:top; font-size:7.5pt;">
+<b>Terms and Conditions:</b><br>
+{{ doc.terms or "" }}
+</td>
+<td style="width:32%; padding:6px; text-align:center; vertical-align:top; font-size:8.5pt;">
+<div style="font-size:8.5pt; font-weight:bold; margin-bottom:42px;">For {{ doc.company }}</div>
+              <div style="display:inline-block; border-top:1px solid #000; padding-top:2px; width:90%; font-weight:bold; font-size:8.5pt;">Authorised Signatory</div>
+</td>
+</tr>
+</table>
+</div>
