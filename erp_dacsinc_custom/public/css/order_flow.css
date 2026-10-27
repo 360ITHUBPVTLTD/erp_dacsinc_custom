@@ -1646,3 +1646,12 @@
         width: 92px;
     }
 }
+/* Job Work › Sub POs: submitted PO without a submitted Subcontracting Order (of_sco_missing) */
+.of-table tbody tr.of-row-no-sco > td { background: rgba(220, 53, 69, .06); }
+.of-table tbody tr.of-row-no-sco > td:first-child { box-shadow: inset 3px 0 0 var(--of-red); }
+.of-table tbody tr.of-row-sco-draft > td { background: rgba(253, 126, 20, .07); }
+.of-table tbody tr.of-row-sco-draft > td:first-child { box-shadow: inset 3px 0 0 var(--of-orange); }
+.of-sco-note { margin-top: 4px; font-size: 11px; font-weight: 700; color: var(--of-red); white-space: nowrap; }
+.of-row-sco-draft .of-sco-note { color: var(--of-orange); }
+.of-po-actions .of-sco-missing-btn { color: var(--of-red); border-color: rgba(220, 53, 69, .45); }
+.of-row-sco-draft .of-po-actions .of-sco-missing-btn { color: var(--of-orange); border-color: rgba(253, 126, 20, .5); }

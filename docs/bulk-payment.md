@@ -22,6 +22,7 @@ Users don't want a Journal Entry for a shared cheque, and one Payment Entry can 
   Payment / Make Payment** (ERPNext's Create › Payment is removed there) — starting with that party and
   that invoice at its outstanding;
 - a draft **Bulk Payment** form › **Pick Invoices** — fills its table instead of submitting.
+- the **Payment Entry list** › **Receive / Pay** (`public/js/payment_entry_list.js`) — empty, as on Order Flow.
 
 ## The prompt
 

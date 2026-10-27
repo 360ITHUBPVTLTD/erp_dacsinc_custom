@@ -244,7 +244,8 @@ class OrderFlow {
         this.tf_options = {};    // each table's dropdown values from the server (filter_options)
         this.scope = 'open';
         this.stage_filter = 'all';
-        this.search = '';
+        this.search = '';        // the active tab's search box — each tab keeps its own (this.searches)
+        this.searches = {};      // {tab: text}; switch_tab puts the tab's own back into the box
         this.merchandiser_filter = '';
         this.approval_stage_filter = '';
         this.uniform_status_filter = ''; // Embroidery Transfers tab only — see #of-uniform-status
@@ -760,7 +761,7 @@ class OrderFlow {
     save_view_prefs() {
         try {
             localStorage.setItem(this.view_prefs_key(), JSON.stringify({
-                days: this.days, scope: this.scope, search: this.search, stage_filter: this.stage_filter,
+                days: this.days, scope: this.scope, searches: this.searches, stage_filter: this.stage_filter,
                 date_from: this.$body.find('#of-date-from').val() || '', date_to: this.$body.find('#of-date-to').val() || '',
                 table_filters: this.table_filters, docstatus_filter: this.docstatus_filter,
                 merchandiser_filter: this.merchandiser_filter, approval_stage_filter: this.approval_stage_filter,
@@ -779,7 +780,9 @@ class OrderFlow {
         const str = (v) => (typeof v === 'string' ? v : '');
         if (p.days !== undefined && p.days !== null && p.days !== '') this.days = p.days;
         if (['open', 'all', 'mine'].includes(p.scope)) this.scope = p.scope;
-        this.search = str(p.search);
+        if (p.searches && typeof p.searches === 'object') {
+            Object.keys(p.searches).forEach(t => { if (str(p.searches[t])) this.searches[t] = p.searches[t]; });
+        }
         if (str(p.stage_filter)) this.stage_filter = p.stage_filter;
         if (p.table_filters && typeof p.table_filters === 'object') this.table_filters = p.table_filters;
         if (p.docstatus_filter && typeof p.docstatus_filter === 'object') {
@@ -1350,6 +1353,7 @@ class OrderFlow {
         let timer = null;
         this.$body.on('input', '#of-search', (e) => {
             this.search = e.target.value.trim();
+            if (this.active) this.searches[this.active] = this.search;
             clearTimeout(timer);
             timer = setTimeout(() => { this.reset_all_pagination(); this.refresh(true); }, 300);
         });
@@ -2332,6 +2336,25 @@ class OrderFlow {
             });
         });
 
+        // Job Work › Sub POs › Create SCO: the PO form's own "Create Subcontracting Docs" — the same
+        // raw-material check (get_required_raw_materials_for_po) and dialog (show_stock_check_dialog,
+        // which reads only frm.doc.name and calls frm.refresh), so a mock frm is enough here too.
+        this.$body.on('click', '.of-sco-create-btn', (e) => {
+            e.preventDefault(); e.stopPropagation();
+            const po = String($(e.currentTarget).data('po') || '');
+            if (!po) return;
+            frappe.require('/assets/erp_dacsinc_custom/js/purchase_order.js', () => {
+                frappe.call({
+                    method: 'erp_dacsinc_custom.purchase_order.get_required_raw_materials_for_po',
+                    args: { purchase_order_name: po }, freeze: true,
+                }).then(r => {
+                    if (!r.message) return;
+                    const mock_frm = { doc: { name: po }, refresh: () => this.refresh(true), refresh_field: () => {} };
+                    show_stock_check_dialog(mock_frm, r.message, null);
+                });
+            });
+        });
+
         // Embroidery Work Order — per-stage actions, the same 3 steps the
         // Purchase Order's own Panel dashboard offers (Send -> Receive ->
         // Close), plus Full Piece's single Receive step, done here so the
@@ -2671,6 +2694,9 @@ class OrderFlow {
         if (!this.can_see(tab)) return;
         this.active = tab;
         localStorage.setItem(OF_LAST_TAB_KEY, tab);
+        // Each tab keeps its own search: a search typed on one tab does not narrow the others.
+        this.search = this.searches[tab] || '';
+        this.$body.find('#of-search').val(this.search);
         this.$body.find('.of-tab').removeClass('is-active')
             .filter(`[data-tab="${tab}"]`).addClass('is-active');
         OF_TABS.forEach(t => {
@@ -4793,8 +4819,8 @@ class OrderFlow {
         this.$body.find('#of-count').text(__('{0} job work POs · {1} receipts · {2} full piece · {3} panel',
             [pos_env.total || 0, rcs_env.total || 0, ewo_fp_env.total || 0, ewo_pn_env.total || 0]));
 
-        const po_rows = pos.map(p => `
-            <tr class="of-doc-row">
+        const po_rows = pos.map(p => { const sco = of_sco_missing(p); return `
+            <tr class="of-doc-row ${sco ? sco.row_class : ''}">
                 <td><i class="fa fa-caret-right of-doc-items-toggle" data-doctype="Purchase Order" data-docname="${of_esc(p.name)}" data-docstatus="${p.docstatus}" style="cursor:pointer;margin-right:4px;color:var(--text-light);"></i>
                     <a href="/app/purchase-order/${encodeURIComponent(p.name)}" target="_blank" style="font-weight:700;">${of_esc(p.name)}</a>
                     <div><span class="of-chip" style="background:var(--of-purple);color:#fff;">Job Work</span></div>
@@ -4811,12 +4837,13 @@ class OrderFlow {
                 <td>${of_qty(p.received_qty, flt_of(p.received_qty) > 0 ? 'pos' : null)}
                     ${of_status_chip(p.per_received)}</td>
                 <td>${of_money(p.grand_total, p.currency)}</td>
-                <td>${of_doc_status(p.status)}</td>
+                <td>${of_doc_status(p.status)}${sco ? sco.note : ''}</td>
                 <td>
                     <div class="of-po-actions">
                         <a class="of-btn" href="/app/purchase-order/${encodeURIComponent(p.name)}" target="_blank">
                             <i class="fa fa-external-link"></i> Open PO
                         </a>
+                        ${sco ? sco.button : ''}
                         ${p.sco_name ? `
                             <button class="of-btn of-sco-print-btn" data-name="${of_esc(p.sco_name)}" title="${__('Print Subcontracting Order')}">
                                 <i class="fa fa-print"></i>
@@ -4824,7 +4851,7 @@ class OrderFlow {
                         ` : ''}
                     </div>
                 </td>
-            </tr>`).join('');
+            </tr>`; }).join('');
 
         const rc_rows = rcs.map(r => {
             // Every Subcontracting Receipt this app creates immediately gets a
@@ -6517,6 +6544,28 @@ function of_print_po(po_name) {
         + `&settings=%7B%7D`
         + `&_lang=en`
     );
+}
+
+// Job Work › Sub POs: a submitted, open subcontract PO with no submitted Subcontracting Order can't send
+// raw material or be received. The row is tinted (red; amber when the SCO is only a draft), the Status
+// cell says so in one line, and the Action cell gets Create SCO (the PO form's Create Subcontracting Docs
+// dialog, opened here — .of-sco-create-btn) or Submit SCO (opens the draft).
+function of_sco_missing(p) {
+    if (cint(p.docstatus) !== 1 || p.sco_name || ['Closed', 'Completed'].includes(p.status)) return null;
+    const draft = !!p.sco_draft;
+    const href = draft ? `/app/subcontracting-order/${encodeURIComponent(p.sco_draft)}` : `/app/purchase-order/${encodeURIComponent(p.name)}`;
+    const tip = draft
+        ? __('Subcontracting Order {0} is still a draft: submit it to send raw material and receive the goods.', [p.sco_draft])
+        : __('No Subcontracting Order for this PO yet: Create SCO opens the PO form\'s Create Subcontracting Docs here.');
+    return {
+        row_class: draft ? 'of-row-sco-draft' : 'of-row-no-sco',
+        note: `<div class="of-sco-note" title="${of_esc(tip)}"><i class="fa fa-exclamation-circle"></i> ${draft ? __('SCO in draft') : __('No SCO yet')}</div>`,
+        button: draft
+            ? `<a class="of-btn of-sco-missing-btn" href="${href}" target="_blank" title="${of_esc(tip)}">
+                <i class="fa fa-check"></i> ${__('Submit SCO')}</a>`
+            : `<button class="of-btn of-sco-missing-btn of-sco-create-btn" data-po="${of_esc(p.name)}" title="${of_esc(tip)}">
+                <i class="fa fa-plus"></i> ${__('Create SCO')}</button>`,
+    };
 }
 
 function of_print_sco(sco_name) {

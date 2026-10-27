@@ -50,7 +50,7 @@ app_include_js = [
 
 app_include_css = [
     "/assets/erp_dacsinc_custom/style.css?v=1.0.5",
-    "/assets/erp_dacsinc_custom/css/order_flow.css?v=1.0.10"
+    "/assets/erp_dacsinc_custom/css/order_flow.css?v=1.0.12"
 ]
 
 # include js, css files in header of web template
@@ -111,6 +111,9 @@ doctype_list_js = {
 	"Purchase Receipt": "public/js/purchase_receipt_list.js",
 	# outstanding balance on each row (public/js/party_balance_list.js)
 	"Supplier": "public/js/supplier_list.js",
+	# Receive / Pay and the Journal Entry prompt, as on Order Flow › Finance › New
+	"Payment Entry": "public/js/payment_entry_list.js",
+	"Journal Entry": "public/js/journal_entry_list.js",
 }
 
 # Svg Icons
