@@ -1548,6 +1548,14 @@ Both helpers build the same `frappe.utils.print_format.download_pdf` URL
 (doctype, name, format, `no_letterhead=1`, letterhead, `_lang=en`) the form
 buttons use, so a PO or SCO prints identically from either place.
 
+**SCO missing (Job Work › Sub POs).** A submitted subcontract PO that is not Closed / Completed and has
+no submitted Subcontracting Order is highlighted (`of_sco_missing`): a light red row with a red left edge,
+"No SCO yet" under its status and a small **Create SCO** button next to Open PO: the PO form's own "Create Subcontracting Docs" opened right
+on the dashboard (same raw-material check `get_required_raw_materials_for_po` and dialog
+`show_stock_check_dialog`, with a mock frm — it reads only `frm.doc.name`), then the list refreshes. With only a draft SCO (`sco_draft`) the row is amber, "SCO in draft"
+and **Submit SCO** (opens the draft). Without a submitted SCO no raw material can be sent and nothing
+received. The "Subcontracting order: Not made" filter lists the same POs.
+
 ## Purchase Flow / Job Work: which receipts are "open"
 
 A receipt is **open while it is not fully billed** (status not Completed / Closed / Cancelled), whatever its
@@ -1724,8 +1732,8 @@ From Order Flow the server also checks the Finance tab and the sub-tab of each p
 (as Create › Payment). One party → one Payment Entry (several invoices, any extra = advance, no
 invoice = advance); several parties → a Bulk Payment (one Payment Entry each).
 
-**New › Journal Entry** opens a prompt (`public/js/journal_prompt.js`, server `journal_prompt.py`) instead
-of the full form, in three columns: **1 What kind of entry?** — grouped patterns, each showing its
+**New › Journal Entry** (and **Journal Entry (guided)** on the Journal Entry list, `public/js/journal_entry_list.js`)
+opens a prompt (`public/js/journal_prompt.js`, server `journal_prompt.py`) instead of the full form, in three columns: **1 What kind of entry?** — grouped patterns, each showing its
 "Dr … · Cr …": Bank & cash (bank charges, OD interest, cash deposited / withdrawn, bank-to-bank),
 Expenses & salary (expense paid in cash / from bank, salary due, salary paid, depreciation), Taxes (TDS
 paid, GST paid — CGST / SGST / IGST lines, PF / ESIC paid, TDS cut by a customer), Customers & suppliers
@@ -1859,8 +1867,11 @@ out in that order from the widget's own figures (draft DN, undelivered
 submitted picks, SO-direct embroidery, draft picks — minus what a draft Pick
 List has out at embroidery, which counts once as At Embroidery — free
 finished stock, incoming PO/SCO/EWO, MR/draft-PO coverage), and whatever is
-left is Not Started, with the next step named ("raw material short — Request
-RM", "raw material ready — create Subcontract PO", "nothing raised yet").
+left is Not Started, with the next step named. For a BOM line it follows the Item Stock & Action
+Plan's rule (`so_buy_btn`), checked for the Not Started qty: every raw material on the shelf → "raw
+material ready — create Subcontract PO"; what is missing is all on an MR / PO already (nothing left To
+Request) → "raw material requested — waiting for stock, then Subcontract PO"; else "raw material short —
+Request RM". A line without a BOM says "nothing raised yet — Raise MR / PO".
 The header shows the whole order's bar, % delivered, % dispatched and items
 complete. Purchase Orders / receipts already have their per-item ordered vs
 received panel (see "The items toggle shows ordered vs received").
@@ -1877,6 +1888,10 @@ trip no longer keeps an order "In Job Work"). An EWO whose Purchase Order was
 deleted still shows under Open while its goods are out.
 
 ## The page filters work on every tab (Open / All, Last N days, search)
+
+**Search is per tab.** Each tab keeps its own search text (`this.searches[tab]`): a search typed on
+Sales Tracker does not narrow Purchase or Finance; switching back puts that tab's text back into the box
+(`switch_tab`). Sub-tabs of one tab share it. Open / All and Last N days stay page-wide.
 
 **Custom range.** The days dropdown's "Custom range…" shows one "between" picker (Frappe
 DateRange, `mount_date_range`: pick the first day, then the last) that fills two hidden From / To
@@ -1915,7 +1930,7 @@ title, above its filter bar, and wrap onto a second line when needed — nothing
 with no orders fold behind "+N more" (`update_stage_more`).
 
 **Filters are remembered across reloads** (per user, in this browser — `localStorage`
-`dac_order_flow_filters:<user>`): tab (as before), sub-tabs, search, Open / All, Last N days /
+`dac_order_flow_filters:<user>`): tab (as before), sub-tabs, each tab's search, Open / All, Last N days /
 custom range, stage, Draft / Submitted pills, every table filter and the mirrored toolbar
 filters. `refresh` saves on every change (sub-tab clicks too); `load_view_prefs` restores them
 before the first paint and `apply_view_prefs_to_controls` puts them back into the controls (the

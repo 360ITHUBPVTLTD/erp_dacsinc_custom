@@ -3734,6 +3734,8 @@ def get_jobwork_flow(days=180, search=None, scope="open", merchandiser=None,
                po.order_confirmation_no, po.order_confirmation_date,
                (SELECT sco.name FROM `tabSubcontracting Order` sco
                 WHERE sco.purchase_order = po.name AND sco.docstatus = 1 LIMIT 1) AS sco_name,
+               (SELECT sco.name FROM `tabSubcontracting Order` sco
+                WHERE sco.purchase_order = po.name AND sco.docstatus = 0 LIMIT 1) AS sco_draft,
                GROUP_CONCAT(DISTINCT poi.sales_order ORDER BY poi.sales_order SEPARATOR ', ') AS sales_orders,
                GROUP_CONCAT(DISTINCT so.customer_name ORDER BY so.customer_name SEPARATOR ', ') AS so_customer_names,
                COUNT(DISTINCT poi.item_code) AS item_count,
@@ -6549,7 +6551,18 @@ def get_so_overall_status(sales_order):
         parts = [f"{flt(steps[k], 2):g} {lbl}" for k, lbl, _t in _SO_STATUS_STEPS if flt(steps.get(k)) > 0.001]
         note = ""
         if flt(steps["not_started"]) > 0.001 and d.get("is_bom_item"):
-            note = "raw material short — Request RM" if rp.get("rm_shortfall_exists") else "raw material ready — create Subcontract PO"
+            # The Item Stock & Action Plan's own rule (sales_order.js › so_buy_btn): a Subcontract PO
+            # needs the raw material on the shelf for this qty; missing material that is all on an
+            # MR / PO already (nothing left To Request) is waiting, not short.
+            rm_rows = rp.get("rm_items_status") or []
+            missing = [x for x in rm_rows if flt(x.get("rm_available_stock"), 2)
+                       < flt(flt(steps["not_started"]) * flt(x.get("rm_qty_per_fg")), 2)]
+            if not missing:
+                note = "raw material ready — create Subcontract PO"
+            elif all(flt(x.get("rm_shortfall_total")) <= 0.0005 for x in missing):
+                note = "raw material requested — waiting for stock, then Subcontract PO"
+            else:
+                note = "raw material short — Request RM"
         elif flt(steps["not_started"]) > 0.001:
             note = "nothing raised yet — Raise MR / PO"
         for k in steps:
