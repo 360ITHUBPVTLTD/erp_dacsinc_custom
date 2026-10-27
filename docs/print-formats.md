@@ -69,6 +69,25 @@ resets them (`.ql-editor`), or the terms box stretches to the page and shows scr
 **Header details (Format 4):** only the detail rows with a value print (a pair keeps its filled half; an
 empty row is left out), so the header box is as tall as what it holds.
 
+## Font
+
+Every format loads **Liberation Sans** (Arial's letter widths; SIL Open Font License, `public/fonts`, licence beside
+it) under the name "Arial" from the site's own `/assets` URL (`frappe.utils.get_url()`), and prints all text in it.
+Without this each server used whatever it had: locally "Arial" became Nimbus Sans, on live the wider DejaVu Sans —
+lines wrapped more on live, so a page measured locally overflowed there. DejaVu still appears for the ₹ sign
+(not in Liberation Sans); both servers have it. `print_check.py` reports the fonts a print embeds — Liberation
+missing means the server cannot fetch its own `/assets` URL.
+
+## Page header and page numbers
+
+Every format prints its letter head (the POS bills: the store header with bill no. / date) as the **PDF page
+header**, so it repeats on every page, and "Page X of Y" in the footer. Builder formats do it by themselves
+(Frappe's `#header-html`); the Jinja formats put the letter head in a `<div id="header-html">` and the footer in
+`<div id="footer-html">` once, before the copies. Sales Invoice Multi Copy Master hides Format 4's own letter head
+and footer in each copy and prints the letter head once as the page header; each copy keeps its heading strip
+and label. A format with a page header must not carry a `.print-format { margin-top }` rule — it squeezes the
+header out. The challans and Embroidery Work Order 1 draw their own header on every chunked page.
+
 ## Blank rows instead of empty space
 
 The item table is followed, inside a `.dacs-items-box`, by a `.dacs-fill-wrap`: a table of 60 empty
@@ -86,7 +105,10 @@ document surely fits on one page**: a Jinja estimate of the free space at the pa
 content — item lines (long names count extra), address lines, HSN codes, tax lines, terms / notes length,
 supplied items — with weights fitted to measured documents (each format's estimate never exceeds the
 real free space of any measured document, and no 2-page document passes the threshold, +8 mm safety).
-A longer document prints as plain flow (no blank rows); `.dacs-fill-wrap` is `display: none` unless the
+A document **outside the measured range** — more item lines, address lines, HSN codes, terms, notes, supplied
+items or a longer party name than any measured document of that format — also prints as plain flow: the estimate
+is not trusted there, and a wrong fixed page height squeezes the item rows under the totals (seen on live: an
+invoice with two long addresses). A longer document prints as plain flow (no blank rows); `.dacs-fill-wrap` is `display: none` unless the
 box shows it. Credit / Debit Note and the two older challans use `min-height` boxes (they behave there); Purchase Invoice DAC
 switches to a fixed height when its item lines (long names count extra) are at most 11, else plain flow.
 Box heights (mm) are measured per format on a 1-page document: the largest that stays one page, less 1.

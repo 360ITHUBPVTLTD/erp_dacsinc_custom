@@ -82,6 +82,18 @@ def run(docs=3):
 				out.append(f"{n}: ERROR {str(e)[:80]}"); problems.append(f"{pf} / {n}")
 		print(f"  {pf:<45} " + (" | ".join(out) or "no documents"))
 
+	print("\nFONT (the prints embed Liberation Sans from the app; DejaVu only for the ₹ sign)")
+	n = frappe.get_all("Sales Invoice", filters={"docstatus": 1, "is_return": 0}, pluck="name", order_by="creation desc", limit=1)
+	if n:
+		from io import BytesIO
+		from pypdf import PdfReader
+		fonts = set()
+		for page in PdfReader(BytesIO(frappe.get_print("Sales Invoice", n[0], "Sales Invoice Multi Copy Master", as_pdf=True))).pages:
+			for f in ((page.get("/Resources") or {}).get("/Font") or {}).values():
+				fonts.add(str(f.get_object().get("/BaseFont")).split("+")[-1])
+		ok = any("Liberation" in f for f in fonts)
+		print("  ", sorted(fonts), "OK" if ok else "— Liberation Sans NOT loaded: the site cannot fetch its own /assets URL (frappe.utils.get_url())")
+		if not ok: problems.append("font")
 	print("\nOTHER")
 	lh = frappe.db.get_value("Letter Head", "DAC Letter Header", "content") or ""
 	print("  Letter Head 'DAC Letter Header' bordered box:", "yes" if "border:1px solid #000" in lh else "NO")
