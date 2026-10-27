@@ -28,6 +28,13 @@ def grant_submit_on_quotation_share(doc, method=None):
     doc.write = doc.submit = 1
 
 
+def submit_for_lead_owner_share(user, write):
+    """Submit flag for the lead-owner share (order_flow_api.add_docshare, which writes DocShare
+    with SQL, so the hook above doesn't run): an editable share with a DAC CRM user can submit;
+    a read-only one (the previous lead owner) cannot."""
+    return 1 if cint(write) and set(frappe.get_roles(user)) & set(SUBMIT_ON_SHARE_ROLES) else 0
+
+
 def backfill_existing_shares():
     """Patch: existing draft-quotation shares with DAC CRM users get write + submit."""
     users = set(frappe.get_all("Has Role", filters={"role": ["in", SUBMIT_ON_SHARE_ROLES], "parenttype": "User"},
