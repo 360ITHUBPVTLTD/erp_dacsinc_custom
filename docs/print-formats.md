@@ -88,6 +88,15 @@ and footer in each copy and prints the letter head once as the page header; each
 and label. A format with a page header must not carry a `.print-format { margin-top }` rule — it squeezes the
 header out. The challans and Embroidery Work Order 1 draw their own header on every chunked page.
 
+## Margins
+
+Every format: the page header (letter head, or the format's own company / store header) starts **10mm** from the
+top of the paper, left and right margins 15mm (wkhtmltopdf's), "Page X of Y" at the bottom. Frappe's PDF header
+template pulls a letter head to the paper's edge (`.letter-head { margin-top: -15mm }`); the font block of each
+format sets `body[onload] .wrapper > :first-child { margin-top: -7.5mm }` (only the header / footer pages have
+`body onload`), POS Invoice A5 −1.7mm. Each fixed page height is the local measurement **less ~13mm**, so a bill
+that fills page 1 locally still fits on live (a print on live came out a few mm taller: last terms line on page 2).
+
 ## Blank rows instead of empty space
 
 The item table is followed, inside a `.dacs-items-box`, by a `.dacs-fill-wrap`: a table of 60 empty
