@@ -10,9 +10,8 @@ frappe.ui.form.on('Payment Entry', {
     // the same PDF as the 🖨 under an invoice's payments on Order Flow › Finance.
     refresh(frm) {
         if (frm.is_new()) return;
-        const label = frm.doc.payment_type === 'Receive' ? __('Print Receipt')
-            : frm.doc.payment_type === 'Pay' ? __('Print Voucher') : __('Print Transfer');
-        frm.add_custom_button(label, () => window.open(dacs_print_url('Payment Entry', frm.doc.name), '_blank'))
+        // Receipt / Payment / Contra Voucher (print_format/payment_receipt_dac) — one label for all three
+        frm.add_custom_button(__('Print Voucher'), () => window.open(dacs_print_url('Payment Entry', frm.doc.name), '_blank'))
             .css({ 'background-color': '#000', 'color': '#fff' });
     },
 });

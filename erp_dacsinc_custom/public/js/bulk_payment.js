@@ -767,7 +767,7 @@ window.dacs_payment_dialog = function (opts) {
 					${pes.map(p => `<div><span>${__("Payment Entry")} <b>${link("Payment Entry", p)}</b></span>
 						<button type="button" class="dpd-sm dpd-one" data-pe="${esc(p)}"><i class="fa fa-print"></i> ${__("Print")}</button></div>`).join("")}
 				</div>
-				<button type="button" class="dpd-print"><i class="fa fa-print"></i> ${receive ? __("Print Receipt") : __("Print Payment Advice")}</button>
+				<button type="button" class="dpd-print"><i class="fa fa-print"></i> ${__("Print Voucher")}</button>
 				<div class="sub" style="margin:10px 0 0;">${__("You can print it again any time from the Payment Entry or Bulk Payment.")}</div>
 			</div>`);
 			dd.fields_dict.b.$wrapper.on("click", ".dpd-print", () => window.open(main_url, "_blank"));

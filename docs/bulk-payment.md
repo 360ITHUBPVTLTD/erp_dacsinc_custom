@@ -41,7 +41,7 @@ allocation rules below) and opens a short **Check & submit** window — "You are
 account, mode, date, deductions, each customer with its invoices and amounts, a tick box, **Submit
 payment** / *Go back and change*. From a draft Bulk Payment form the button is **Fill the table**. After Submit, a
 success screen: ✓, the amount, the parties, each Payment Entry (and the Bulk Payment) with its own
-**Print**, and a large **Print Receipt** (Bulk Payment Receipt for several parties, else Payment Receipt
+**Print**, and a large **Print Voucher** (Bulk Payment Receipt for several parties, else Payment Receipt
 DAC; *Print Payment Advice* when paying). Look: one blue accent on white / slate, soft green / amber / red
 only for status, white inputs with a focus ring, initials on the customer list. The
 dialog's own required-field check is not used (the button checks the parts itself).
@@ -78,7 +78,7 @@ ticked), Left after with the status under it, then ✕ / Full.
    invoice; their ledgers (TDS on Pay blank = each supplier's own TDS ledger).
 
 **Review** lists each Payment Entry to be made (settled / in bank, invoices, TDS, advance, charges) and
-needs the tick; then the result with links and **Print Receipt** (Bulk Payment Receipt for several
+needs the tick; then the result with links and **Print Voucher** (Bulk Payment Receipt for several
 parties, Payment Receipt DAC for one).
 
 ## Rules (server, `doctype/bulk_payment/bulk_payment.py`)
@@ -122,7 +122,7 @@ A one-party payment is an ordinary Payment Entry — cancelled / amended like an
 
 ## Printing
 
-- **Bulk Payment Receipt** (default for Bulk Payment): Payment Receipt / Payment Advice — the amount in
+- **Bulk Payment Receipt** (default for Bulk Payment): Receipt Voucher / Payment Voucher — the amount in
   bank (what it settles, charges, TDS, write-off), parties with their invoices, set-off, TDS / write-off
   columns when any, the Payment Entry per party, amount in words, signatures.
 - Each Payment Entry prints **Payment Receipt DAC**; one from a Bulk Payment says "Part of Bulk Payment …".
