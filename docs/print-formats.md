@@ -16,7 +16,7 @@ the desk.
 | **Sales Order Print Format 3** | Sales Order (default; form button with "DAC Letter Header") | Format 4's layout for an order |
 | **Purchase Order Print Format** | Purchase Order (default; Print PO on a submitted PO, on a saved draft of a normal PO, and in Order Flow; no letter head) | its own company header (bordered box) + Format 4's layout |
 | **Subcontracting Order Print Format 3** | Subcontracting Order (Print SCO / Order Flow, no letter head) | Goods Issue Note: issue and receivable tables |
-| **Proforma Invoice Quotation** | Quotation (default) | proforma invoice — the Quotation PDF's layout; no blank rows (the item table ends at the last item), Tax% the item's GST rate |
+| **Proforma Invoice Quotation** | Quotation (default) | proforma invoice — the same body as the Quotation PDF (`templates/print/quotation_body.html`), titled PROFORMA INVOICE, no GSTIN line |
 | **Delivery Note Version 3** / **Delivery Note Without Amount Version 3** | Delivery Note › Custom Print › With / Without Amount (`public/js/delivery_note.js`, document's letter head) | Format 4's layout, with / without rates and totals |
 | **Delivery Note Print Format with Amount** / **without Amount** | Delivery Note (default in the Print menu, no letter head) | the older challan layout with its own header |
 | **Embroidery Work Order Print Format** / **… 2** | Embroidery Work Order (format 1 from the buttons, no letter head) | jobber work order |
@@ -88,7 +88,9 @@ and footer in each copy and prints the letter head once as the page header; each
 label) in its body. Credit / Debit Note and
 Purchase Invoice DAC do the same. From page 2 on, a small "… No: … | Date: … (continued)" line prints at the top
 right, above the letter head (positioned absolutely, so it takes no room; hidden on page 1 by the page number the
-PDF engine passes to the header); the item table's column headings repeat on the next page as well. A format with a page header must not carry a `.print-format { margin-top }` rule — it squeezes the
+PDF engine passes to the header); the item table's column headings repeat on the next page as well. Proforma
+Invoice Quotation and the Quotation PDF print the same line from their `print_heading_template` block (builder
+formats render it inside the page header) via `templates/print/quotation_contd.html`. A format with a page header must not carry a `.print-format { margin-top }` rule — it squeezes the
 header out. The challans and Embroidery Work Order 1 draw their own header on every chunked page.
 
 ## Margins
@@ -111,8 +113,6 @@ No JavaScript runs in the PDF, so nothing is counted.
 wkhtmltopdf's legacy box has two traps, which shape how it is used:
 - `min-height` on the box is ignored on some documents (blank space left); a fixed `height` is honoured.
 - On a document longer than one page the box spoils page breaking (gaps, overlapping blocks).
-
-Proforma Invoice Quotation has no blank rows (the user's choice: it looks like the Quotation PDF).
 
 So on the builder formats and Format 4 the box (with a fixed height) is switched on **only when the
 document surely fits on one page**: a Jinja estimate of the free space at the page bottom (mm) from the
@@ -168,14 +168,23 @@ invoice on Order Flow › Finance.
 ## Quotation PDF ("Quotation print format 7Apr")
 
 DB-only print format (not shipped in the app) used by `custom_script.download_quotation_pdf`, with letter
-head "DAC Letter Header quotation". All content is one Custom HTML block; no blank rows.
-`patches/quotation_print_format_7apr_header.py` gave it the uniform header block (Liberation Sans, letter head
-10mm from the top, the letter head's gaps tightened so "QUOTATION" sits just under it, no blank last page) and
-Tax% as the item's GST rate (`igst_rate` or `cgst_rate + sgst_rate`, else the Item Tax Template's `gst_rate`) —
-it printed the template's name ("GST 5% - IND%"); Proforma Invoice Quotation prints Tax% the same way. A
-change to this format is shipped as a patch (it is not an app file). Keep no empty HTML block after
-it: an empty block still renders a row, and a quotation that just fills page 1 then got a second page
-holding only the letter head (`patches/quotation_print_format_blank_page.py` removed it).
+head "DAC Letter Header quotation". Its one Custom HTML block only sets the title (QUOTATION) and the GSTIN line
+and includes **`templates/print/quotation_body.html`** — the body it shares with Proforma Invoice Quotation, so a
+layout change is made in that app file for both (the DB record itself was switched over once by
+`patches/quotation_print_format_7apr_header.py`, which also labels its section "Items" for the page box).
+
+The shared body: plain centred title with No | Date, uniform sizes and font, Tax% the item's GST rate
+(`igst_rate` or `cgst_rate + sgst_rate`, else the Item Tax Template's `gst_rate` — not the template's name),
+tax rows only when not 0, and blank item rows down to the totals (page box, 224mm) when its estimate says the
+quotation surely fits one page. The estimate counts item lines **per line break** (descriptions are often a list,
+one entry per line), plus items, HSN codes and address lines, with weights fitted on 45 quotations of both
+formats; 24 of the 27 one-page ones get blank rows, the rest end 7–19mm above the footer. From page 2 on the
+page header carries "Quotation / Proforma Invoice No | Date (continued)", the footer "Page X of Y".
+
+Keep no empty HTML block after the body, in either format: an empty block still renders a row — a quotation
+that just filled page 1 got a second page holding only the letter head
+(`patches/quotation_print_format_blank_page.py` removed it from 7Apr) — and inside the page box it takes the
+spare height itself: the Terms were pushed to the page bottom with no blank rows (Proforma, SAL-QTN-2026-00658).
 
 ## Tax / charge rows only when not 0
 

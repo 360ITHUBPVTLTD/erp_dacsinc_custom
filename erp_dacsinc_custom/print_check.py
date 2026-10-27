@@ -66,6 +66,8 @@ def run(docs=3):
 		state = "OK " if get_datetime(site.modified) >= get_datetime(f["modified"]) else "OLD"
 		if state == "OLD": problems.append(name)
 		body = (site.html or "") + (site.format_data or "") + (site.css or "")
+		if "templates/print/quotation_body.html" in body:  # shared body (Proforma / Quotation PDF)
+			body += open(frappe.get_app_path("erp_dacsinc_custom", "templates", "print", "quotation_body.html")).read()
 		marks = [m for m, k in (("blank rows", "dacs-fill-wrap"), ("discount cols", "dacs_disc"), ("margins", "page margins")) if k.lower() in body.lower()]
 		print(f"  {state}  {name:<45} {'disabled ' if site.disabled else ''}{', '.join(marks)}")
 
