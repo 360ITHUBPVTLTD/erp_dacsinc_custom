@@ -8,6 +8,11 @@ see someone else's quotation.
   after_insert / on_update): sharing a Quotation (Read) with a user who has the **DAC CRM** role
   always grants Read, Write and **Submit**, whether or not "Can Submit" was ticked. Shares with
   other users stay exactly as given.
+- **Lead owner share = can submit**: the automatic share with the quotation's lead owner (on
+  creation, on a change of Lead Owner on the draft, and when the Lead's owner changes —
+  `order_flow_api.add_docshare`, which writes DocShare with SQL so the hook above doesn't run)
+  sets Submit itself via `quotation_sharing.submit_for_lead_owner_share`: Read, Write and Submit
+  for a DAC CRM lead owner. The previous lead owner, left read-only, loses Submit too.
 - **Existing shares** got the same on migrate (`patches/quotation_share_submit.py`: draft
   quotations already shared with DAC CRM users).
 - **Lead update on submit**: submitting moves the quotation's Lead from Enquiry to Pipeline

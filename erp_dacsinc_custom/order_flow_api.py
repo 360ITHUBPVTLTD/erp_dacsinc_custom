@@ -6200,23 +6200,32 @@ def add_docshare(share_doctype, share_name, user, read=1, write=0, share=0, ever
         "share_name": share_name,
         "user": user
     })
-    
+
+    # A Quotation's lead owner (DAC CRM) can also submit it (docs/quotation-sharing.md)
+    submit = 0
+    if share_doctype == "Quotation":
+        from erp_dacsinc_custom.quotation_sharing import submit_for_lead_owner_share
+        submit = submit_for_lead_owner_share(user, write)
+
     if share_name_db:
-        frappe.db.set_value("DocShare", share_name_db, {
+        values = {
             "read": read,
             "write": write,
             "share": share,
             "notify_by_email": notify
-        }, update_modified=False)
+        }
+        if share_doctype == "Quotation":
+            values["submit"] = submit
+        frappe.db.set_value("DocShare", share_name_db, values, update_modified=False)
     else:
         name = frappe.generate_hash(length=10)
         frappe.db.sql("""
             INSERT INTO `tabDocShare` 
             (name, creation, modified, modified_by, owner, docstatus, idx,
-             share_doctype, share_name, user, `read`, `write`, share, notify_by_email, everyone)
-            VALUES (%s, NOW(), NOW(), %s, %s, 0, 0, %s, %s, %s, %s, %s, %s, %s, %s)
+             share_doctype, share_name, user, `read`, `write`, submit, share, notify_by_email, everyone)
+            VALUES (%s, NOW(), NOW(), %s, %s, 0, 0, %s, %s, %s, %s, %s, %s, %s, %s, %s)
         """, (name, frappe.session.user or "Administrator", frappe.session.user or "Administrator",
-              share_doctype, share_name, user, read, write, share, notify, everyone))
+              share_doctype, share_name, user, read, write, submit, share, notify, everyone))
 
 
 @frappe.whitelist()

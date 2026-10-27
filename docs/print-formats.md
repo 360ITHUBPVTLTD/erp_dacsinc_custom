@@ -16,7 +16,7 @@ the desk.
 | **Sales Order Print Format 3** | Sales Order (default; form button with "DAC Letter Header") | Format 4's layout for an order |
 | **Purchase Order Print Format** | Purchase Order (default; Print PO on a submitted PO, on a saved draft of a normal PO, and in Order Flow; no letter head) | its own company header (bordered box) + Format 4's layout |
 | **Subcontracting Order Print Format 3** | Subcontracting Order (Print SCO / Order Flow, no letter head) | Goods Issue Note: issue and receivable tables |
-| **Proforma Invoice Quotation** | Quotation (default) | proforma invoice |
+| **Proforma Invoice Quotation** | Quotation (default) | proforma invoice — the Quotation PDF's layout; no blank rows (the item table ends at the last item), Tax% the item's GST rate |
 | **Delivery Note Version 3** / **Delivery Note Without Amount Version 3** | Delivery Note › Custom Print › With / Without Amount (`public/js/delivery_note.js`, document's letter head) | Format 4's layout, with / without rates and totals |
 | **Delivery Note Print Format with Amount** / **without Amount** | Delivery Note (default in the Print menu, no letter head) | the older challan layout with its own header |
 | **Embroidery Work Order Print Format** / **… 2** | Embroidery Work Order (format 1 from the buttons, no letter head) | jobber work order |
@@ -112,6 +112,8 @@ wkhtmltopdf's legacy box has two traps, which shape how it is used:
 - `min-height` on the box is ignored on some documents (blank space left); a fixed `height` is honoured.
 - On a document longer than one page the box spoils page breaking (gaps, overlapping blocks).
 
+Proforma Invoice Quotation has no blank rows (the user's choice: it looks like the Quotation PDF).
+
 So on the builder formats and Format 4 the box (with a fixed height) is switched on **only when the
 document surely fits on one page**: a Jinja estimate of the free space at the page bottom (mm) from the
 content — item lines (long names count extra), address lines, HSN codes, tax lines, terms / notes length,
@@ -166,11 +168,14 @@ invoice on Order Flow › Finance.
 ## Quotation PDF ("Quotation print format 7Apr")
 
 DB-only print format (not shipped in the app) used by `custom_script.download_quotation_pdf`, with letter
-head "DAC Letter Header quotation". All content is one Custom HTML block. Keep no empty HTML block after
-it: an empty block still renders a row, and on the server — which has no Arial, so the PDF uses the
-wider DejaVu Sans — a quotation that just fills page 1 then got a second page holding only the letter
-head (`patches/quotation_print_format_blank_page.py` removed it). Check page breaks with DejaVu Sans,
-not with a local Arial / Helvetica.
+head "DAC Letter Header quotation". All content is one Custom HTML block; no blank rows.
+`patches/quotation_print_format_7apr_header.py` gave it the uniform header block (Liberation Sans, letter head
+10mm from the top, the letter head's gaps tightened so "QUOTATION" sits just under it, no blank last page) and
+Tax% as the item's GST rate (`igst_rate` or `cgst_rate + sgst_rate`, else the Item Tax Template's `gst_rate`) —
+it printed the template's name ("GST 5% - IND%"); Proforma Invoice Quotation prints Tax% the same way. A
+change to this format is shipped as a patch (it is not an app file). Keep no empty HTML block after
+it: an empty block still renders a row, and a quotation that just fills page 1 then got a second page
+holding only the letter head (`patches/quotation_print_format_blank_page.py` removed it).
 
 ## Tax / charge rows only when not 0
 

@@ -32,7 +32,7 @@ erp_dacsinc_custom.patches.setup_pos_requests
 erp_dacsinc_custom.patches.ensure_autoincrement_sequences
 erp_dacsinc_custom.patches.uniform_transfer_items_table
 erp_dacsinc_custom.patches.correct_chart_of_accounts
-erp_dacsinc_custom.patches.quotation_share_submit
+erp_dacsinc_custom.patches.quotation_share_submit #2026-10-27 re-run: lead-owner shares made by add_docshare
 erp_dacsinc_custom.patches.finance_notes_subtab_roles
 erp_dacsinc_custom.patches.si_print_button_to_app
 erp_dacsinc_custom.patches.customer_tax_category
@@ -46,3 +46,4 @@ erp_dacsinc_custom.patches.charge_items
 erp_dacsinc_custom.patches.supplier_tax_category
 erp_dacsinc_custom.patches.letter_head_border
 erp_dacsinc_custom.patches.dn_print_buttons_to_app
+erp_dacsinc_custom.patches.quotation_print_format_7apr_header
