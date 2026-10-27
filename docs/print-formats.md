@@ -84,11 +84,8 @@ Every format prints its letter head (the POS bills: the store header with bill n
 header**, so it repeats on every page, and "Page X of Y" in the footer. Builder formats do it by themselves
 (Frappe's `#header-html`); the Jinja formats put the letter head in a `<div id="header-html">` and the footer in
 `<div id="footer-html">` once, before the copies. Sales Invoice Multi Copy Master hides Format 4's own letter head
-and footer in each copy and prints the letter head **and the heading (TAX INVOICE, No, Date)** once as the page
-header, so a second page carries them too; each copy keeps only its label (ORIGINAL …) on the right, in its body
-(a page header is one for the whole PDF, so it cannot carry a different label per copy). Credit / Debit Note and
-Purchase Invoice DAC do the same with their title and No / Date; the item table's column headings repeat on the
-next page as well. A format with a page header must not carry a `.print-format { margin-top }` rule — it squeezes the
+and footer in each copy and prints the letter head once as the page header; each copy keeps its heading strip
+and label. A format with a page header must not carry a `.print-format { margin-top }` rule — it squeezes the
 header out. The challans and Embroidery Work Order 1 draw their own header on every chunked page.
 
 ## Blank rows instead of empty space
