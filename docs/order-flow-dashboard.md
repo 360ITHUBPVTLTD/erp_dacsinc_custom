@@ -1750,8 +1750,8 @@ Series and Company — one company — sit in the folded More Information) → P
 Amount → **Cheque / Reference** (No + Date, moved up from the bottom) → **Invoices / Orders Settled**
 (Get Outstanding Invoices, references) → **Allocation** → Deductions or Loss → then, folded: Accounts
 (filled from the mode), Taxes, GST Details, Accounting Dimensions, More Information. No field, rule or
-ERPNext logic changed — order and labels only. A saved entry has a **Print Receipt** (Receive) / **Print
-Voucher** (Pay) / **Print Transfer** button (`public/js/payment_entry.js`) opening Payment Receipt DAC
+ERPNext logic changed — order and labels only. A saved entry has a **Print Voucher** button (`public/js/payment_entry.js`) opening Payment Receipt DAC — Receipt /
+Payment / Contra Voucher by payment type
 (`dacs_print_url`), the same PDF as the 🖨 under an invoice's payments.
 
 **Deduction accounts** (bank charges, TDS, write-off — `docs/bulk-payment.md`): Bank Charges - IND

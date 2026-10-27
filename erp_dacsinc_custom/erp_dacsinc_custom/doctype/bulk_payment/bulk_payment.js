@@ -22,7 +22,7 @@ frappe.ui.form.on("Bulk Payment", {
 				.addClass("btn-primary");
 		}
 		if (frm.doc.docstatus === 1) {
-			frm.add_custom_button(__("Print Receipt"), () => window.open(dacs_print_url("Bulk Payment", frm.doc.name), "_blank"))
+			frm.add_custom_button(__("Print Voucher"), () => window.open(dacs_print_url("Bulk Payment", frm.doc.name), "_blank"))
 				.css({ "background-color": "#000", "color": "#fff" });
 			frm.set_intro(__("Payment Entries made: {0}. Cancel this Bulk Payment to cancel them all together.", [frm.doc.payment_entries || "—"]), "green");
 		}

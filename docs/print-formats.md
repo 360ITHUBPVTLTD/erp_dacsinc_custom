@@ -11,8 +11,8 @@ the desk.
 | **Sales Invoice Multi Copy Master** | Sales Invoice | Format 4 once per copy with its label. A return hands over to Credit Note DAC. |
 | **Credit Note DAC** / **Debit Note DAC** | Sales / Purchase Invoice returns | see `docs/returns.md` › Printing |
 | **Purchase Invoice DAC** | Purchase Invoice (form › Print Purchase Invoice, with the copy choice; a return prints as Debit Note DAC) | the supplier's bill: supplier, their bill no. / date, due date, our PO and receipt numbers, items, GST summary, totals, remarks — the Debit Note's layout |
-| **Payment Receipt DAC** | Payment Entry (default print format, `custom/payment_entry.json`) | Payment Receipt / Payment Voucher / Internal Transfer ; notes "Part of Bulk Payment …" |
-| **Bulk Payment Receipt** | Bulk Payment (default) | one receipt / payment advice for the whole amount: parties, invoices, set-off, Payment Entry per party — see `docs/bulk-payment.md` |
+| **Payment Receipt DAC** | Payment Entry (default print format, `custom/payment_entry.json`) | Receipt Voucher / Payment Voucher / Contra Voucher ; notes "Part of Bulk Payment …" |
+| **Bulk Payment Receipt** | Bulk Payment (default) | one Receipt / Payment Voucher for the whole amount: parties, invoices, set-off, Payment Entry per party — see `docs/bulk-payment.md` |
 | **Sales Order Print Format 3** | Sales Order (default; form button with "DAC Letter Header") | Format 4's layout for an order |
 | **Purchase Order Print Format** | Purchase Order (default; Print PO on a submitted PO, on a saved draft of a normal PO, and in Order Flow; no letter head) | its own company header (bordered box) + Format 4's layout |
 | **Subcontracting Order Print Format 3** | Subcontracting Order (Print SCO / Order Flow, no letter head) | Goods Issue Note: issue and receivable tables |
@@ -113,8 +113,8 @@ shows NOT RUN). A format left OLD is loaded with `frappe.reload_doc('erp_dacsinc
 
 One Payment Entry, however many invoices it settles:
 
-- **PAYMENT RECEIPT** (Receive, "Received with thanks from"), **PAYMENT VOUCHER** (Pay, "Paid to"),
-  **INTERNAL TRANSFER** (from / to account); chip RECEIVED / PAID / DRAFT / CANCELLED.
+- **RECEIPT VOUCHER** (Receive, "Received with thanks from"), **PAYMENT VOUCHER** (Pay, "Paid to"),
+  **CONTRA VOUCHER** (Internal Transfer, from / to account); chip RECEIVED / PAID / DRAFT / CANCELLED.
 - Company letter head; party with GSTIN; mode of payment, cheque / ref. no. and date, our bank account.
 - The invoices / bills settled: no., supplier bill no. (voucher), date, total, **amount set off**.
   (No "due before / balance": ERPNext stores a reference's outstanding as it was when the entry was
