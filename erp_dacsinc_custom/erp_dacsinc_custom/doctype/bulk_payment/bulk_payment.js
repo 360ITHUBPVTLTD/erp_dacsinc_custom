@@ -22,9 +22,15 @@ frappe.ui.form.on("Bulk Payment", {
 				.addClass("btn-primary");
 		}
 		if (frm.doc.docstatus === 1) {
+			// Cancel lists every payment that goes with it first (public/js/bulk_cancel.js)
+			frm.savecancel = (btn, callback, on_error) => frappe.require("/assets/erp_dacsinc_custom/js/bulk_cancel.js",
+				() => dacs_bulk_cancel(frm, btn, callback, on_error));
 			frm.add_custom_button(__("Print Voucher"), () => window.open(dacs_print_url("Bulk Payment", frm.doc.name), "_blank"))
 				.css({ "background-color": "#000", "color": "#fff" });
-			frm.set_intro(__("Payment Entries made: {0}. Cancel this Bulk Payment to cancel them all together.", [frm.doc.payment_entries || "—"]), "green");
+			frm.set_intro(frm.doc.status === "Partly Cancelled"
+				? __("Partly cancelled: {0} of its Payment Entries cancelled on their own (rows ticked Cancelled). The others stand: cancel this Bulk Payment to cancel them too.", [format_currency(frm.doc.cancelled_amount)])
+				: __("Payment Entries made: {0}. Cancel one on its own (this becomes Partly Cancelled) or cancel this Bulk Payment to cancel them all.", [frm.doc.payment_entries || "—"]),
+				frm.doc.status === "Partly Cancelled" ? "orange" : "green");
 		}
 	},
 	payment_type(frm) {
@@ -35,7 +41,8 @@ frappe.ui.form.on("Bulk Payment", {
 	set_row_types(frm) {
 		const pt = frm.doc.payment_type === "Pay" ? "Supplier" : "Customer";
 		const dt = frm.doc.payment_type === "Pay" ? "Purchase Invoice" : "Sales Invoice";
-		(frm.doc.allocations || []).forEach(r => { r.party_type = pt; r.reference_doctype = dt; });
+		// rows keep Journal Entry (an opening balance / other due); everything else is the invoice type
+		(frm.doc.allocations || []).forEach(r => { r.party_type = pt; if (r.reference_doctype !== "Journal Entry") r.reference_doctype = dt; });
 	},
 	allocations_add(frm, cdt, cdn) {
 		frappe.model.set_value(cdt, cdn, "party_type", frm.doc.payment_type === "Pay" ? "Supplier" : "Customer");

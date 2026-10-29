@@ -27,6 +27,7 @@ previously-buggy edge cases — are documented in `docs/`:
   pick-only users (no list, no form), no export / print / report, master reports.
 - `docs/draft-guard.md` — a new PO / SCO / PR / PI / SCR / MR / DN / SI is refused
   while a draft for the same source line exists.
+  PO lines from a Material Request may not ask for more than it has open (save and submit).
 - `docs/merchandiser-purchase.md` — Merchandiser User sees and creates only
   subcontracted POs; Stock Entries only for their orders' jobber transfers.
 - `docs/crm-admin-review-dashboard.md` — CRM Admin Review dashboard (a DB-stored HTML

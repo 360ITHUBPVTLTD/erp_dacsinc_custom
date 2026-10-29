@@ -66,6 +66,33 @@ Delivery Note Version 3, Embroidery 2) must **not** carry that rule — it squee
 shared). Terms written in the editor carry Quill's `height: 100%`, padding and scroll bars; every format
 resets them (`.ql-editor`), or the terms box stretches to the page and shows scroll arrows.
 
+**Description (Sales Order 3, Purchase Order):** a **Description** column after Item Code (8.5pt), shown only
+when at least one line's description says more than its item code / name (`dacs_desc` macro); a line whose
+description only repeats the name has an empty cell, and a document with no such line keeps the old layout
+(Item Code at full width). Item Code gives up part of its width to it (PO 44% → 24% + 24%, SO 30% → 19% + 19%).
+Descriptions are what the user types: the app no longer writes its own ("Source Trace: MR …" from the PO's
+Material Request fetch, "Requirement for SAL-ORD-…" on Material Requests from a Sales Order, "Manufacturing: …
+Ref SO: …" on subcontract PO rows) — a new line keeps the item's own description. Those notes on older
+documents are left out of the print. In the fit estimate a row with the column is as tall as its longer cell
+(item code ~30 / 26 characters a line, description ~32 / 28); the item-line limit counts the code lines, the
+extra lines a description adds have their own cap (5).
+
+**Heading dates:** the strip under the title shows No | Date | **Required By** (PO, `schedule_date`) or
+**Delivery** (SO, `delivery_date`).
+
+**Purchase Order items:** no Item Tax Template column (the GST breakup under the items shows the tax); Item
+Code takes its width.
+
+**Terms (Purchase Order):** amount in words / bank, then one box: the terms on the left (7.2pt, line height
+1.05, 78% wide) and, behind a partition line, the signature column on the right — "For Dac's Inc" at its top,
+Authorised Signatory at its bottom (absolutely positioned, so the signing space is the terms' full height; the
+box is at least 22 mm tall). The terms may continue on the next page. Before, terms and signature were one
+table row that moved whole to page 2 and left page 1 half empty. The GST breakup table's own bottom margin is
+removed (it left a gap above the amount in words). The fit estimate counts terms by lines (paragraphs / list
+items, +1 per 140 characters): 3.8 mm a line less 10.4 mm (short terms fit in the 22 mm), measured; at most
+16 lines get the page box. Measured 30-Oct-2026: the 20 recent POs are one page each; PO-00131 (5 items, 16
+terms lines) prints without the box, 18 mm above the footer.
+
 **Header details (Format 4):** only the detail rows with a value print (a pair keeps its filled half; an
 empty row is left out), so the header box is as tall as what it holds.
 

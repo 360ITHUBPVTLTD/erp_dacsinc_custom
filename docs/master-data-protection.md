@@ -110,37 +110,41 @@ the section is hidden, and the list pill is not drawn). Custom HTML field `custo
 its own section at the top (`custom/customer.json` / `supplier.json`); `public/js/party_summary.js`;
 data `party_balance.get_party_summary` and `party_statement.py`.
 
-- Top bar: the position in words ("Advance with us ₹…", "Customer owes us ₹…") and the buttons —
-  Receive / Make Payment (the payment prompt, `docs/bulk-payment.md`), **Print Statement**, Ledger
-  (General Ledger report), Ageing (Receivable / Payable), Refresh.
-- Always open: the top bar and the **Money** cards (and the Adjust note). **Sales Orders**, **Documents**
-  and **Advances & recent payments** are folding sections — Documents open by default, the other two shut; each header keeps its key
-  figures (open / to deliver / to bill; unpaid / overdue; advance / last payment). Open / shut is
-  remembered per user and browser (localStorage); Documents load only when first opened.
-- Cards, four per row (2 / 1 on narrow screens):
-  - **Money** (with this year's billed and received / paid in its heading): Net balance (Dr / Cr, made up
-    as unpaid − advance ± other entries; credit limit), Unpaid (count, next due date), Overdue, Advance /
-    credit not adjusted (advances and notes).
-  - **Sales Orders / Purchase Orders** (`party_balance._order_status`): Draft / awaiting approval (by the
-    Sales Order Workflow state), Open orders (by status: To Deliver and Bill, To Bill, …), **To deliver /
-    To receive** (value still to go, per item: pending qty × rate, with tax) and **To bill** (delivered /
-    received but not invoiced: delivered qty × rate − billed amount, with tax); completed count and a
-    link to the order list. In the Documents › Orders view a draft order shows its approval state.
-- **Documents** — chips Unpaid · All invoices · Paid · Credit notes · Sales Orders (supplier: bills,
-  debit notes, Purchase Orders) with a date range (Unpaid ignores the dates; ageing chips there). A row
-  opens to its chain: Quotation → Sales Order → Delivery → Invoice and the payments / notes / journal
-  entries set against it; an order opens to its deliveries, invoices (still due, payments) and
-  advances against it (`party_statement.get_party_documents`, first 100). A note's set-off Journal Entry
-  is not listed again when the note itself is.
-- Advances / notes waiting, and the last 8 payments with their receipt print.
+- **Headline**: the position in one big figure ("Customer owes us ₹…", "We owe the customer (advance / credit) ₹…",
+  "All settled") with one sentence — to receive ₹… on "1 opening balance, 2 invoices", ₹… overdue, we hold ₹… for
+  them, credit limit — and the buttons: Receive / Make Payment (the payment prompt, `docs/bulk-payment.md`),
+  Statement, Ledger (General Ledger report), Refresh. When they owe something *and* we hold something the headline
+  is the **net** ("Net to receive from the customer", sentence "₹… due − ₹… we hold for them = ₹…"), and three
+  boxes under it say what each side is made of: They owe (per kind) − We hold for them (per kind) = Net to
+  receive (or: We owe them — pay back or keep as advance), with a line that the credits aren't set off yet (the
+  list shows full dues) until **Adjust**. The list then ends with a *Net to receive* row, and an invoice with a
+  return of it still held says so under it ("Return … not set off yet — ₹… after Adjust").
+  The figures come from the party's open items (`party_open_items.open_items`: ERPNext's Payment Ledger, as its
+  Accounts Receivable / Payable report) — invoices, opening invoices, **opening balances and other Journal
+  Entries**, credit / debit notes, advances by Payment or Journal Entry — so they add up to the ledger balance; if
+  they ever don't, an orange line says by how much (`difference`).
+- **Open items** (always shown): grouped *To receive* (dues, oldest first) and *Held for them* (credits), each group
+  with its total; every line labelled in words (Opening balance, Invoice, Journal Entry, Advance payment, Credit
+  note…), its status (n days late / due date / can be set off / to pay back), the open amount and one action —
+  **Receive / Pay** on a due (the prompt starts with it), **Adjust** on a credit when something is due, **Refund**
+  on a credit note with nothing to set it against.
+- **Tabs** below, one open at a time (or none; the choice is remembered per user and browser): **Returns** (only
+  when there are notes; opens by itself while one is open, with the open count) — the latest 20 credit / debit
+  notes with amount, still open, the money status (*Settled* / *Open — set off against their dues* / *Open — to pay
+  back*) and what settled it (Payment Ledger: "set against SINV-…", "refunded by ACC-PAY-…"), the goods status
+  (`return_goods.note_goods`), Adjust / Refund (`party_balance._returns`); **Sales Orders / Purchase Orders**
+  (`party_balance._order_status`: Draft / awaiting approval, Open orders, To deliver / To receive, To bill);
+  **History** — chips Unpaid · All invoices · Paid · Credit notes · Sales Orders with a date range, each row
+  opening to its chain and what settled it (`party_statement.get_party_documents`, first 100; Unpaid also lists
+  opening balances and other Journal Entries due; loads when first opened); **Payments** (last 8, with receipt
+  print). This year's billed / received and the payment terms are in the small line at the bottom.
 - **Print Statement**: period (this financial year, last 12 / 3 / 1 months, or dates), with or
   without letter head → `party_statement.statement_pdf`: the default Letter Head (as the receipts),
   party with GSTIN and address, opening balance, every ledger voucher (type, document, details —
   return against, bill / PO no, payment mode / ref and the invoices it paid), debit, credit, running
   balance Dr / Cr, period totals, closing balance in figures and words, signature.
 
-When an advance / credit and unpaid invoices exist together a warning says so, with **Adjust
-against invoices**: choose the credits (oldest used first) and how much goes on each invoice (spread
+**Adjust** (on a credit in Open now, or a return): choose the credits (oldest used first) and how much goes on each invoice (spread
 oldest due first by itself, editable; left after / fully / part paid shown). `party_balance.adjust_advances`
 builds ERPNext's own **Payment Reconciliation** (unreconciled entries, allocation rows built as its
 `allocate_entries` does, then `reconcile()`), so the posting is exactly that tool's: the Payment

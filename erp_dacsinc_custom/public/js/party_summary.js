@@ -1,7 +1,8 @@
 // Account Summary on the Customer / Supplier form (custom field custom_account_summary, at the top) —
 // only for Admin, System Manager, Accounts Executive, Accounts Manager (party_balance.FINANCE_ROLES;
 // the server returns nothing to anyone else and the section is hidden).
-//   • Position card: the net figure in words, worked out as unpaid − advance / credit = balance
+//   • one sentence and a sum: what they owe − what we hold for them = net balance (party_open_items:
+//     invoices, opening balances / Journal Entries, credit notes, advances — every row named in words)
 //   • cards: unpaid, overdue, billed this year, received / paid this year (+ credit limit)
 //   • advance and unpaid together → a step that says what Adjust will do, with the button
 //   • unpaid invoices (ageing), advances / notes waiting, recent payments
@@ -16,6 +17,52 @@
 	.dps-bar__state.is-due { background: #fdecea; color: #b03a2e; } .dps-bar__state.is-adv { background: #e8f6ee; color: #1e8449; }
 	.dps-bar__state.is-zero { background: var(--subtle-fg); color: var(--text-muted); }
 	.dps-bar__btns { margin-left: auto; display: flex; flex-wrap: wrap; gap: 6px; }
+	.dps-head { display: flex; flex-wrap: wrap; gap: 12px 20px; align-items: center; justify-content: space-between; padding: 14px 18px; border-radius: 12px; border: 1px solid var(--border-color); background: var(--card-bg, #fff); margin-bottom: 10px; border-left: 5px solid #aab7c4; }
+	.dps-head.is-due { border-left-color: #e74c3c; background: linear-gradient(90deg, #fff4f3 0%, #fff 55%); }
+	.dps-head.is-cr { border-left-color: #27ae60; background: linear-gradient(90deg, #f0faf4 0%, #fff 55%); }
+	.dps-head.is-zero { background: linear-gradient(90deg, #f5f7fa 0%, #fff 55%); }
+	.dps-list, .dps-pane { box-shadow: 0 1px 3px rgba(16,24,40,.06); }
+	.dps-head__lbl { font-size: 12.5px; font-weight: 600; color: var(--text-muted); }
+	.dps-head__amt { font-size: 28px; font-weight: 800; line-height: 1.15; font-variant-numeric: tabular-nums; }
+	.dps-head.is-due .dps-head__amt { color: #c0392b; } .dps-head.is-cr .dps-head__amt { color: #1e8449; } .dps-head.is-zero .dps-head__amt { color: var(--text-muted); }
+	.dps-head__sub { font-size: 12.5px; color: var(--text-color); margin-top: 2px; }
+	.dps-late { color: #c0392b; } .dps-ok { color: #1e8449; }
+	.dps-sum { font-size: 13px; margin: 0 0 10px; padding: 8px 14px; border-radius: 8px; background: var(--subtle-fg); }
+	.dps-sum span { color: var(--text-muted); margin: 0 6px; font-weight: 700; }
+	.dps-list { border: 1px solid var(--border-color); border-radius: 12px; overflow: hidden; background: var(--card-bg, #fff); }
+	.dps-list .dps-t th, .dps-pane .dps-t th { background: #3498DB; color: #fff; font-size: 11px; text-transform: uppercase; letter-spacing: .05em; border-right: 0; padding: 8px 14px; }
+	.dps-list .dps-t tr:nth-child(even):not(.dps-grp) td, .dps-pane .dps-t tr:nth-child(even):not(.dps-grp) td { background: #f8fbfe; }
+	.dps-grp.is-due td { background: #fdf3f2 !important; color: #a93226 !important; }
+	.dps-grp.is-cr td { background: #eff9f3 !important; color: #1e8449 !important; }
+	.dps-grp.is-due td:first-child { box-shadow: inset 3px 0 0 #e74c3c; } .dps-grp.is-cr td:first-child { box-shadow: inset 3px 0 0 #27ae60; }
+	.dps-list .btn-go { background: #3498DB; border-color: #2e86c1; color: #fff; font-weight: 600; } .dps-list .btn-go:hover { background: #2e86c1; color: #fff; }
+	.dps-tab .fa { margin-right: 5px; opacity: .8; }
+	.dps-list .dps-t td, .dps-pane .dps-t td { padding: 9px 14px; }
+	.dps-list .dps-t tr:not(.dps-grp):hover td { background: #f8fafc; }
+	.dps-list .dps-t td a { font-weight: 600; }
+	.dps-grp td { background: #fbfcfd; font-size: 12px; font-weight: 700; color: var(--text-muted); text-transform: uppercase; letter-spacing: .03em; padding: 6px 14px !important; }
+	.dps-tabs { display: flex; flex-wrap: wrap; gap: 6px; margin: 14px 0 0; padding-top: 12px; border-top: 1px solid var(--border-color); }
+	.dps-tab { border: 1px solid var(--border-color); background: var(--card-bg, #fff); border-radius: 18px; padding: 5px 14px; font-size: 12.5px; font-weight: 600; color: var(--text-color); cursor: pointer; }
+	.dps-tab:hover { border-color: #3498DB; } .dps-tab.is-on { background: #3498DB; border-color: #3498DB; color: #fff; }
+	.dps-tab span { display: inline-block; min-width: 18px; border-radius: 9px; background: #e74c3c; color: #fff; font-size: 11px; padding: 0 5px; margin-left: 3px; }
+	.dps-pane { margin-top: 10px; border: 1px solid var(--border-color); border-radius: 12px; overflow: hidden; background: var(--card-bg, #fff); }
+	.dps-pane > .dps-kpi, .dps-pane > .dps-meta { margin: 12px; } .dps-pane > .dps-box { margin: 0; border: 0; }
+	.dps-eq { display: flex; flex-wrap: wrap; align-items: stretch; gap: 6px; margin: 0 0 10px; }
+	.dps-eq__i { border: 1px solid var(--border-color); border-radius: 8px; padding: 6px 12px; background: var(--card-bg, #fff); min-width: 150px; }
+	.dps-eq__i span { display: block; font-size: 11.5px; color: var(--text-muted); font-weight: 600; }
+	.dps-eq__i b { font-size: 17px; font-variant-numeric: tabular-nums; }
+	.dps-eq__i small { display: block; font-size: 11px; color: var(--text-muted); }
+	.dps-eq__i.is-due b { color: #c0392b; } .dps-eq__i.is-cr b { color: #1e8449; }
+	.dps-eq__i.is-net { border-width: 2px; } .dps-eq__i.is-net.is-due { border-color: #e6b0aa; background: #fdf6f5; } .dps-eq__i.is-net.is-cr { border-color: #a9dfbf; background: #f4fbf6; }
+	.dps-note { margin: 0 0 10px; font-size: 12.5px; color: var(--text-muted); } .dps-note i { color: #3498DB; }
+	.dps-retnote { display: block; color: #1e8449 !important; font-weight: 600; margin-top: 2px; }
+	.dps-net td { background: #eaf3fb !important; font-weight: 700; font-size: 13.5px; border-top: 2px solid #3498DB; } .dps-net td small { display: inline; margin-left: 8px; font-weight: 400; color: var(--text-muted); }
+	.dps-net b { font-size: 15px; }
+	.dps-eq__op { align-self: center; font-size: 20px; font-weight: 700; color: var(--text-muted); padding: 0 2px; }
+	.dps-warn { margin: 0 0 10px; border-left: 4px solid #e67e22; background: #fef5e7; border-radius: 6px; padding: 8px 12px; font-size: 12.5px; color: #935116; }
+	.dps-kind { display: inline-block; border-radius: 6px; padding: 1px 7px; font-size: 11px; font-weight: 700; margin-right: 6px; background: #eaf2f8; color: #21618c; white-space: nowrap; }
+	.dps-kind.k-opening, .dps-kind.k-opening_invoice { background: #f4ecf7; color: #6c3483; } .dps-kind.k-journal, .dps-kind.k-journal_credit { background: #fef5e7; color: #935116; }
+	.dps-kind.k-advance, .dps-kind.k-credit_note, .dps-kind.k-debit_note { background: #e8f6ee; color: #1e8449; } .dps-kind.k-refund { background: #fdecea; color: #a93226; }
 	.dps-sec { font-size: 11.5px; font-weight: 700; color: var(--text-muted); text-transform: uppercase; letter-spacing: .05em; margin: 14px 0 6px; display: flex; gap: 8px; align-items: baseline; }
 	.dps-sec small { text-transform: none; letter-spacing: 0; font-weight: 500; }
 	.dps-kpi { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; }
@@ -132,26 +179,17 @@
 		const link = (dt, n) => `<a href="/app/${frappe.router.slug(dt)}/${encodeURIComponent(n)}" target="_blank">${esc(n)}</a>`;
 		const bal = flt(s.balance);
 		const n_unpaid = s.unpaid.length;
-		const n_adv = (s.advances || []).length, n_notes = (s.notes || []).length;
-		const credits = flt(s.advance_total) + (s.notes || []).reduce((a, n) => a - flt(n.outstanding_amount), 0);
-		const other = flt(bal - (flt(s.outstanding) - credits), 2);   // opening balances, journal entries…
+		const credits = flt(s.credit_total);
+		const other = flt(s.difference);   // not explained by the open items: should be 0, shown if not
+		const KIND = dps_kinds(customer);
+		// "2 invoices, 1 opening balance" — what a list of open items is made of
+		const kinds_text = (list) => {
+			const n = {};
+			list.forEach(r => { n[r.kind] = (n[r.kind] || 0) + 1; });
+			return Object.entries(n).map(([k, c]) => `${c} ${c === 1 ? KIND[k][0].toLowerCase() : KIND[k][1]}`).join(", ");
+		};
 
-		// ── state chip + buttons, then six equal figures ─────────────────────────────────
-		const state_cls = bal > 0.005 ? "is-due" : bal < -0.005 ? "is-adv" : "is-zero";
-		const state_txt = bal > 0.005 ? (customer ? __("Customer owes us {0}", [money(bal)]) : __("We owe the supplier {0}", [money(bal)]))
-			: bal < -0.005 ? (customer ? __("Advance with us {0}", [money(-bal)]) : __("Advance with the supplier {0}", [money(-bal)])) : __("All settled");
 		const report = (name, extra) => `/app/query-report/${encodeURIComponent(name)}?${new URLSearchParams(Object.assign({ company: s.company }, extra)).toString()}`;
-		const bar = `<div class="dps-bar">
-			<span class="dps-bar__state ${state_cls}">${state_txt}</span>
-			<span class="dps-docs-sub">${esc(s.company)} · ${__("this year: billed {0}, {1} {2}", [money(s.billed_fy), customer ? __("received") : __("paid"), s.can_pe ? money(s.paid_fy) : "—"])}</span>
-			<div class="dps-bar__btns">
-				${s.can_pay ? `<button class="btn btn-sm btn-primary dps-pay"><i class="fa fa-${customer ? "arrow-down" : "arrow-up"}"></i> ${customer ? __("Receive Payment") : __("Make Payment")}</button>` : ""}
-				<button class="btn btn-sm btn-default dps-stmt"><i class="fa fa-print"></i> ${__("Print Statement")}</button>
-				<a class="btn btn-sm btn-default" target="_blank" href="${report("General Ledger", { party_type: frm.doctype, party: frm.doc.name, from_date: frappe.datetime.add_months(frappe.datetime.get_today(), -12), to_date: frappe.datetime.get_today(), group_by: "Group by Voucher (Consolidated)" })}"><i class="fa fa-book"></i> ${__("Ledger")}</a>
-				<a class="btn btn-sm btn-default" target="_blank" href="${report(customer ? "Accounts Receivable" : "Accounts Payable", { party_type: frm.doctype, party: frm.doc.name })}"><i class="fa fa-bar-chart"></i> ${__("Ageing")}</a>
-				<button class="btn btn-sm btn-default dps-refresh" title="${esc(__("Refresh"))}"><i class="fa fa-refresh"></i></button>
-			</div></div>`;
-
 		const k = (cls, icon, label, value, sub, chips) => `<div class="dps-k is-${cls}"><span class="dps-k__i"><i class="fa fa-${icon}"></i></span>
 			<div class="dps-k__l">${label}</div><div class="dps-k__v">${value}</div>
 			<div class="dps-k__s" title="${esc($("<div>").html(sub).text())}">${sub}${chips && chips.length ? `<span class="dps-k__chips">${chips.map(c => `<span>${c}</span>`).join("")}</span>` : ""}</div></div>`;
@@ -160,20 +198,6 @@
 		const odt = customer ? __("Sales Orders") : __("Purchase Orders");
 		const n_ord = (n) => `${n} ${n === 1 ? (customer ? __("order") : __("PO")) : (customer ? __("orders") : __("POs"))}`;
 		const ord_url = (extra) => `/app/${frappe.router.slug(o.doctype || (customer ? "Sales Order" : "Purchase Order"))}?${new URLSearchParams(Object.assign({ [customer ? "customer" : "supplier"]: frm.doc.name }, extra)).toString()}`;
-		const kpi = `
-		<div class="dps-kpi">
-			${k(bal > 0.005 ? "red" : bal < -0.005 ? "green" : "grey", "balance-scale",
-				bal > 0.005 ? (customer ? __("Net balance — they owe") : __("Net balance — we owe")) : bal < -0.005 ? __("Net balance — advance") : __("Net balance"),
-				`${money(Math.abs(bal))}<small>${bal > 0.005 ? (customer ? "Dr" : "Cr") : bal < -0.005 ? (customer ? "Cr" : "Dr") : ""}</small>`,
-				`<b>${money(s.outstanding)}</b> ${__("unpaid")} − <b>${money(credits)}</b> ${__("advance")}${Math.abs(other) > 0.005 ? ` ${other > 0 ? "+" : "−"} <b>${money(Math.abs(other))}</b> ${__("other")}` : ""}${limit}`)}
-			${k(n_unpaid ? "red" : "grey", "file-text-o", customer ? __("Unpaid invoices") : __("Unpaid bills"), money(s.outstanding),
-				n_unpaid ? count(n_unpaid) + (s.unpaid.length && s.unpaid[0].due_date ? " · " + __("next due {0}", [date(s.unpaid.filter(u => !u.days_overdue).map(u => u.due_date)[0] || s.unpaid[0].due_date)]) : "") : __("Nothing unpaid"))}
-			${k(s.overdue_count ? "orange" : "grey", "clock-o", __("Overdue"), money(s.overdue),
-				s.overdue_count ? __("{0} past due date", [count(s.overdue_count)]) : __("Nothing past due date"))}
-			${k(credits > 0.005 ? "green" : "grey", "money", __("Advance / credit"), money(credits),
-				credits > 0.005 ? __("Not yet set against invoices") : __("Nothing waiting"),
-				[n_adv ? __("{0} advance", [n_adv]) : "", n_notes ? (customer ? __("{0} credit note", [n_notes]) : __("{0} debit note", [n_notes])) : ""].filter(Boolean))}
-		</div>`;
 		const orders_body = `<div class="dps-kpi">
 			${k(o.draft_n ? "purple" : "grey", "pencil", customer ? __("Draft / awaiting approval") : __("Draft"), money(o.draft_amount),
 				o.draft_n ? n_ord(o.draft_n) + " " + __("not submitted") : __("None"),
@@ -188,14 +212,6 @@
 		</div>
 		<div class="dps-meta">${__("{0} completed", [o.completed_n || 0])} · <a href="${ord_url({})}" target="_blank">${__("Open the {0} list", [odt])}</a></div>`;
 
-		// ── advance and unpaid together: one line saying what Adjust does ─────────────────
-		const can_adjust = s.can_pe && credits > 0.005 && n_unpaid;
-		const use = Math.min(credits, flt(s.outstanding));
-		const step = can_adjust ? `<div class="dps-note"><i class="fa fa-exchange" style="color:#b7950b;"></i>
-			<div class="dps-note__txt">${__("Advance / credit <b>{0}</b> is not yet set against {1} (<b>{2}</b> unpaid).", [money(credits), count(n_unpaid), money(s.outstanding)])}
-				${credits >= flt(s.outstanding) - 0.005 ? __("Adjusting makes them Paid; {0} advance stays for later.", [money(credits - use)]) : __("Adjusting leaves {0} unpaid.", [money(flt(s.outstanding) - use)])}</div>
-			<button class="btn btn-sm btn-primary dps-adjust">${__("Adjust {0}", [money(use)])}</button></div>` : "";
-
 		// ── documents: unpaid / all / paid / notes / orders, each row opens to its chain ─────────
 		const age = AGE_CHIPS(s, money);
 		const unpaid = `<div class="dps-docs">
@@ -209,13 +225,7 @@
 			<div class="dps-docs-body"><div class="dps-empty">${__("Loading…")}</div></div>
 		</div>`;
 
-		const credit_rows = [
-			...(s.advances || []).map(a => `<tr><td><b>${link("Payment Entry", a.name)}</b><small>${__("Advance payment")} · ${date(a.posting_date)}${a.mode_of_payment ? " · " + esc(a.mode_of_payment) : ""}${a.reference_no ? " · " + esc(a.reference_no) : ""}</small></td><td class="r"><b>${money(a.unallocated_amount)}</b></td></tr>`),
-			...(s.notes || []).map(n => `<tr><td><b>${link(inv_dt, n.name)}</b><small>${customer ? __("Credit Note") : __("Debit Note")} · ${date(n.posting_date)}${n.return_against ? " · " + __("against {0}", [esc(n.return_against)]) : ""}</small></td><td class="r"><b>${money(-flt(n.outstanding_amount))}</b></td></tr>`),
-		].join("");
-		const credit_box = `<div class="dps-box"><div class="dps-box__h">${__("Advance / credit not adjusted")} <small>${money(credits)}</small></div>
-			${credit_rows ? `<table class="dps-t"><tr><th>${__("Document")}</th><th class="r">${__("Not adjusted")}</th></tr>${credit_rows}</table>` : `<div class="dps-empty">${__("Nothing waiting.")}</div>`}</div>`;
-		const pay_box = !s.can_pe ? "" : `<div class="dps-box"><div class="dps-box__h">${__("Recent payments")} <small>${__("last 8")}</small></div>
+		const pay_box = !s.can_pe ? "" : `<div class="dps-box" style="margin-top:0;">
 			${(s.payments || []).length ? `<table class="dps-t"><tr><th>${__("Payment")}</th><th class="r">${__("Amount")}</th><th></th></tr>
 				${s.payments.map(p => `<tr><td><b>${link("Payment Entry", p.name)}</b><small>${date(p.posting_date)}${p.mode_of_payment ? " · " + esc(p.mode_of_payment) : ""}${p.reference_no ? " · " + esc(p.reference_no) : ""}${p.custom_bulk_payment ? " · " + __("Bulk Payment") + " " + esc(p.custom_bulk_payment) : ""}</small>
 					${(p.payment_type === "Receive") !== customer ? `<span class="dps-pill is-part">${__("refund")}</span>` : ""}</td>
@@ -223,38 +233,126 @@
 					<td class="r"><a class="btn btn-xs btn-default dps-print" data-pe="${esc(p.name)}" title="${esc(__("Print receipt"))}"><i class="fa fa-print"></i></a></td></tr>`).join("")}</table>`
 				: `<div class="dps-empty">${__("No payments yet.")}</div>`}</div>`;
 
-		// Money stays open; the rest fold away (the header keeps the key figures). Open / shut is
-		// remembered per user and browser.
-		const fold_key = (k) => `dps_fold:${frm.doctype}:${k}`;
-		// Documents open by default (the most used), the others shut; the user's own choice wins
-		const OPEN_BY_DEFAULT = { docs: true };
-		const is_open = (k) => {
-			let v = null;
-			try { v = localStorage.getItem(fold_key(k)); } catch (e) { /* no storage */ }
-			return v === null ? !!OPEN_BY_DEFAULT[k] : v === "1";
+		// ── returns: every credit / debit note with its status, what is open, what settled it, the goods ──
+		const rets = s.returns || [];
+		const ret_open = rets.filter(r => r.status !== "settled");
+		const RST = {
+			settled: ["green", __("Settled")],
+			adjust: ["part", customer ? __("Open — set off against their dues") : __("Open — set off against our bills")],
+			refund: ["late", customer ? __("Open — to pay back") : __("Open — to receive back")],
 		};
-		const fold = (key, icon, title, sums, body) => `<div class="dps-fold ${is_open(key) ? "is-open" : ""}" data-k="${key}">
-			<div class="dps-fold__h"><i class="fa fa-chevron-right"></i><span class="dps-fold__t"><i class="fa fa-${icon}"></i>${title}</span>
-				<span class="dps-fold__sum">${sums.filter(Boolean).map(([c, t]) => `<span class="${c ? "is-" + c : ""}">${t}</span>`).join("")}</span>
-				<span class="dps-fold__hint">${__("click to open / close")}</span></div>
-			<div class="dps-fold__b">${body}</div></div>`;
+		const how = (x) => x.how === "against" ? __("set against {0}", [link(x.doctype, x.name)])
+			: x.how === "refund" ? (customer ? __("refunded by {0}", [link(x.doctype, x.name)]) : __("received back by {0}", [link(x.doctype, x.name)]))
+			: __("by {0}", [link(x.doctype, x.name)]);
+		const GOODS = { done: ["green", __("Back in stock")], self: ["green", __("Back in stock")], none: ["ok", __("No stock item")],
+			draft: ["part", __("Return in draft")], pending: ["late", __("Goods not back")], unlinked: ["late", __("Goods not linked")] };
+		const returns_body = rets.length ? `<table class="dps-t"><tr><th>${customer ? __("Credit note") : __("Debit note")}</th><th class="r">${__("Amount")}</th>
+			<th class="r">${__("Still open")}</th><th>${__("Money")}</th><th>${__("Goods")}</th><th></th></tr>
+			${rets.map(r => `<tr><td><b>${link(inv_dt, r.name)}</b><small>${date(r.date)}${r.return_against ? " · " + __("return of {0}", [link(inv_dt, r.return_against)]) : ""}</small></td>
+				<td class="r">${money(r.total)}</td><td class="r"><b>${r.open > 0.005 ? money(r.open) : "—"}</b></td>
+				<td><span class="dps-pill is-${RST[r.status][0]}">${RST[r.status][1]}</span>
+					<small>${(r.settled_by || []).map(x => `${how(x)} · ${money(x.amount)}`).join("<br>") || (r.status === "settled" ? "" : __("nothing set off yet"))}</small></td>
+				<td>${r.goods_status ? `<span class="dps-pill is-${(GOODS[r.goods_status] || ["ok"])[0]}">${(GOODS[r.goods_status] || ["", ""])[1]}</span><small>${esc(r.goods_text || "")}</small>` : ""}</td>
+				<td class="r">${r.status === "refund" && s.can_pay ? `<button class="btn btn-xs btn-primary dps-refund" data-n="${esc(r.name)}">${customer ? __("Refund") : __("Receive refund")}</button>`
+					: r.status === "adjust" && s.can_pe ? `<button class="btn btn-xs btn-default dps-adjust">${__("Adjust")}</button>` : ""}</td></tr>`).join("")}</table>`
+			: `<div class="dps-empty">${customer ? __("No credit notes.") : __("No debit notes.")}</div>`;
+
+		// ── headline: the position in one big line and one plain sentence, the buttons on the right ──────
+		const today = frappe.datetime.get_today();
+		const late_n = s.unpaid.filter(r => r.due_date && r.due_date < today).length;
+		const head_cls = bal > 0.005 ? "is-due" : bal < -0.005 ? "is-cr" : "is-zero";
+		const both = n_unpaid && credits > 0.005;   // dues and credits: the headline is the net of the two
+		const head_lbl = bal > 0.005 ? (both ? (customer ? __("Net to receive from the customer") : __("Net to pay the supplier")) : (customer ? __("Customer owes us") : __("We owe the supplier")))
+			: bal < -0.005 ? (customer ? __("We owe the customer (advance / credit)") : __("Supplier owes us (advance / debit)")) : __("All settled");
+		const head_sub = [
+			both ? __("{0} due − {1} {2} = {3}", [money(s.outstanding), money(credits), customer ? __("we hold for them") : __("they hold for us"), money(Math.abs(bal))])
+				: n_unpaid ? (customer ? __("To receive {0} on {1}", [money(s.outstanding), kinds_text(s.unpaid)]) : __("To pay {0} on {1}", [money(s.outstanding), kinds_text(s.unpaid)])) : "",
+			late_n ? `<b class="dps-late">${__("{0} overdue", [money(s.overdue)])}</b>` : "",
+			!n_unpaid && credits > 0.005 ? kinds_text(s.credits) : "",
+		].filter(Boolean).join(" · ") || __("Nothing open.");
+		const head = `<div class="dps-head ${head_cls}">
+			<div class="dps-head__l"><div class="dps-head__lbl">${head_lbl}</div>
+				<div class="dps-head__amt">${money(Math.abs(bal))}</div>
+				<div class="dps-head__sub">${head_sub}${limit}</div></div>
+			<div class="dps-bar__btns">
+				${s.can_pay ? `<button class="btn btn-sm btn-primary dps-pay"><i class="fa fa-${customer ? "arrow-down" : "arrow-up"}"></i> ${customer ? __("Receive Payment") : __("Make Payment")}</button>` : ""}
+				<button class="btn btn-sm btn-default dps-stmt"><i class="fa fa-print"></i> ${__("Statement")}</button>
+				<a class="btn btn-sm btn-default" target="_blank" href="${report("General Ledger", { party_type: frm.doctype, party: frm.doc.name, from_date: frappe.datetime.add_months(today, -12), to_date: today, group_by: "Group by Voucher (Consolidated)" })}"><i class="fa fa-book"></i> ${__("Ledger")}</a>
+				<button class="btn btn-sm btn-default dps-refresh" title="${esc(__("Refresh"))}"><i class="fa fa-refresh"></i></button>
+			</div></div>`;
+		// the sum only when both sides have something (else it repeats the headline): due − held = net, each box
+		// saying what it is made of, and a line on what Adjust does (until then the invoices show their full due)
+		const kinds_amt = (list, f) => {
+			const n = {};
+			list.forEach(r => { const x = n[r.kind] = n[r.kind] || { c: 0, a: 0 }; x.c++; x.a += flt(r[f]); });
+			return Object.entries(n).map(([k, x]) => `${x.c} ${x.c === 1 ? KIND[k][0].toLowerCase() : KIND[k][1]} ${money(x.a)}`).join(" · ");
+		};
+		const eq = both ? `<div class="dps-eq">
+			<div class="dps-eq__i is-due"><span>${customer ? __("They owe") : __("We owe")}</span><b>${money(s.outstanding)}</b><small>${kinds_amt(s.unpaid, "outstanding_amount")}</small></div>
+			<div class="dps-eq__op">−</div>
+			<div class="dps-eq__i is-cr"><span>${customer ? __("We hold for them") : __("They hold for us")}</span><b>${money(credits)}</b><small>${kinds_amt(s.credits, "amount")}</small></div>
+			<div class="dps-eq__op">=</div>
+			<div class="dps-eq__i is-net ${bal > 0.005 ? "is-due" : "is-cr"}"><span>${bal > 0.005 ? (customer ? __("Net to receive") : __("Net to pay")) : (customer ? __("We owe them") : __("They owe us"))}</span><b>${money(Math.abs(bal))}</b>
+				<small>${bal > 0.005 ? __("what is really left") : (customer ? __("pay back or keep as advance") : __("get back or keep against bills"))}</small></div>
+			</div>
+			<div class="dps-note"><i class="fa fa-info-circle"></i> ${__("The {0} are not set off yet, so the list below still shows every item's full due. Click <b>Adjust</b> to set them off — then only {1} stays open.",
+				[kinds_text(s.credits), money(Math.max(bal, 0))])}</div>` : "";
+
+		// ── open items: what is to be received / paid, then what is held — each with its one action ──────
+		const ret_status = {};
+		(s.returns || []).forEach(r => { ret_status[r.name] = r.status; });
+		const returns_of = {};   // invoice → its credit / debit notes still held (not yet set off against it)
+		(s.credits || []).forEach(c => { if (c.return_against) (returns_of[c.return_against] = returns_of[c.return_against] || []).push(c); });
+		const due_row = (r) => {
+			const late = r.due_date && r.due_date < today;
+			const rets = returns_of[r.name] || [], ret_amt = rets.reduce((a, c) => a + flt(c.amount), 0);
+			const ret_note = rets.length ? `<small class="dps-retnote"><i class="fa fa-undo"></i> ${__("Return {0} {1} not set off yet — {2} after Adjust",
+				[rets.map(c => esc(c.name)).join(", "), money(ret_amt), money(Math.max(flt(r.outstanding_amount) - ret_amt, 0))])}</small>` : "";
+			return `<tr><td><span class="dps-kind k-${r.kind}">${KIND[r.kind][0]}</span>${link(r.doctype, r.name)}
+				<small>${date(r.posting_date)}${r.bill_no ? " · " + esc(r.bill_no) : ""}${r.remark ? " · " + esc(r.remark) : ""}</small>${ret_note}</td>
+				<td>${late ? `<span class="dps-pill is-late">${__("{0} days late", [frappe.datetime.get_day_diff(today, r.due_date)])}</span>` : `<span class="dps-pill is-ok">${r.due_date ? __("due {0}", [date(r.due_date)]) : __("due")}</span>`}</td>
+				<td class="r"><b>${money(r.outstanding_amount)}</b>${flt(r.invoice_total) - flt(r.outstanding_amount) > 0.005 ? `<small>${__("of {0}", [money(r.invoice_total)])}</small>` : ""}</td>
+				<td class="r">${s.can_pay && r.kind !== "refund" ? `<button class="btn btn-xs btn-go dps-pay-one" data-inv="${esc(r.name)}" data-out="${flt(r.outstanding_amount, 2)}">${customer ? __("Receive") : __("Pay")}</button>` : ""}</td></tr>`;
+		};
+		const credit_row = (c) => {
+			const refund = (c.kind === "credit_note" || c.kind === "debit_note") && ret_status[c.name] === "refund";
+			return `<tr><td><span class="dps-kind k-${c.kind}">${KIND[c.kind][0]}</span>${link(c.doctype, c.name)}
+				<small>${date(c.posting_date)}${c.return_against ? " · " + __("return of {0}", [esc(c.return_against)]) : ""}${c.remark ? " · " + esc(c.remark) : ""}</small></td>
+				<td><span class="dps-pill is-green">${n_unpaid ? __("can be set off") : (customer ? __("to pay back") : __("to get back"))}</span></td>
+				<td class="r"><b class="dps-ok">${money(c.amount)}</b></td>
+				<td class="r">${refund && s.can_pay ? `<button class="btn btn-xs btn-default dps-refund" data-n="${esc(c.name)}">${customer ? __("Refund") : __("Get refund")}</button>`
+					: n_unpaid && s.can_pe ? `<button class="btn btn-xs btn-default dps-adjust" title="${esc(__("Set it against what they owe"))}">${__("Adjust")}</button>` : ""}</td></tr>`;
+		};
+		const group = (title, total, cls) => `<tr class="dps-grp ${cls === "dps-late" ? "is-due" : "is-cr"}"><td colspan="2">${title}</td><td class="r"><b class="${cls}">${money(total)}</b></td><td></td></tr>`;
+		const items = (n_unpaid || (s.credits || []).length) ? `<div class="dps-list"><table class="dps-t">
+			<tr><th>${__("Open item")}</th><th>${__("Status")}</th><th class="r">${__("Open amount")}</th><th></th></tr>
+			${n_unpaid ? group(customer ? __("To receive") : __("To pay"), s.outstanding, "dps-late") + s.unpaid.map(due_row).join("") : ""}
+			${(s.credits || []).length ? group(customer ? __("Held for them") : __("Held with them"), credits, "dps-ok") + s.credits.map(credit_row).join("") : ""}
+			${both ? `<tr class="dps-net"><td colspan="2">${bal > 0.005 ? (customer ? __("Net to receive") : __("Net to pay")) : (customer ? __("We owe them") : __("They owe us"))}
+				<small>${money(s.outstanding)} − ${money(credits)}</small></td><td class="r"><b class="${bal > 0.005 ? "dps-late" : "dps-ok"}">${money(Math.abs(bal))}</b></td><td></td></tr>` : ""}
+			</table></div>` : `<div class="dps-list dps-empty">${__("Nothing open — the account is settled.")}</div>`;
+		const back = flt(s.to_pay_back);
+		const warn = Math.abs(other) > 0.005 ? `<div class="dps-warn"><i class="fa fa-exclamation-triangle"></i> ${__("The ledger balance differs from the open items by {0}. Check the Ledger or ask Accounts.", [money(other)])}</div>` : "";
+
+		// ── tabs below: one open at a time (or none); Returns first when a return needs attention ─────────
+		const TABS = [
+			rets.length ? ["returns", `<i class="fa fa-undo"></i>${__("Returns")}`, ret_open.length ? ret_open.length : "", returns_body] : null,
+			["orders", `<i class="fa fa-${customer ? "shopping-cart" : "truck"}"></i>${odt}`, o.open_n || "", orders_body],
+			["hist", `<i class="fa fa-history"></i>${__("History")}`, "", unpaid],
+			s.can_pe ? ["pays", `<i class="fa fa-money"></i>${__("Payments")}`, "", pay_box] : null,
+		].filter(Boolean);
+		const tab_key = `dps_tab:${frm.doctype}`;
+		let cur = null;
+		try { cur = localStorage.getItem(tab_key); } catch (e) { /* no storage */ }
+		if (ret_open.length && cur === null) cur = "returns";
+		if (!TABS.some(t => t[0] === cur)) cur = "";
+		const tabs = `<div class="dps-tabs">${TABS.map(([k, l, n]) => `<button type="button" class="dps-tab ${k === cur ? "is-on" : ""}" data-t="${k}">${l}${n ? ` <span>${n}</span>` : ""}</button>`).join("")}</div>
+			${TABS.map(([k, , , body]) => `<div class="dps-pane" data-t="${k}" style="${k === cur ? "" : "display:none;"}">${body}</div>`).join("")}`;
 
 		$w.html(`<style>${CSS}</style><div class="dps">
-			${bar}${kpi}${step}
-			${fold("orders", customer ? "shopping-cart" : "truck", odt, [
-				[o.open_n ? "blue" : "", __("{0} open · {1}", [o.open_n || 0, money(o.open_amount)])],
-				[o.to_do > 0.005 ? "orange" : "", (customer ? __("to deliver {0}") : __("to receive {0}")).replace("{0}", money(o.to_do))],
-				[o.to_bill > 0.005 ? "red" : "", __("to bill {0}", [money(o.to_bill)])],
-				o.draft_n ? ["", __("{0} draft", [o.draft_n])] : null], orders_body)}
-			${fold("docs", "file-text-o", __("Documents — invoices, notes, orders"), [
-				[n_unpaid ? "red" : "", __("{0} unpaid · {1}", [n_unpaid, money(s.outstanding)])],
-				s.overdue_count ? ["orange", __("overdue {0}", [money(s.overdue)])] : null,
-				["", `<span class="dps-docs-sub">${__("click a row for Quotation → Order → Delivery → Invoice")}</span>`]], unpaid)}
-			${fold("pays", "money", __("Advances & recent payments"), [
-				[credits > 0.005 ? "green" : "", __("advance / credit {0}", [money(credits)])],
-				s.can_pe && (s.payments || [])[0] ? ["", __("last payment {0} on {1}", [money(s.payments[0].paid_amount), date(s.payments[0].posting_date)])] : null],
-				`<div class="dps-grid">${credit_box}${pay_box}</div>`)}
-			<div class="dps-meta">${[esc(s.company), s.payment_terms ? __("Payment terms: {0}", [esc(s.payment_terms)]) : "",
+			${head}${eq}${warn}${items}${tabs}
+			<div class="dps-meta">${[esc(s.company), __("this year: billed {0}, {1} {2}", [money(s.billed_fy), customer ? __("received") : __("paid"), s.can_pe ? money(s.paid_fy) : "—"]),
+				s.payment_terms ? __("Payment terms: {0}", [esc(s.payment_terms)]) : "",
 				s.drafts ? __("{0} draft {1} not submitted yet", [s.drafts, s.drafts === 1 ? one : many]) : ""].filter(Boolean).join(" · ")}</div>
 		</div>`);
 
@@ -262,22 +360,43 @@
 		const pay = (o) => frappe.require("/assets/erp_dacsinc_custom/js/bulk_payment.js",
 			() => dacs_payment_dialog(Object.assign({ payment_type: customer ? "Receive" : "Pay", party: frm.doc.name, from_form: 1, on_done: refresh }, o)));
 		$w.find(".dps-pay").on("click", () => pay({}));
-		$w.find(".dps-pay-one").on("click", (e) => pay({ invoice: String($(e.currentTarget).data("inv")) }));
-		$w.find(".dps-adjust").on("click", () => adjust_dialog(frm, s, customer, refresh));
+		$w.find(".dps-pay-one").on("click", (e) => pay({ invoice: String($(e.currentTarget).data("inv")), amount: flt($(e.currentTarget).data("out")) }));
+		$w.find(".dps-adjust").on("click", (e) => { e.stopPropagation(); adjust_dialog(frm, s, customer, refresh); });
+		$w.find(".dps-refund").on("click", (e) => {
+			e.stopPropagation();
+			const n = String($(e.currentTarget).data("n"));
+			frappe.require("/assets/erp_dacsinc_custom/js/payment_prompt.js", () => of_refund_prompt(inv_dt, n, refresh, { from_form: 1 }));
+		});
 		$w.find(".dps-refresh").on("click", refresh);
 		$w.find(".dps-stmt").on("click", () => statement_dialog(frm));
-		// the documents load when their section is first opened
+		// History loads when its tab is first opened
 		let docs_loaded = false;
 		const load_docs = () => { if (!docs_loaded) { docs_loaded = true; docs(frm, $w.find(".dps-docs"), s, customer, pay); } };
-		if ($w.find('.dps-fold[data-k="docs"]').hasClass("is-open")) load_docs();
-		$w.find(".dps-fold__h").on("click", (e) => {
-			if ($(e.target).closest("a, button").length) return;
-			const $f = $(e.currentTarget).closest(".dps-fold").toggleClass("is-open");
-			const key = String($f.data("k")), open = $f.hasClass("is-open");
-			try { localStorage.setItem(fold_key(key), open ? "1" : "0"); } catch (err) { /* no storage */ }
-			if (key === "docs" && open) load_docs();
+		if (cur === "hist") load_docs();
+		$w.find(".dps-tab").on("click", (e) => {
+			const k = String($(e.currentTarget).data("t"));
+			const open = !$(e.currentTarget).hasClass("is-on");
+			$w.find(".dps-tab").removeClass("is-on"); $w.find(".dps-pane").hide();
+			if (open) { $(e.currentTarget).addClass("is-on"); $w.find(`.dps-pane[data-t="${k}"]`).show(); if (k === "hist") load_docs(); }
+			try { localStorage.setItem(tab_key, open ? k : ""); } catch (err) { /* no storage */ }
 		});
 		$w.find(".dps-print").on("click", (e) => window.open(dacs_print_url("Payment Entry", String($(e.currentTarget).data("pe"))), "_blank"));
+	}
+
+	// what each open item is, in words: [one, many]
+	function dps_kinds(customer) {
+		return {
+			invoice: customer ? [__("Invoice"), __("invoices")] : [__("Bill"), __("bills")],
+			opening_invoice: customer ? [__("Opening invoice"), __("opening invoices")] : [__("Opening bill"), __("opening bills")],
+			opening: [__("Opening balance"), __("opening balances")],
+			journal: [__("Journal Entry"), __("journal entries")],
+			journal_credit: [__("Journal Entry credit"), __("journal entry credits")],
+			credit_note: [__("Credit note"), __("credit notes")],
+			debit_note: [__("Debit note"), __("debit notes")],
+			advance: [__("Advance payment"), __("advance payments")],
+			refund: customer ? [__("Refund paid out"), __("refunds paid out")] : [__("Refund received"), __("refunds received")],
+			other: [__("Other"), __("other")],
+		};
 	}
 
 	function AGE_CHIPS(s, money) {
@@ -296,12 +415,12 @@
 		const link = (dt, n, cls) => `<a class="${cls || ""}" href="/app/${frappe.router.slug(dt)}/${encodeURIComponent(n)}" target="_blank" onclick="event.stopPropagation()">${esc(n)}</a>`;
 		// the chosen view / dates stay while the same party is open
 		if (!frm.__dps_docs || frm.__dps_docs.party !== frm.doc.name)
-			frm.__dps_docs = { party: frm.doc.name, view: "unpaid", from: frappe.datetime.add_months(frappe.datetime.get_today(), -12), to: frappe.datetime.get_today() };
+			frm.__dps_docs = { party: frm.doc.name, view: "all", from: frappe.datetime.add_months(frappe.datetime.get_today(), -12), to: frappe.datetime.get_today() };
 		const st = frm.__dps_docs;
 		$box.find(".dps-from").val(st.from); $box.find(".dps-to").val(st.to);
 		const pill = (cls, t) => `<span class="dps-pill is-${cls}">${t}</span>`;
 		const status_pill = (r) => r.draft ? pill("part", esc(__(r.workflow_state || "Draft")))
-			: r.doctype.endsWith("Invoice") ? (r.total < 0 ? pill("ok", __("Return"))
+			: (r.doctype.endsWith("Invoice") || r.kind) ? (r.total < 0 ? pill("ok", __("Return"))
 				: r.outstanding <= 0.005 ? pill("green", __("Paid"))
 				: (r.due_date && r.due_date < frappe.datetime.get_today()) ? pill("late", __("{0} days late", [frappe.datetime.get_day_diff(frappe.datetime.get_today(), r.due_date)]))
 				: r.outstanding < r.total - 0.005 ? pill("part", __("Part paid")) : pill("ok", __("Not due yet")))
@@ -317,10 +436,10 @@
 				const paid = r.total > 0 ? flt(r.total) - flt(r.outstanding) : 0;
 				const c = r.chain || {};
 				return `<tr class="dps-main" data-i="${i}"><td class="dps-tog"><i class="fa fa-chevron-right"></i></td>
-					<td><b>${link(r.doctype, r.name)}</b><small>${date(r.date)}${r.bill_no ? " · " + esc(r.bill_no) : ""}${r.return_against ? " · " + __("against {0}", [esc(r.return_against)]) : ""}</small></td>
+					<td>${r.kind ? `<span class="dps-kind k-${r.kind}">${dps_kinds(customer)[r.kind][0]}</span>` : ""}<b>${link(r.doctype, r.name)}</b><small>${date(r.date)}${r.bill_no ? " · " + esc(r.bill_no) : ""}${r.return_against ? " · " + __("against {0}", [esc(r.return_against)]) : ""}${r.remark ? " · " + esc(r.remark) : ""}</small></td>
 					<td>${date(r.due_date)}</td><td class="r">${money(r.total)}</td><td class="r">${paid > 0.005 ? money(paid) : "—"}</td>
 					<td class="r"><b>${r.total > 0 ? money(r.outstanding) : "—"}</b></td><td>${status_pill(r)}</td>
-					<td class="r">${s.can_pay && r.outstanding > 0.005 ? `<button class="btn btn-xs btn-default dps-pay-one" data-inv="${esc(r.name)}">${customer ? __("Receive") : __("Pay")}</button>` : ""}</td></tr>
+					<td class="r">${s.can_pay && r.outstanding > 0.005 && r.kind !== "refund" ? `<button class="btn btn-xs btn-default dps-pay-one" data-inv="${esc(r.name)}" data-out="${flt(r.outstanding, 2)}">${customer ? __("Receive") : __("Pay")}</button>` : ""}</td></tr>
 				<tr class="dps-sub" data-i="${i}" style="display:none;"><td colspan="8">
 					<div class="dps-chain">${chain(__("Quotation"), c.quotations, "Quotation")}${chain(customer ? __("Sales Order") : __("Purchase Order"), c.orders, customer ? "Sales Order" : "Purchase Order")}${chain(customer ? __("Delivery") : __("Receipt"), c.receipts, customer ? "Delivery Note" : "Purchase Receipt")}
 						<span class="lbl">${customer ? __("Invoice") : __("Bill")}</span>${link(r.doctype, r.name, "doc")}</div>
@@ -366,7 +485,7 @@
 					$(e.currentTarget).toggleClass("is-open");
 					$body.find(`tr.dps-sub[data-i="${i}"]`).toggle();
 				});
-				$body.find(".dps-pay-one").on("click", (e) => { e.stopPropagation(); pay({ invoice: String($(e.currentTarget).data("inv")) }); });
+				$body.find(".dps-pay-one").on("click", (e) => { e.stopPropagation(); pay({ invoice: String($(e.currentTarget).data("inv")), amount: flt($(e.currentTarget).data("out")) }); });
 			});
 		};
 		$box.find(".dps-chip").on("click", (e) => { st.view = String($(e.currentTarget).data("v")); load(); });

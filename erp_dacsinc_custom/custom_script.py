@@ -104,6 +104,7 @@ def copy_custom_fields(doc, method):
 import frappe
 import re
 from frappe.utils import flt
+from erp_dacsinc_custom import merchant_export
 def item_before_save(doc, method):
     doc_before = doc.get_doc_before_save()
 
@@ -128,7 +129,10 @@ def item_before_save(doc, method):
     if not tax_changed and doc.custom_tax_rate and doc.custom_tax_rate != "Non-GST - IND":
         taxes = doc.get("taxes") or []
         tax_changed = (not any(t.item_tax_template == EXEMPTED_TAX_TEMPLATE for t in taxes)
-            or any(not t.valid_from for t in taxes))
+            or any(not t.valid_from for t in taxes)
+            # an item saved before the GST 0.1% rows existed gets them too (merchant_export.py)
+            or (bool(merchant_export.item_rows(doc))
+                and not any(t.item_tax_template == merchant_export.TEMPLATE for t in taxes)))
 
     # 2. Update Tax Table ONLY if fields changed
     if tax_changed:
@@ -395,6 +399,8 @@ def update_tax_child(doc):
                 if frappe.db.exists("Item Tax Template", template):
                     for category in ["In-State", "Out-State"]:
                         doc.append("taxes", {"tax_category": category, "item_tax_template": template})
+            for row in merchant_export.item_rows(doc):
+                doc.append("taxes", row)
             for row in doc.get("taxes"):
                 row.valid_from = TAX_VALID_FROM
             return
@@ -442,6 +448,10 @@ def update_tax_child(doc):
                         for category in ["In-State", "Out-State"]:
                             doc.append("taxes", {"tax_category": category,
                                 "item_tax_template": EXEMPTED_TAX_TEMPLATE})
+
+        # GST 0.1% (merchant export) last: listed, never picked by itself (merchant_export.py)
+        for row in merchant_export.item_rows(doc):
+            doc.append("taxes", row)
 
         for row in doc.get("taxes"):
             row.valid_from = TAX_VALID_FROM
@@ -8086,10 +8096,6 @@ def validate_and_get_items_for_po(selected_items, is_subcontracted=False):
                 item_details_data['sales_order'] = item.get('salesOrder') 
                 item_details_data['bom'] = item.get('bom')                
 
-                # Update description to be informative
-                description = item_details_data.get('description', '')
-                new_description_line = f"\n\nManufacturing of: {item.get('itemName')} ({item.get('itemCode')})\nRef SO: {item.get('salesOrder')}"
-                item_details_data['description'] = (description + new_description_line).strip()
             
             else:
                 # Standard procurement (remains unchanged)
@@ -10785,7 +10791,8 @@ def create_material_request_custom(items, company, sales_order_name, is_subcontr
             # Finished Item MR collectors both state it). Left blank otherwise,
             # so set_procurement_purpose falls back to inferring it.
             "custom_procurement_purpose": it.get('custom_procurement_purpose') or None,
-            "description": it.get('description', f"Requirement for {sales_order_name}")
+            # the item's own description (as the form fills it) — never an auto text: users type their own
+            "description": it.get('description') or frappe.get_cached_value("Item", it.get('item_code'), "description")
         })
     
     mr.insert()

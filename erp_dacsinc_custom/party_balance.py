@@ -53,10 +53,11 @@ def get_party_balances(party_type, names, company=None):
 
 @frappe.whitelist()
 def get_party_summary(party_type, party, company=None):
-	"""Account Summary on the Customer / Supplier form (public/js/party_summary.js): balance, unpaid
-	invoices / bills with ageing, overdue, advances not yet used, open credit / debit notes, recent
-	payments, this financial year's billing and payments, credit limit. Same access rule as the list
-	pill; payments only for users who may read Payment Entries."""
+	"""Account Summary on the Customer / Supplier form (public/js/party_summary.js): balance; what is still due
+	(invoices, opening invoices, opening balances and other Journal Entries) with ageing and overdue; credits held
+	(advances by Payment / Journal Entry, credit / debit notes) — both from the Payment Ledger, adding up to the
+	balance; recent payments, this financial year's billing and payments, credit limit. Same access rule as the
+	list pill; payments only for users who may read Payment Entries."""
 	from erpnext.accounts.utils import get_fiscal_year
 	from frappe.utils import date_diff, getdate
 
@@ -72,27 +73,29 @@ def get_party_summary(party_type, party, company=None):
 	balance = flt(frappe.db.sql(f"""SELECT SUM({sign}) FROM `tabGL Entry` WHERE party_type = %s AND party = %s
 		AND company = %s AND is_cancelled = 0""", (party_type, party, company))[0][0], 2)
 
-	fields = ["name", "posting_date", "due_date", "grand_total", "rounded_total", "outstanding_amount", "status"]
-	if not customer:
-		fields.append("bill_no")
-	unpaid = frappe.get_all(inv_dt, filters={inv_field: party, "company": company, "docstatus": 1, "is_return": 0,
-		"outstanding_amount": [">", 0.005]}, fields=fields, order_by="due_date asc, posting_date asc", limit_page_length=500)
+	# what is open on the account — invoices, opening balances / Journal Entries, credit notes, advances — from
+	# ERPNext's Payment Ledger (party_open_items); dues and credits add up to the ledger balance above
+	from erp_dacsinc_custom.party_open_items import open_items
+
+	items = open_items(party_type, [party], company).get(party, [])
+	unpaid, credits = [], []
 	ageing = {"not_due": 0.0, "d30": 0.0, "d60": 0.0, "d90": 0.0, "d90p": 0.0}
 	overdue_amt, overdue_n = 0.0, 0
-	for r in unpaid:
-		r["invoice_total"] = flt(r.rounded_total) or flt(r.grand_total)
-		late = date_diff(today, r.due_date) if r.due_date else 0
-		r["days_overdue"] = max(late, 0)
-		out = flt(r.outstanding_amount)
+	for it in items:
+		if it.outstanding < 0:
+			credits.append(frappe._dict(it, amount=flt(-it.outstanding, 2)))
+			continue
+		late = date_diff(today, it.due_date) if it.due_date else 0
+		r = frappe._dict(it, invoice_total=it.total, outstanding_amount=it.outstanding, days_overdue=max(late, 0))
+		unpaid.append(r)
 		if late <= 0:
-			ageing["not_due"] += out
+			ageing["not_due"] += it.outstanding
 		else:
-			overdue_amt += out
+			overdue_amt += it.outstanding
 			overdue_n += 1
-			ageing["d30" if late <= 30 else "d60" if late <= 60 else "d90" if late <= 90 else "d90p"] += out
-	notes = frappe.get_all(inv_dt, filters={inv_field: party, "company": company, "docstatus": 1, "is_return": 1,
-		"outstanding_amount": ["<", -0.005]}, fields=["name", "posting_date", "return_against", "outstanding_amount"],
-		order_by="posting_date desc", limit_page_length=50)
+			ageing["d30" if late <= 30 else "d60" if late <= 60 else "d90" if late <= 90 else "d90p"] += it.outstanding
+	dues_total = flt(sum(r.outstanding for r in unpaid), 2)
+	credit_total = flt(sum(c.amount for c in credits), 2)
 	drafts = frappe.db.count(inv_dt, {inv_field: party, "company": company, "docstatus": 0})
 
 	try:
@@ -106,12 +109,9 @@ def get_party_summary(party_type, party, company=None):
 		"posting_date", order_by="posting_date desc")
 
 	can_pe = frappe.has_permission("Payment Entry", "read")
-	advances, payments, paid_fy = [], [], 0.0
+	payments, paid_fy = [], 0.0
 	if can_pe:
 		pe_filters = {"party_type": party_type, "party": party, "company": company, "docstatus": 1}
-		advances = frappe.get_all("Payment Entry", filters=dict(pe_filters, unallocated_amount=[">", 0.005]),
-			fields=["name", "posting_date", "unallocated_amount", "mode_of_payment", "reference_no"],
-			order_by="posting_date desc", limit_page_length=50)
 		payments = frappe.get_all("Payment Entry", filters=pe_filters,
 			fields=["name", "posting_date", "payment_type", "paid_amount", "mode_of_payment", "reference_no", "custom_bulk_payment"],
 			order_by="posting_date desc, creation desc", limit_page_length=8)
@@ -120,6 +120,7 @@ def get_party_summary(party_type, party, company=None):
 			(party_type, party, company, "Receive" if customer else "Pay", fy_from, fy_to))[0][0], 2)
 
 	orders = _order_status(party_type, party, company)
+	returns = _returns(party_type, party, company, inv_dt, inv_field, credits, dues_total)
 	credit_limit = 0.0
 	if customer:
 		credit_limit = flt(frappe.db.get_value("Customer Credit Limit", {"parent": party, "parenttype": "Customer",
@@ -127,14 +128,63 @@ def get_party_summary(party_type, party, company=None):
 	terms = frappe.db.get_value(party_type, party, "payment_terms")
 	return {
 		"company": company, "currency": frappe.get_cached_value("Company", company, "default_currency"),
-		"balance": balance, "unpaid": unpaid, "outstanding": flt(sum(flt(r.outstanding_amount) for r in unpaid), 2),
+		"balance": balance, "unpaid": unpaid, "outstanding": dues_total,
 		"overdue": flt(overdue_amt, 2), "overdue_count": overdue_n, "ageing": ageing,
-		"notes": notes, "drafts": drafts, "advances": advances, "payments": payments, "can_pe": can_pe,
-		"advance_total": flt(sum(flt(a.unallocated_amount) for a in advances), 2),
+		"credits": credits, "credit_total": credit_total, "returns": returns,
+		# credit held beyond what they owe: money to pay back (or keep as advance)
+		"to_pay_back": flt(max(credit_total - dues_total, 0), 2),
+		# anything the open items don't explain (should be 0): shown as a warning, never hidden
+		"difference": flt(balance - (dues_total - credit_total), 2),
+		"drafts": drafts, "payments": payments, "can_pe": can_pe,
 		"fy": fy_name, "billed_fy": billed, "paid_fy": paid_fy, "last_invoice": last_invoice,
 		"credit_limit": credit_limit, "payment_terms": terms, "orders": orders,
 		"can_pay": bool(frappe.has_permission("Payment Entry", "create") and frappe.has_permission("Payment Entry", "submit")),
 	}
+
+
+def _returns(party_type, party, company, inv_dt, inv_field, credits, dues_total, limit=20):
+	"""The party's latest credit notes (customer) / debit notes (supplier), each with what is still open on it, what
+	settled it (Payment Ledger: the invoice it was set against, a refund paid / received, a Journal Entry), the goods
+	status (return_goods.note_goods) and one plain status:
+	  settled — nothing open; adjust — open, and the party has dues it can be set off against; refund — open and
+	  nothing to set it against: to be paid back (customer) / received back (supplier)."""
+	from erp_dacsinc_custom.return_goods import note_goods
+
+	notes = frappe.get_all(inv_dt, filters={inv_field: party, "company": company, "docstatus": 1, "is_return": 1},
+		fields=["name", "posting_date", "return_against", "grand_total", "rounded_total", "update_stock"],
+		order_by="posting_date desc, name desc", limit_page_length=limit)
+	if not notes:
+		return []
+	names = [n.name for n in notes]
+	open_by = {c.name: c.amount for c in credits if c.doctype == inv_dt}
+	settled = {n: [] for n in names}
+	for r in frappe.db.sql("""
+		SELECT voucher_type, voucher_no, against_voucher_type, against_voucher_no, posting_date, amount
+		FROM `tabPayment Ledger Entry`
+		WHERE delinked = 0 AND company = %(c)s AND party_type = %(pt)s AND party = %(p)s
+		AND ((voucher_type = %(dt)s AND voucher_no IN %(n)s AND NOT (against_voucher_type = %(dt)s AND against_voucher_no = voucher_no))
+			OR (against_voucher_type = %(dt)s AND against_voucher_no IN %(n)s AND NOT (voucher_type = %(dt)s AND voucher_no = against_voucher_no)))
+		ORDER BY posting_date""", {"c": company, "pt": party_type, "p": party, "dt": inv_dt, "n": tuple(names)}, as_dict=True):
+		if r.voucher_type == inv_dt and r.voucher_no in settled:
+			# the note set against an invoice (the one it returns, or another through Adjust)
+			settled[r.voucher_no].append({"how": "against", "doctype": r.against_voucher_type, "name": r.against_voucher_no,
+										  "date": r.posting_date, "amount": flt(abs(r.amount), 2)})
+		elif r.against_voucher_no in settled:
+			# a refund Payment Entry / a Journal Entry against the note
+			settled[r.against_voucher_no].append({"how": "refund" if r.voucher_type == "Payment Entry" else "journal",
+												  "doctype": r.voucher_type, "name": r.voucher_no, "date": r.posting_date,
+												  "amount": flt(abs(r.amount), 2)})
+	goods = note_goods(inv_dt, names)
+	out = []
+	for nt in notes:
+		total = flt(abs(flt(nt.rounded_total) or flt(nt.grand_total)), 2)
+		left = flt(open_by.get(nt.name, 0), 2)
+		status = "settled" if left <= 0.005 else ("adjust" if dues_total > 0.005 else "refund")
+		g = goods.get(nt.name) or {}
+		out.append({"name": nt.name, "date": nt.posting_date, "return_against": nt.return_against, "total": total,
+					"open": left, "status": status, "settled_by": settled.get(nt.name, []),
+					"goods_status": g.get("status"), "goods_text": g.get("text")})
+	return out
 
 
 def _order_status(party_type, party, company):

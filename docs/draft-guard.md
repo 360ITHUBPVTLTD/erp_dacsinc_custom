@@ -37,3 +37,30 @@ keeps the source links of what it reverses (so_detail, dn_detail, po_detail …)
 matches drafts with the same `is_return` as the new document, so a draft Credit Note never blocks
 the next invoice for that order line (nor the reverse), while a second draft return of the same
 line is still refused. See `docs/returns.md`.
+
+## Purchase Order lines from a Material Request (`purchase_order.guard_po_against_mr`)
+
+Runs on every save and on submit of a Purchase Order (validate), so an old draft can't be kept or
+submitted either:
+
+1. **Not more than the MR line has open.** What submitted POs (other than this one) already ordered,
+   plus this PO's lines, may not exceed the MR line's qty plus the over-receipt allowance (the same
+   limit ERPNext checks at submit). A line **already fully ordered** by submitted POs, or on a stopped /
+   cancelled MR, has **nothing** left — the allowance is for receiving a little more, not for ordering
+   the line twice. The error names each row, its MR and the PO(s) that ordered it (links).
+2. **Not on another draft.** A row added to an existing draft (Get Items From › Material Request) whose
+   MR line is already on another draft PO is refused; a new PO is refused by `guard_duplicate_draft`.
+
+The form shows the same lines up front (`check_po_against_mr` → red rows and a box above the items, with
+the MR and ordering PO as links) and **Correct quantities** reduces each line to what it may keep, or
+removes it. The items grid shows each line's **Material Request** (a link) in place of the Description
+column (`po_show_mr_column`; a user's own grid column choice still wins).
+
+**Fetch prompts agree with it.** The PO form's Material Request fetch (`get_mr_suggestions_for_po`) offers
+an MR line only up to its qty less every draft and submitted PO row; a line on **another** draft PO is not
+offered at all ("On draft PUR-ORD-…", checkbox disabled). "Create Purchase Order" from an MR maps only the
+qty not yet ordered (ERPNext), and the Create preview names an existing draft first (above).
+
+Typical case: a draft made while the MR was open, then another PO ordered and received the same MR — the
+draft can no longer be saved until those lines are removed.
+

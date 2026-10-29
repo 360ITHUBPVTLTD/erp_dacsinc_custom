@@ -353,13 +353,6 @@ def validate_and_get_items_for_po(selected_items, is_subcontracted=0, allow_held
                 "bom": bom_name,
             })
 
-            # Improve description
-            base_desc = item_details.get("description", "")
-            extra_desc = (
-                f"\n\nManufacturing: {entry.get('itemName')} ({item_code})\n"
-                f"Ref SO: {sales_order}"
-            )
-            item_details["description"] = (base_desc + extra_desc).strip()
 
         # ── Normal procurement path ───────────────────────────────────
         else:
@@ -6953,6 +6946,12 @@ def get_mr_suggestions_for_po(purchase_order=None):
         row['draft_ordered_qty'] = flt(
             sum(flt(p.po_qty) for p in row['previous_po_history'] if p['is_draft']), 2)
         row['pending_qty'] = max(0, flt(row.mr_total_qty) - row['already_ordered_qty'])
+        # A line already on ANOTHER draft PO is not offered at all, even with qty left — saving would
+        # refuse it (guard_po_against_mr: one draft per MR line). The dialog names that draft.
+        row['other_draft'] = next((p.po_id for p in row['previous_po_history']
+                                   if p['is_draft'] and not p['is_current']), None)
+        if row['other_draft']:
+            row['pending_qty'] = 0
         row['fully_ordered'] = row['pending_qty'] <= 0.01
 
     return data
@@ -7122,34 +7121,46 @@ def guard_subcontract_po_jobber(doc, method=None):
 @frappe.whitelist()
 def check_po_against_mr(rows, purchase_order=None):
     """Purchase Order lines asking for more than their Material Request line still has open —
-    the check ERPNext runs only at submit ("Limit Crossed … over limit by Stock Qty …",
-    status_updater on Material Request Item.stock_qty), done up front so the form can highlight
-    and correct them. Same rule: what submitted POs (other than this one) already ordered, plus
-    this PO's lines, may not exceed the MR line's stock qty plus the over-receipt allowance
-    (Item › Over Delivery/Receipt Allowance, else Stock Settings). Typical cause: a draft made
-    while the MR line was open, then another PO ordered it.
+    shown on the form (red rows, "Correct quantities") and enforced on save (guard_po_against_mr).
 
     rows: [{"row": <child name>, "material_request_item": ..., "qty": ..., "stock_qty": ...,
     "conversion_factor": ..., "uom": ...}] in grid order. Returns the lines to correct with the
-    quantity they may keep (0 → remove the line)."""
+    quantity they may keep (0 → remove the line) and the submitted POs that already ordered it."""
     import json
     rows = json.loads(rows) if isinstance(rows, str) else (rows or [])
+    return _po_mr_over(rows, purchase_order)
+
+
+def _po_mr_over(rows, purchase_order=None):
+    """The rule: what submitted POs (other than this one) already ordered, plus this PO's lines, may not
+    exceed the MR line's stock qty plus the over-receipt allowance (Item › Over Delivery/Receipt
+    Allowance, else Stock Settings) — ERPNext's own submit check ("Limit Crossed"). A line already
+    fully ordered by submitted POs, or on a stopped / cancelled MR, has nothing left: the allowance
+    is for receiving a little more, not for ordering a line twice (a stale draft made while the MR
+    was open, then another PO ordered it)."""
     rows = [r for r in rows if r.get("material_request_item")]
     if not rows:
         return []
     mri_names = list({r["material_request_item"] for r in rows})
-    mri = {d.name: d for d in frappe.get_all(
-        "Material Request Item", filters={"name": ["in", mri_names]},
-        fields=["name", "parent", "item_code", "stock_qty", "stock_uom"])}
-    ordered = dict(frappe.db.sql("""
-        SELECT poi.material_request_item, SUM(poi.stock_qty)
+    mri = {d.name: d for d in frappe.db.sql("""
+        SELECT mri.name, mri.parent, mri.item_code, mri.stock_qty, mri.stock_uom, mr.docstatus, mr.status
+        FROM `tabMaterial Request Item` mri JOIN `tabMaterial Request` mr ON mr.name = mri.parent
+        WHERE mri.name IN %(m)s""", {"m": mri_names}, as_dict=True)}
+    ordered, ordered_by = {}, {}
+    for d in frappe.db.sql("""
+        SELECT poi.material_request_item, po.name, SUM(poi.stock_qty) AS qty
         FROM `tabPurchase Order Item` poi JOIN `tabPurchase Order` po ON po.name = poi.parent
         WHERE po.docstatus = 1 AND poi.material_request_item IN %(m)s AND po.name != %(me)s
-        GROUP BY poi.material_request_item
-    """, {"m": mri_names, "me": purchase_order or ""}))
+        GROUP BY poi.material_request_item, po.name
+    """, {"m": mri_names, "me": purchase_order or ""}, as_dict=True):
+        ordered[d.material_request_item] = flt(ordered.get(d.material_request_item)) + flt(d.qty)
+        ordered_by.setdefault(d.material_request_item, []).append(d.name)
     global_allow = flt(frappe.db.get_single_value("Stock Settings", "over_delivery_receipt_allowance"))
     left = {}
     for name, m in mri.items():
+        if m.docstatus != 1 or m.status in ("Stopped", "Cancelled") or flt(ordered.get(name)) >= flt(m.stock_qty) - 0.0005:
+            left[name] = 0.0
+            continue
         allow = flt(frappe.get_cached_value("Item", m.item_code, "over_delivery_receipt_allowance")) or global_allow
         left[name] = flt(m.stock_qty) * (1 + allow / 100.0) - flt(ordered.get(name))
     out = []
@@ -7163,9 +7174,65 @@ def check_po_against_mr(rows, purchase_order=None):
         left[m.name] -= keep_stock
         if want - keep_stock > 0.0005:
             out.append({
-                "row": r.get("row"), "item_code": m.item_code, "material_request": m.parent,
+                "row": r.get("row"), "idx": r.get("idx"), "item_code": m.item_code, "material_request": m.parent,
+                "mr_status": m.status, "ordered_by": ordered_by.get(m.name, []),
                 "qty": flt(r.get("qty")), "uom": r.get("uom") or m.stock_uom,
                 "allowed_qty": flt(keep_stock / cf, 6), "over_by_stock_qty": flt(want - keep_stock, 3),
                 "stock_uom": m.stock_uom,
             })
     return out
+
+
+def guard_po_against_mr(doc, method=None):
+    """Purchase Order › validate (drafts and submit). Hard rules for lines made from a Material Request:
+
+    1. No line may ask for more than its MR line still has open (_po_mr_over) — an MR already fully
+       ordered (or received) by another PO leaves 0: that line has to go. The form's "Correct
+       quantities" sets every line to what it may keep.
+    2. A line added to this draft (Get Items From › Material Request) whose MR line is already on
+       another draft PO is refused — finish or delete that draft first (draft_guard.py does the same
+       for a new PO)."""
+    if doc.docstatus > 1 or doc.flags.ignore_draft_guard or frappe.flags.in_import or frappe.flags.in_patch \
+            or frappe.flags.in_migrate or frappe.flags.in_install:
+        return
+    rows = [{"row": r.name, "idx": r.idx, "material_request_item": r.material_request_item, "qty": r.qty,
+             "stock_qty": r.stock_qty, "conversion_factor": r.conversion_factor, "uom": r.uom}
+            for r in doc.items if r.material_request_item]
+    if not rows:
+        return
+    link = frappe.utils.get_link_to_form
+    over = _po_mr_over(rows, None if doc.is_new() else doc.name)
+    if over:
+        lines = []
+        for o in over:
+            by = ", ".join(link("Purchase Order", n) for n in o["ordered_by"])
+            if flt(o["allowed_qty"]) <= 0.0005:
+                why = _("nothing left — already ordered on {0}").format(by) if by else _("nothing left ({0})").format(_(o["mr_status"]))
+            else:
+                why = _("only {0} {1} left").format(flt(o["allowed_qty"], 3), o["uom"]) + (_(" (rest ordered on {0})").format(by) if by else "")
+            lines.append(_("Row {0}: <b>{1}</b> — asks {2} {3} from {4}: {5}").format(
+                o["idx"], o["item_code"], flt(o["qty"], 3), o["uom"], link("Material Request", o["material_request"]), why))
+        frappe.throw(_("These lines ask for more than their Material Request still has open:") + "<br><br>"
+                     + "<br>".join(lines) + "<br><br>"
+                     + _("Click <b>Correct quantities</b> above the items (it reduces or removes these lines), then save."),
+                     title=_("Material Request already ordered"))
+
+    # 2. rows added to an existing draft that another draft already holds
+    if doc.is_new():
+        return  # a new PO: draft_guard.guard_duplicate_draft (before_insert)
+    saved = set(frappe.get_all("Purchase Order Item", filters={"parent": doc.name}, pluck="name"))
+    added = {r["material_request_item"]: r for r in rows if r["row"] not in saved}
+    if not added:
+        return
+    other = frappe.db.sql("""
+        SELECT poi.material_request_item, poi.parent, poi.material_request
+        FROM `tabPurchase Order Item` poi JOIN `tabPurchase Order` po ON po.name = poi.parent
+        WHERE po.docstatus = 0 AND po.name != %(me)s AND poi.material_request_item IN %(m)s
+    """, {"me": doc.name, "m": list(added)}, as_dict=True)
+    if other:
+        lines = [_("Row {0}: {1} is already on draft {2}").format(
+            added[o.material_request_item]["idx"], link("Material Request", o.material_request), link("Purchase Order", o.parent))
+            for o in other]
+        frappe.throw("<br>".join(lines) + "<br><br>"
+                     + _("Open that draft and finish it (or delete it), or remove these rows here."),
+                     title=_("Already on another draft"))
