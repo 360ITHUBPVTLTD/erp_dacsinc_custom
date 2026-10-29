@@ -38,6 +38,10 @@ app_include_js = [
     "/assets/erp_dacsinc_custom/js/return_list_toggle.js?v=1.0.0",
     # outstanding balance on the Customer / Supplier lists (called by their *_list.js)
     "/assets/erp_dacsinc_custom/js/party_balance_list.js?v=1.0.5",
+    # one "Search everything" box on the Customer / Supplier lists (called by their *_list.js)
+    "/assets/erp_dacsinc_custom/js/party_list_search.js?v=1.0.0",
+    # list filter boxes match parts of words: "mo ra" finds "Mohan Madhan Raj" (list_words.js)
+    "/assets/erp_dacsinc_custom/js/list_words.js?v=1.0.0",
     # POS store requests board + dialogs (workspace block and Material Request form) — bump ?v= on change
     "/assets/erp_dacsinc_custom/js/pos_requests_board.js?v=1.0.6",
     # Overall discount skips items ticked "Exclude from Overall Discount" (overall_discount.py)
@@ -889,6 +893,9 @@ override_doctype_class = {
 }
 
 override_whitelisted_methods = {
+    # search by parts of words in every Link field: "mo ra" finds "Mohan Madhan Raj" (search_words.py)
+    "frappe.desk.search.search_link": "erp_dacsinc_custom.search_words.search_link",
+    "frappe.desk.search.search_widget": "erp_dacsinc_custom.search_words.search_widget",
     # Point of Sale: continue the store's open shift, not only one you opened (pos_cash.py)
     "erpnext.selling.page.point_of_sale.point_of_sale.check_opening_entry": "erp_dacsinc_custom.pos_cash.check_opening_entry",
     # POS Closing Entry form: the store's bills in the shift, by any user (pos_closing.py)

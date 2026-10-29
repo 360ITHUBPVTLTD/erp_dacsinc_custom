@@ -9,6 +9,8 @@
 // Data: party_balance.get_party_summary. Receive / Make Payment = the payment prompt
 // (public/js/bulk_payment.js); Adjust = party_balance.adjust_advances (ERPNext Payment Reconciliation).
 (function () {
+	// loaded both as the Customer / Supplier form script and by the Group Outstanding page (frappe.require): once
+	if (window.dacs_party_summary) return;
 	const ROLES = ["Admin", "System Manager", "Accounts Executive", "Accounts Manager"];
 	const CSS = `
 	.dps { font-size: 13px; color: var(--text-color); }
@@ -163,10 +165,28 @@
 		const show = !frm.is_new() && allowed();
 		frm.toggle_display(["custom_account_section", "custom_account_summary"], show);
 		if (!show) { fd.$wrapper.html(""); return; }
-		fd.$wrapper.html(`<div class="text-muted" style="padding:6px 0;">${__("Loading account summary…")}</div>`);
-		frappe.call({ method: "erp_dacsinc_custom.party_balance.get_party_summary", args: { party_type: frm.doctype, party: frm.doc.name } })
-			.then(r => paint(frm, fd.$wrapper, r.message || {}, frm.doctype === "Customer"));
+		load_into(frm, fd.$wrapper);
 	}
+	function load_into(frm, $w) {
+		$w.html(`<div class="text-muted" style="padding:6px 0;">${__("Loading account summary…")}</div>`);
+		frappe.call({ method: "erp_dacsinc_custom.party_balance.get_party_summary", args: { party_type: frm.doctype, party: frm.doc.name } })
+			.then(r => paint(frm, $w, r.message || {}, frm.doctype === "Customer"));
+	}
+
+	// The same summary outside the form (Group Outstanding page): a stand-in for the form with what paint() uses.
+	// on_change runs after a payment / adjust / refund made from it (the page refreshes its own parts).
+	window.dacs_party_summary = function ($w, party_type, party, party_name, on_change) {
+		if (!allowed()) { $w.html(""); return; }
+		const name_field = party_type === "Customer" ? "customer_name" : "supplier_name";
+		const frm = { doctype: party_type, doc: { name: party, [name_field]: party_name || party } };
+		frm.__dps_refresh = () => { load_into(frm, $w); on_change && on_change(); };
+		load_into(frm, $w);
+	};
+	// Adjust advance / credit for one party (the page's group view, per member)
+	window.dacs_party_adjust = function (party_type, party, party_name, currency, on_done) {
+		const name_field = party_type === "Customer" ? "customer_name" : "supplier_name";
+		adjust_dialog({ doctype: party_type, doc: { name: party, [name_field]: party_name || party } }, { currency }, party_type === "Customer", on_done);
+	};
 
 	function paint(frm, $w, s, customer) {
 		if (!s.company) { $w.html(""); return; }
@@ -357,7 +377,7 @@
 				s.drafts ? __("{0} draft {1} not submitted yet", [s.drafts, s.drafts === 1 ? one : many]) : ""].filter(Boolean).join(" · ")}</div>
 		</div>`);
 
-		const refresh = () => render(frm);
+		const refresh = frm.__dps_refresh || (() => render(frm));
 		const pay = (o) => frappe.require("/assets/erp_dacsinc_custom/js/bulk_payment.js",
 			() => dacs_payment_dialog(Object.assign({ payment_type: customer ? "Receive" : "Pay", party: frm.doc.name, from_form: 1, on_done: refresh }, o)));
 		$w.find(".dps-pay").on("click", () => pay({}));

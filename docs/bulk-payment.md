@@ -114,14 +114,31 @@ the parties in it or in a group under it.
   catch-all like "Individual", not branches: never offered or matched. Opened for one party (Account Summary, an invoice form or
   row), the header says when that party's group has other members owing ("Part of group …: 2 more customers
   owe") with **Add whole group**, which adds them and sets the amount to their full due (lower it to the cheque).
-- **Group Outstanding** page (`/app/group-outstanding`, `page/group_outstanding/`, finance roles): pick
-  Customer / Supplier and the group. It shows the group's totals (they owe, overdue, held for them, net), then each
+- **Group Outstanding** page (`/app/group-outstanding`, `page/group_outstanding/`, finance roles): it opens on
+  **every group with something open** (`get_groups_outstanding`: members owing, items, they owe, overdue, held, net;
+  most owed first, catch-all groups greyed at the end, totals on top). Click a group (or pick Customer / Supplier and
+  the group above) to open it, **All groups** goes back. A group shows the group's totals (they owe, overdue, held for them, net), then each
   member that has something open, with its dues (tick boxes; a member's header box ticks all of its items) and its
   credits in green (set off with Adjust on that party's Account Summary). The bar at the bottom shows the ticked
   total. **Receive ₹… / Pay ₹…** opens the prompt with those members and items in full, and **Receive payment for
   the group** (nothing ticked) opens it with every member that owes, where the amount spreads oldest first.
   **Print** gives the same list on paper (`get_group_outstanding`), under the company's default letter head (as the
   statement of account and the receipts).
+- **By group | By customer (supplier)** in the top bar next to Customers | Suppliers (remembered per browser): by
+  group as above (with the Group field), or every customer / supplier with something open
+  (`get_parties_outstanding`: group, items, they owe, overdue, held, net; the Group field is hidden) — a click opens
+  that party with its ledger, Back returns to the list. The search bar follows it (`search(scope=…)`): By group finds
+  groups by name; By customer finds customers / suppliers by name, ID, mobile, GSTIN, email, group, address. Esc
+  closes the results.
+- **One search bar** on top of the page (`party_group.search`) finds groups (By group) or single customers /
+  suppliers (By customer) by ID, name, mobile, GSTIN, group, email, address, contact phone. A party opens on its own
+  with **the same Account Summary as its form** (`party_summary.js` → `dacs_party_summary`: Receive / Pay per item,
+  Adjust, Refund, Returns, orders, History, Payments, Statement) and its **ledger** for the dates (`get_party_view`:
+  opening, each voucher with debit / credit / running balance Dr / Cr, closing — `party_statement._statement_data`),
+  with Statement PDF, General Ledger and its form; a payment / adjust / refund there refreshes the ledger. Its group
+  links back to the group when the group is real. In a group, each member has **Summary & ledger** (opens it the
+  same way; Back returns to the group) and, when it owes and something is held for it, **Adjust ₹…**
+  (`dacs_party_adjust`, the summary's Adjust dialog).
 - The page opens from **Outstanding** on the Customer / Supplier Group form (`public/js/party_group_form.js`)
   and from **Group: …** on a member's Account Summary. That button appears only when the group has 2–60 members
   (`party_balance._group`).
