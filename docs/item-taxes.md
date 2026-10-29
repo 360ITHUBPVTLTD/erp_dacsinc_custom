@@ -18,9 +18,10 @@ With a slab (alternate GST and amount both set):
 | In-State, Out-State | GST rate | – | amount − 0.01 |
 | In-State, Out-State | Alternate GST | amount | 9,999,999 |
 | In-State, Out-State | Exempted - IND | – | 9,999,999 |
+| In-State, Out-State | GST 0.1% - IND | – | 9,999,999 |
 
 Without a slab: In-State and Out-State rows with the GST rate, then In-State and Out-State
-`Exempted - IND` rows, none with a range.
+`Exempted - IND` rows, then `GST 0.1% - IND` rows, none with a range.
 Every row has **Valid From 2023-01-01** (`TAX_VALID_FROM`). `Non-GST - IND` items get no rows. An item whose GST rate
 is itself `Exempted - IND` (e.g. Khadi, an exempt supply) gets just its In-State / Out-State rows — the
 extra Exempted rows would repeat the template, which the Item form refuses.
@@ -31,6 +32,36 @@ On the Quotation / Sales Order / Invoice the line still fills in the GST templat
 that is sold without GST, change that line's **Item Tax Template** to **Exempted - IND** (0%). Other
 lines keep their GST, so one document can mix taxed and Exempted lines. The Tax Category of the
 document stays In-State / Out-State.
+
+## GST 0.1% for a merchant exporter (`merchant_export.py`)
+
+Goods sold to a **merchant exporter** (a buyer who exports them within 90 days, Notifications 40/2017 and
+41/2017) carry GST **0.1%**: CGST 0.05% + SGST 0.05%, or IGST 0.1%.
+
+- **Template `GST 0.1% - IND`**: made by `patches/merchant_export_gst.py` from `GST 5% - IND` — the same accounts
+  (Output / Input / RCM / Refund), every rate × 0.02 with its sign — so it posts to the usual GST ledgers and
+  India Compliance reports it as the 0.1% rate (GSTR-1, e-invoice).
+- **On every item** with GST rows, two `GST 0.1% - IND` rows come **last** (after Exempted): listed, so a line can
+  keep it, but never picked by itself — the first fitting row (the item's GST) stays the default. On a slab item
+  they carry the full range like the Exempted rows (a row without a range is skipped while a ranged one fits —
+  without the range they would never be valid there; on an item without a slab, a ranged row would become the
+  default instead). Items on Exempted / Nil-Rated / Non-GST get none. The patch added them in bulk with a dated
+  comment per item; `update_tax_child` adds them on every rebuild, and an item saved without them gets them.
+- **Customer tick "Merchant Exporter (0.1% GST)"** (`custom_merchant_exporter`): a Quotation / Sales Order /
+  Delivery Note / Sales Invoice / POS Invoice line on `GST 0.1% - IND` is refused unless the customer is ticked
+  (`guard_merchant_export`, validate) — 0.1% charged to anyone else is GST under-paid. A Quotation to a Lead can't
+  carry it.
+- **Document tick "Merchant Export - GST 0.1%"** (`custom_merchant_export`, next to Tax Category on Quotation /
+  Sales Order / Delivery Note / Sales Invoice; shown only for a ticked customer, `public/js/merchant_export.js`):
+  ticking puts every line whose item lists the template on it at once; unticking puts them back on the line's
+  normal template (`get_default_templates` — the first fitting row, so 5% / 18% by price). On save
+  (`apply_document_tick`, before_validate after the Tax Category rule) a ticked document puts new lines on 0.1%
+  too; a document unticked after being ticked has its 0.1% lines put back; on a document never ticked a line set to
+  0.1% by hand is left alone. Exempted / Nil-Rated / Non-GST items keep theirs. The tick is copied when a Quotation
+  becomes a Sales Order (same field name), and on to the Delivery Note / Invoice.
+- **Use**: tick the customer once (after the accountant confirms they qualify); on the document tick **Merchant
+  Export - GST 0.1%** (or set single lines' **Item Tax Template** to `GST 0.1% - IND`, as for Exempted). Tax
+  Category stays In-State / Out-State. Purchases need no tick (the supplier decides the rate on their bill).
 
 ## Why it is built this way
 
@@ -68,8 +99,13 @@ picks the right GST template but never sets the category; ERPNext copies it from
   supply in another state than the company GSTIN, else **In-State**. Lines with no Item Tax Template,
   or one not valid for that category, get the item's first valid row (ERPNext's
   `get_item_tax_template`: price slab and Exempted kept — a line set to Exempted stays Exempted); a
-  header GST template of the other category is swapped for the matching one. An alert says what
-  changed. On the form ERPNext's own Tax Category change re-picks templates too, but only on lines
+  header GST template of the other category is swapped for the matching one. The new tax rows are then
+  tagged igst / cgst / sgst again (India Compliance's `set_gst_tax_type`): its own before_validate runs
+  before ours, and untagged rows leave every line's GST rate / amount at 0 — the printed HSN breakup showed
+  "(0.0%) ₹ 0.00" while the total tax was right (SAL-ORD-2026-00218 after its address changed state). A
+  document already saved that way is put right by saving it again; `bench --site <site> execute
+  erp_dacsinc_custom.gst_tag_check.run` lists them (read-only). Older Quotations carry untagged rows too
+  (203 on the local copy, June 2026). An alert says what changed. On the form ERPNext's own Tax Category change re-picks templates too, but only on lines
   that already have one — the save rule covers empty lines.
 - **Customer** (validate) and **Address** (on_update → its customers): Out-State for SEZ / Overseas,
   an address outside India, or a billing state (address GSTIN, else customer GSTIN, else address

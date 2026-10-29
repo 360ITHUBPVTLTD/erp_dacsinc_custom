@@ -9,8 +9,12 @@
 // Submit (bulk_payment.make_payment): one party → one Payment Entry; several → a Bulk Payment that
 // makes one Payment Entry per party. From a draft Bulk Payment form (opts.frm) it fills the table.
 //
-// opts: { payment_type: "Receive" | "Pay", party, invoice (put first when spreading), frm,
-//         from_form (opened from an invoice form), on_done(result) }
+// Opened for one party (a customer / supplier form, an invoice row): no search — a header with the party and
+// what they owe, and a short "this pays" list (oldest first) with "Change which items" for the full table.
+// Dues are invoices / bills, opening balances and other Journal Entries (bulk_payment.get_open_invoices).
+//
+// opts: { payment_type: "Receive" | "Pay", party, invoice (put first when spreading), amount (its outstanding),
+//         frm, from_form (opened from an invoice form), on_done(result) }
 window.dacs_payment_dialog = function (opts) {
 	opts = opts || {};
 	const frm = opts.frm;
@@ -25,13 +29,15 @@ window.dacs_payment_dialog = function (opts) {
 		const inv_dt = receive ? "Sales Invoice" : "Purchase Invoice";
 		const who = receive ? __("customer") : __("supplier");
 		const whos = receive ? __("customers") : __("suppliers");
-		const bills = receive ? __("invoices") : __("bills");
+		// what is due: invoices / bills and Journal Entries (opening balances) — "items" in the prompt
+		const bills = __("items");
 		const esc = frappe.utils.escape_html;
 		const money = (v) => format_currency(flt(v, 2), setup.currency);
 		const mode_by_name = Object.fromEntries((setup.modes || []).map(m => [m.name, m]));
 		const selected = new Map();   // party → name, in the order picked
 		let parties_due = [];         // the picker list
 		let invoices = [];            // open invoices of the selected parties
+		let loaded = false;           // invoices loaded for the current choice (until then no chip shows "nothing due")
 		const amt = {}, tds = {}, wo = {};
 		let manual = false;           // the user typed a row: stop spreading the total by itself
 		// Calculator: with no amount typed, the amount is the sum of what is ticked (total_auto); once the
@@ -41,6 +47,15 @@ window.dacs_payment_dialog = function (opts) {
 		let flash_msg = null;
 		const flash = (m) => { flash_msg = m; };
 		const first = opts.invoice || null;
+		// one party known (customer / supplier form, an invoice): the short form — no search, a compact list
+		const simple = !!(opts.party && !frm);
+		let detail = !simple, picking = false;
+		const KIND = {
+			invoice: receive ? __("Invoice") : __("Bill"), opening_invoice: receive ? __("Opening invoice") : __("Opening bill"),
+			opening: __("Opening balance"), journal: __("Journal Entry"),
+		};
+		const kind_chip = (r) => `<span class="dbp-kind k-${esc(r.kind || "invoice")}">${KIND[r.kind] || KIND.invoice}</span>`;
+		const doc_url = (r) => `/app/${frappe.router.slug(r.doctype || inv_dt)}/${encodeURIComponent(r.name)}`;
 		const acc_q = () => ({ filters: { company, is_group: 0, root_type: "Expense", disabled: 0 } });
 
 		const d = new frappe.ui.Dialog({
@@ -99,12 +114,19 @@ window.dacs_payment_dialog = function (opts) {
 				<details class="dpz-more"><summary><i class="fa fa-comment-o"></i> ${__("Remarks")} <small>${__("optional")}</small></summary><div class="dpz-rem"></div></details>
 			</section>
 			<section class="wz-sec" data-s="3">
-				<div class="wz-q"><span class="wz-n">3</span>${receive ? __("Which invoices is it for?") : __("Which bills is it for?")}</div>
+				<div class="wz-q"><span class="wz-n">3</span>${__("What is it for?")}</div>
 				<div class="dpz-foot"></div>
 				<div class="dpz-list"></div>
 			</section>
 			<section class="wz-sec" data-s="4"><div class="wz-review"></div></section>
 		</div>`);
+		if (simple) {
+			$lay.find(".wz").addClass("is-simple");
+			$lay.find('.wz-sec[data-s="2"] .wz-n').text("1");
+			$lay.find('.wz-sec[data-s="3"] .wz-n').text("2");
+			$lay.find('.wz-sec[data-s="3"] .wz-q').contents().last().replaceWith(receive ? __("What does it pay? (oldest first)") : __("What does it pay? (oldest first)"));
+			$lay.find(".wz-hint").first().text(__("Leave it empty to add up the items you tick below."));
+		}
 		const move = (sel, names) => names.forEach(f => $lay.find(sel).append(d.fields_dict[f].$wrapper));
 		move(".dpz-picker", ["picker"]); move(".dpz-list", ["list"]);
 		move(".dpz-amt", ["total_amount"]); move(".dpz-mode", ["mode_of_payment", "mode_info"]); move(".dpz-date", ["posting_date"]);
@@ -122,6 +144,16 @@ window.dacs_payment_dialog = function (opts) {
 		.wz-sec[data-s="4"] { display: none; }
 		.wz-n { width: 26px; height: 26px; border-radius: 50%; background: #3498DB; color: #fff; display: inline-flex; align-items: center; justify-content: center; font-size: 13px; margin-right: 9px; vertical-align: 2px; }
 		.wz-who { display: none !important; }
+		.wz.is-simple .wz-sec[data-s="2"] .wz-who { display: flex !important; }
+		.wz.is-simple:not(.is-picking) .wz-sec[data-s="1"] { display: none; }
+		.dbp-kind { display: inline-block; border-radius: 6px; padding: 1px 7px; font-size: 11px; font-weight: 700; margin-right: 6px; background: #eaf2f8; color: #21618c; white-space: nowrap; }
+		.dbp-kind.k-opening, .dbp-kind.k-opening_invoice { background: #f4ecf7; color: #6c3483; } .dbp-kind.k-journal { background: #fef5e7; color: #935116; }
+		.dbp-mini { width: 100%; border-collapse: collapse; font-size: 13px; }
+		.dbp-mini td { padding: 8px 10px; border-bottom: 1px solid var(--border-color); vertical-align: middle; }
+		.dbp-mini td.r { text-align: right; white-space: nowrap; font-variant-numeric: tabular-nums; }
+		.dbp-mini td small { display: block; color: var(--text-muted); font-size: 11.5px; }
+		.dbp-mini tr.is-none td { color: var(--text-muted); }
+		.dbp-more { margin-top: 10px; }
 		.wz-sec .dpp .dpp-list { max-height: 170px; }
 		.wz-q { font-size: 17px; font-weight: 700; margin: 0 0 4px; }
 		.wz-hint { font-size: 12.5px; color: var(--text-muted); margin-bottom: 10px; }
@@ -270,6 +302,8 @@ window.dacs_payment_dialog = function (opts) {
 		.dacs-pay-dialog .wz-amtrow [data-fieldname="total_amount"] input { border: 2px solid var(--acc) !important; color: var(--ink) !important; font-size: 24px !important; border-radius: 12px !important; }
 		.dacs-pay-dialog .dpp .dpp-chip { background: var(--acc-50); color: var(--acc-d); border: 1px solid var(--acc-200); }
 		.dacs-pay-dialog .dpp .dpp-chip button { background: var(--acc-100); color: var(--acc-d); }
+		.dacs-pay-dialog .dpp .dpp-chip.is-idle { background: #fdf2e9; color: #a04000; border-color: #f5cba7; }
+		.dpp .dpp-chip small { font-weight: 400; opacity: .85; }
 		.dacs-pay-dialog .dpp .dpp-list { border: 1px solid var(--line); border-radius: 12px; }
 		.dacs-pay-dialog .dpp .dpp-p { border-bottom: 1px solid var(--line); padding: 9px 12px; }
 		.dacs-pay-dialog .dpp .dpp-p:hover { background: var(--soft); }
@@ -347,9 +381,11 @@ window.dacs_payment_dialog = function (opts) {
 			<div class="dpp-list"></div>
 			<div class="dpp-hint" style="margin-top:6px;">${esc(__("Click a {0} to add or remove. Only {1} with something unpaid are listed — most due first. For an advance from someone else, search their name.", [who, whos]))}</div>
 		</div>`);
+		// a chosen party with nothing open (no invoice, opening balance or journal) — known once its items are loaded
+		const idle_party = (p) => loaded && !invoices.some(r => r.party === p);
 		const paint_chips = () => {
 			$pk.find(".dpp-chips").html(selected.size
-				? [...selected].map(([p, n]) => `<span class="dpp-chip">${esc(n || p)}<button type="button" data-p="${esc(p)}" title="${esc(__("Remove"))}">×</button></span>`).join("")
+				? [...selected].map(([p, n]) => `<span class="dpp-chip ${idle_party(p) ? "is-idle" : ""}">${esc(n || p)}${idle_party(p) ? ` <small>· ${__("nothing due")}</small>` : ""}<button type="button" data-p="${esc(p)}" title="${esc(__("Remove"))}">×</button></span>`).join("")
 				: `<span class="dpp-hint">${esc(__("No {0} chosen yet.", [who]))}</span>`);
 		};
 		const paint_parties = () => {
@@ -361,7 +397,7 @@ window.dacs_payment_dialog = function (opts) {
 						<div style="min-width:0;"><b>${esc(p.party_name || p.party)}</b><small>${[esc(p.party), p.mobile ? `<i class="fa fa-phone"></i> ${esc(p.mobile)}` : "", p.place ? `<i class="fa fa-map-marker"></i> ${esc(p.place)}` : "",
 							p.gstin ? esc(p.gstin) : "", p.invoices ? "" : __("nothing due — advance")].filter(Boolean).join(" · ")}</small></div></div>
 					<span class="late">${p.oldest_due ? (p.oldest_due < today ? __("overdue since {0}", [frappe.datetime.str_to_user(p.oldest_due)]) : __("due {0}", [frappe.datetime.str_to_user(p.oldest_due)])) : ""}</span>
-					<span class="due">${p.due ? `${money(p.due)}<small>${p.invoices} ${p.invoices === 1 ? (receive ? __("invoice") : __("bill")) : bills}</small>` : ""}</span>
+					<span class="due">${p.due ? `${money(p.due)}<small>${p.invoices} ${p.invoices === 1 ? __("item") : bills}</small>` : ""}</span>
 				</div>`).join("") : `<div class="dpp-empty">${esc(__("No {0} found.", [who]))}</div>`);
 		};
 		let search_timer;
@@ -376,6 +412,7 @@ window.dacs_payment_dialog = function (opts) {
 			if (selected.has(p)) selected.delete(p); else selected.set(p, String($p.data("n") || p));
 			paint_chips(); paint_parties(); load();
 		});
+		$lay.on("click", ".wz-pick", () => { picking = !picking; $lay.find(".wz").toggleClass("is-picking", picking); });
 		$pk.on("click", ".dpp-chip button", (e) => { selected.delete(String($(e.currentTarget).data("p"))); paint_chips(); paint_parties(); load(); });
 
 		// ── ③ invoices and totals ──────────────────────────────────────────────────────────
@@ -406,12 +443,12 @@ window.dacs_payment_dialog = function (opts) {
 			if (!selected.size) return __("Start with part 1: click the {0}.", [whos]);
 			if (c.total <= 0) return __("Type the amount in part 2, or tick {0} below — the amount adds up as you go.", [bills]);
 			if (c.remaining < -0.005) return __("The {0} add up to more than the amount — lower one of them.", [bills]);
-			if (!n_on) return adv_ok ? __("No {0} chosen: the whole {1} is kept as advance.", [receive ? __("invoice") : __("bill"), money(c.total)])
+			if (!n_on) return adv_ok ? __("No {0} chosen: the whole {1} is kept as advance.", [__("item"), money(c.total)])
 				: __("Tick the {0} this amount is for.", [bills]);
-			if (c.remaining > 0.005) return adv_ok ? __("{0} goes on {1}; the other {2} stays as advance and can be adjusted later.", [money(c.allocated), n_on === 1 ? __("1 {0}", [receive ? __("invoice") : __("bill")]) : __("{0} {1}", [n_on, bills]), money(c.remaining)])
+			if (c.remaining > 0.005) return adv_ok ? __("{0} goes on {1}; the other {2} stays as advance and can be adjusted later.", [money(c.allocated), n_on === 1 ? __("1 {0}", [__("item")]) : __("{0} {1}", [n_on, bills]), money(c.remaining)])
 				: c.n_parties > 1 ? __("With several {0} the whole amount must go on {1} — {2} still to allocate.", [whos, bills, money(c.remaining)])
 				: __("An advance can't go with bank charges, TDS or write-off — allocate the {0} or take them off.", [money(c.remaining)]);
-			return __("The whole {0} goes on {1}.", [money(c.total), n_on === 1 ? __("1 {0}", [receive ? __("invoice") : __("bill")]) : __("{0} {1}", [n_on, bills])]);
+			return __("The whole {0} goes on {1}.", [money(c.total), n_on === 1 ? __("1 {0}", [__("item")]) : __("{0} {1}", [n_on, bills])]);
 		};
 		const allocated_except = (name) => flt(Object.entries(amt).reduce((a, [k, v]) => a + (k === name ? 0 : flt(v)), 0), 2);
 		const set_total = (v) => { setting_total = true; Promise.resolve(d.set_value("total_amount", flt(v, 2))).then(() => { setting_total = false; render(); }); };
@@ -424,7 +461,7 @@ window.dacs_payment_dialog = function (opts) {
 					v = Math.max(left, 0);
 					if (!quiet) flash(v > 0
 						? __("Only {0} of the amount is left — {1} is part paid.", [money(v), r.name])
-						: __("The whole {0} is already allocated. Lower another {1} or raise the amount.", [money(d.get_value("total_amount")), receive ? __("invoice") : __("bill")]));
+						: __("The whole {0} is already allocated. Lower another {1} or raise the amount.", [money(d.get_value("total_amount")), __("item")]));
 				}
 			}
 			if (v > 0.005) amt[r.name] = flt(v, 2); else { [amt, tds, wo].forEach(o => delete o[r.name]); }
@@ -444,8 +481,15 @@ window.dacs_payment_dialog = function (opts) {
 		const paint_sel = () => {
 			const $s = $lay.find(".dpz-sel");
 			const due0 = flt(invoices.reduce((x, r) => x + flt(r.outstanding_amount), 0), 2);
-			$lay.find(".wz-who").html(selected.size ? `<i class="fa fa-user" style="color:#3498DB;"></i><b>${[...selected.values()].map(esc).join(", ")}</b>
-				<span>${__("owe{0} {1} on {2} {3}", [selected.size === 1 ? "s" : "", money(due0), invoices.length, invoices.length === 1 ? (receive ? __("invoice") : __("bill")) : bills])}</span>
+			if (simple) {
+				const late0 = flt(invoices.filter(r => r.due_date && r.due_date < frappe.datetime.get_today()).reduce((x, r) => x + flt(r.outstanding_amount), 0), 2);
+				$lay.find(".wz-who").html(`<i class="fa fa-user" style="color:#3498DB;"></i><b>${[...selected.values()].map(esc).join(", ")}</b>
+					<span>${due0 > 0.005 ? (receive ? __("owes {0} on {1} item(s)", [money(due0), invoices.length]) : __("we owe {0} on {1} item(s)", [money(due0), invoices.length]))
+						: (receive ? __("owes nothing now — the amount will be an advance") : __("nothing due now — the amount will be an advance"))}${late0 > 0.005 ? " · " + __("{0} overdue", [money(late0)]) : ""}</span>
+					<button type="button" class="dbp-b is-line wz-edit wz-pick"><i class="fa fa-pencil"></i> ${__("Change")}</button>`);
+			}
+			if (!simple) $lay.find(".wz-who").html(selected.size ? `<i class="fa fa-user" style="color:#3498DB;"></i><b>${[...selected.values()].map(esc).join(", ")}</b>
+				<span>${__("owe{0} {1} on {2} {3}", [selected.size === 1 ? "s" : "", money(due0), invoices.length, invoices.length === 1 ? __("item") : bills])}</span>
 				<button type="button" class="dbp-b is-line wz-edit" data-go="1"><i class="fa fa-pencil"></i> ${__("Change")}</button>` : "");
 			$lay.find(".wz-full").html(due0 > 0.005 ? `<button type="button" class="dbp-b is-fill dpz-takeall"><i class="fa fa-check-circle"></i> ${__("Full due {0}", [money(due0)])}</button>` : "");
 			if (!selected.size) { $s.html(""); return; }
@@ -456,7 +500,7 @@ window.dacs_payment_dialog = function (opts) {
 			$s.html(`<div class="dpz-selbar">
 				<div><span>${__("Selected")}</span><b>${selected.size} ${selected.size === 1 ? who : whos}</b></div>
 				<div><span>${__("Total due")}</span><b>${money(due)}</b></div>
-				<div><span>${receive ? __("Invoices") : __("Bills")}</span><b>${invoices.length}</b></div>
+				<div><span>${__("Items")}</span><b>${invoices.length}</b></div>
 				<div><span>${__("Overdue")}</span><b class="${late_amt ? "is-late" : ""}">${money(late_amt)}</b></div>
 
 			</div>`);
@@ -472,7 +516,7 @@ window.dacs_payment_dialog = function (opts) {
 				<span class="dpf-op">│</span>
 				<div class="dpf-i is-main"><span>${receive ? __("Amount received") : __("Amount paid")}${total_auto ? " · " + __("adds up as you tick") : ""}</span><b>${money(c.total)}</b></div>
 				<span class="dpf-op">=</span>
-				<div class="dpf-i"><span>${__("On {0} {1}", [n_on, n_on === 1 ? (receive ? __("invoice") : __("bill")) : bills])}</span><b>${money(c.allocated)}</b></div>
+				<div class="dpf-i"><span>${__("On {0} {1}", [n_on, n_on === 1 ? __("item") : bills])}</span><b>${money(c.allocated)}</b></div>
 				${Math.abs(c.remaining) < 0.005 ? "" : `<span class="dpf-op">+</span>${c.remaining > 0 && adv_ok
 					? `<div class="dpf-i is-adv"><span>${__("Kept as advance")}</span><b>${money(c.remaining)}</b></div>`
 					: c.remaining > 0 ? `<div class="dpf-i is-bad"><span>${__("Still to allocate")}</span><b>${money(c.remaining)}</b></div>`
@@ -492,6 +536,24 @@ window.dacs_payment_dialog = function (opts) {
 				$w.html(`<div class="dbp-empty">${selected.size
 					? __("No unpaid {0} for the chosen {1} — the whole amount will be an advance.", [bills, selected.size === 1 ? who : whos])
 					: __("Click the {0} in part 1 — their unpaid {1} appear here.", [whos, bills])}</div>`);
+				return;
+			}
+			if (!detail) {
+				// the short list: what this payment pays, oldest first; the full table on "Change which items"
+				const today0 = frappe.datetime.get_today();
+				const rows0 = invoices.map(r => {
+					const paying = flt(amt[r.name]), out = flt(r.outstanding_amount);
+					const st = paying <= 0.005 ? "none" : (out - paying <= 0.005 ? "full" : "part");
+					const PL = { full: ["is-full", __("fully paid")], part: ["is-part", __("part paid — {0} left", [money(out - paying)])], none: ["is-none", __("not paid now")] };
+					return `<tr class="is-${st}"><td>${kind_chip(r)}<a href="${doc_url(r)}" target="_blank">${esc(r.name)}</a>
+						<small>${r.due_date ? (r.due_date < today0 ? `<span class="dbp-late">${__("overdue since {0}", [frappe.datetime.str_to_user(r.due_date)])}</span>` : __("due {0}", [frappe.datetime.str_to_user(r.due_date)])) : ""}${r.remark ? " · " + esc(r.remark) : ""}</small></td>
+						<td class="r">${__("due")} <b>${money(out)}</b></td>
+						<td class="r"><b>${paying > 0.005 ? money(paying) : "—"}</b></td>
+						<td class="r"><span class="dbp-pill ${PL[st][0]}">${PL[st][1]}</span></td></tr>`;
+				}).join("");
+				$w.html(`<table class="dbp-mini">${rows0}</table>
+					<div class="dbp-more"><button type="button" class="dbp-b is-line dbp-detail"><i class="fa fa-list"></i> ${__("Change which items or amounts")}</button>
+					<span class="wz-hint" style="margin-left:8px;">${__("The amount is set against the oldest first.")}</span></div>`);
 				return;
 			}
 			const groups = {};
@@ -519,15 +581,15 @@ window.dacs_payment_dialog = function (opts) {
 						${pst === "full" ? "" : `<button class="dbp-b is-fill dbp-pfull" data-p="${esc(p)}"><i class="fa fa-check-circle"></i> ${__("Pay all in full")}</button>`}
 					</div>
 					<div class="dbp-prog"><i style="width:${pct}%"></i></div>
-					<div class="dbp-tw"><table class="dbp-t"><thead><tr><th class="l">${receive ? __("Invoice") : __("Bill")}</th>
+					<div class="dbp-tw"><table class="dbp-t"><thead><tr><th class="l">${__("Item")}</th>
 						<th class="r">${__("Due now")}</th><th class="r dbp-th-edit"><i class="fa fa-pencil"></i> ${__("Paying now")}</th>
 						${cuts ? `<th class="r dbp-th-edit"><i class="fa fa-pencil"></i> ${receive ? __("TDS") : __("TDS")}</th><th class="r dbp-th-edit"><i class="fa fa-pencil"></i> ${__("W/off")}</th>` : ""}
 						<th class="r">${__("Left after")}</th><th></th></tr></thead>
 					<tbody>${rows.map(r => {
 						const paying = flt(amt[r.name]), out = flt(r.outstanding_amount), st = state(paying, out);
 						return `<tr class="is-${st}">
-						<td class="l"><a class="dbp-inv" href="/app/${frappe.router.slug(inv_dt)}/${encodeURIComponent(r.name)}" target="_blank">${esc(r.name)}</a>
-							<small>${receive ? "" : (r.bill_no ? esc(r.bill_no) + " · " : "")}${__("total {0}", [money(r.invoice_total)])}${r.due_date
+						<td class="l">${kind_chip(r)}<a class="dbp-inv" href="${doc_url(r)}" target="_blank">${esc(r.name)}</a>
+							<small>${receive ? "" : (r.bill_no ? esc(r.bill_no) + " · " : "")}${r.remark ? esc(r.remark) + " · " : ""}${__("total {0}", [money(r.invoice_total)])}${r.due_date
 								? ` · <span class="${r.due_date < today ? "dbp-late" : ""}">${r.due_date < today ? __("overdue {0}", [frappe.datetime.str_to_user(r.due_date)]) : __("due {0}", [frappe.datetime.str_to_user(r.due_date)])}</span>` : ""}</small></td>
 						<td class="r"><b>${money(out)}</b></td>
 						<td class="r"><span class="dbp-in" title="${esc(__("Type the amount for this invoice"))}"><i>₹</i><input type="number" step="0.01" min="0" class="dbp-amt" data-k="amt" data-inv="${esc(r.name)}" value="${paying ? flt(paying, 2) : ""}" placeholder="${esc(__("type"))}"></span></td>
@@ -543,6 +605,7 @@ window.dacs_payment_dialog = function (opts) {
 		};
 		const by_name = (n) => invoices.find(r => r.name === n);
 		const $list = d.fields_dict.list.$wrapper;
+		$list.on("click", ".dbp-detail", () => { detail = true; render(); });
 		$list.on("change", ".dbp-amt", (e) => {
 			const k = String($(e.target).data("k")), r = by_name(String($(e.target).data("inv")));
 			const store = { amt, tds, wo }[k];
@@ -594,10 +657,12 @@ window.dacs_payment_dialog = function (opts) {
 
 		const load = () => {
 			const parties = [...selected.keys()];
-			if (!parties.length) { invoices = []; render(); return; }
+			loaded = false;
+			if (!parties.length) { invoices = []; paint_chips(); render(); return; }
 			frappe.call({ method: P + "get_open_invoices", args: { payment_type: receive ? "Receive" : "Pay", parties, company } })
 				.then(r => {
 					invoices = r.message || [];
+					loaded = true; paint_chips();
 					[amt, tds, wo].forEach(o => Object.keys(o).forEach(k => { if (!by_name(k)) delete o[k]; }));
 					if (!manual && !total_auto) spread(); else if (!total_auto) fit();
 					after_change();
@@ -653,12 +718,19 @@ window.dacs_payment_dialog = function (opts) {
 			if (c.wo && !v.write_off_account) { frappe.msgprint(__("Choose the Write Off Account.")); return null; }
 			const cuts = show_cuts();
 			const allocations = invoices.filter(r => flt(amt[r.name]) > 0).map(r => ({
-				party: r.party, party_name: r.party_name, invoice: r.name, amount: flt(amt[r.name], 2),
+				party: r.party, party_name: r.party_name, invoice: r.name, doctype: r.doctype || inv_dt, amount: flt(amt[r.name], 2),
 				tds: cuts ? flt(tds[r.name], 2) : 0, write_off: cuts ? flt(wo[r.name], 2) : 0 }));
 			const parties = [...new Set(allocations.map(a => a.party))];
 			if (selected.size > 1 && parties.length < selected.size) {
-				const idle = [...selected.keys()].filter(p => !parties.includes(p)).map(p => selected.get(p));
-				frappe.msgprint(__("Nothing is allocated to {0} — enter an amount or remove them.", [idle.map(esc).join(", ")])); return null;
+				const idle = [...selected.keys()].filter(p => !parties.includes(p));
+				const none_due = idle.filter(idle_party), names = (l) => l.map(p => esc(selected.get(p) || p)).join(", ");
+				const remove = () => { idle.forEach(p => selected.delete(p)); paint_chips(); paint_parties(); load(); };
+				frappe.msgprint({ title: __("Nothing to pay for {0}", [names(idle)]), indicator: "orange",
+					message: (none_due.length ? __("{0}: nothing unpaid (no invoice, opening balance or journal is open).", [names(none_due)]) + "<br><br>" : "")
+						+ __("With several {0} in one payment, every one of them must pay something here. Remove {1}, or put an amount on their items.", [whos, names(idle)])
+						+ (none_due.length ? "<br>" + __("For an advance from them, make a separate payment for them alone.") : ""),
+					primary_action: { label: __("Remove {0}", [names(idle)]), action: () => { frappe.hide_msgprint(); remove(); } } });
+				return null;
 			}
 			return { v, c, allocations, party: [...selected.keys()][0] };
 		};
@@ -670,7 +742,7 @@ window.dacs_payment_dialog = function (opts) {
 			 "bank_charges", "bank_charges_account", "tds_account", "write_off_account"].forEach(f => frm.set_value(f, x.v[f] || null));
 			frm.clear_table("allocations");
 			x.allocations.forEach(a => frm.add_child("allocations", {
-				party_type: party_dt, party: a.party, party_name: a.party_name, reference_doctype: inv_dt,
+				party_type: party_dt, party: a.party, party_name: a.party_name, reference_doctype: a.doctype || inv_dt,
 				reference_name: a.invoice, allocated_amount: a.amount, tds_amount: a.tds, write_off_amount: a.write_off }));
 			frm.refresh_field("allocations");
 			d.hide();
@@ -701,10 +773,10 @@ window.dacs_payment_dialog = function (opts) {
 				${c.charges ? `<div class="wz-rv__row"><span>${__("Bank charges")}</span><b>${money(c.charges)}</b></div>` : ""}
 				${c.tds ? `<div class="wz-rv__row"><span>${__("TDS")}</span><b>${money(c.tds)}</b></div>` : ""}
 				${c.wo ? `<div class="wz-rv__row"><span>${__("Written off")}</span><b>${money(c.wo)}</b></div>` : ""}
-				<table><tr><th>${receive ? __("Customer") : __("Supplier")}</th><th>${receive ? __("Invoices") : __("Bills")}</th><th class="r">${__("Amount")}</th></tr>${rows}</table>
+				<table><tr><th>${receive ? __("Customer") : __("Supplier")}</th><th>${__("Items")}</th><th class="r">${__("Amount")}</th></tr>${rows}</table>
 			</div>
 			${many ? `<div class="wz-hint" style="margin-top:8px;">${__("One Payment Entry per {0}, kept together as one Bulk Payment with one receipt. To undo, cancel the Bulk Payment.", [who])}</div>` : ""}
-			<label class="wz-ok"><input type="checkbox" class="wz-okbox"> ${__("I have checked the amount, the mode / reference and every {0}", [receive ? __("invoice") : __("bill")])}</label>`);
+			<label class="wz-ok"><input type="checkbox" class="wz-okbox"> ${__("I have checked the amount, the mode / reference and every {0}", [__("item")])}</label>`);
 			pending = x;
 			return true;
 		};
@@ -796,7 +868,10 @@ window.dacs_payment_dialog = function (opts) {
 			frappe.db.get_value(party_dt, opts.party, receive ? "customer_name" : "supplier_name").then(r => {
 				selected.set(opts.party, ((r && r.message) || {})[receive ? "customer_name" : "supplier_name"] || opts.party);
 				// opened from one invoice: the amount starts at its outstanding
-				if (first && !d.get_value("total_amount")) {
+				if (first && !d.get_value("total_amount") && opts.amount) {
+					d.set_value("total_amount", flt(opts.amount));
+					begin();
+				} else if (first && !d.get_value("total_amount")) {
 					frappe.db.get_value(inv_dt, first, "outstanding_amount").then(o => {
 						d.set_value("total_amount", flt(((o && o.message) || {}).outstanding_amount));
 						begin();

@@ -225,6 +225,11 @@ def set_document_tax_category(doc, method=None):
 				doc.append("taxes", {k: old.get(k) for k in ("charge_type", "account_head", "description", "tax_amount",
 					"cost_center", "category", "add_deduct_tax", "included_in_print_rate") if old.get(k) is not None})
 			swapped = new
+			# India Compliance tags each GST row (igst / cgst / sgst) in its own before_validate, which ran before
+			# this one; the rows above are new, and untagged rows give every item 0% in the GST breakup (HSN table)
+			if "india_compliance" in frappe.get_installed_apps():
+				from india_compliance.gst_india.overrides.transaction import set_gst_tax_type
+				set_gst_tax_type(doc)
 
 	if changed or fixed or swapped:
 		frappe.msgprint(_("Tax Category set to {0} ({1}){2}{3}").format(

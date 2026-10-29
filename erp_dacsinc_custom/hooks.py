@@ -78,15 +78,17 @@ doctype_js = {
     # Close the POS: tables exist and the entry loads its opening amounts / invoices
     "POS Closing Entry": "public/js/pos_closing_entry.js",
 	"Lead": "public/js/lead.js",
-	"Sales Order": "public/js/sales_order.js",
+	"Sales Order": ["public/js/sales_order.js", "public/js/merchant_export.js"],
 	"Item": "public/js/item.js",
 	"Purchase Order": ["public/js/so_qty_cap.js", "public/js/purchase_order.js"],
 	"Purchase Invoice": "public/js/purchase_invoice.js",
 	"Material Request": ["public/js/so_qty_cap.js", "public/js/material_request.js", "public/js/pos_stock.js"],
 	"Stock Entry": "public/js/pos_stock.js",
 	"BOM": "public/js/bom.js",
-	"Sales Invoice": "public/js/sales_invoice.js",
-	"Delivery Note": "public/js/delivery_note.js",
+	"Sales Invoice": ["public/js/sales_invoice.js", "public/js/merchant_export.js"],
+	"Delivery Note": ["public/js/delivery_note.js", "public/js/merchant_export.js"],
+	# the "Merchant Export - GST 0.1%" tick (merchant_export.py)
+	"Quotation": "public/js/merchant_export.js",
 	# Purchase Return: Debit Note status + "Make Debit Note" (return_goods.py)
 	"Purchase Receipt": "public/js/purchase_receipt.js",
 	"Pick List": "public/js/pick_list.js",
@@ -295,11 +297,14 @@ doc_events = {
     },
     # Finance tab: another user's payment changes outstanding amounts — tell open dashboards
     "Payment Entry": {
-        # an entry made by a Bulk Payment is cancelled with it, not on its own (bulk_payment.py)
-        "before_cancel": "erp_dacsinc_custom.erp_dacsinc_custom.doctype.bulk_payment.bulk_payment.payment_entry_before_cancel",
         "on_trash": "erp_dacsinc_custom.erp_dacsinc_custom.doctype.bulk_payment.bulk_payment.payment_entry_on_trash",
         "on_submit": "erp_dacsinc_custom.order_flow_api.broadcast_order_flow_change",
-        "on_cancel": "erp_dacsinc_custom.order_flow_api.broadcast_order_flow_change",
+        "on_cancel": [
+            # an entry of a Bulk Payment may be cancelled on its own: the Bulk Payment becomes Partly Cancelled,
+            # or Cancelled with its last entry (bulk_payment.py)
+            "erp_dacsinc_custom.erp_dacsinc_custom.doctype.bulk_payment.bulk_payment.payment_entry_on_cancel",
+            "erp_dacsinc_custom.order_flow_api.broadcast_order_flow_change",
+        ],
     },
     # Role Permission Manager edits reach the access sheet (access_reverse.py).
     "Custom DocPerm": {
@@ -320,6 +325,8 @@ doc_events = {
     },
     # A customer's first POS Invoice gives them that store (pos_scope.py).
     "POS Invoice": {
+        # GST 0.1% lines only for a merchant exporter (merchant_export.py)
+        "validate": "erp_dacsinc_custom.merchant_export.guard_merchant_export",
         "on_update": "erp_dacsinc_custom.pos_scope.set_store_from_pos_invoice",
     },
     # A page / report whose Custom Role the access sheet manages keeps the roles
@@ -353,13 +360,19 @@ doc_events = {
         "validate": "erp_dacsinc_custom.custom_lead.validate_lead"
     },
     "Quotation": {
-        "before_validate": "erp_dacsinc_custom.tax_category.set_document_tax_category",
+        "before_validate": [
+            "erp_dacsinc_custom.tax_category.set_document_tax_category",
+            # the "Merchant Export - GST 0.1%" tick puts every line on GST 0.1% (merchant_export.py)
+            "erp_dacsinc_custom.merchant_export.apply_document_tick",
+        ],
         "before_insert": "erp_dacsinc_custom.custom_script.before_insert",
         "after_insert": "erp_dacsinc_custom.custom_script.after_insert_quotation",
         "on_update": "erp_dacsinc_custom.custom_script.on_update_quotation",
         "on_submit": "erp_dacsinc_custom.custom_script.quotation_on_submit",
         "validate": ["erp_dacsinc_custom.custom_script.validate_non_zero_rate",
-                        "erp_dacsinc_custom.custom_script.validate_quotation"]
+                        "erp_dacsinc_custom.custom_script.validate_quotation",
+                        # GST 0.1% lines only for a merchant exporter (merchant_export.py)
+                        "erp_dacsinc_custom.merchant_export.guard_merchant_export"]
         # "on_cancel": "erp_dacsinc_custom.custom_script.quotation_on_cancel"
     },
     "Sales Invoice": {
@@ -368,6 +381,8 @@ doc_events = {
         "before_validate": [
             "erp_dacsinc_custom.custom_script.lock_item_rate_to_sales_order_early",
             "erp_dacsinc_custom.tax_category.set_document_tax_category",
+            # the "Merchant Export - GST 0.1%" tick puts every line on GST 0.1% (merchant_export.py)
+            "erp_dacsinc_custom.merchant_export.apply_document_tick",
             # direct invoice ticks Update Stock; from Delivery Notes unticks it (si_stock.py)
             "erp_dacsinc_custom.si_stock.set_update_stock",
         ],
@@ -375,7 +390,9 @@ doc_events = {
             "erp_dacsinc_custom.custom_script.lock_item_rate_to_sales_order",
             "erp_dacsinc_custom.custom_script.guard_si_items_locked_to_pick_list",
             "erp_dacsinc_custom.custom_script.validate_non_zero_rate",
-            "erp_dacsinc_custom.custom_script.sales_invoice_validate"
+            "erp_dacsinc_custom.custom_script.sales_invoice_validate",
+            # GST 0.1% lines only for a merchant exporter (merchant_export.py)
+            "erp_dacsinc_custom.merchant_export.guard_merchant_export",
         ],
         "before_submit": [
             "erp_dacsinc_custom.custom_script.guard_so_fulfillment_route_lock",
@@ -419,8 +436,14 @@ doc_events = {
        "before_validate": [
             "erp_dacsinc_custom.custom_script.sales_order_before_insert",
             "erp_dacsinc_custom.tax_category.set_document_tax_category",
+            # the "Merchant Export - GST 0.1%" tick puts every line on GST 0.1% (merchant_export.py)
+            "erp_dacsinc_custom.merchant_export.apply_document_tick",
         ],
-       "validate": "erp_dacsinc_custom.custom_script.validate_non_zero_rate"
+       "validate": [
+            "erp_dacsinc_custom.custom_script.validate_non_zero_rate",
+            # GST 0.1% lines only for a merchant exporter (merchant_export.py)
+            "erp_dacsinc_custom.merchant_export.guard_merchant_export",
+       ],
     },
     "Delivery Note": {
         # no second draft for the same source line (draft_guard.py)
@@ -428,10 +451,14 @@ doc_events = {
         "before_validate": [
             "erp_dacsinc_custom.custom_script.lock_item_rate_to_sales_order_early",
             "erp_dacsinc_custom.tax_category.set_document_tax_category",
+            # the "Merchant Export - GST 0.1%" tick puts every line on GST 0.1% (merchant_export.py)
+            "erp_dacsinc_custom.merchant_export.apply_document_tick",
         ],
         "validate": [
             "erp_dacsinc_custom.custom_script.lock_item_rate_to_sales_order",
             "erp_dacsinc_custom.custom_script.guard_dn_items_locked_to_pick_list",
+            # GST 0.1% lines only for a merchant exporter (merchant_export.py)
+            "erp_dacsinc_custom.merchant_export.guard_merchant_export",
         ],
         "before_submit": [
             "erp_dacsinc_custom.custom_script.guard_so_fulfillment_route_lock",
@@ -535,6 +562,8 @@ doc_events = {
             "erp_dacsinc_custom.procurement_purpose.set_procurement_purpose",
             # Subcontracted PO only on a jobber (Supplier › Is Jobber)
             "erp_dacsinc_custom.purchase_order.guard_subcontract_po_jobber",
+            # lines from a Material Request: not more than it has open; not on another draft
+            "erp_dacsinc_custom.purchase_order.guard_po_against_mr",
         ],
         # Subcontract PO: raw material for all its rows together must be the PO's own.
         "before_submit": "erp_dacsinc_custom.purchase_order.guard_subcontract_po_rm",

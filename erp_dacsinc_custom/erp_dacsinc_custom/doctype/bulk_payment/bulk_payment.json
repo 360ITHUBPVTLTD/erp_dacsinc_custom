@@ -39,6 +39,8 @@
   "invoice_count",
   "column_break_3",
   "payment_entries",
+  "status",
+  "cancelled_amount",
   "remarks",
   "amended_from"
  ],
@@ -244,7 +246,32 @@
    "fieldtype": "Small Text",
    "label": "Payment Entries",
    "no_copy": 1,
-   "read_only": 1
+   "read_only": 1,
+   "allow_on_submit": 1
+  },
+  {
+   "fieldname": "status",
+   "fieldtype": "Select",
+   "label": "Status",
+   "options": "Draft\nSubmitted\nPartly Cancelled\nCancelled",
+   "default": "Draft",
+   "read_only": 1,
+   "allow_on_submit": 1,
+   "no_copy": 1,
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "description": "Partly Cancelled: one or more of its Payment Entries were cancelled on their own; the rest stand."
+  },
+  {
+   "fieldname": "cancelled_amount",
+   "fieldtype": "Currency",
+   "label": "Cancelled Amount",
+   "options": "Company:company:default_currency",
+   "read_only": 1,
+   "allow_on_submit": 1,
+   "no_copy": 1,
+   "depends_on": "eval:doc.cancelled_amount",
+   "description": "Received / paid amount of the Payment Entries cancelled on their own."
   },
   {
    "fieldname": "remarks",
@@ -263,7 +290,7 @@
  ],
  "is_submittable": 1,
  "links": [],
- "modified": "2026-10-26 18:00:00.000000",
+ "modified": "2026-10-29 17:00:00.000000",
  "modified_by": "Administrator",
  "module": "Erp Dacsinc Custom",
  "name": "Bulk Payment",

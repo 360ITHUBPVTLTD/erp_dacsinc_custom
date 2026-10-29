@@ -171,6 +171,16 @@ def get_party_documents(party_type, party, view="unpaid", from_date=None, to_dat
 			bill_no=i.get("bill_no"), return_against=i.return_against,
 			chain={"quotations": sorted({q for o in s["orders"] for q in quote_of.get(o, ())}),
 				   "orders": sorted(s["orders"]), "receipts": sorted(s["receipts"]), "payments": pays.get(i.name, [])}))
+	if view == "unpaid":
+		# what else is due besides invoices — opening balances and other Journal Entries, a refund paid out
+		# (party_open_items, the Payment Ledger): listed with the invoices, oldest due first
+		from erp_dacsinc_custom.party_open_items import open_items
+		for it in open_items(party_type, [party], company).get(party, []):
+			if it.outstanding > 0.005 and it.doctype != inv_dt:
+				rows.append({"doctype": it.doctype, "name": it.name, "date": it.posting_date, "total": it.total,
+							 "outstanding": it.outstanding, "due_date": it.due_date, "kind": it.kind, "remark": it.remark,
+							 "status": "", "draft": False, "chain": {}})
+		rows.sort(key=lambda r: str(r.get("due_date") or r.get("date") or ""))
 	return {"view": view, "from_date": from_date, "to_date": to_date, "rows": rows, "more": len(invs) >= LIMIT}
 
 

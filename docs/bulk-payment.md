@@ -24,9 +24,25 @@ Users don't want a Journal Entry for a shared cheque, and one Payment Entry can 
 - a draft **Bulk Payment** form › **Pick Invoices** — fills its table instead of submitting.
 - the **Payment Entry list** › **Receive / Pay** (`public/js/payment_entry_list.js`) — empty, as on Order Flow.
 
+## What can be paid (open items)
+
+The prompt lists everything due from the chosen parties, not only invoices: invoices / bills, opening invoices,
+**opening balances and other Journal Entries** with something due (`party_open_items.open_items` — ERPNext's
+Payment Ledger, the same as the Account Summary; kinds `PAYABLE_KINDS`), each labelled in words. "Who owes" sums
+the same. A Journal Entry row is checked against the Payment Ledger (`BulkPayment._validate_je_row`: due for that
+party, amount ≤ what is due) and its Payment Entry reference is built from ERPNext's Get Outstanding
+(`_je_references`); a payment of only Journal Entry rows starts from an advance entry and gets them as references.
+Bulk Payment Allocation's Invoice Type allows Journal Entry.
+
 ## The prompt
 
-One screen, three numbered parts:
+**Opened for one party** (the Customer / Supplier form, an invoice or due row): no search — a header with the party,
+what they owe and the overdue amount (*Change* opens the search), then **1 How much did you receive?** and
+**2 What does it pay? (oldest first)** — a short list (item, due, paying now, fully / part paid / not paid now) with
+**Change which items or amounts** for the full table below. Opened from a due row, the amount starts at what is due
+on it.
+
+Opened from Order Flow (any party): one screen, three numbered parts:
 1. **Who paid you?** — the list of who owes, each with ID · mobile · city pincode · GSTIN (search matches id, name, mobile,
    email, GSTIN, any of their addresses — lines, city, pincode, phone — and contact phones; a search also lists matching
    parties with nothing due, for an advance — `bulk_payment._search_parties`); click to add; a *Selected* line (how many, total
@@ -67,6 +83,9 @@ ticked), Left after with the status under it, then ✕ / Full.
      allocate** with several parties, or with bank charges / TDS / write-off; red **Over by** can't
      happen through the buttons), plus *In bank after deductions* when there are any, and one sentence
      saying what will happen ("No invoice chosen: the whole ₹… is kept as advance").
+   - With several parties every one must pay something (an advance only goes with one party). A chosen
+     party with nothing open shows "· nothing due" on its chip (orange); Review stops with a message
+     naming them and a **Remove** button.
    - Messages about the last change (amount ran out, already allocated, Auto-allocate needs an amount)
      show inside the prompt above the invoices, not as toasts. Editable boxes (Paying now, TDS,
      write-off) are white with a blue border and ₹ and their column header is dark blue with a pencil;
@@ -84,8 +103,8 @@ parties, Payment Receipt DAC for one).
 
 ## Rules (server, `doctype/bulk_payment/bulk_payment.py`)
 
-- Rows: invoice submitted, not a return, same company and party; 0 < amount ≤ outstanding; an invoice
-  once; TDS + write-off ≤ the row's amount.
+- Rows: invoice submitted, not a return, same company and party — or a Journal Entry with something due for the
+  party (Payment Ledger); 0 < amount ≤ outstanding; a document once; TDS + write-off ≤ the row's amount.
 - Total = sum of the rows, except one party may have more (advance) — but not together with bank
   charges, TDS or write-off. Bank amount must be > 0.
 - Deduction ledgers: bank charges / write-off an expense ledger, TDS a TDS ledger
@@ -109,15 +128,27 @@ remarks.
 
 | Action | Result |
 |---|---|
-| Cancel the Bulk Payment | cancels all its Payment Entries (`ignore_links`), invoices reopen |
-| Cancel one of its Payment Entries | refused while the Bulk Payment is submitted |
-| Cancel an invoice it paid | refused (SI / PI `before_cancel`) — cancel the Bulk Payment first |
+| Cancel the Bulk Payment | cancels all its still-submitted Payment Entries (`ignore_links`), invoices reopen; Status → Cancelled |
+| Cancel one of its Payment Entries | **allowed** (`payment_entry_on_cancel`; the Bulk Payment's link back to it is ignored for that cancel): its rows are ticked **Cancelled**, its received / paid amount is added to **Cancelled Amount**, Status → **Partly Cancelled**, a dated comment on the Bulk Payment; its invoices reopen. When none of its entries is left submitted the Bulk Payment is cancelled too |
+| Cancel an invoice it paid | refused (SI / PI `before_cancel`) — the message names the Payment Entry to cancel first (or the whole Bulk Payment) |
 | Unreconcile Payment on its entry | refused |
-| Amend | a new draft without the old links; submit makes new entries |
+| Amend a cancelled entry of it | a separate Payment Entry (`custom_bulk_payment` is not copied); the Bulk Payment keeps the row as Cancelled |
+| Amend the Bulk Payment | a new draft without the old links / cancelled ticks; submit makes new entries |
 | Delete submitted | refused (standard) |
 | Delete cancelled | refused while any of its entries is submitted; else clears `custom_bulk_payment` on them, dated comment on each |
-| Delete a cancelled entry of it | allowed once the bulk is cancelled; clears the row's link |
+| Delete a cancelled entry of it | allowed (cancelled with the Bulk Payment or on its own); its rows lose the link, keep Cancelled |
 | Delete the original while its amendment exists | refused (standard Frappe) |
+
+**Cancel asks first** (`public/js/bulk_cancel.js`, data `cancel_preview`; replaces Frappe's "Cancel All Documents", which
+on an entry offered to cancel the whole Bulk Payment without saying so): on a Payment Entry of a Bulk Payment — every
+standing entry with what it settles, then what **Cancel only this payment** does (what it settled is due again; the
+Bulk Payment becomes Partly Cancelled, its other entries stay — or, for the last one, it is cancelled too) and
+**Cancel the whole Bulk Payment** (`cancel_bulk_payment`, needs cancel on Bulk Payment); on the Bulk Payment — every
+entry cancelled with it and what it settles, **Cancel all**. The entry's form also says it is part of the Bulk Payment.
+
+**Status** (Draft / Submitted / Partly Cancelled / Cancelled, list filter): set on submit / cancel and by the entry
+cancel above; `patches/bulk_payment_status.py` set it on existing ones. The receipt of a Partly Cancelled one prints
+"PART CANCELLED", the amount still standing, the cancelled rows struck through and out of the totals.
 
 A one-party payment is an ordinary Payment Entry — cancelled / amended like any other.
 
@@ -136,7 +167,7 @@ in the access sheet (/roles-and-permissions) if they should pay several parties 
 ## Files
 
 `public/js/bulk_payment.js` (prompt), `doctype/bulk_payment/` (json, py, js), `doctype/bulk_payment_allocation/`,
-`print_format/bulk_payment_receipt/`, `custom/payment_entry.json` (`custom_bulk_payment`), `hooks.py`
+`print_format/bulk_payment_receipt/`, `party_open_items.py` (open items), `custom/payment_entry.json` (`custom_bulk_payment`), `hooks.py`
 (Payment Entry before_cancel / on_trash, SI / PI before_cancel, Unreconcile Payment before_submit),
 `page/order_flow/order_flow.js` (New › Receive / Pay, row buttons), `public/js/sales_invoice.js` /
 `purchase_invoice.js` (form buttons), `dashboard_payment.py` (ledger helpers, refunds).

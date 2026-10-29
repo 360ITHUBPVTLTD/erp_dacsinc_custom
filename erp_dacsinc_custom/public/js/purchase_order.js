@@ -3394,6 +3394,7 @@ function render_smart_po_dialog(frm, raw_data) {
         // The draft slice of that same total — see get_mr_suggestions_for_po.
         grouped[key].draft_ordered_qty += flt(d.draft_ordered_qty);
         grouped[key].total_pending += flt(d.pending_qty);
+        if (d.other_draft) grouped[key].other_draft = d.other_draft;
         grouped[key].origins.push(d);
     });
     Object.values(grouped).forEach(g => {
@@ -3518,7 +3519,7 @@ function render_smart_po_dialog(frm, raw_data) {
 
             html += `<tr class="planner-row ${is_selected ? 'row-selected' : ''} ${row.fully_ordered ? 'row-covered' : ''}" data-key="${row.item_code}">
                 <td class="text-center"><input type="checkbox" class="row-chk" data-key="${row.item_code}"
-                    ${is_selected ? 'checked' : ''} ${row.fully_ordered ? `disabled title="Already fully ordered${row.draft_ordered_qty > 0.01 ? ' (partly on a draft Purchase Order)' : ''} — shown for reference only"` : ''}></td>
+                    ${is_selected ? 'checked' : ''} ${row.fully_ordered ? `disabled title="${row.other_draft ? `On draft Purchase Order ${row.other_draft} — finish or delete that draft first` : `Already fully ordered${row.draft_ordered_qty > 0.01 ? ' (partly on a draft Purchase Order)' : ''}`} — shown for reference only"` : ''}></td>
                 <td>
                     <a href="/app/item/${row.item_code}" target="_blank" class="link-item">${row.item_code}</a>
                     <div style="font-size:10.5px; color:#64748b; line-height: 1.4;">${row.item_name}</div>
@@ -3545,7 +3546,10 @@ function render_smart_po_dialog(frm, raw_data) {
                 </td>
                 <td class="text-right">
                     ${row.fully_ordered
-                        ? (row.draft_ordered_qty > 0.01
+                        ? (row.other_draft
+                            ? `<span class="covered-tag" style="background:#fff7ed; color:#9a3412; border-color:#fed7aa;"
+                                     title="${frappe.utils.escape_html(`This Material Request line is on draft Purchase Order ${row.other_draft}. Finish or delete that draft first — one draft per Material Request line.`)}">${__('On draft {0}', [frappe.utils.escape_html(row.other_draft)])}</span>`
+                            : row.draft_ordered_qty > 0.01
                             ? `<span class="covered-tag" style="background:#fff7ed; color:#9a3412; border-color:#fed7aa;"
                                      title="${frappe.utils.escape_html(`Fully covered, but ${row.draft_ordered_qty} of it is on a Purchase Order that has not been submitted: ${row.draft_pos.map(p => p.is_current ? `${p.po_id} (this PO)` : p.po_id).join(', ')}.`)}">${__('Ordered — Draft PO')}</span>`
                             : `<span class="covered-tag">${__('Already Ordered')}</span>`)
@@ -3603,7 +3607,7 @@ function submit_to_po(d, frm, data) {
                         item_code: l.item_code, qty: flt(l.pending_qty * multiplier),
                         warehouse: l.warehouse, uom: l.uom,
                         material_request: l.mr_id, material_request_item: l.mr_item_id,
-                        sales_order: l.sales_order, description: `Source Trace: MR ${l.mr_id} | ${l.sales_order || ''}`
+                        sales_order: l.sales_order
                     });
                 });
             }
@@ -3626,8 +3630,8 @@ function submit_to_po(d, frm, data) {
     // set_value). build_rm_purchase_rows is the same server-side fetch the
     // other "fetch item" dialogs now use — call it here too so every row
     // gets a real rate/price list rate/HSN code, then layer this dialog's
-    // own MR-tracing fields (warehouse, material_request, sales_order,
-    // Source Trace description) on top. Indices line up 1:1 with to_add
+    // own MR-tracing fields (warehouse, material_request, sales_order) on
+    // top — the description stays the item's own (users type their own). Indices line up 1:1 with to_add
     // since every entry here already has item_code and qty > 0 — nothing
     // for build_rm_purchase_rows to skip.
     frappe.call({
@@ -3653,7 +3657,6 @@ function submit_to_po(d, frm, data) {
                     material_request: source.material_request,
                     material_request_item: source.material_request_item,
                     sales_order: source.sales_order,
-                    description: source.description,
                 }));
             });
             frm.refresh_field('items');
@@ -3920,14 +3923,21 @@ function po_paint_mr_over(frm) {
     $wrap.find('.dacs-mr-over-alert').remove();
     if (!over.length) return;
     const idx = Object.fromEntries((frm.doc.items || []).map(r => [r.name, r.idx]));
-    const lines = over.map(o => `<li>${__('Row {0}', [idx[o.row] || '?'])}: <b>${frappe.utils.escape_html(o.item_code)}</b> —
-        ${__('asks {0} {1}, only {2} {1} left on {3}', [flt(o.qty, 3), frappe.utils.escape_html(o.uom || ''), flt(o.allowed_qty, 3),
-        frappe.utils.escape_html(o.material_request)])}${flt(o.allowed_qty) <= 0 ? ` <i>(${__('already fully ordered — the line will be removed')})</i>` : ''}</li>`).join('');
+    const esc = frappe.utils.escape_html;
+    const link = (dt, n) => `<a href="/app/${frappe.router.slug(dt)}/${encodeURIComponent(n)}" target="_blank" style="font-weight:600;">${esc(n)}</a>`;
+    const lines = over.map(o => {
+        const by = (o.ordered_by || []).map(n => link('Purchase Order', n)).join(', ');
+        const why = flt(o.allowed_qty) <= 0.0005
+            ? `<i>${by ? __('nothing left — already ordered on {0}', [by]) : __('nothing left ({0})', [esc(o.mr_status || '')])}; ${__('the line will be removed')}</i>`
+            : __('only {0} {1} left', [flt(o.allowed_qty, 3), esc(o.uom || '')]) + (by ? ` (${__('rest ordered on {0}', [by])})` : '');
+        return `<li>${__('Row {0}', [idx[o.row] || '?'])}: <b>${esc(o.item_code)}</b> —
+            ${__('asks {0} {1} from {2}', [flt(o.qty, 3), esc(o.uom || ''), link('Material Request', o.material_request)])}: ${why}</li>`;
+    }).join('');
     const $a = $(`<div class="dacs-mr-over-alert">
         <b><i class="fa fa-exclamation-triangle"></i> ${__('{0} line(s) ask for more than their Material Request still has open', [over.length])}</b>
         <ul>${lines}</ul>
         <button class="btn btn-xs btn-danger dacs-mr-fix">${__('Correct quantities')}</button>
-        <span class="text-muted" style="margin-left:8px;">${__('Another Purchase Order has already ordered part of it. ERPNext will not submit this one as it is.')}</span>
+        <span class="text-muted" style="margin-left:8px;">${__('Another Purchase Order has already ordered it. This Purchase Order cannot be saved or submitted until these lines are corrected.')}</span>
     </div>`);
     $a.find('.dacs-mr-fix').on('click', () => po_fix_mr_over(frm));
     $wrap.prepend($a);
@@ -3952,8 +3962,21 @@ function po_fix_mr_over(frm) {
     setTimeout(() => po_check_mr_limits(frm), 600);
 }
 
+// The items grid shows each line's Material Request as a link instead of the Description
+// (a user's own column choice, grid ⚙, still wins).
+function po_show_mr_column(frm) {
+    const grid = frm.fields_dict.items && frm.fields_dict.items.grid;
+    if (!grid || grid.__dacs_mr_col) return;
+    grid.__dacs_mr_col = true;
+    grid.update_docfield_property('description', 'in_list_view', 0);
+    grid.update_docfield_property('material_request', 'in_list_view', 1);
+    grid.update_docfield_property('material_request', 'columns', 1);
+    grid.reset_grid();   // rebuild the header and rows with the new columns
+}
+
 frappe.ui.form.on('Purchase Order', {
-    refresh(frm) { setTimeout(() => po_check_mr_limits(frm), 800); },
+    onload_post_render(frm) { po_show_mr_column(frm); },
+    refresh(frm) { po_show_mr_column(frm); setTimeout(() => po_check_mr_limits(frm), 800); },
     after_save(frm) { po_check_mr_limits(frm); },
     before_submit(frm) {
         return po_check_mr_limits(frm).then(over => {

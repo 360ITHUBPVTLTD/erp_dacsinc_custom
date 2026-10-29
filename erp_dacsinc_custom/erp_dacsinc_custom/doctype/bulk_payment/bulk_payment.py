@@ -6,7 +6,12 @@ parties and their invoices. docs/bulk-payment.md.
   as advance; no invoice at all = an advance).                                   make_payment
 - Several    → a Bulk Payment (this doctype) that, on Submit, makes one Payment Entry per party, each
   marked with it (Payment Entry › custom_bulk_payment) and sharing its mode, date and cheque /
-  reference no. Cancelling it cancels them; one of them can't be cancelled on its own.
+  reference no. Cancelling it cancels them all. One of them may be cancelled on its own: its rows here are
+  marked Cancelled, the status becomes Partly Cancelled (cancelled amount kept), and when the last one is
+  cancelled the Bulk Payment is cancelled too (payment_entry_on_cancel).
+
+Rows are invoices / bills, or a Journal Entry with something due on it (an opening balance, a charge) — from the
+Payment Ledger (party_open_items); the Payment Entry references it the way ERPNext's Get Outstanding does.
 
 Bank charges (for the whole amount, on the first party's entry), TDS and write-off (per invoice row)
 are Payment Entry deductions, as Create › Payment would post them:
@@ -21,8 +26,11 @@ from frappe import _
 from frappe.model.document import Document
 from frappe.utils import cint, flt, fmt_money, getdate
 
+from erp_dacsinc_custom.party_open_items import PAYABLE_KINDS
+
 INVOICE = {"Receive": ("Customer", "Sales Invoice", "customer", "customer_name"),
 		   "Pay": ("Supplier", "Purchase Invoice", "supplier", "supplier_name")}
+JE = "Journal Entry"
 
 
 class BulkPayment(Document):
@@ -31,8 +39,9 @@ class BulkPayment(Document):
 		# however it was copied) has no Payment Entries yet — its Submit makes them — so drop old ones first
 		if self.docstatus == 0:
 			self.payment_entries = None
+			self.status, self.cancelled_amount = "Draft", 0
 			for row in self.allocations:
-				row.payment_entry = None
+				row.payment_entry, row.cancelled = None, 0
 		return super()._validate_links()
 
 	def before_validate(self):
@@ -41,14 +50,14 @@ class BulkPayment(Document):
 			party_type, inv_dt = INVOICE[self.payment_type][:2]
 			self.party_type = party_type
 			for row in self.allocations:
-				row.party_type, row.reference_doctype = party_type, inv_dt
+				row.party_type = party_type
+				if row.reference_doctype != JE:
+					row.reference_doctype = inv_dt
 
 	def validate(self):
 		"""Also run (without saving) for a one-party payment from the prompt: flags.allow_advance lets the
 		total exceed the invoices (kept as advance on its Payment Entry), flags.advance_party names the
 		party when no invoice is chosen."""
-		from erp_dacsinc_custom.dashboard_payment import _deduction_account_ok
-
 		if not self.company:
 			self.company = frappe.defaults.get_user_default("Company") or frappe.db.get_single_value("Global Defaults", "default_company")
 		party_type, inv_dt, party_field, name_field = INVOICE[self.payment_type]
@@ -57,12 +66,34 @@ class BulkPayment(Document):
 		self._set_bank_account()
 		seen, total, tds, wo = set(), 0.0, 0.0, 0.0
 		for row in self.allocations:
-			row.party_type, row.reference_doctype = party_type, inv_dt
+			row.party_type = party_type
+			if row.reference_doctype != JE:
+				row.reference_doctype = inv_dt
 			if not row.reference_name:
 				frappe.throw(_("Row {0}: choose the invoice.").format(row.idx))
 			if row.reference_name in seen:
 				frappe.throw(_("Row {0}: {1} is in the table twice.").format(row.idx, row.reference_name))
 			seen.add(row.reference_name)
+			if row.reference_doctype == JE:
+				self._validate_je_row(row)
+			else:
+				self._validate_invoice_row(row, inv_dt, party_field, name_field)
+			row.tds_amount, row.write_off_amount = flt(row.tds_amount, 2), flt(row.write_off_amount, 2)
+			if flt(row.allocated_amount) <= 0:
+				frappe.throw(_("Row {0}: enter the amount for {1}.").format(row.idx, row.reference_name))
+			if flt(row.allocated_amount) - flt(row.outstanding_amount) > 0.005:
+				frappe.throw(_("Row {0}: {1} is more than what is still due on {2} ({3}).").format(
+					row.idx, fmt_money(row.allocated_amount), row.reference_name, fmt_money(row.outstanding_amount)))
+			if row.tds_amount < 0 or row.write_off_amount < 0:
+				frappe.throw(_("Row {0}: TDS and write-off cannot be negative.").format(row.idx))
+			if row.tds_amount + row.write_off_amount - flt(row.allocated_amount) > 0.005:
+				frappe.throw(_("Row {0}: TDS and write-off on {1} are more than its amount.").format(row.idx, row.reference_name))
+			total += flt(row.allocated_amount)
+			tds += row.tds_amount
+			wo += row.write_off_amount
+		self._after_rows(total, tds, wo, receive)
+
+	def _validate_invoice_row(self, row, inv_dt, party_field, name_field):
 			inv = frappe.db.get_value(inv_dt, row.reference_name,
 									  ["docstatus", "is_return", party_field, name_field, "posting_date", "due_date",
 									   "rounded_total", "grand_total", "outstanding_amount", "company",
@@ -80,19 +111,27 @@ class BulkPayment(Document):
 				row.outstanding_amount = flt(inv.outstanding_amount)
 			if inv_dt == "Purchase Invoice":
 				row.bill_no = inv.bill_no
-			row.tds_amount, row.write_off_amount = flt(row.tds_amount, 2), flt(row.write_off_amount, 2)
-			if flt(row.allocated_amount) <= 0:
-				frappe.throw(_("Row {0}: enter the amount for {1}.").format(row.idx, row.reference_name))
-			if flt(row.allocated_amount) - flt(row.outstanding_amount) > 0.005:
-				frappe.throw(_("Row {0}: {1} is more than what is still due on {2} ({3}).").format(
-					row.idx, fmt_money(row.allocated_amount), row.reference_name, fmt_money(row.outstanding_amount)))
-			if row.tds_amount < 0 or row.write_off_amount < 0:
-				frappe.throw(_("Row {0}: TDS and write-off cannot be negative.").format(row.idx))
-			if row.tds_amount + row.write_off_amount - flt(row.allocated_amount) > 0.005:
-				frappe.throw(_("Row {0}: TDS and write-off on {1} are more than its amount.").format(row.idx, row.reference_name))
-			total += flt(row.allocated_amount)
-			tds += row.tds_amount
-			wo += row.write_off_amount
+
+	def _validate_je_row(self, row):
+		"""A Journal Entry row: something still due on it for this party (Payment Ledger — an opening balance or
+		another debit to a customer / credit to a supplier)."""
+		from erp_dacsinc_custom.party_open_items import open_items
+
+		if not row.party:
+			frappe.throw(_("Row {0}: choose the {1} for {2}.").format(row.idx, _(self.party_type).lower(), row.reference_name))
+		item = next((i for i in open_items(self.party_type, [row.party], self.company).get(row.party, [])
+					 if i.doctype == JE and i.name == row.reference_name), None)
+		if not item or item.outstanding <= 0.005:
+			frappe.throw(_("Row {0}: nothing is due from {1} on {2}.").format(row.idx, row.party, row.reference_name))
+		row.party_name = frappe.db.get_value(self.party_type, row.party, INVOICE[self.payment_type][3])
+		row.posting_date, row.due_date = item.posting_date, item.due_date
+		row.invoice_total = item.total
+		if self.docstatus == 0:
+			row.outstanding_amount = item.outstanding
+
+	def _after_rows(self, total, tds, wo, receive):
+		from erp_dacsinc_custom.dashboard_payment import _deduction_account_ok
+
 		self.allocated_amount = flt(total, 2)
 		self.tds_amount, self.write_off_amount = flt(tds, 2), flt(wo, 2)
 		self.bank_charges = flt(self.bank_charges, 2)
@@ -183,9 +222,15 @@ class BulkPayment(Document):
 		bank = flt(settled - tds - wo - charges if receive else settled - tds - wo + charges, 2)
 
 		if rows:
-			pe = get_payment_entry(rows[0].reference_doctype, rows[0].reference_name, bank_account=self.bank_cash_account)
+			inv_rows = [r for r in rows if r.reference_doctype != JE]
+			pe = get_payment_entry(inv_rows[0].reference_doctype, inv_rows[0].reference_name, bank_account=self.bank_cash_account) \
+				if inv_rows else self._advance_entry(party)
+			je_refs = self._je_references(pe, party, [r for r in rows if r.reference_doctype == JE])
 			refs = []
 			for row in rows:
+				if row.reference_doctype == JE:
+					refs.append(je_refs[row.reference_name])
+					continue
 				# ERPNext's own reference row for this invoice (accounts, due date, outstanding…)
 				ref = get_payment_entry(row.reference_doctype, row.reference_name, bank_account=self.bank_cash_account).references[0]
 				ref.allocated_amount = flt(row.allocated_amount)
@@ -236,6 +281,27 @@ class BulkPayment(Document):
 		pe.submit()
 		return pe
 
+	def _je_references(self, pe, party, rows):
+		"""{Journal Entry: reference row} — as ERPNext's Get Outstanding builds them on a Payment Entry."""
+		if not rows:
+			return {}
+		from erpnext.accounts.doctype.payment_entry.payment_entry import get_outstanding_reference_documents
+
+		found = {d.voucher_no: d for d in get_outstanding_reference_documents({
+			"posting_date": self.posting_date, "company": self.company, "party_type": self.party_type,
+			"payment_type": self.payment_type, "party": party, "party_account": pe.party_account,
+			"get_outstanding_invoices": True}) if d.voucher_type == JE}
+		out = {}
+		for row in rows:
+			d = found.get(row.reference_name)
+			if not d:
+				frappe.throw(_("{0}: nothing is due on it for {1} any more.").format(row.reference_name, party))
+			out[row.reference_name] = {"reference_doctype": JE, "reference_name": row.reference_name,
+				"due_date": d.get("due_date") or d.get("posting_date"), "total_amount": flt(d.invoice_amount),
+				"outstanding_amount": flt(d.outstanding_amount), "allocated_amount": flt(row.allocated_amount),
+				"exchange_rate": 1, "account": d.get("account") or pe.party_account}
+		return out
+
 	def _advance_entry(self, party):
 		"""A Payment Entry with no invoice — all of it advance (Receive: customer advance; Pay: to a supplier)."""
 		from erpnext.accounts.party import get_party_account
@@ -254,9 +320,12 @@ class BulkPayment(Document):
 
 	def on_submit(self):
 		made = self.make_entries(bulk=True)
-		self.db_set("payment_entries", ", ".join(made), update_modified=False)
+		self.db_set({"payment_entries": ", ".join(made), "status": "Submitted"}, update_modified=False)
 		frappe.msgprint(_("{0} Payment Entr{1} made and submitted: {2}").format(
 			len(made), "y" if len(made) == 1 else "ies", ", ".join(made)), indicator="green", alert=True)
+
+	def on_cancel(self):
+		self.db_set("status", "Cancelled", update_modified=False)
 
 	def before_cancel(self):
 		# its Payment Entries go first (they link back to this document)
@@ -285,12 +354,40 @@ def _tds_account(party, company):
 	return _supplier_tds_account(party, company, frappe.get_cached_value("Company", company, "abbr"))
 
 
-def payment_entry_before_cancel(doc, method=None):
-	"""A Payment Entry made by a Bulk Payment is cancelled with it, not on its own."""
-	if doc.get("custom_bulk_payment") and not doc.flags.get("from_bulk_payment") \
-			and frappe.db.get_value("Bulk Payment", doc.custom_bulk_payment, "docstatus") == 1:
-		frappe.throw(_("{0} is part of Bulk Payment {1} — cancel the Bulk Payment (it cancels all its entries together).").format(
-			doc.name, doc.custom_bulk_payment), title=_("Part of a Bulk Payment"))
+def payment_entry_on_cancel(doc, method=None):
+	"""One of a Bulk Payment's entries cancelled on its own (not by cancelling the Bulk Payment): its rows there are
+	marked Cancelled, the amount it received / paid is added to Cancelled Amount, the status becomes Partly
+	Cancelled with a dated comment — and when no entry of it is left submitted, the Bulk Payment is cancelled."""
+	bp_name = doc.get("custom_bulk_payment")
+	if not bp_name:
+		return
+	# the submitted Bulk Payment links to this entry (its rows) — that must not stop the cancel. Set here, not
+	# before_cancel: ERPNext's own on_cancel replaces ignore_linked_doctypes, and Frappe checks the links after
+	# the on_cancel hooks
+	doc.ignore_linked_doctypes = tuple(doc.get("ignore_linked_doctypes") or ()) + ("Bulk Payment", "Bulk Payment Allocation")
+	if doc.flags.get("from_bulk_payment"):
+		return
+	bp = frappe.get_doc("Bulk Payment", bp_name)
+	if bp.docstatus != 1:
+		return
+	for row in bp.allocations:
+		if row.payment_entry == doc.name and not row.cancelled:
+			row.db_set("cancelled", 1, update_modified=False)
+	amount = flt(doc.received_amount if doc.payment_type == "Receive" else doc.paid_amount)
+	left = frappe.get_all("Payment Entry", filters={"custom_bulk_payment": bp.name, "docstatus": 1}, pluck="name")
+	bp.db_set({"cancelled_amount": flt(flt(bp.cancelled_amount) + amount, 2),
+			   "status": "Partly Cancelled" if left else "Cancelled"}, update_modified=True)
+	bp.add_comment("Comment", _("{0}: Payment Entry {1} ({2}, {3}) was cancelled on its own.").format(
+		frappe.utils.nowdate(), doc.name, doc.party_name or doc.party, fmt_money(amount)))
+	if not left:
+		# nothing of it stands any more: cancel it too (its own cancel finds no submitted entry to cancel)
+		bp.reload()
+		bp.flags.ignore_permissions = True
+		bp.cancel()
+		frappe.msgprint(_("That was the last Payment Entry of Bulk Payment {0}, so it is cancelled too.").format(bp.name), alert=True)
+	else:
+		frappe.msgprint(_("Bulk Payment {0} is now Partly Cancelled: {1} still stand ({2}).").format(
+			bp.name, len(left), ", ".join(left)), alert=True)
 
 
 def _can_pay():
@@ -388,11 +485,25 @@ def get_parties_due(payment_type, company=None, txt=None):
 		frappe.throw(_("Not permitted"), frappe.PermissionError)
 	company = company or frappe.defaults.get_user_default("Company")
 	txt = (txt or "").strip()
-	filters = {"docstatus": 1, "is_return": 0, "outstanding_amount": [">", 0.005], "company": company}
-	rows = frappe.get_list(inv_dt, filters=filters,
-						   fields=[party_field + " as party", f"max({name_field}) as party_name", "count(name) as invoices",
-								   "sum(outstanding_amount) as due", "min(due_date) as oldest_due"],
-						   group_by=party_field, order_by="due desc", limit_page_length=500)
+	# who has something due — invoices, opening balances, other Journal Entries (Payment Ledger, as
+	# party_open_items); only parties this user may see
+	from erp_dacsinc_custom.party_open_items import open_items
+	owing = frappe.db.sql("""SELECT party FROM `tabPayment Ledger Entry` WHERE delinked = 0 AND company = %s
+		AND party_type = %s GROUP BY party, against_voucher_type, against_voucher_no HAVING SUM(amount) > 0.005""",
+		(company, party_type), pluck=True)
+	owing = list(dict.fromkeys(owing))
+	if owing:
+		owing = frappe.get_list(party_type, filters={"name": ["in", owing]}, pluck="name", limit_page_length=0)
+	items = open_items(party_type, owing, company)
+	names = dict(frappe.get_all(party_type, filters={"name": ["in", owing]}, fields=["name", name_field], as_list=True)) if owing else {}
+	rows = []
+	for party, its in items.items():
+		due = [i for i in its if i.outstanding > 0.005 and i.kind in PAYABLE_KINDS]
+		if due:
+			rows.append(frappe._dict(party=party, party_name=names.get(party) or party, invoices=len(due),
+									 due=flt(sum(i.outstanding for i in due), 2), oldest_due=min(i.due_date for i in due)))
+	rows.sort(key=lambda r: -r.due)
+	rows = rows[:500]
 	if txt:
 		# those who owe are searched first (all of them), then up to 15 others for an advance
 		hit = set(_search_parties(party_type, txt, within=[r.party for r in rows]))
@@ -410,23 +521,28 @@ def get_parties_due(payment_type, company=None, txt=None):
 
 @frappe.whitelist()
 def get_open_invoices(payment_type, parties, company=None):
-	"""Unpaid submitted invoices / bills of the chosen customers / suppliers (oldest due first)."""
+	"""What the chosen customers / suppliers still owe / are owed, oldest due first: invoices / bills, opening
+	invoices, opening balances and other Journal Entries (party_open_items). Each row: doctype, name, kind (what it
+	is, in words on the prompt), party, dates, total, outstanding."""
+	from erp_dacsinc_custom.party_open_items import open_items
+
 	party_type, inv_dt, party_field, name_field = INVOICE[payment_type]
 	if not _can_pay() or not frappe.has_permission(inv_dt, "read"):
 		frappe.throw(_("Not permitted"), frappe.PermissionError)
 	parties = frappe.parse_json(parties) if isinstance(parties, str) else (parties or [])
 	if not parties:
 		return []
+	parties = frappe.get_list(party_type, filters={"name": ["in", parties]}, pluck="name", limit_page_length=0)
 	company = company or frappe.defaults.get_user_default("Company")
-	fields = ["name", party_field + " as party", name_field + " as party_name", "posting_date", "due_date",
-			  "rounded_total", "grand_total", "outstanding_amount", "currency"]
-	if inv_dt == "Purchase Invoice":
-		fields.append("bill_no")
-	rows = frappe.get_list(inv_dt, filters={"docstatus": 1, "is_return": 0, "outstanding_amount": [">", 0.005],
-											party_field: ["in", parties], "company": company},
-						   fields=fields, order_by="due_date asc, posting_date asc, name asc", limit_page_length=1000)
-	for r in rows:
-		r["invoice_total"] = flt(r.rounded_total) or flt(r.grand_total)
+	names = dict(frappe.get_all(party_type, filters={"name": ["in", parties]}, fields=["name", name_field], as_list=True)) if parties else {}
+	rows = []
+	for party, its in open_items(party_type, parties, company).items():
+		for i in its:
+			if i.outstanding > 0.005 and i.kind in PAYABLE_KINDS:
+				rows.append({"name": i.name, "doctype": i.doctype, "kind": i.kind, "party": party, "party_name": names.get(party) or party,
+							 "posting_date": i.posting_date, "due_date": i.due_date, "invoice_total": i.total,
+							 "outstanding_amount": i.outstanding, "bill_no": i.bill_no, "remark": i.remark})
+	rows.sort(key=lambda r: (str(r["due_date"] or ""), str(r["posting_date"] or ""), r["name"]))
 	return rows
 
 
@@ -447,7 +563,8 @@ def _build(data):
 		"bank_charges_account": data.get("bank_charges_account") if flt(data.get("bank_charges")) else None,
 		"tds_account": data.get("tds_account") or None,
 		"write_off_account": data.get("write_off_account") or None,
-		"allocations": [{"party_type": party_type, "party": a.get("party"), "reference_doctype": inv_dt,
+		"allocations": [{"party_type": party_type, "party": a.get("party"),
+						 "reference_doctype": JE if a.get("doctype") == JE else inv_dt,
 						 "reference_name": a.get("invoice"), "allocated_amount": flt(a.get("amount")),
 						 "tds_amount": flt(a.get("tds")), "write_off_amount": flt(a.get("write_off"))}
 						for a in (data.get("allocations") or []) if flt(a.get("amount")) > 0],
@@ -497,26 +614,61 @@ def make_payment(data):
 	return {"bulk_payment": None, "payment_entries": doc.make_entries(bulk=False)}
 
 
+@frappe.whitelist()
+def cancel_preview(bulk_payment=None, payment_entry=None):
+	"""What a cancel will do, for the confirmation on the Payment Entry / Bulk Payment form: the Bulk Payment, its
+	submitted entries (party, amount, what each settles) and, for one entry, what cancelling only it leaves."""
+	if payment_entry:
+		bulk_payment = frappe.db.get_value("Payment Entry", payment_entry, "custom_bulk_payment")
+	if not bulk_payment:
+		return None
+	bp = frappe.get_doc("Bulk Payment", bulk_payment)
+	bp.check_permission("read")
+	entries = []
+	for pe in frappe.get_all("Payment Entry", filters={"custom_bulk_payment": bp.name, "docstatus": 1},
+							 fields=["name", "party", "party_name", "payment_type", "paid_amount", "received_amount",
+									 "unallocated_amount"], order_by="name"):
+		refs = frappe.get_all("Payment Entry Reference", filters={"parent": pe.name, "allocated_amount": [">", 0]},
+							  fields=["reference_doctype", "reference_name", "allocated_amount"], order_by="idx")
+		entries.append({"name": pe.name, "party": pe.party, "party_name": pe.party_name or pe.party,
+						"amount": flt(pe.received_amount if pe.payment_type == "Receive" else pe.paid_amount),
+						"advance": flt(pe.unallocated_amount), "refs": refs})
+	return {"bulk_payment": bp.name, "status": bp.status, "docstatus": bp.docstatus, "payment_type": bp.payment_type,
+			"total": flt(bp.bank_amount or bp.total_amount), "cancelled_amount": flt(bp.cancelled_amount),
+			"entries": entries, "this": payment_entry,
+			"can_cancel_bulk": bool(frappe.has_permission("Bulk Payment", "cancel", bp.name)),
+			"can_cancel_entry": bool(payment_entry and frappe.has_permission("Payment Entry", "cancel", payment_entry))}
+
+
+@frappe.whitelist()
+def cancel_bulk_payment(bulk_payment):
+	"""Cancel a whole Bulk Payment (and so its submitted entries) — the confirmation's second choice."""
+	bp = frappe.get_doc("Bulk Payment", bulk_payment)
+	bp.check_permission("cancel")
+	if bp.docstatus != 1:
+		frappe.throw(_("{0} is not submitted.").format(bp.name))
+	bp.cancel()
+	return bp.name
+
+
 def payment_entry_on_trash(doc, method=None):
-	"""A Payment Entry of a submitted Bulk Payment can't be deleted (it is submitted anyway); one of a
-	cancelled Bulk Payment can — its row there drops the link."""
+	"""A cancelled Payment Entry of a Bulk Payment (cancelled with it, or on its own) may be deleted: its rows there
+	drop the link and keep "Cancelled"."""
 	if not doc.get("custom_bulk_payment"):
 		return
-	if frappe.db.get_value("Bulk Payment", doc.custom_bulk_payment, "docstatus") == 1:
-		frappe.throw(_("{0} is part of Bulk Payment {1} — cancel the Bulk Payment first.").format(doc.name, doc.custom_bulk_payment))
 	frappe.db.sql("""UPDATE `tabBulk Payment Allocation` SET payment_entry = NULL
 		WHERE parent = %s AND payment_entry = %s""", (doc.custom_bulk_payment, doc.name))
 
 
 def invoice_before_cancel(doc, method=None):
-	"""An invoice paid by a submitted Bulk Payment is not cancelled under it — the Bulk Payment (and
-	so its Payment Entries) is cancelled first."""
-	bulk = frappe.db.sql("""SELECT DISTINCT pe.custom_bulk_payment FROM `tabPayment Entry Reference` per
+	"""An invoice paid through a Bulk Payment is not cancelled under it — first cancel the Payment Entry that pays it
+	(the Bulk Payment becomes Partly Cancelled) or the whole Bulk Payment."""
+	bulk = frappe.db.sql("""SELECT DISTINCT CONCAT(pe.name, ' (', pe.custom_bulk_payment, ')') FROM `tabPayment Entry Reference` per
 		JOIN `tabPayment Entry` pe ON pe.name = per.parent
 		WHERE per.reference_doctype = %s AND per.reference_name = %s AND pe.docstatus = 1
 		AND IFNULL(pe.custom_bulk_payment, '') != ''""", (doc.doctype, doc.name), pluck=True)
 	if bulk:
-		frappe.throw(_("{0} is paid by Bulk Payment {1} — cancel the Bulk Payment first (it cancels its Payment Entries together).").format(
+		frappe.throw(_("{0} is paid by {1} of a Bulk Payment — cancel that Payment Entry first (or the whole Bulk Payment).").format(
 			doc.name, ", ".join(bulk)), title=_("Paid by a Bulk Payment"))
 
 
