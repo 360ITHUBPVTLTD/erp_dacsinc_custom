@@ -369,7 +369,7 @@
    "property": "options",
    "property_type": "Text",
    "row_name": null,
-   "value": "MAT-MR-.YYYY.-"
+   "value": "MR/.FYS./.#####\nMAT-MR-.YYYY.-"
   },
   {
    "_assign": null,

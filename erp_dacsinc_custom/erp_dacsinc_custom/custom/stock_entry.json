@@ -3016,7 +3016,7 @@
    "property": "options",
    "property_type": "Small Text",
    "row_name": null,
-   "value": "MAT-STE-\nMAT-STE-.YYYY.-"
+   "value": "STE/.FYS./.####\nMAT-STE-\nMAT-STE-.YYYY.-"
   },
   {
    "_assign": null,

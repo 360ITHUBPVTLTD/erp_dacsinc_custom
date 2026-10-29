@@ -95,6 +95,9 @@ doctype_js = {
 	# Account Summary at the top of the form (public/js/party_summary.js, party_balance.py)
 	"Customer": ["public/js/customer.js", "public/js/party_summary.js"],
 	"Supplier": "public/js/party_summary.js",
+	# "Outstanding" → Group Outstanding page (party_group.py)
+	"Customer Group": "public/js/party_group_form.js",
+	"Supplier Group": "public/js/party_group_form.js",
 	# job work is received from the Sub PO ("Receive Finished Goods"), not from the SCO
 	"Subcontracting Order": "public/js/subcontracting_order.js"
 }
@@ -281,11 +284,16 @@ has_permission = {
 # 	"ToDo": "custom_app.overrides.CustomToDo"
 # }
 
+# Document numbers PREFIX/26-27/00001: .FYS. is the short financial year (naming.py, docs/naming-series.md)
+naming_series_variables = {"FYS": "erp_dacsinc_custom.naming.short_fiscal_year"}
+
 # Document Events
 # ---------------
 # Hook on document methods and events
 
 doc_events = {
+    # the series of a new sales / purchase / stock / payment document, never picked by hand (naming.py)
+    "*": {"before_insert": "erp_dacsinc_custom.naming.set_series"},
     "Unreconcile Payment": {
         # not on a Bulk Payment's Payment Entry (bulk_payment.py)
         "before_submit": "erp_dacsinc_custom.erp_dacsinc_custom.doctype.bulk_payment.bulk_payment.unreconcile_before_submit",

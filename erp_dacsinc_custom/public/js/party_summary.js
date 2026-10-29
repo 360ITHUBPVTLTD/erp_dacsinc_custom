@@ -277,6 +277,7 @@
 			<div class="dps-bar__btns">
 				${s.can_pay ? `<button class="btn btn-sm btn-primary dps-pay"><i class="fa fa-${customer ? "arrow-down" : "arrow-up"}"></i> ${customer ? __("Receive Payment") : __("Make Payment")}</button>` : ""}
 				<button class="btn btn-sm btn-default dps-stmt"><i class="fa fa-print"></i> ${__("Statement")}</button>
+				${s.group ? `<a class="btn btn-sm btn-default" href="/app/group-outstanding?${new URLSearchParams({ party_type: frm.doctype, group: s.group.name })}" title="${esc(__("All {0} members of {1}: what each owes, one payment for all", [s.group.members, s.group.name]))}"><i class="fa fa-users"></i> ${__("Group")}: ${esc(s.group.name)}</a>` : ""}
 				<a class="btn btn-sm btn-default" target="_blank" href="${report("General Ledger", { party_type: frm.doctype, party: frm.doc.name, from_date: frappe.datetime.add_months(today, -12), to_date: today, group_by: "Group by Voucher (Consolidated)" })}"><i class="fa fa-book"></i> ${__("Ledger")}</a>
 				<button class="btn btn-sm btn-default dps-refresh" title="${esc(__("Refresh"))}"><i class="fa fa-refresh"></i></button>
 			</div></div>`;

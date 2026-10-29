@@ -55,6 +55,8 @@ previously-buggy edge cases — are documented in `docs/`:
   In-State / Out-State, then Exempted rows (a line sold without GST picks "Exempted - IND"), and why
   the order and price ranges are set the way they are; Tax Category is always In-State / Out-State
   from the place of supply (`tax_category.py`), or a line loses its slab row.
+- `docs/naming-series.md` — document numbers PREFIX/26-27/00001 (GST 16 characters, amended -1 included): the short
+  financial year `.FYS.`, the series picked automatically (returns, payment type, POS store), where the options live.
 - `docs/workspace-shortcuts.md` — workspace shortcuts without a count filter aren't counted (Frappe counted
   them, and single DocTypes like GST Settings have no table → TableMissingError popup).
 - `docs/stock-hold.md` — stock held for Sales Orders (Pick Lists, jobber, earmarks)

@@ -3364,7 +3364,7 @@
    "property": "options",
    "property_type": "Small Text",
    "row_name": null,
-   "value": "SINV-.YY.-\nSRET-.YY.-\n\nACC-SINV-.YYYY.-\nACC-SINV-RET-.YYYY.-"
+   "value": "SI/.FYS./.#####\nCN/.FYS./.#####\nSINV-.YY.-\nSRET-.YY.-\nACC-SINV-.YYYY.-\nACC-SINV-RET-.YYYY.-"
   },
   {
    "_assign": null,

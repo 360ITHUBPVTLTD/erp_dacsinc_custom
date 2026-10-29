@@ -139,7 +139,20 @@ def get_party_summary(party_type, party, company=None):
 		"fy": fy_name, "billed_fy": billed, "paid_fy": paid_fy, "last_invoice": last_invoice,
 		"credit_limit": credit_limit, "payment_terms": terms, "orders": orders,
 		"can_pay": bool(frappe.has_permission("Payment Entry", "create") and frappe.has_permission("Payment Entry", "submit")),
+		"group": _group(party_type, party),
 	}
+
+
+def _group(party_type, party):
+	"""The party's Customer / Supplier Group when it is a real group (other members, not a catch-all like
+	"Individual"): the summary links it to Group Outstanding (party_group.py)."""
+	from erp_dacsinc_custom.party_group import GROUP, MAX_PROMPT_MEMBERS
+	field = GROUP[party_type][1]
+	group = frappe.db.get_value(party_type, party, field)
+	if not group:
+		return None
+	n = frappe.db.count(party_type, {field: group, "disabled": 0})
+	return {"name": group, "members": n} if 2 <= n <= MAX_PROMPT_MEMBERS else None
 
 
 def _returns(party_type, party, company, inv_dt, inv_field, credits, dues_total, limit=20):
