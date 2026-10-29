@@ -432,18 +432,21 @@ def get_payment_setup(payment_type, company=None):
 
 
 def _search_parties(party_type, txt, limit=300, within=None):
-	"""Customers / suppliers matching `txt` on id, name, mobile, email, GSTIN, any of their addresses
-	(lines, city, pincode, phone) or a phone / mobile on any of their contacts — a list of ids.
-	`within`: only among these ids."""
+	"""Customers / suppliers matching `txt` on id, name, mobile, email, GSTIN, their Customer / Supplier Group
+	(branches of one firm, party_group.py — not a catch-all group), any of their addresses (lines, city, pincode,
+	phone) or a phone / mobile on any of their contacts — a list of ids. `within`: only among these ids."""
 	like = f"%{txt}%"
 	if within is not None and not within:
 		return []
 	w1 = "AND name IN %(w)s" if within else ""
 	w2 = "AND dl.link_name IN %(w)s" if within else ""
 	name_col = "customer_name" if party_type == "Customer" else "supplier_name"
+	from erp_dacsinc_custom.party_group import matching_groups
+	groups = matching_groups(party_type, txt)
+	w3 = "OR " + ("customer_group" if party_type == "Customer" else "supplier_group") + " IN %(g)s" if groups else ""
 	hits = frappe.db.sql(f"""
 		SELECT name FROM `tab{party_type}` WHERE disabled = 0 {w1} AND (name LIKE %(t)s OR {name_col} LIKE %(t)s
-			OR IFNULL(mobile_no, '') LIKE %(t)s OR IFNULL(email_id, '') LIKE %(t)s OR IFNULL(gstin, '') LIKE %(t)s)
+			OR IFNULL(mobile_no, '') LIKE %(t)s OR IFNULL(email_id, '') LIKE %(t)s OR IFNULL(gstin, '') LIKE %(t)s {w3})
 		UNION
 		SELECT dl.link_name FROM `tabDynamic Link` dl JOIN `tabAddress` a ON a.name = dl.parent
 		WHERE dl.parenttype = 'Address' AND dl.link_doctype = %(pt)s {w2} AND (a.address_line1 LIKE %(t)s
@@ -452,7 +455,7 @@ def _search_parties(party_type, txt, limit=300, within=None):
 		UNION
 		SELECT dl.link_name FROM `tabDynamic Link` dl JOIN `tabContact Phone` cp ON cp.parent = dl.parent
 		WHERE dl.parenttype = 'Contact' AND dl.link_doctype = %(pt)s {w2} AND cp.phone LIKE %(t)s
-		LIMIT {int(limit)}""", {"t": like, "pt": party_type, "w": tuple(within or [])}, pluck=True)
+		LIMIT {int(limit)}""", {"t": like, "pt": party_type, "w": tuple(within or []), "g": tuple(groups)}, pluck=True)
 	return [h for h in hits if frappe.has_permission(party_type, "read", h)]
 
 

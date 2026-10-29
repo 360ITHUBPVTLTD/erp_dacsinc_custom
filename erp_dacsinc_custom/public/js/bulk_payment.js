@@ -14,7 +14,9 @@
 // Dues are invoices / bills, opening balances and other Journal Entries (bulk_payment.get_open_invoices).
 //
 // opts: { payment_type: "Receive" | "Pay", party, invoice (put first when spreading), amount (its outstanding),
+//         parties ([[id, name], …] — several at once, e.g. a group), items ({item name: amount} set from the start),
 //         frm, from_form (opened from an invoice form), on_done(result) }
+// Part 1 also offers whole groups (Customer / Supplier Group, party_group.py): "Add whole group" adds every member that owes.
 window.dacs_payment_dialog = function (opts) {
 	opts = opts || {};
 	const frm = opts.frm;
@@ -158,6 +160,8 @@ window.dacs_payment_dialog = function (opts) {
 		.wz-q { font-size: 17px; font-weight: 700; margin: 0 0 4px; }
 		.wz-hint { font-size: 12.5px; color: var(--text-muted); margin-bottom: 10px; }
 		.wz-who { display: flex; flex-wrap: wrap; gap: 8px 16px; align-items: center; padding: 10px 14px; background: #eef6fd; border: 1px solid #aed6f1; border-radius: 10px; margin-bottom: 16px; }
+		.wz-grp { flex-basis: 100%; display: flex; flex-wrap: wrap; gap: 6px 10px; align-items: center; font-size: 12.5px; color: #1a5276; padding-top: 8px; border-top: 1px dashed #aed6f1; }
+		.wz-grp .wz-addgrp { margin-left: auto; }
 		.wz-who b { font-size: 14px; } .wz-who span { color: #5d6d7e; font-size: 12.5px; } .wz-who .wz-edit { margin-left: auto; }
 		.wz-amtrow { display: flex; flex-wrap: wrap; gap: 10px; align-items: flex-start; }
 		.wz-amtrow .dpz-amt { flex: 0 1 340px; }
@@ -302,6 +306,12 @@ window.dacs_payment_dialog = function (opts) {
 		.dacs-pay-dialog .wz-amtrow [data-fieldname="total_amount"] input { border: 2px solid var(--acc) !important; color: var(--ink) !important; font-size: 24px !important; border-radius: 12px !important; }
 		.dacs-pay-dialog .dpp .dpp-chip { background: var(--acc-50); color: var(--acc-d); border: 1px solid var(--acc-200); }
 		.dacs-pay-dialog .dpp .dpp-chip button { background: var(--acc-100); color: var(--acc-d); }
+		.dpp .dpp-groups { margin: 8px 0 4px; }
+		.dpp .dpp-gl { font-size: 11.5px; font-weight: 700; color: var(--text-muted); text-transform: uppercase; letter-spacing: .03em; margin-bottom: 4px; }
+		.dpp .dpp-g { display: flex; align-items: center; gap: 10px; padding: 7px 10px; border: 1px dashed #85c1e9; border-radius: 8px; background: #f4f9fd; margin-bottom: 5px; cursor: pointer; }
+		.dpp .dpp-g.is-on { border-style: solid; background: #eaf3fb; }
+		.dpp .dpp-g .dpp-gn { flex: 1; min-width: 0; } .dpp .dpp-g .dpp-gn small { display: block; color: var(--text-muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+		.dpp .dpp-g .due { font-weight: 700; color: #c0392b; white-space: nowrap; }
 		.dacs-pay-dialog .dpp .dpp-chip.is-idle { background: #fdf2e9; color: #a04000; border-color: #f5cba7; }
 		.dpp .dpp-chip small { font-weight: 400; opacity: .85; }
 		.dacs-pay-dialog .dpp .dpp-list { border: 1px solid var(--line); border-radius: 12px; }
@@ -377,9 +387,10 @@ window.dacs_payment_dialog = function (opts) {
 		const $pk = d.fields_dict.picker.$wrapper;
 		$pk.html(`<style>${css}</style><div class="dpp">
 			<div class="dpp-chips"></div>
-			<input type="text" class="form-control dpp-search" placeholder="${esc(__("Search {0} by name, mobile, city, pincode, GSTIN or ID…", [who]))}">
+			<input type="text" class="form-control dpp-search" placeholder="${esc(__("Search {0} or group by name, mobile, city, pincode, GSTIN or ID…", [who]))}">
+			<div class="dpp-groups"></div>
 			<div class="dpp-list"></div>
-			<div class="dpp-hint" style="margin-top:6px;">${esc(__("Click a {0} to add or remove. Only {1} with something unpaid are listed — most due first. For an advance from someone else, search their name.", [who, whos]))}</div>
+			<div class="dpp-hint" style="margin-top:6px;">${esc(__("Click a {0} to add or remove. Only {1} with something unpaid are listed — most due first. For an advance from someone else, search their name. Branches paying with one cheque: type their group's name and Add whole group.", [who, whos]))}</div>
 		</div>`);
 		// a chosen party with nothing open (no invoice, opening balance or journal) — known once its items are loaded
 		const idle_party = (p) => loaded && !invoices.some(r => r.party === p);
@@ -400,20 +411,40 @@ window.dacs_payment_dialog = function (opts) {
 					<span class="due">${p.due ? `${money(p.due)}<small>${p.invoices} ${p.invoices === 1 ? __("item") : bills}</small>` : ""}</span>
 				</div>`).join("") : `<div class="dpp-empty">${esc(__("No {0} found.", [who]))}</div>`);
 		};
+		// groups (Customer / Supplier Group) whose members owe — "Add whole group" adds every one that owes (branches
+		// paid with one cheque, party_group.get_groups_due)
+		let groups_due = [];
+		const paint_groups = () => {
+			$pk.find(".dpp-groups").html(groups_due.length ? `<div class="dpp-gl"><i class="fa fa-users"></i> ${__("Pay a whole group (branches, one cheque)")}</div>` + groups_due.map((g, i) => {
+				const on = g.parties.every(([p]) => selected.has(p));
+				return `<div class="dpp-g ${on ? "is-on" : ""}" data-i="${i}">
+					<div class="dpp-gn"><b>${esc(g.group)}</b><small>${g.parties.length === 1 ? __("1 {0} owes", [who]) : __("{0} {1} owe", [g.parties.length, whos])}: ${g.parties.slice(0, 4).map(([p, n]) => esc(n)).join(", ")}${g.parties.length > 4 ? " …" : ""}</small></div>
+					<span class="due">${money(g.due)}</span>
+					<button type="button" class="btn btn-xs ${on ? "btn-default" : "btn-primary"}">${on ? __("Remove group") : __("Add whole group")}</button></div>`;
+			}).join("") : "");
+		};
+		$pk.on("click", ".dpp-g", (e) => {
+			const g = groups_due[cint($(e.currentTarget).data("i"))]; if (!g) return;
+			const on = g.parties.every(([p]) => selected.has(p));
+			g.parties.forEach(([p, n]) => on ? selected.delete(p) : selected.set(p, n));
+			paint_chips(); paint_groups(); paint_parties(); load();
+		});
+		const search_groups = (txt) => frappe.call({ method: "erp_dacsinc_custom.party_group.get_groups_due", args: { payment_type: receive ? "Receive" : "Pay", company, txt } })
+			.then(r => { groups_due = r.message || []; paint_groups(); if (simple && loaded) paint_sel(); });
 		let search_timer;
-		const search = (txt) => frappe.call({ method: P + "get_parties_due", args: { payment_type: receive ? "Receive" : "Pay", company, txt } })
+		const search = (txt) => (search_groups(txt), frappe.call({ method: P + "get_parties_due", args: { payment_type: receive ? "Receive" : "Pay", company, txt } })
 			.then(r => {
 				parties_due = r.message || [];   // a search also brings parties with nothing due (for an advance)
 				paint_parties();
-			});
+			}));
 		$pk.on("input", ".dpp-search", (e) => { clearTimeout(search_timer); search_timer = setTimeout(() => search(e.target.value.trim()), 300); });
 		$pk.on("click", ".dpp-p", (e) => {
 			const $p = $(e.currentTarget), p = String($p.data("p"));
 			if (selected.has(p)) selected.delete(p); else selected.set(p, String($p.data("n") || p));
-			paint_chips(); paint_parties(); load();
+			paint_chips(); paint_groups(); paint_parties(); load();
 		});
 		$lay.on("click", ".wz-pick", () => { picking = !picking; $lay.find(".wz").toggleClass("is-picking", picking); });
-		$pk.on("click", ".dpp-chip button", (e) => { selected.delete(String($(e.currentTarget).data("p"))); paint_chips(); paint_parties(); load(); });
+		$pk.on("click", ".dpp-chip button", (e) => { selected.delete(String($(e.currentTarget).data("p"))); paint_chips(); paint_groups(); paint_parties(); load(); });
 
 		// ── ③ invoices and totals ──────────────────────────────────────────────────────────
 		const show_cuts = () => !!d.get_value("show_cuts");
@@ -477,6 +508,14 @@ window.dacs_payment_dialog = function (opts) {
 				put(r, flt(amt[r.name]) - cut, true); over = flt(over - cut, 2);
 			}
 		};
+		// opened for one party that is in a group whose other members owe too: say so, with "Add whole group"
+		const group_hint = () => {
+			const i = groups_due.findIndex(g => g.parties.some(([p]) => selected.has(p)) && !g.parties.every(([p]) => selected.has(p)));
+			if (i < 0) return "";
+			const g = groups_due[i], rest = g.parties.filter(([p]) => !selected.has(p));
+			return `<div class="wz-grp"><i class="fa fa-users"></i> ${__(rest.length === 1 ? "Part of group <b>{0}</b>: {1} more {2} owes ({3})." : "Part of group <b>{0}</b>: {1} more {2} owe ({3}).", [esc(g.group), rest.length, rest.length === 1 ? who : whos, rest.slice(0, 3).map(([, n]) => esc(n)).join(", ") + (rest.length > 3 ? " …" : "")])}
+				<button type="button" class="dbp-b is-fill wz-addgrp" data-i="${i}"><i class="fa fa-plus"></i> ${__("Add whole group")}</button></div>`;
+		};
 		// under part 1: what the chosen customers owe; part 2's "Full due" takes all of it
 		const paint_sel = () => {
 			const $s = $lay.find(".dpz-sel");
@@ -486,7 +525,8 @@ window.dacs_payment_dialog = function (opts) {
 				$lay.find(".wz-who").html(`<i class="fa fa-user" style="color:#3498DB;"></i><b>${[...selected.values()].map(esc).join(", ")}</b>
 					<span>${due0 > 0.005 ? (receive ? __("owes {0} on {1} item(s)", [money(due0), invoices.length]) : __("we owe {0} on {1} item(s)", [money(due0), invoices.length]))
 						: (receive ? __("owes nothing now — the amount will be an advance") : __("nothing due now — the amount will be an advance"))}${late0 > 0.005 ? " · " + __("{0} overdue", [money(late0)]) : ""}</span>
-					<button type="button" class="dbp-b is-line wz-edit wz-pick"><i class="fa fa-pencil"></i> ${__("Change")}</button>`);
+					<button type="button" class="dbp-b is-line wz-edit wz-pick"><i class="fa fa-pencil"></i> ${__("Change")}</button>
+					${group_hint()}`);
 			}
 			if (!simple) $lay.find(".wz-who").html(selected.size ? `<i class="fa fa-user" style="color:#3498DB;"></i><b>${[...selected.values()].map(esc).join(", ")}</b>
 				<span>${__("owe{0} {1} on {2} {3}", [selected.size === 1 ? "s" : "", money(due0), invoices.length, invoices.length === 1 ? __("item") : bills])}</span>
@@ -634,6 +674,13 @@ window.dacs_payment_dialog = function (opts) {
 				flash(__("The amount ran out — the rest stays due."));
 			after_change();
 		});
+		let take_all_next = false;   // after "Add whole group" in the header: the amount becomes their full due
+		$lay.on("click", ".wz-addgrp", (e) => {
+			const g = groups_due[cint($(e.currentTarget).data("i"))]; if (!g) return;
+			g.parties.forEach(([p, n]) => selected.set(p, n));
+			take_all_next = true;
+			paint_chips(); paint_groups(); paint_parties(); load();
+		});
 		const $sumw = d.fields_dict.summary.$wrapper;
 		$lay.on("click", ".dpz-takeall", () => {
 			const due = flt(invoices.reduce((x, r) => x + flt(r.outstanding_amount), 0), 2);
@@ -666,6 +713,7 @@ window.dacs_payment_dialog = function (opts) {
 					[amt, tds, wo].forEach(o => Object.keys(o).forEach(k => { if (!by_name(k)) delete o[k]; }));
 					if (!manual && !total_auto) spread(); else if (!total_auto) fit();
 					after_change();
+					if (take_all_next) { take_all_next = false; $lay.find(".dpz-takeall").trigger("click"); }
 				});
 		};
 
@@ -864,7 +912,14 @@ window.dacs_payment_dialog = function (opts) {
 			if (Object.keys(tds).length || Object.keys(wo).length) d.set_value("show_cuts", 1);
 		}
 		const begin = () => { total_auto = flt(d.get_value("total_amount")) <= 0; paint_chips(); search(""); load(); };
-		if (opts.party) {
+		if ((opts.parties || []).length) {
+			// opened from Group Outstanding: these parties, and (when ticked there) these items in full
+			opts.parties.forEach(([p, n]) => selected.set(p, n || p));
+			const pre = Object.entries(opts.items || {});
+			if (pre.length) { manual = true; pre.forEach(([k, v]) => { amt[k] = flt(v, 2); }); }
+			const total = flt(pre.reduce((a, [, v]) => a + flt(v), 0), 2);
+			Promise.resolve(total > 0 ? d.set_value("total_amount", total) : null).then(begin);
+		} else if (opts.party) {
 			frappe.db.get_value(party_dt, opts.party, receive ? "customer_name" : "supplier_name").then(r => {
 				selected.set(opts.party, ((r && r.message) || {})[receive ? "customer_name" : "supplier_name"] || opts.party);
 				// opened from one invoice: the amount starts at its outstanding

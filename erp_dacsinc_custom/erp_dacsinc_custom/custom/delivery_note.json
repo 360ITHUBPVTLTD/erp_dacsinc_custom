@@ -1641,7 +1641,7 @@
    "property": "options",
    "property_type": "Small Text",
    "row_name": null,
-   "value": "DN-.YY.-\nDRET-.YY.-\n\nMAT-DN-.YYYY.-\nMAT-DN-RET-.YYYY.-"
+   "value": "DC/.FYS./.#####\nSR/.FYS./.#####\nDN-.YY.-\nDRET-.YY.-\nMAT-DN-.YYYY.-\nMAT-DN-RET-.YYYY.-"
   },
   {
    "_assign": null,

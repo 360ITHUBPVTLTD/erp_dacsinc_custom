@@ -1285,7 +1285,7 @@
    "property": "options",
    "property_type": "Text",
    "row_name": null,
-   "value": "PUR-ORD-.YYYY.-"
+   "value": "PO/.FYS./.#####\nPUR-ORD-.YYYY.-"
   },
   {
    "_assign": null,

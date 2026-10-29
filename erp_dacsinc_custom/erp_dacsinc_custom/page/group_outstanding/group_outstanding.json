@@ -1,0 +1,33 @@
+{
+ "content": null,
+ "creation": "2026-10-29 18:00:00",
+ "docstatus": 0,
+ "doctype": "Page",
+ "icon": "users",
+ "idx": 0,
+ "modified": "2026-10-29 18:00:00",
+ "modified_by": "Administrator",
+ "module": "Erp Dacsinc Custom",
+ "name": "group-outstanding",
+ "owner": "Administrator",
+ "page_name": "group-outstanding",
+ "roles": [
+  {
+   "role": "Admin"
+  },
+  {
+   "role": "System Manager"
+  },
+  {
+   "role": "Accounts Executive"
+  },
+  {
+   "role": "Accounts Manager"
+  }
+ ],
+ "script": null,
+ "standard": "Yes",
+ "style": null,
+ "system_page": 0,
+ "title": "Group Outstanding"
+}

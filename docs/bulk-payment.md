@@ -101,6 +101,32 @@ ticked), Left after with the status under it, then ✕ / Full.
 needs the tick; then the result with links and **Print Voucher** (Bulk Payment Receipt for several
 parties, Payment Receipt DAC for one).
 
+## Group payment (branches, one cheque)
+
+Branches of one firm are separate customers (or suppliers) but often pay with one cheque. Put them in one
+**Customer Group / Supplier Group** (ERPNext's own field on the party form); `party_group.py`. A group's members are
+the parties in it or in a group under it.
+
+- **In the prompt**, part 1 lists *Pay a whole group* above the parties: the groups with at least two members owing
+  something (`get_groups_due`, most due first). **Searching a group's name** lists that group (even with one member
+  owing) and its members (`_search_parties` matches the group, `matching_groups`). **Add whole group** adds every member that
+  owes; **Remove group** takes them out again. A group with more than 60 members (`MAX_PROMPT_MEMBERS`) is a
+  catch-all like "Individual", not branches: never offered or matched. Opened for one party (Account Summary, an invoice form or
+  row), the header says when that party's group has other members owing ("Part of group …: 2 more customers
+  owe") with **Add whole group**, which adds them and sets the amount to their full due (lower it to the cheque).
+- **Group Outstanding** page (`/app/group-outstanding`, `page/group_outstanding/`, finance roles): pick
+  Customer / Supplier and the group. It shows the group's totals (they owe, overdue, held for them, net), then each
+  member that has something open, with its dues (tick boxes; a member's header box ticks all of its items) and its
+  credits in green (set off with Adjust on that party's Account Summary). The bar at the bottom shows the ticked
+  total. **Receive ₹… / Pay ₹…** opens the prompt with those members and items in full, and **Receive payment for
+  the group** (nothing ticked) opens it with every member that owes, where the amount spreads oldest first.
+  **Print** gives the same list on paper (`get_group_outstanding`), under the company's default letter head (as the
+  statement of account and the receipts).
+- The page opens from **Outstanding** on the Customer / Supplier Group form (`public/js/party_group_form.js`)
+  and from **Group: …** on a member's Account Summary. That button appears only when the group has 2–60 members
+  (`party_balance._group`).
+- One cheque for several members is a normal Bulk Payment: one Payment Entry per member, same cheque no.
+
 ## Rules (server, `doctype/bulk_payment/bulk_payment.py`)
 
 - Rows: invoice submitted, not a return, same company and party — or a Journal Entry with something due for the
@@ -167,7 +193,7 @@ in the access sheet (/roles-and-permissions) if they should pay several parties 
 ## Files
 
 `public/js/bulk_payment.js` (prompt), `doctype/bulk_payment/` (json, py, js), `doctype/bulk_payment_allocation/`,
-`print_format/bulk_payment_receipt/`, `party_open_items.py` (open items), `custom/payment_entry.json` (`custom_bulk_payment`), `hooks.py`
+`print_format/bulk_payment_receipt/`, `party_open_items.py` (open items), `party_group.py` + `page/group_outstanding/` (group payment), `custom/payment_entry.json` (`custom_bulk_payment`), `hooks.py`
 (Payment Entry before_cancel / on_trash, SI / PI before_cancel, Unreconcile Payment before_submit),
 `page/order_flow/order_flow.js` (New › Receive / Pay, row buttons), `public/js/sales_invoice.js` /
 `purchase_invoice.js` (form buttons), `dashboard_payment.py` (ledger helpers, refunds).
