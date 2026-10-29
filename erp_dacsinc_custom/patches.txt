@@ -50,3 +50,4 @@ erp_dacsinc_custom.patches.quotation_print_format_7apr_header #2026-10-27 shared
 erp_dacsinc_custom.patches.merchant_export_gst
 erp_dacsinc_custom.patches.bulk_payment_status
 erp_dacsinc_custom.patches.naming_series_fy
+erp_dacsinc_custom.patches.list_filters

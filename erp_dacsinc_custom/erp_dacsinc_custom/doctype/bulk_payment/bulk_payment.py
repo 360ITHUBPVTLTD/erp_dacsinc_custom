@@ -434,7 +434,19 @@ def get_payment_setup(payment_type, company=None):
 def _search_parties(party_type, txt, limit=300, within=None):
 	"""Customers / suppliers matching `txt` on id, name, mobile, email, GSTIN, their Customer / Supplier Group
 	(branches of one firm, party_group.py — not a catch-all group), any of their addresses (lines, city, pincode,
-	phone) or a phone / mobile on any of their contacts — a list of ids. `within`: only among these ids."""
+	phone) or a phone / mobile on any of their contacts — a list of ids. `within`: only among these ids.
+	Several words: each (2+ letters) must match, in any field and any order — "mo ra" finds "Mohan Madhan Raj"
+	(search_words.pieces)."""
+	from erp_dacsinc_custom.search_words import pieces
+
+	words = pieces(txt)
+	if len(words) > 1:
+		hits = None
+		for w in sorted(words, key=len, reverse=True):   # the longest word narrows most
+			hits = _search_parties(party_type, w, limit=5000, within=within if hits is None else hits)
+			if not hits:
+				return []
+		return hits[:limit]
 	like = f"%{txt}%"
 	if within is not None and not within:
 		return []
