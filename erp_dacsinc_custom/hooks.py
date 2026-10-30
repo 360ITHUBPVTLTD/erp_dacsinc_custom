@@ -443,6 +443,8 @@ doc_events = {
             "erp_dacsinc_custom.so_share.share_with_lead_owner",
        ],
         "on_update_after_submit": "erp_dacsinc_custom.so_share.share_with_lead_owner",
+        # Close / Re-open / Hold set the status by db_set → the list's Order Stage (so_stage.py)
+        "on_change": "erp_dacsinc_custom.so_stage.on_change",
         "on_trash": "erp_dacsinc_custom.custom_script.sales_order_on_trash",
         "before_insert": "erp_dacsinc_custom.custom_script.sales_order_before_insert",
        "before_validate": [
@@ -861,6 +863,11 @@ scheduler_events = {
 	# "hourly": [
 	# 	"erp_dacsinc_custom.tasks.hourly"
 	# ],
+	# The Sales Order list's Order Stage for open orders: stock arriving for an
+	# item changes orders the receipt doesn't name (so_stage.py).
+	"hourly": [
+		"erp_dacsinc_custom.so_stage.refresh_open"
+	],
 	# Nothing accumulates now that expiry entries are deleted rather than
 	# cancelled; this only clears the backlog the old job left behind.
 	"weekly": [
