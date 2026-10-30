@@ -7,6 +7,37 @@
 //  SECTION 1: FORM EVENT HANDLERS
 // ================================================================
 
+// The order's stage as on the Order Flow dashboard (so_stage.py), or who rejected it and why —
+// in the form's headline, under the approval note. Drafts only get the rejection: the approval
+// note above already says where a draft stands.
+function so_stage_alert_html(st, frm) {
+    if (!st) return '';
+    const esc = frappe.utils.escape_html;
+    const box = (bg, border, fg, body) => `<div style="font-size:13px; font-weight:500; color:${fg}; background-color:${bg};
+        border:1px solid ${border}; padding:10px 14px; border-radius:6px; margin-bottom:15px;">${body}</div>`;
+    if (st.workflow_state === 'Rejected') {
+        const r = st.rejection || {};
+        const who = [
+            r.at ? __('at {0}', [__(r.at)]) : '',
+            r.by ? __('by {0}', [esc(r.by)]) : '',
+            r.on ? __('on {0}', [frappe.datetime.str_to_user(r.on)]) : '',
+        ].filter(Boolean).join(' ');
+        return box('#f8d7da', '#f5c6cb', '#721c24',
+            `<i class="fa fa-times-circle"></i> <b>${__('Rejected')}</b> ${who}<br>`
+            + `${__('Reason')}: ${r.reason ? esc(r.reason) : `<i>${__('not given')}</i>`}`);
+    }
+    if (frm.doc.docstatus === 0 || !st.custom_order_stage) return '';
+    const detail = st.custom_stage_detail && st.custom_stage_detail !== st.custom_order_stage
+        ? ` <span class="text-muted">— ${esc(st.custom_stage_detail)}</span>` : '';
+    const extra = [
+        st.custom_needs_invoice && st.custom_order_stage !== 'Dispatched — Invoice Pending' ? __('Also needs invoice') : '',
+        st.custom_rm_ready_for_sco ? __('RM ready — make Subcontract PO') : '',
+    ].filter(Boolean).map(t => ` · <span style="color:var(--orange-600);">${t}</span>`).join('');
+    return box('var(--fg-color)', 'var(--border-color)', 'var(--text-color)',
+        `${__('Order Stage')}: <span class="indicator-pill ${st.color || 'gray'}">${esc(__(st.custom_order_stage))}</span>`
+        + detail + extra);
+}
+
 frappe.ui.form.on('Sales Order', {
     refresh: function (frm) {
         // --- Show Who Needs to Approve (Workflow Approver Indicator) ---
@@ -44,6 +75,7 @@ frappe.ui.form.on('Sales Order', {
                         }
                     }
 
+                    html += so_stage_alert_html(info.stage, frm);
                     if (html) {
                         frm.dashboard.set_headline(html);
                     } else {
@@ -55,11 +87,14 @@ frappe.ui.form.on('Sales Order', {
 
         // --- Remove standard "Create" buttons outside our flow ---
         // Pick List / Delivery Note / Sales Invoice are made from the Item Stock & Action Plan
-        // and the Order Flow dashboard; Material Request, our "Create Purchase Order" and
-        // Payment (advance against the order) stay. ERPNext adds some of these late (after
-        // async calls), so the removal repeats — one pass at 500 ms left them all showing.
+        // and the Order Flow dashboard; so is a Material Request (the widget's Request / Raise MR
+        // asks only for what is short — Create › Material Request copied every line and confused
+        // users). Our "Create Purchase Order" and Payment (advance against the order) stay. ERPNext
+        // adds some of these late (after async calls), so the removal repeats — one pass at 500 ms
+        // left them all showing.
         dacs_hide_create_buttons(frm, ['Maintenance Visit', 'Maintenance Schedule', 'Work Order', 'Purchase Order',
-            'Project', 'Payment Request', 'Request for Raw Materials', 'Pick List', 'Delivery Note', 'Sales Invoice']);
+            'Project', 'Payment Request', 'Material Request', 'Request for Raw Materials', 'Pick List', 'Delivery Note',
+            'Sales Invoice']);
 
         // --- Custom "Create Purchase Order" button (submitted docs only) ---
         if (frm.doc.docstatus === 1) {

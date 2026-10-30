@@ -1511,10 +1511,11 @@ can't drift — so `amount` was already fully protected server-side once
 `sales_invoice.js` when missing) removes standard "Create" buttons, repeating for 2.5 s because
 ERPNext adds some after its own async calls (a single pass at 500 ms left them all showing).
 
-- **Sales Order** keeps Material Request, our "Create Purchase Order" and **Payment** (advance
-  against the order); hides Pick List, Delivery Note, Sales Invoice (made from the widget and the
-  dashboard), Work Order, Request for Raw Materials, Purchase Order (standard), Project, Payment
-  Request, Maintenance Visit / Schedule.
+- **Sales Order** keeps our "Create Purchase Order" and **Payment** (advance against the order);
+  hides Pick List, Delivery Note, Sales Invoice, Material Request and Request for Raw Materials
+  (made from the widget and the dashboard — their Request / Raise MR asks only for what is short,
+  while Create › Material Request copied every line), Work Order, Purchase Order (standard),
+  Project, Payment Request, Maintenance Visit / Schedule.
 - **Delivery Note** keeps Sales Invoice, Sales Return, Credit Note; hides Shipment, Installation
   Note, Delivery Trip, Packing Slip, Quality Inspection(s).
 - **Sales Invoice** keeps Payment and Return / Credit Note; hides Payment Request, Invoice
@@ -2148,3 +2149,36 @@ click-through to the documents behind each number — `get_stock_reservation_det
 
 The held columns are the same holds the Stock Hold guard and the embroidery transfer's free-stock
 check use, so "free" means the same everywhere. Expanding an item shows these columns per warehouse.
+
+## The stage on the Sales Order list (and form)
+
+The Sales Tracker's stage is stored on each Sales Order (`so_stage.py`) so the plain Sales Order
+list can show and filter by it:
+
+- **Fields** (read-only, no copy): **Order Stage** (Select — the Stage bar's names: Draft (Awaiting
+  Approval), Rejected, Nothing Raised Yet, MR Raised, Awaiting Stock (PO), In Job Work, Embroidery,
+  Receiving (Draft PR), Stock Arrived, Draft Pick List, Ready to Dispatch, Dispatched — Invoice
+  Pending, Completed, Closed, Cancelled), **Stage Detail** (the tracker's full label, e.g. "Stock
+  Arrived — Create Pick List — Partial Delivery"; a draft's approval state; "Rejected by X: reason"),
+  **Also Needs Invoice**, **RM Ready for Subcontract PO**. Added by patch `so_order_stage`, which also
+  fills every order.
+- **Same rules, not a copy:** `refresh(names)` runs `_get_tracker_rows(names=…)` (those orders, any
+  date, no tab filter or user scoping) and maps `stage_key` to the option (`STAGES`).
+  `partially_delivered` / `partial_rm_shortage` / RM-ready read "Nothing Raised Yet", as on the Stage
+  bar. Closed status → Closed; a rejected draft → Rejected.
+- **Kept current:** `broadcast_order_flow_change` enqueues `refresh` for the orders it names (after
+  commit: a DN's on_update runs before per_delivered moves); Sales Order `on_change` covers Close /
+  Re-open / Hold (status by db_set, no on_update); hourly `refresh_open` catches stock arriving for an
+  item, which changes orders the receipt doesn't name. Stored with `db.set_value` (no modified, no
+  hooks) plus `list_update`, so an open list redraws. Overdue is not stored (it changes with the
+  date): filter Delivery Date.
+- **List** (`sales_order_list.js`): a coloured Order Stage column (Stage Detail on hover; "+ Needs
+  Invoice"; a rejected order shows who and why), and a Stage bar with counts above the list —
+  `get_group_by_count` under the list's other filters; a click filters, a second click clears.
+- **Rejected:** Status says Rejected instead of Draft in the list and form header (`get_indicator`
+  with `has_indicator_for_draft`). `so_stage.rejection` reads who / when from the workflow's
+  "Rejected" comment and the approval step and reason from `reject_sales_orders`' note written with
+  it (a Reject clicked on the form has no reason → "not given").
+- **Form:** `get_so_approvers` returns `stage` (`so_stage.for_form`, recomputed on open), and the
+  headline shows the Order Stage (submitted orders) or a red "Rejected at … by … on … — Reason"
+  (`so_stage_alert_html` in `sales_order.js`).

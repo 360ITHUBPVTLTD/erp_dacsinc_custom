@@ -1013,7 +1013,7 @@ _TRACKER_ROW_CEILING = 5000
 
 
 def _get_tracker_rows(days=120, search=None, scope="open", merchandiser=None, approval_stage=None, tab="tracker", industry=None,
-                      with_filter_options=False):
+                      with_filter_options=False, names=None):
     """
     Sales Orders ordered by most recent downstream activity, each enriched
     with doc-flow counts and `stage` (via _compute_stage_info) — the full
@@ -1032,6 +1032,10 @@ def _get_tracker_rows(days=120, search=None, scope="open", merchandiser=None, ap
     Executive might be scoped for one tab's purposes but not the other's).
 
     Returns {"rows": [...], "truncated": bool} — see _TRACKER_ROW_CEILING.
+
+    `names` (so_stage.py) computes exactly those Sales Orders, any date, draft or
+    submitted, with no tab filter or user scoping — the stage stored on the order
+    must not depend on who saved the document that changed it.
     """
     from_date = _from_date(days)
 
@@ -1102,6 +1106,9 @@ def _get_tracker_rows(days=120, search=None, scope="open", merchandiser=None, ap
     if is_scoped_to_own_customers(tab):
         conditions.append(_merch_scope_so())
         params["merch_scope"] = frappe.session.user
+
+    if names:
+        conditions, params = ["so.docstatus < 2", "so.name IN %(only)s"], {"only": tuple(names)}
 
     filter_options = _filter_options(
         list_key, [("`tabSales Order` so LEFT JOIN `tabCustomer` cust ON cust.name = so.customer", conditions)],
@@ -6232,6 +6239,7 @@ def add_docshare(share_doctype, share_name, user, read=1, write=0, share=0, ever
 
 @frappe.whitelist()
 def get_so_approvers(sales_order):
+    from erp_dacsinc_custom.so_stage import for_form as so_stage_for_form
     _guard()
     so = frappe.get_doc("Sales Order", sales_order)
     state = so.workflow_state or "Draft"
@@ -6255,7 +6263,9 @@ def get_so_approvers(sales_order):
         "merchandiser": merchandiser,
         "merchandiser_fullname": merchandiser_fullname,
         "final_approvers": final_fullnames,
-        "final_users": final_users
+        "final_users": final_users,
+        # the form's Order Stage / rejection alert (so_stage.py)
+        "stage": so_stage_for_form(so.name),
     }
 
 
@@ -6417,6 +6427,11 @@ def broadcast_order_flow_change(doc, method=None):
              "sales_orders": sales_orders, "item_codes": item_codes},
             after_commit=True,
         )
+        if sales_orders:
+            # the stage the Sales Order list shows and filters by (so_stage.py) — after
+            # commit, since a DN's on_update runs before per_delivered is updated
+            frappe.enqueue("erp_dacsinc_custom.so_stage.refresh", queue="short",
+                           names=sales_orders, enqueue_after_commit=True)
     except Exception:
         frappe.log_error(title="Order Flow: realtime broadcast failed")
 
