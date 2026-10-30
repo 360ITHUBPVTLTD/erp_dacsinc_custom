@@ -338,11 +338,14 @@ def guard_tab(tab):
 # (Customer › Merchandiser User), whoever created them. Kept per user (a user default),
 # so every tab and every reload follows it. Their right to open other orders (Sales Order
 # list, links) is not changed by this.
-MY_CUSTOMERS_KEY = "of_show_my_customers"
+# On unless the user turned it off (a merchandiser's dashboard opens with their customers' orders).
+# A new key: under the old one ("of_show_my_customers") off was the default, and a stored "0" from
+# then would keep a user off without them ever choosing it.
+MY_CUSTOMERS_KEY = "of_show_my_customers_v2"
 
 
 def show_my_customers(user=None):
-    return frappe.defaults.get_user_default(MY_CUSTOMERS_KEY, user or frappe.session.user) == "1"
+    return frappe.defaults.get_user_default(MY_CUSTOMERS_KEY, user or frappe.session.user) != "0"
 
 
 @frappe.whitelist(methods=["POST"])
