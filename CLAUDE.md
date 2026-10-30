@@ -60,6 +60,8 @@ previously-buggy edge cases — are documented in `docs/`:
 - `docs/list-search.md` — search by parts of words everywhere ("mo ra" → "Mohan Madhan Raj": Link fields, list
   filter boxes, party searches), filter boxes on the important lists (patch), the Customer / Supplier lists' "Search
   everything" box (ID, name, mobile, GSTIN, group, address, contacts), Customer / Supplier search fields.
+- `docs/item-barcode.md` — Item › Barcode field and the Barcodes table kept in step before ERPNext's barcode check:
+  CODE-39 only for valid values, rows removed when the barcode is cleared, old duplicates don't block saves.
 - `docs/workspace-shortcuts.md` — workspace shortcuts without a count filter aren't counted (Frappe counted
   them, and single DocTypes like GST Settings have no table → TableMissingError popup).
 - `docs/stock-hold.md` — stock held for Sales Orders (Pick Lists, jobber, earmarks)
