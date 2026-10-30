@@ -2178,7 +2178,10 @@ list can show and filter by it:
 - **Rejected:** Status says Rejected instead of Draft in the list and form header (`get_indicator`
   with `has_indicator_for_draft`). `so_stage.rejection` reads who / when from the workflow's
   "Rejected" comment and the approval step and reason from `reject_sales_orders`' note written with
-  it (a Reject clicked on the form has no reason → "not given").
+  it (a Reject without a reason → "not given"). The SO Approvals › Rejected Orders rows show the same
+  (`get_pending_approvals` attaches `rejection`): "Reason: …" and "by X · date", to **everyone who
+  sees the row**. It used to be only System Manager, the order's creator and its merchandiser, so an
+  Admin / Super Admin / final approver without System Manager (Anuj) saw no reason.
 - **Form:** `get_so_approvers` returns `stage` (`so_stage.for_form`, recomputed on open), and the
   headline shows the Order Stage (submitted orders) or a red "Rejected at … by … on … — Reason"
   (`so_stage_alert_html` in `sales_order.js`).

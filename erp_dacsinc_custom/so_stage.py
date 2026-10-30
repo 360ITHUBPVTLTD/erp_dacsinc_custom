@@ -155,7 +155,10 @@ def refresh_all():
 
 
 def for_form(name):
-	"""The Sales Order form's alert: the stage computed now (and stored), and the rejection if rejected."""
+	"""The Sales Order form's alert: the stage computed now (and stored), and the rejection if rejected.
+	Only for an order the user may open (get_so_approvers checks Sales Order read in general, not this one)."""
+	if not frappe.has_permission("Sales Order", "read", name):
+		return None
 	refresh([name])
 	out = frappe.db.get_value("Sales Order", name, ["workflow_state", *FIELDS], as_dict=True) or {}
 	out["rejection"] = rejection(name) if out.get("workflow_state") == "Rejected" else None
