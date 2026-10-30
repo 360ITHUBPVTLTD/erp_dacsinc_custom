@@ -4,6 +4,20 @@
 // ================================================================
 
 frappe.ui.form.on('Item', {
+    // A Barcodes row added and left blank (Add Row, or the grid adding one while tabbing) stopped the
+    // save with "Mandatory fields required in table Barcodes, Row N" — this Frappe keeps blank rows,
+    // and its check runs in the browser before the server's barcode sync (item_barcode.py). validate
+    // runs before that check: drop the rows with no barcode, whatever else (UOM, type) they carry.
+    validate(frm) {
+        const rows = frm.doc.barcodes || [];
+        const keep = rows.filter(r => (r.barcode || '').trim());
+        if (keep.length !== rows.length) {
+            frm.doc.barcodes = keep;
+            keep.forEach((r, i) => { r.idx = i + 1; });
+            frm.refresh_field('barcodes');
+        }
+    },
+
     /**
      * This event triggers every time the form is loaded or refreshed.
      */
