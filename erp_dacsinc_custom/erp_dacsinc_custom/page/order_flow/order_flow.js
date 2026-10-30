@@ -5766,10 +5766,12 @@ class OrderFlow {
                 pill_class = 'of-pill--draft'; // Orange / Gray badge
             }
 
-            const is_admin = frappe.user_roles.includes("System Manager") || current_user === "Administrator";
-            const is_owner = !!(current_user && o.owner && current_user.toLowerCase() === o.owner.toLowerCase());
-            const is_assigned_merchandiser = !!(current_user && o.custom_merchandiser_user && current_user.toLowerCase() === o.custom_merchandiser_user.toLowerCase());
-            const show_rejection_reason = is_admin || is_owner || is_assigned_merchandiser;
+            // Who rejected it, when, and why — shown to everyone who sees the row (it used to be only
+            // the System Manager, the order's creator and its merchandiser, so a final approver saw
+            // no reason at all). A Reject without a reason (older ones) says so.
+            const rej = o.rejection || {};
+            const rej_reason = rej.reason || (o.rejection_comment || '').replace(/<[^>]*>/g, '').replace(/^.*? on \d{2}-\w{3}-\d{4} \d{2}:\d{2} [AP]M:?\s*/, '');
+            const rej_who = [rej.by ? __('by {0}', [of_esc(rej.by)]) : '', rej.on ? of_date(rej.on) : ''].filter(Boolean).join(' · ');
 
             return `
             <tr data-so="${o.name}" class="of-row-main">
@@ -5812,9 +5814,10 @@ class OrderFlow {
                         </span>
                     </div>
                     ` : ''}
-                    ${o.workflow_state === 'Rejected' && o.rejection_comment && show_rejection_reason ? `
-                    <div style="font-size: 11px; color: #dc3545; margin-top: 5px; font-weight: 500; line-height: 1.3;">
-                        <i class="fa fa-info-circle"></i> Reason: ${of_esc(o.rejection_comment.replace(/<[^>]*>/g, ''))}
+                    ${o.workflow_state === 'Rejected' ? `
+                    <div style="font-size: 11px; color: #dc3545; margin-top: 5px; font-weight: 500; line-height: 1.3; white-space: normal;">
+                        <i class="fa fa-info-circle"></i> ${__('Reason')}: ${rej_reason ? of_esc(rej_reason) : `<i>${__('not given')}</i>`}
+                        ${rej_who ? `<div class="of-micro" style="color: var(--text-muted); font-weight: 400;">${rej_who}</div>` : ''}
                     </div>
                     ` : ''}
                 </td>

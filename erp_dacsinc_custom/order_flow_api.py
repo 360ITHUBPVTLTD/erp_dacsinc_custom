@@ -5708,6 +5708,10 @@ def get_pending_approvals(search=None, merchandiser=None, approval_stage=None, p
         if o.get("workflow_state") == "Rejected":
             comment = o.get("rejection_comment") or ""
             o["rejected_stage"] = "final" if "Final Approval" in comment else "merchandiser"
+            # who / when / why for the row's Reason line — the same reading as the
+            # Sales Order form's alert (so_stage.rejection)
+            from erp_dacsinc_custom.so_stage import rejection
+            o["rejection"] = rejection(o.name)
 
     # This tab already resolves creator_name via the owner_u JOIN above — this
     # call is a no-op for any row that JOIN matched. It only helps a row whose
