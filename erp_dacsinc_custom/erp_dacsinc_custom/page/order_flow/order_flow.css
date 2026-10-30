@@ -1525,8 +1525,26 @@ td > .of-action-btn {
 .of-my-customers { display: inline-flex; align-items: center; gap: 6px; margin: 0; padding: 0 10px; height: 30px;
 	border: 1px solid var(--border-color); border-radius: var(--border-radius); background: var(--control-bg);
 	font-size: var(--text-sm); color: var(--text-color); cursor: pointer; white-space: nowrap; font-weight: 500; }
-.of-my-customers input { margin: 0; accent-color: var(--primary); }
-.of-my-customers:has(input:checked) { border-color: var(--primary); }
+/* Frappe's own checkbox style (margin-top, position) sat it above the text */
+.of-my-customers input[type="checkbox"] { margin: 0 !important; position: static; top: auto; flex: none;
+	width: 14px; height: 14px; align-self: center; vertical-align: middle; accent-color: var(--of-blue); }
+.of-my-customers > span { line-height: 1; }
+.of-my-customers:has(input:checked) { border-color: var(--of-blue); background: rgba(52, 152, 219, 0.08); color: var(--of-blue); }
+
+/* SO Approvals: who sent / approved the order (of_approval_trail_html) */
+.of-trail { display: block; width: 100%; max-width: 240px; margin: 6px auto 0; padding: 6px 9px; box-sizing: border-box;
+	text-align: left; font-size: 11px; line-height: 1.35; background: var(--subtle-fg, #f7f7f9);
+	border: 1px solid var(--border-color); border-left: 3px solid var(--border-color); border-radius: 6px; }
+.of-trail--ok { border-left-color: var(--of-green, #28a745); }
+.of-trail__row { display: flex; gap: 6px; align-items: flex-start; }
+.of-trail__row + .of-trail__row { margin-top: 4px; }
+.of-trail__row > i { width: 12px; text-align: center; margin-top: 2px; flex: none; }
+.of-trail__who { font-weight: 600; color: var(--text-color); white-space: nowrap; }
+.of-trail__when { color: var(--text-muted); font-size: 10.5px; }
+.of-trail__tag { display: inline-flex; align-items: center; gap: 3px; margin-top: 3px; padding: 1px 7px; border-radius: 10px;
+	background: #fff3cd; color: #8a5a00; font-size: 10px; font-weight: 600; white-space: nowrap; }
+.of-trail__note { margin-top: 4px; padding: 3px 7px; border-radius: 4px; background: var(--fg-color);
+	color: var(--text-color); font-style: italic; word-break: break-word; }
 
 /* Embroidery work orders: the notes column — full notes, darker text, scrolls past ~7 lines */
 .of-table td.of-ewo-notes-cell { text-align: left; width: 230px; max-width: 230px; vertical-align: top; }

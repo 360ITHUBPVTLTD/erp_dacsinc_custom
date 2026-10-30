@@ -249,13 +249,20 @@ def _hide_pos(clause):
 
 def _merch_scope_so():
     """The orders a scoped Merchandiser User sees on the Order Flow dashboard: the Sales Orders
-    they created; with "Show my customers' orders" on (order_flow_permissions.show_my_customers)
-    also those of customers assigned to them. Rows with no Sales Order stay out."""
+    they created or approved as merchandiser (an unassigned customer's order they took: the
+    workflow's "Pending Final Approval" comment is theirs — without it the order vanished from
+    their view the moment they approved it); with "Show my customers' orders" on (the default,
+    order_flow_permissions.show_my_customers) also those of customers assigned to them. Rows with
+    no Sales Order stay out."""
     from erp_dacsinc_custom.order_flow_permissions import show_my_customers
 
+    own = ("so.owner = %(merch_scope)s OR EXISTS (SELECT 1 FROM `tabComment` mc"
+           " WHERE mc.reference_doctype = 'Sales Order' AND mc.reference_name = so.name"
+           " AND mc.comment_type = 'Workflow' AND mc.content = 'Pending Final Approval'"
+           " AND mc.owner = %(merch_scope)s)")
     if show_my_customers():
-        return "(so.owner = %(merch_scope)s OR cust.custom_merchandiser_user = %(merch_scope)s)"
-    return "(so.owner = %(merch_scope)s)"
+        return f"({own} OR cust.custom_merchandiser_user = %(merch_scope)s)"
+    return f"({own})"
 
 
 def _guard(tab=None):
@@ -5684,8 +5691,12 @@ def get_pending_approvals(search=None, merchandiser=None, approval_stage=None, p
             items_by_so[it.parent].append(it)
 
     contact_map = _get_primary_contact_names_map([o.customer for o in orders])
+    # who sent each order for approval and who approved it as merchandiser (so_stage.py)
+    from erp_dacsinc_custom.so_stage import approval_trails
+    trails = approval_trails([o.name for o in orders])
 
     for o in orders:
+        o["approval_trail"] = trails.get(o.name)
         items_formatted = []
         for it in items_by_so.get(o.name, []):
             qty_val = it.qty

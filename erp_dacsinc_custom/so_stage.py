@@ -96,6 +96,51 @@ def rejection(name):
 	return out
 
 
+def approval_trails(names):
+	"""{so: {"sent": {by, on}, "merchandiser": {by, on, note, missing}}} — who sent each draft for approval
+	and who approved it as merchandiser, for the SO Approvals rows (a final approver sees who passed it on).
+
+	From the workflow's own comments (content = the state it moved to, owner = who moved it): the latest
+	move to Pending Merchandiser Approval, and the latest move to Pending Final Approval after it. The
+	"Merchandiser Approved[ (with missing details)] by … on …: note" comment written with that move gives
+	the note (order_flow_api.approve_sales_orders / verify_customer_details).
+	"""
+	names = [n for n in names or [] if n]
+	if not names:
+		return {}
+	rows = frappe.get_all("Comment", order_by="creation asc",
+						  fields=["reference_name", "comment_type", "owner", "content", "creation"],
+						  filters={"reference_doctype": "Sales Order", "reference_name": ["in", names],
+								   "comment_type": ["in", ["Workflow", "Comment"]]})
+	full = {}
+	def who(user):
+		if user not in full:
+			full[user] = frappe.db.get_value("User", user, "full_name") or user
+		return full[user]
+
+	out, notes = {}, []
+	for c in rows:
+		t = out.setdefault(c.reference_name, {"sent": None, "merchandiser": None})
+		text = strip_html(c.content or "").strip()
+		if c.comment_type == "Workflow" and text == "Pending Merchandiser Approval":
+			t["sent"] = {"by": who(c.owner), "on": c.creation}
+			t["merchandiser"] = None   # sent again: an earlier approval no longer counts
+		elif c.comment_type == "Workflow" and text == "Pending Final Approval":
+			t["merchandiser"] = {"by": who(c.owner), "on": c.creation, "note": None, "missing": False}
+		elif c.comment_type == "Comment" and text.startswith("Merchandiser Approved"):
+			notes.append((c, text))
+	# matched afterwards: verify_customer_details writes its note just BEFORE the workflow move
+	for c, text in notes:
+		t = out[c.reference_name]
+		if t["merchandiser"] and abs(time_diff_in_seconds(c.creation, t["merchandiser"]["on"])) < 120:
+			m = re.match(r"Merchandiser Approved(?: \(with missing details\))? by .+? on "
+						 r"\d{2}-\w{3}-\d{4} \d{2}:\d{2} [AP]M(?::\s*(.*))?$", text, re.S)
+			note = ((m.group(1) if m else "") or "").strip()
+			t["merchandiser"]["note"] = note if note and note != "." else None
+			t["merchandiser"]["missing"] = "missing details" in text
+	return out
+
+
 def _values(so, row):
 	if so.docstatus == 0 and so.workflow_state == "Rejected":
 		r = rejection(so.name) or {}

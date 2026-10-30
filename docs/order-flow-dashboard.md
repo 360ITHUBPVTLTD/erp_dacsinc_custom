@@ -680,20 +680,24 @@ Customer list, opening another merchandiser's customer, and the dashboards stay 
 customer of an order they raised.
 
 On the Order Flow dashboard, a scoped Merchandiser User sees, on every tab:
-- **by default** only the Sales Orders **they created** (`so.owner`), and the
-  documents of those orders;
-- **with "Show my customers' orders" ticked** (toolbar, next to the search box;
-  shown only to them), also the orders of customers assigned to them (Customer ›
-  Merchandiser User), whoever created them.
+- the Sales Orders **they created** (`so.owner`) or **approved as merchandiser** (the
+  workflow's "Pending Final Approval" comment is theirs — an unassigned customer's order
+  they approved used to vanish from their view the moment it moved on), and the documents
+  of those orders;
+- **with "Show my customers' orders" ticked — the default** (filter bar, next to the
+  search box; shown only to them), also the orders of customers assigned to them
+  (Customer › Merchandiser User), whoever created them. Unticking narrows back to the
+  orders above.
 
 Details:
 - One condition, `order_flow_api._merch_scope_so()`, is used by Approvals, Tracker,
   Pick Lists, Purchase Flow, Job Work, Finance, Billing, Material Requests and
   Embroidery. Logistics uses the same rule on the invoice (its own or its order's
   creator).
-- The choice is kept per user (user default `of_show_my_customers`,
-  `order_flow_permissions.set_show_my_customers`), so every tab and every reload
-  follows it.
+- The choice is kept per user (user default `of_show_my_customers_v2`, on unless it is
+  "0"; `order_flow_permissions.set_show_my_customers`), so every tab and every reload
+  follows it. A new key because the old `of_show_my_customers` was off by default, and
+  its stored "0"s would have kept users off without them choosing it.
 - **Exception, Approvals › Merchandiser Unassigned Orders:** every order of a customer
   with no merchandiser yet, while it can still be approved and claimed (Draft /
   Pending Merchandiser Approval). It shows whoever created it and whatever the switch
@@ -854,8 +858,9 @@ approvals` into a sub-tab purely client-side — the server has already
 decided *which rows* a viewer may see; this bucketing only decides *which
 sub-tab* each visible row lands in. Three kinds of viewer exist:
 
-- A plain Merchandiser User — scoped server-side to their own orders, plus their
-  customers' with "Show my customers' orders" on (`get_pending_approvals` uses
+- A plain Merchandiser User — scoped server-side to the orders they created or
+  approved, plus their customers' with "Show my customers' orders" on (the default;
+  `get_pending_approvals` uses
   `_merch_scope_so`), and client-side to
   `o.custom_merchandiser_user === current_user` in the **Pending Approval**
   bucket.
@@ -2182,6 +2187,17 @@ list can show and filter by it:
   (`get_pending_approvals` attaches `rejection`): "Reason: …" and "by X · date", to **everyone who
   sees the row**. It used to be only System Manager, the order's creator and its merchandiser, so an
   Admin / Super Admin / final approver without System Manager (Anuj) saw no reason.
+- **Who passed it on (SO Approvals rows):** under the Approval Stage pill, one compact block
+  (`of_approval_trail_html`): "Approved by X" + time once past the merchandiser, "Sent by Y" + time —
+  merged into "Sent & approved by X" when the same person did both within 10 minutes — a small
+  "Details missing" tag when `verify_customer_details` was skipped, and the note only when it has at
+  least two letters / digits (the skip box forces some text, so "." / "," / "n" are common). A final
+  approver sees who approved before them. `so_stage.approval_trails`
+  (one query for the page, via `get_pending_approvals`' `approval_trail`) reads the workflow's own
+  comments (content = the state moved to, owner = who): the latest move to Pending Merchandiser
+  Approval, and the latest move to Pending Final Approval after it; the "Merchandiser Approved…"
+  note is matched to that move within 2 minutes, before or after (verify_customer_details writes it
+  just before the move).
 - **Form:** `get_so_approvers` returns `stage` (`so_stage.for_form`, recomputed on open), and the
   headline shows the Order Stage (submitted orders) or a red "Rejected at … by … on … — Reason"
   (`so_stage_alert_html` in `sales_order.js`).

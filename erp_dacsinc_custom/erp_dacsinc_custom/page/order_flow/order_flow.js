@@ -5769,6 +5769,7 @@ class OrderFlow {
             // Who rejected it, when, and why — shown to everyone who sees the row (it used to be only
             // the System Manager, the order's creator and its merchandiser, so a final approver saw
             // no reason at all). A Reject without a reason (older ones) says so.
+            const is_owner = !!(current_user && o.owner && current_user.toLowerCase() === o.owner.toLowerCase());
             const rej = o.rejection || {};
             const rej_reason = rej.reason || (o.rejection_comment || '').replace(/<[^>]*>/g, '').replace(/^.*? on \d{2}-\w{3}-\d{4} \d{2}:\d{2} [AP]M:?\s*/, '');
             const rej_who = [rej.by ? __('by {0}', [of_esc(rej.by)]) : '', rej.on ? of_date(rej.on) : ''].filter(Boolean).join(' · ');
@@ -5814,6 +5815,7 @@ class OrderFlow {
                         </span>
                     </div>
                     ` : ''}
+                    ${of_approval_trail_html(o)}
                     ${o.workflow_state === 'Rejected' ? `
                     <div style="font-size: 11px; color: #dc3545; margin-top: 5px; font-weight: 500; line-height: 1.3; white-space: normal;">
                         <i class="fa fa-info-circle"></i> ${__('Reason')}: ${rej_reason ? of_esc(rej_reason) : `<i>${__('not given')}</i>`}
@@ -6901,6 +6903,36 @@ function of_qty(v, tone) {
 
 function of_route(doctype) {
     return String(doctype || '').toLowerCase().trim().replace(/\s+/g, '-');
+}
+
+// SO Approvals: who sent the order for approval and who approved it as merchandiser — so a final
+// approver sees who passed it on (so_stage.approval_trails → get_pending_approvals' approval_trail).
+// One compact block: "Sent & approved by X" when the same person did both within 10 minutes, a small
+// "Details missing" tag when the customer-details check was skipped, and the note only when it says
+// something (not "." / "," / "n").
+function of_approval_trail_html(o) {
+    const t = o.approval_trail || {};
+    const m = o.workflow_state !== 'Pending Merchandiser Approval' ? t.merchandiser : null;
+    const sent = t.sent;
+    if (!m && !sent) return '';
+    const when = (v) => `<div class="of-trail__when">${moment(v).format('DD-MMM-YYYY, hh:mm A')}</div>`;
+    const row = (icon, color, body, title) => `<div class="of-trail__row" title="${of_esc(title)}">
+        <i class="fa ${icon}" style="color:${color};"></i><div>${body}</div></div>`;
+    const same = m && sent && m.by === sent.by && Math.abs(moment(m.on).diff(moment(sent.on), 'minutes')) <= 10;
+    let html = '';
+    if (m) {
+        const note = (m.note || '').trim();
+        html += row('fa-check-circle', 'var(--of-green, #28a745)',
+            `${same ? __('Sent & approved by') : __('Approved by')} <span class="of-trail__who">${of_esc(m.by)}</span>${when(m.on)}`
+            + (m.missing ? `<span class="of-trail__tag"><i class="fa fa-exclamation-triangle"></i> ${__('Customer details missing')}</span>` : '')
+            + (note.replace(/[^\p{L}\p{N}]/gu, '').length >= 2 ? `<div class="of-trail__note">“${of_esc(note)}”</div>` : ''),
+            __('Merchandiser approval'));
+    }
+    if (sent && !same) {
+        html += row('fa-paper-plane-o', 'var(--text-muted)',
+            `${__('Sent by')} <span class="of-trail__who">${of_esc(sent.by)}</span>${when(sent.on)}`, __('Sent for approval'));
+    }
+    return `<div class="of-trail ${m ? 'of-trail--ok' : ''}">${html}</div>`;
 }
 
 function of_date(v) {
