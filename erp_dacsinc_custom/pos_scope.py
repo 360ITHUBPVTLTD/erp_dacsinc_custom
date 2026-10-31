@@ -467,14 +467,14 @@ def get_stock_for_rows(rows):
 # ------------------------------------------------------------------ Items by the stores' brands
 # POS Profile › Brands (custom_brands, see pos_brand_filter.py) also decides which
 # Items a POS login sees anywhere (Item list, item pickers on MR / Stock Entry /
-# POS Invoice): Store Manager → their stores' brands; POS Admin → every store's.
+# POS Invoice): Store Manager → their stores' brands; POS Admin → every item.
 # A store with no brands listed sells everything, so it lifts the limit.
 
 def _scope_brands(scope):
 	"""Set of brands, or None for no limit."""
-	if not scope:
-		return None
-	profiles = frappe.get_all("POS Profile", filters={"disabled": 0}, pluck="name") if scope[0] == "all" else scope[1]
+	if not scope or scope[0] == "all":
+		return None  # POS Admin sees every item (user, 31-10-2026)
+	profiles = scope[1]
 	if not profiles:
 		return set()
 	if not frappe.db.exists("DocType", "POS Brand"):
@@ -482,11 +482,10 @@ def _scope_brands(scope):
 	brands = set()
 	for p in profiles:
 		b = {d.brand for d in frappe.get_all("POS Brand", filters={"parent": p, "parenttype": "POS Profile"}, fields=["brand"]) if d.brand}
-		if not b and scope[0] != "all":
+		if not b:
 			return None  # a store of theirs with no brands sells everything
 		brands |= b
-	# POS Admin: the brands the stores list (stores without brands are ignored).
-	return brands or None
+	return brands
 
 
 def item_query(user=None):

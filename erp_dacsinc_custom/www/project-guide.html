@@ -259,7 +259,7 @@
         requirements, how to build and deploy, and the task list — delivered, open from the 8 Oct meeting, and Phase 2.</p>
     </div>
     <div class="actions no-print">
-      <a class="btn" href="/assets/erp_dacsinc_custom/docs/project-guide.pdf?v=28" download="Dacsinc ERP - Project Guide.pdf" data-dl-name="Dacsinc ERP - Project Guide">⤓ Download PDF</a>
+      <a class="btn" href="/assets/erp_dacsinc_custom/docs/project-guide.pdf?v=29" download="Dacsinc ERP - Project Guide.pdf" data-dl-name="Dacsinc ERP - Project Guide">⤓ Download PDF</a>
       <button class="btn outline" type="button" id="btn-pdf">⎙ Print all</button>
       <button class="btn outline" type="button" id="btn-tab">⎙ Print this tab</button>
       <button class="btn outline" type="button" id="btn-html">⤓ HTML copy</button>
@@ -789,7 +789,7 @@ const FRD = [
   ["FR-D5", "Stock & dispatch", "Multi-order embroidery", "Production", "Embroidery Work Order · Purchase Receipt", "Many Sales Orders to one embroidery order; many POs to one Purchase Receipt; design name in the tab (MOM 8 Oct).", [], "Create one embroidery order from two Sales Orders.", "—", "Open"],
   ["FR-E1", "POS", "Shift opening", "Store manager", "POS › Create POS Opening Entry", "Store auto-filled; cash only; carried from last closing; reason if different; one open shift per store.", [], "Open with a different cash amount → reason asked.", "pos_cash.opening_validate", "Done"],
   ["FR-E2", "POS", "Shift closing", "Store manager", "POS Closing Entry", "Built on the server; steps cash counted / why / taken out; left carried; closing email with Excel.", ["Every difference needs a reason."], "Count less than expected → reason required.", "pos_closing · pos_cash · pos_notify", "Done"],
-  ["FR-E3", "POS", "Store & brand scope", "POS users", "Lists, barcode scan, reports", "Store users see their stores' records and brands everywhere.", [], "A store login sees only its store's bills.", "pos_scope · pos_report_scope · pos_brand_filter", "Done"],
+  ["FR-E3", "POS", "Store & brand scope", "POS users", "Lists, barcode scan, reports", "Store users see their stores' records and brands everywhere; POS Admin sees every item.", [], "A store login sees only its store's bills.", "pos_scope · pos_report_scope · pos_brand_filter", "Done"],
   ["FR-E4", "POS", "Store stock requests: HO approval, dispatch, receipt", "Store manager · HO approvers", "Material Request · Stock Entry · Stock Requests board", "Store MR (transfer from VV Puram) → Send for HO approval → HO approves / rejects → HO's draft transfer (In Transit) → the store checks and submits it. Status on the MR; board on POS / POS Admin / POS HO workspaces.", ["Approver roles in Admin Settings › POS.", "Free stock only (held stock excluded)."], "Store submits its own request → refused; HO / POS Admin submits the store's transfer → refused.", "pos_request.py · pos_requests_board.js", "Done"],
   ["FR-E5", "POS", "Store Cash Book", "Store manager · POS Admin", "Report", "One line per shift; mismatches in red.", [], "Run for a store and a date range.", "report/store_cash_book", "Done"],
   ["FR-E6", "POS", "POS return entries", "Store manager", "Point of Sale", "Create return entries against POS bills (MOM 8 Oct).", [], "Return an item → stock and payment reversed.", "—", "Open"],
@@ -846,6 +846,7 @@ const TASKS = [
   ["Done", "POS", "Email receipt: store email account, message, light template with PDF, store name as sender, email saved on the invoice", "Delivered", "1", "", "2026-10-02", "360ithub", ""],
   ["Done", "POS", "Shift closing built on the server — fast and correct", "Delivered", "1", "", "2026-10-02", "360ithub", ""],
   ["Done", "POS", "Brand scope for barcode scan and stock reports; no finance / HR reports for store users; POS Register own store", "Delivered", "1", "", "2026-10-02", "360ithub", ""],
+  ["Done", "POS", "POS Admin sees every item (no brand limit); store managers keep their stores' brands", "Delivered", "1", "", "2026-10-31", "360ithub", ""],
   ["Done", "POS", "Opening: store filled in for single-store users; cash carried from last closing; one open shift per store", "Delivered", "1", "", "2026-10-02", "360ithub", ""],
   ["Done", "POS", "Closing: cash counted / why short-extra / taken out / left; closing form laid out in steps", "Delivered", "1", "", "2026-10-02", "360ithub", ""],
   ["Done", "POS", "Store Cash Book report", "Delivered", "1", "", "2026-10-02", "360ithub", ""],
