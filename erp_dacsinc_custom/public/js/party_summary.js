@@ -563,6 +563,7 @@
 	// Pay back an advance / opening credit (customer), or record a supplier paying theirs back: amount (part allowed),
 	// mode, date, reference — then a Payment Entry and Payment Reconciliation against the credit (party_balance.pay_back).
 	function pay_back_dialog(frm, s, customer, doctype, name, on_done) {
+		const esc = frappe.utils.escape_html;
 		const party_type = customer ? "Customer" : "Supplier";
 		frappe.call({ method: "erp_dacsinc_custom.party_balance.get_pay_back",
 			args: { party_type, party: frm.doc.name, doctype, name, company: s.company } }).then((r) => {
