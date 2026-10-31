@@ -160,7 +160,10 @@ from the supplier (Dr Bank / Cash, Cr Creditors), unallocated, in the account th
 custom posting). A Payment Entry can't reference the Journal Entry directly: ERPNext reads a customer's credit
 Journal Entry as "already fully paid". GST: none for goods; GST paid on an advance for services is adjusted
 separately (the prompt says so). Needs Payment Entry create + submit and Payment Reconciliation write. Shown next to
-Adjust when the party also owes us — Adjust is usually right then. Tested 01-11-2026 on rolled-back entries:
+Adjust when the party also owes us — Adjust is usually right then. **Undo:** an advance's pay-back — cancel the
+Payment Entry; an opening / journal credit's — **Unreconcile** on the Journal Entry first (Payment Reconciliation
+split its row and linked it to the payment, so ERPNext blocks the cancel and shows Unreconcile there), then cancel —
+the same as reconciling by hand in Accounting › Payment Reconciliation. Tested 01-11-2026 on rolled-back entries:
 opening credit part / rest, customer advance, supplier advance; paying back more than held is refused.
 
 Each row of the Customer and Supplier list views shows what is outstanding with that party
