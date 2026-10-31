@@ -20,7 +20,7 @@ works either way.
 | Customer | POS customers (POS Store set) + ones they created | their stores' customers + ones they created |
 | Stock Entry | touching any store's warehouse, or made by POS staff | touching their stores' warehouses, or their own |
 | Material Request | flagged Created by POS User (`custom_is_pos_request`), or their own | touching their stores' warehouses, or their own |
-| Item | brands the stores list | their stores' brands (none listed = all) |
+| Item | all | their stores' brands (none listed = all) |
 | Sales Invoice | POS Sales Invoices only | their own (sheet: O) |
 
 Wiring:
@@ -192,14 +192,17 @@ has no status and is unaffected, including a POS Admin's own requests.
 
 ## Items by the stores' brands
 
-POS Profile › Brands (`custom_brands`) also decides which Items a POS login sees
+POS Profile › Brands (`custom_brands`) also decides which Items a POS Store Manager sees
 anywhere: the Item list and every item picker, since ERPNext's `item_query` includes
 permission query conditions (`item_query` / `has_item_permission`).
 
 - **Store Manager:** their stores' brands. A store of theirs with no brands sells
   everything, so there's no limit. This matches the Point of Sale screen
   (`pos_brand_filter.py`).
-- **POS Admin:** every brand the stores list. Stores without brands are ignored.
+- **POS Admin:** every item, with no brand limit (the user's decision, 31-10-2026: items whose brand no
+  store listed were hidden from them, e.g. after the final item list brought new brands). Their stock
+  reports are still cut to the stores' warehouses; the Point of Sale screen still shows the
+  chosen store's brands.
 - The per-document-type rule applies: a POS user whose other role reads Items
   (e.g. DAC CRM) sees all Items.
 - **Barcode scan in forms** (`erpnext.stock.utils.scan_barcode`, overridden by
