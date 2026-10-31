@@ -151,6 +151,18 @@ builds ERPNext's own **Payment Reconciliation** (unreconciled entries, allocatio
 Entry gets the invoice as a reference, the invoice's outstanding drops, credit notes are set off
 with their standard Journal Entry. Needs write on Payment Reconciliation (Accounts User / Manager).
 
+**Pay back / Receive back** (on an advance — Payment Entry — or an opening / journal credit — Journal Entry — in
+Open now; credit / debit notes keep their own **Refund**): amount (all or part, up to what is held; the rest stays
+held), mode, date, UTR / cheque, remarks. `party_balance.pay_back` does ERPNext's standard refund of an advance in
+one transaction: a **Payment Entry the other way** — Pay to the customer (Dr Debtors, Cr Bank / Cash) or Receive
+from the supplier (Dr Bank / Cash, Cr Creditors), unallocated, in the account the credit sits in — then the same
+**Payment Reconciliation** as Adjust matches it with the credit, so both close (no income / expense account, no
+custom posting). A Payment Entry can't reference the Journal Entry directly: ERPNext reads a customer's credit
+Journal Entry as "already fully paid". GST: none for goods; GST paid on an advance for services is adjusted
+separately (the prompt says so). Needs Payment Entry create + submit and Payment Reconciliation write. Shown next to
+Adjust when the party also owes us — Adjust is usually right then. Tested 01-11-2026 on rolled-back entries:
+opening credit part / rest, customer advance, supplier advance; paying back more than held is refused.
+
 Each row of the Customer and Supplier list views shows what is outstanding with that party
 (`party_balance.get_party_balances`, `public/js/party_balance_list.js`, wired by `customer_list.js` /
 `supplier_list.js`): a short red pill **"₹ due · n Inv"** (customer) / **"₹ to pay · n Bills"** (supplier — the

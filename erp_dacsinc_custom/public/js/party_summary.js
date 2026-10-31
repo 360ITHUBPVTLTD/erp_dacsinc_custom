@@ -342,7 +342,11 @@
 				<td><span class="dps-pill is-green">${n_unpaid ? __("can be set off") : (customer ? __("to pay back") : __("to get back"))}</span></td>
 				<td class="r"><b class="dps-ok">${money(c.amount)}</b></td>
 				<td class="r">${refund && s.can_pay ? `<button class="btn btn-xs btn-default dps-refund" data-n="${esc(c.name)}">${customer ? __("Refund") : __("Get refund")}</button>`
-					: n_unpaid && s.can_pe ? `<button class="btn btn-xs btn-default dps-adjust" title="${esc(__("Set it against what they owe"))}">${__("Adjust")}</button>` : ""}</td></tr>`;
+					: (n_unpaid && s.can_pe ? `<button class="btn btn-xs btn-default dps-adjust" title="${esc(__("Set it against what they owe"))}">${__("Adjust")}</button>` : "")
+					// an advance / opening credit given back in money (party_balance.pay_back: Payment Entry + reconciliation)
+					+ (s.can_pay && (c.doctype === "Payment Entry" || c.doctype === "Journal Entry")
+						? ` <button class="btn btn-xs btn-default dps-payback" data-dt="${esc(c.doctype)}" data-n="${esc(c.name)}"
+							title="${esc(customer ? __("Pay this amount back to the customer") : __("Record the supplier paying this back"))}">${customer ? __("Pay back") : __("Receive back")}</button>` : "")}</td></tr>`;
 		};
 		const group = (title, total, cls) => `<tr class="dps-grp ${cls === "dps-late" ? "is-due" : "is-cr"}"><td colspan="2">${title}</td><td class="r"><b class="${cls}">${money(total)}</b></td><td></td></tr>`;
 		const items = (n_unpaid || (s.credits || []).length) ? `<div class="dps-list"><table class="dps-t">
@@ -387,6 +391,10 @@
 			e.stopPropagation();
 			const n = String($(e.currentTarget).data("n"));
 			frappe.require("/assets/erp_dacsinc_custom/js/payment_prompt.js", () => of_refund_prompt(inv_dt, n, refresh, { from_form: 1 }));
+		});
+		$w.find(".dps-payback").on("click", (e) => {
+			e.stopPropagation();
+			pay_back_dialog(frm, s, customer, String($(e.currentTarget).data("dt")), String($(e.currentTarget).data("n")), refresh);
 		});
 		$w.find(".dps-refresh").on("click", refresh);
 		$w.find(".dps-stmt").on("click", () => statement_dialog(frm));
@@ -552,6 +560,61 @@
 	}
 
 	// Set advances / credit notes against unpaid invoices — ERPNext's Payment Reconciliation underneath.
+	// Pay back an advance / opening credit (customer), or record a supplier paying theirs back: amount (part allowed),
+	// mode, date, reference — then a Payment Entry and Payment Reconciliation against the credit (party_balance.pay_back).
+	function pay_back_dialog(frm, s, customer, doctype, name, on_done) {
+		const party_type = customer ? "Customer" : "Supplier";
+		frappe.call({ method: "erp_dacsinc_custom.party_balance.get_pay_back",
+			args: { party_type, party: frm.doc.name, doctype, name, company: s.company } }).then((r) => {
+			const d = r.message;
+			if (!d) return;
+			const money = (v) => format_currency(flt(v, 2), d.currency);
+			const modes = Object.fromEntries((d.modes || []).map(m => [m.name, m]));
+			const dlg = new frappe.ui.Dialog({
+				title: customer ? __("Pay back to {0}", [d.party_name]) : __("Received back from {0}", [d.party_name]),
+				fields: [
+					{ fieldtype: "HTML", fieldname: "head" },
+					{ fieldtype: "Currency", fieldname: "amount", reqd: 1, default: d.held, label: __("Amount"),
+					  description: __("Up to {0}. Less = part; the rest stays held for them.", [money(d.held)]) },
+					{ fieldtype: "Select", fieldname: "mode_of_payment", reqd: 1, label: __("Mode of Payment"),
+					  options: [""].concat((d.modes || []).map(m => m.name)).join("\n") },
+					{ fieldtype: "Date", fieldname: "posting_date", reqd: 1, default: frappe.datetime.get_today(), label: __("Payment Date") },
+					{ fieldtype: "Column Break" },
+					{ fieldtype: "Data", fieldname: "reference_no", label: __("Reference No (UTR / Cheque No)") },
+					{ fieldtype: "Date", fieldname: "reference_date", label: __("Reference Date") },
+					{ fieldtype: "Small Text", fieldname: "remarks", label: __("Remarks") },
+				],
+				primary_action_label: customer ? __("Pay back") : __("Record"),
+				primary_action: (v) => {
+					const amt = flt(v.amount, 2);
+					if (amt <= 0 || amt - d.held > 0.005) return frappe.msgprint(__("The amount must be more than 0 and up to {0}.", [money(d.held)]));
+					const m = modes[v.mode_of_payment];
+					if (m && m.account_type === "Bank" && !(v.reference_no && v.reference_date)) {
+						return frappe.msgprint(__("Reference No and Reference Date are required for {0}.", [v.mode_of_payment]));
+					}
+					frappe.confirm(customer
+						? __("Pay {0} back to {1} by {2}? A Payment Entry is made and matched with {3}.", [money(amt), esc(d.party_name), esc(v.mode_of_payment), esc(name)])
+						: __("Record {0} received back from {1} by {2}? A Payment Entry is made and matched with {3}.", [money(amt), esc(d.party_name), esc(v.mode_of_payment), esc(name)]),
+						() => frappe.call({ method: "erp_dacsinc_custom.party_balance.pay_back", freeze: true,
+							args: Object.assign({ party_type, party: frm.doc.name, doctype, name, company: s.company }, v, { amount: amt }) })
+							.then((res) => {
+								dlg.hide();
+								const pe = res.message && res.message.payment_entry;
+								frappe.show_alert({ indicator: "green", message: __("{0} made and matched with {1}", [pe, name]) });
+								on_done && on_done();
+							}));
+				},
+			});
+			dlg.fields_dict.head.$wrapper.html(`<div class="dps-note" style="margin-bottom:8px;">
+				${customer ? __("Held for the customer on") : __("The supplier owes back on")} <b>${esc(name)}</b> (${esc(doctype)}, ${frappe.datetime.str_to_user(d.posting_date)}):
+				<b>${money(d.held)}</b>.<br>${customer
+					? __("Accounting: Dr Debtors (customer) · Cr Bank / Cash. If they still owe us, Adjust sets it off instead.")
+					: __("Accounting: Dr Bank / Cash · Cr Creditors (supplier).")}
+				${customer ? `<br><small class="text-muted">${__("GST: none for goods. If GST was paid on an advance for services, adjust it separately.")}</small>` : ""}</div>`);
+			dlg.show();
+		});
+	}
+
 	function adjust_dialog(frm, s, customer, on_done) {
 		const esc = frappe.utils.escape_html;
 		const money = (v) => format_currency(flt(v, 2), s.currency);
