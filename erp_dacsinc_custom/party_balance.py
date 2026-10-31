@@ -340,3 +340,115 @@ def adjust_advances(party_type, party, credits, invoices, company=None):
 		pr.append("allocation", r)
 	pr.reconcile()
 	return {"adjusted": flt(sum(flt(r.allocated_amount) for r in rows), 2), "rows": len(rows)}
+
+
+# ── Pay back an advance / opening credit (the Account Summary's "Pay back") ─────────────────────────
+# ERPNext's standard refund of an advance: a Payment Entry the other way (Pay to the customer — Dr Debtors,
+# Cr Bank / Cash; Receive from the supplier — Dr Bank / Cash, Cr Creditors), then Payment Reconciliation
+# matches it with the credit (adjust_advances above), so both close. A Payment Entry can't be linked to
+# the Journal Entry directly: ERPNext reads a customer's credit Journal Entry as "already fully paid".
+# Credit / Debit Notes keep their own Refund (dashboard_payment.record_refund, against the note).
+
+PAY_BACK_TYPES = ("Payment Entry", "Journal Entry")
+
+
+def _held(party_type, party, doctype, name, company):
+	"""What is still held for the party on this credit (Payment Ledger), and the account it sits in."""
+	from erp_dacsinc_custom.party_open_items import open_items
+
+	it = next((i for i in open_items(party_type, [party], company).get(party, [])
+			   if i["doctype"] == doctype and i["name"] == name), None)
+	if not it or flt(it["outstanding"]) >= -0.005:
+		frappe.throw(frappe._("{0} has nothing left to pay back.").format(name))
+	account = frappe.db.get_value("Payment Ledger Entry", {"against_voucher_type": doctype, "against_voucher_no": name,
+		"party_type": party_type, "party": party, "company": company, "delinked": 0}, "account")
+	return flt(-it["outstanding"], 2), account
+
+
+def _pay_back_guard(party_type, party, doctype):
+	from erp_dacsinc_custom.dashboard_payment import can_record_payment
+
+	if party_type not in INVOICE or doctype not in PAY_BACK_TYPES:
+		frappe.throw(frappe._("Pay back is for an advance or an opening / journal credit."))
+	if not can_see_balances() or not frappe.has_permission(party_type, "read", party) or not can_record_payment() \
+			or not frappe.has_permission("Payment Reconciliation", "write"):
+		frappe.throw(frappe._("You are not allowed to make and match payments."), frappe.PermissionError)
+
+
+@frappe.whitelist()
+def get_pay_back(party_type, party, doctype, name, company=None):
+	"""What the Pay back prompt shows: the credit, what is held on it, the payment modes for the company."""
+	from erp_dacsinc_custom.payment_modes import FLAG
+
+	_pay_back_guard(party_type, party, doctype)
+	company = company or frappe.defaults.get_user_default("Company")
+	held, _account = _held(party_type, party, doctype, name, company)
+	mode_filters = {"enabled": 1}
+	if frappe.db.has_column("Mode of Payment", FLAG):
+		mode_filters[FLAG] = 1
+	modes = []
+	for m in frappe.get_all("Mode of Payment", filters=mode_filters, fields=["name"], order_by="name"):
+		acc = frappe.db.get_value("Mode of Payment Account", {"parent": m.name, "company": company}, "default_account")
+		if acc:
+			modes.append({"name": m.name, "account": acc, "account_type": frappe.get_cached_value("Account", acc, "account_type")})
+	name_field = "customer_name" if party_type == "Customer" else "supplier_name"
+	return {"party_type": party_type, "party": party, "party_name": frappe.db.get_value(party_type, party, name_field) or party,
+			"doctype": doctype, "name": name, "posting_date": str(frappe.db.get_value(doctype, name, "posting_date")),
+			"company": company, "currency": frappe.get_cached_value("Company", company, "default_currency"),
+			"held": held, "modes": modes}
+
+
+@frappe.whitelist()
+def pay_back(party_type, party, doctype, name, amount, mode_of_payment, posting_date=None, reference_no=None,
+			 reference_date=None, remarks=None, company=None):
+	"""Pay the held credit back (all or part): the Payment Entry, then Payment Reconciliation against the credit.
+	One transaction — if the matching fails, the payment is not kept either."""
+	from erpnext.accounts.doctype.sales_invoice.sales_invoice import get_bank_cash_account
+	from frappe.utils import getdate
+	from erp_dacsinc_custom.payment_modes import shown
+
+	_pay_back_guard(party_type, party, doctype)
+	company = company or frappe.defaults.get_user_default("Company")
+	held, party_account = _held(party_type, party, doctype, name, company)
+	amount = flt(amount, 2)
+	if amount <= 0:
+		frappe.throw(frappe._("Enter the amount to pay back."))
+	if amount - held > 0.005:
+		frappe.throw(frappe._("{0} is more than the {1} held on {2}.").format(
+			frappe.format_value(amount, {"fieldtype": "Currency"}), frappe.format_value(held, {"fieldtype": "Currency"}), name))
+	if not shown(mode_of_payment):
+		frappe.throw(frappe._("Mode of Payment {0} is not ticked \"Show in Payment Entry\".").format(mode_of_payment))
+	bank = (get_bank_cash_account(mode_of_payment, company) or {}).get("account")
+	if not bank:
+		frappe.throw(frappe._("Mode of Payment {0} has no account for {1}.").format(mode_of_payment, company))
+	is_bank = frappe.get_cached_value("Account", bank, "account_type") == "Bank"
+	if is_bank and not (reference_no and reference_date):
+		frappe.throw(frappe._("Reference No and Reference Date are required for {0} (UTR / cheque / transaction number).").format(mode_of_payment))
+
+	customer = party_type == "Customer"
+	pe = frappe.new_doc("Payment Entry")
+	pe.update({
+		"payment_type": "Pay" if customer else "Receive", "company": company, "party_type": party_type, "party": party,
+		"posting_date": getdate(posting_date or nowdate()), "mode_of_payment": mode_of_payment,
+		"paid_from": bank if customer else party_account, "paid_to": party_account if customer else bank,
+		"paid_amount": amount, "received_amount": amount,
+		"reference_no": reference_no or None,
+		"reference_date": getdate(reference_date) if reference_date else (None if is_bank else getdate(posting_date or nowdate())),
+	})
+	pe.setup_party_account_field()
+	pe.set_missing_values()
+	pe.paid_amount = pe.received_amount = amount
+	# the user's words, kept (without Custom Remarks ERPNext rewrites Remarks on validate)
+	note = (remarks or "").strip()
+	pe.remarks = (note + "\n" if note else "") + frappe._("Paid back: {0} {1}").format(doctype, name)
+	pe.custom_remarks = 1
+	pe.insert()
+	pe.submit()
+
+	# match it with the credit — the same Payment Reconciliation as Adjust
+	pr = _reconciliation(party_type, party, company)
+	keys = [_credit_key(p) for p in pr.payments if p.reference_type == doctype and p.reference_name == name]
+	if not keys:
+		frappe.throw(frappe._("{0} is not open for reconciliation.").format(name))
+	res = adjust_advances(party_type, party, keys, [{"name": pe.name, "amount": amount}], company)
+	return {"payment_entry": pe.name, "matched": res.get("adjusted")}
