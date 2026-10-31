@@ -23,8 +23,9 @@ frappe.pages["group-outstanding"].on_page_load = function (wrapper) {
 	const ticked = new Set();   // item names ticked for the payment
 	let party = null, party_back = null;   // one customer / supplier open (and the group to go back to)
 	// the list before anything is opened: by group, or every customer / supplier with something open
-	let overview = "group";
-	try { overview = localStorage.getItem("gos_overview") === "party" ? "party" : "group"; } catch (e) { /* private window */ }
+	// Opens on individual customers / suppliers every time; "By group" is one click away (not remembered,
+	// or one look at the groups would make every later visit open on them). A link with a group opens it.
+	let overview = "party";
 	let led_from = frappe.datetime.add_months(frappe.datetime.get_today(), -12), led_to = frappe.datetime.get_today();
 
 	// Customers | Suppliers — two buttons (a select for two choices opened the browser's own list)
@@ -185,7 +186,6 @@ frappe.pages["group-outstanding"].on_page_load = function (wrapper) {
 		const v = String($(e.currentTarget).data("v"));
 		if (v === overview && !party && !f_group.get_value()) return;
 		overview = v;
-		try { localStorage.setItem("gos_overview", overview); } catch (err) { /* private window */ }
 		party = party_back = null; $search.find("input").val(""); $res.hide();
 		paint_view();
 		if (f_group.get_value()) f_group.set_value(""); else load();

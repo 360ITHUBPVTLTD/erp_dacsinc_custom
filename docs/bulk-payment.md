@@ -115,7 +115,8 @@ the parties in it or in a group under it.
   row), the header says when that party's group has other members owing ("Part of group …: 2 more customers
   owe") with **Add whole group**, which adds them and sets the amount to their full due (lower it to the cheque).
 - **Group Outstanding** page (`/app/group-outstanding`, `page/group_outstanding/`, finance roles): it opens on
-  **every group with something open** (`get_groups_outstanding`: members owing, items, they owe, overdue, held, net;
+  **every customer / supplier with something open** (By customer, below); **By group** lists **every group with
+  something open** (`get_groups_outstanding`: members owing, items, they owe, overdue, held, net;
   most owed first, catch-all groups greyed at the end, totals on top). Click a group (or pick Customer / Supplier and
   the group above) to open it, **All groups** goes back. A group shows the group's totals (they owe, overdue, held for them, net), then each
   member that has something open, with its dues (tick boxes; a member's header box ticks all of its items) and its
@@ -124,7 +125,8 @@ the parties in it or in a group under it.
   the group** (nothing ticked) opens it with every member that owes, where the amount spreads oldest first.
   **Print** gives the same list on paper (`get_group_outstanding`), under the company's default letter head (as the
   statement of account and the receipts).
-- **By group | By customer (supplier)** in the top bar next to Customers | Suppliers (remembered per browser): by
+- **By group | By customer (supplier)** in the top bar next to Customers | Suppliers (By customer every time the page
+  opens — not remembered, so a look at the groups doesn't change the next visit; a link with a group opens it): by
   group as above (with the Group field), or every customer / supplier with something open
   (`get_parties_outstanding`: group, items, they owe, overdue, held, net; the Group field is hidden) — a click opens
   that party with its ledger, Back returns to the list. The search bar follows it (`search(scope=…)`): By group finds
