@@ -2135,6 +2135,50 @@ function _build_incoming_html(item, d, pair_key) {
  * Server statuses are unchanged (get_item_stock_details_bulk); this only
  * decides how they read.
  */
+// Stock details popup of an RM row's "In stock for this order" cell: the sum step by step, then every line of
+// this order using the same raw material and every other order holding it — kept off the row itself.
+const so_rm_details = {};
+function so_rm_detail_key(so_name, pair_key, item) {
+    return `${so_name}||${pair_key || ''}||${item.rm_code}`;
+}
+function so_rm_stock_popup(key) {
+    const d = so_rm_details[key];
+    if (!d) return;
+    const q = (v) => flt(v || 0, 2).toFixed(2).replace(/\.00$/, '');
+    const u = d.uom ? ` ${esc(d.uom)}` : '';
+    const row = (k, v, cls) => `<tr class="${cls || ''}"><td>${k}</td><td style="text-align:right; white-space:nowrap;">${v}</td></tr>`;
+    // a long list scrolls inside the popup instead of making it screens tall
+    const table = (title, head, rows, total) => rows.length ? `<h6 style="margin:14px 0 6px;">${title} (${rows.length})</h6>
+        <div style="max-height:260px; overflow:auto; border:1px solid var(--border-color); border-radius:6px;">
+        <table class="table table-sm" style="margin:0;"><thead><tr><th>${head}</th><th style="text-align:right;">Qty</th></tr></thead>
+        <tbody>${rows.join('')}</tbody></table></div>
+        ${total != null ? `<div style="text-align:right; margin-top:4px;"><b>Total ${q(total)}${u}</b></div>` : ''}` : '';
+    const used = (d.used_lines || []).map(l => row(esc(l.item_code), `${q(l.qty)}${u}`));
+    const held = Object.keys(d.held_by || {}).sort((a, b) => d.held_by[b] - d.held_by[a])
+        .map(h => row(`<a href="/app/sales-order/${encodeURIComponent(h)}" target="_blank">${esc(h)}</a>`, `${q(d.held_by[h])}${u}`));
+    const picked = Object.keys(d.picked_docs || {}).map(pl => row(`<a href="/app/pick-list/${encodeURIComponent(pl)}" target="_blank">${esc(pl)}</a>`, `${q(d.picked_docs[pl])}${u}`));
+    frappe.msgprint({
+        title: __('Stock of {0}', [d.rm]),
+        wide: true,
+        message: `<div style="font-size:13px;">
+            ${d.rm_name && d.rm_name !== d.rm ? `<div class="text-muted" style="margin-bottom:6px;">${esc(d.rm_name)} · for line ${esc(d.line)}</div>` : `<div class="text-muted" style="margin-bottom:6px;">for line ${esc(d.line)}</div>`}
+            <table class="table table-sm" style="margin:0;"><tbody>
+                ${row('Bought for this order', `${q(d.own_mark)}${u}`)}
+                ${row('+ Free stock (bought for no order)', `${q(d.free_stock)}${u}`)}
+                ${d.used_earlier > 0.005 ? row(`− Kept for ${used.length || ''} earlier line${used.length === 1 ? '' : 's'} of this order`, `${q(d.used_earlier)}${u}`) : ''}
+                ${row('<b>= In stock for this line</b>', `<b style="color:var(--so-green);">${q(d.own)}${u}</b>`)}
+                ${row('Needed by this line', `${q(d.need)}${u}`, 'text-muted')}
+                ${d.reserved > 0.005 ? row('On the shelf for other orders (not usable here)', `${q(d.reserved)}${u}`, 'text-muted') : ''}
+                ${d.picked > 0.005 ? row('Picked for a delivery (not usable here)', `${q(d.picked)}${u}`, 'text-muted') : ''}
+            </tbody></table>
+            ${table('Kept for earlier lines of this order', 'Line', used, d.used_earlier)}
+            ${table('Bought for other orders — stays with them', 'Sales Order', held, d.reserved)}
+            ${table('Picked for a delivery', 'Pick List', picked, d.picked)}
+        </div>`,
+    });
+}
+window.so_rm_stock_popup = so_rm_stock_popup;
+
 function get_rm_breakdown_html(data, so_name, docstatus, pair_key) {
     if (!data.is_bom_item) return '';
     const submitted = (docstatus === 1);
@@ -2163,11 +2207,16 @@ function get_rm_breakdown_html(data, so_name, docstatus, pair_key) {
         const picked = flt(item.rm_picked_elsewhere || 0);
         const reserved = flt(item.rm_on_shelf_held || 0);
         const used_earlier = flt(item.rm_used_by_other_lines || 0);
-        const used_lines = (item.rm_used_by_lines || []).map(l => `${esc(l.item_code)} (${q(l.qty)}${u})`).join(', ');
         const holders = Object.keys(item.rm_held_by || {});
         const holder_txt = holders.length ? holders.map(h => esc(so_short(h))).join(', ') : 'other orders';
-        const holder_amounts = holders.map(h => `${esc(so_short(h))} (${q(item.rm_held_by[h])})`).join(' · ');
         const own_mark = flt(item.rm_own_earmark || 0), free_stock = flt(item.rm_free_stock || 0);
+        const n_used = (item.rm_used_by_lines || []).length;
+        // everything behind the short lines above, for the Stock details popup
+        so_rm_details[so_rm_detail_key(so_name, pair_key, item)] = {
+            rm: item.rm_code, rm_name: item.rm_name || '', uom, line: data.item_code, need, own, own_mark, free_stock,
+            used_earlier, used_lines: item.rm_used_by_lines || [], reserved, held_by: item.rm_held_by || {},
+            picked, picked_docs: item.rm_picked_docs || {},
+        };
 
         const mr_pending = flt(item.rm_pending_mr_total || 0);
         const mr_draft = flt(item.rm_draft_mr_total || 0);
@@ -2238,9 +2287,14 @@ function get_rm_breakdown_html(data, so_name, docstatus, pair_key) {
                 <td title="${esc('For this order = bought for this order + free stock (bought for no order) at VV Puram, less what earlier lines of this order use.' + (picked_tip ? '\n\nPicked for a delivery:\n' + picked_tip : ''))}" style="cursor:help;">
                     <span class="so-val" style="font-weight:600; color:${own + 0.0005 >= need ? 'var(--so-green)' : 'var(--so-red)'};">${q(own)}</span>${u}
                     <div class="so-micro" style="color:var(--text-muted);">bought for this order ${q(own_mark)} · free stock ${q(free_stock)}</div>
-                    ${used_earlier > 0.005 ? `<div class="so-micro">${q(used_earlier)}${u} used by ${used_lines || 'an earlier line'} of this order</div>` : ''}
-                    ${reserved > 0.005 && v !== 'none' ? `<div class="so-micro" style="color:var(--text-muted);"><i class="fa fa-info-circle"></i> on the shelf, bought for other orders: ${q(reserved)}${u}${holder_amounts ? ` — ${holder_amounts}` : ''} — stays with them</div>` : ''}
+                    ${/* one short line each, only when it changes this line's picture; the lists are in the
+                         Stock details popup (so_rm_stock_popup) — a line per earlier line / other order took
+                         half the screen on a big order */ ''}
+                    ${used_earlier > 0.005 && v !== 'none' ? `<div class="so-micro">${q(used_earlier)}${u} kept for ${n_used === 1 ? esc(item.rm_used_by_lines[0].item_code) : `${n_used || 'earlier'} earlier lines`} of this order</div>` : ''}
+                    ${reserved > 0.005 && v !== 'none' ? `<div class="so-micro" style="color:var(--text-muted);"><i class="fa fa-info-circle"></i> ${q(reserved)}${u} on the shelf for ${holders.length === 1 ? esc(so_short(holders[0])) : `${holders.length || 'other'} other orders`} — stays with them</div>` : ''}
                     ${picked > 0.005 && v !== 'none' ? `<div class="so-micro" style="color:var(--text-muted);"><i class="fa fa-info-circle"></i> ${q(picked)}${u} picked for a delivery — stays with it</div>` : ''}
+                    ${used_earlier > 0.005 || reserved > 0.005 || picked > 0.005
+                        ? `<a class="so-micro" style="cursor:pointer;" onclick="event.stopPropagation(); so_rm_stock_popup('${js_str(so_rm_detail_key(so_name, pair_key, item))}')"><i class="fa fa-list"></i> Stock details</a>` : ''}
                 </td>
                 <td>
                     ${on_way > 0.005
@@ -5653,6 +5707,9 @@ function so_expand_rm_row(pair_key) {
     $rm.show();
     $rm[0].scrollIntoView({ behavior: 'smooth', block: 'center' });
 }
+// called from the "View Raw Materials" button's onclick: Frappe runs this file inside new Function(), so a plain
+// function here is not global — "so_expand_rm_row is not defined" without this
+window.so_expand_rm_row = so_expand_rm_row;
 
 // True only when every raw material line of this BOM item is PHYSICALLY in
 // stock right now (available >= needed) — a pending Material Request or
