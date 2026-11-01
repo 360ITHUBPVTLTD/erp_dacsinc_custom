@@ -460,7 +460,7 @@ to make", the row said Shortfall 1 / RM Short).
 | --- | --- |
 | Raw Material | the material, and how much one piece needs |
 | Needed | for the pieces still to make (`rm_needed_for_shortfall`); hover shows the whole-order total |
-| In Stock for this Order | this order's raw material (`rm_available_stock`), with "bought for this order N (`rm_own_earmark`) · free stock N (`rm_free_stock`)" under it; "N used by <item> (N) of this order" when an earlier line took some (`rm_used_by_lines`); and — only when the line needs raw material — in grey "on the shelf, bought for other orders: N (`rm_on_shelf_held`) — SO-… (N) (`rm_held_by`) — stays with them" and "N picked for a delivery — stays with it" |
+| In Stock for this Order | this order's raw material (`rm_available_stock`), with "bought for this order N (`rm_own_earmark`) · free stock N (`rm_free_stock`)" under it; then — only when the line needs raw material — one short line each: "N kept for <item> / for K earlier lines of this order" (`rm_used_by_other_lines`), in grey "N on the shelf for SO-… / for K other orders — stays with them" (`rm_on_shelf_held`) and "N picked for a delivery — stays with it"; and a **Stock details** link (`so_rm_stock_popup`) with the sum step by step and the full lists — each earlier line with its qty (`rm_used_by_lines`), each other order (`rm_held_by`), each Pick List (`rm_picked_docs`). The lists used to be written out in the cell: on an order with 25 lines using the same label it took half the screen |
 | Requested / On the Way | open MR (submitted + draft), PO, and material already at the jobber, each linked |
 | To Request | Needed − In Stock − Requested (`rm_shortfall_total`) |
 | Status & Next Step | one status + at most one button |
