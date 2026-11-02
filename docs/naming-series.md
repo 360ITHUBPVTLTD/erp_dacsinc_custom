@@ -11,7 +11,7 @@ a running number that starts again at 1 every 1 April (agreed with the user 29-1
 | POS Invoice | JP / RN / VA / VV /26-27/00001 by the store's warehouse; other counters POS/26-27/00001 | |
 | Payment Entry | Receive RCT/26-27/0001 · Pay PAY/26-27/0001 · Internal Transfer CTR/26-27/0001 | |
 | Material Request / RFQ / Supplier Quotation | MR/…/00001 · RFQ/…/0001 · SQ/…/00001 | |
-| Purchase Order / Subcontracting Order | PO/…/00001 · JO/…/00001 | |
+| Purchase Order / Subcontracting Order | PO/…/00001 · JO/…/00001 | Purchase Order ticked Is Subcontracted (jobber PO): SCO/…/00001 |
 | Purchase Receipt / Subcontracting Receipt | GRN/…/0001 · JR/…/00001 | Purchase Receipt return: PRR/…/0001 |
 | Purchase Invoice | PI/26-27/00001 | return (Debit Note): DBN/26-27/0001 |
 | Journal Entry / Stock Entry / Stock Reconciliation | JV/…/00001 · STE/…/0001 · STR/…/0001 | |
@@ -32,7 +32,7 @@ a running number that starts again at 1 every 1 April (agreed with the user 29-1
 
 - `naming.py` › `set_series` (doc_events `"*"` › before_insert) sets `naming_series` on every listed doctype — users
   never pick it: `is_return` chooses the return series, Payment Entry its payment type, POS Invoice the store from
-  its warehouse (`set_warehouse`, else the POS Profile's).
+  its warehouse (`set_warehouse`, else the POS Profile's), a Purchase Order `is_subcontracted` the SCO series.
 - The naming_series options list the new series first and keep the old ones, so earlier documents stay valid:
   for doctypes whose options live in `custom/<doctype>.json` (Sales Order, Delivery Note, Sales Invoice, POS Invoice,
   Material Request, Purchase Order, Purchase Receipt, Purchase Invoice, Stock Entry) the JSON carries them — migrate

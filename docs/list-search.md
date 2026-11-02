@@ -12,6 +12,13 @@ matched as parts:
   through `hooks.override_whitelisted_methods`): the words in order with anything between (`%mo%ra%`); with 2–3 words
   the other orders are tried when the first gives too few, so "ra mo" works too. Custom queries (ERPNext's
   customer / item queries) get the same `mo%ra`. One word: as before.
+- **Item fields that use ERPNext's `item_query`** (the Item column on every transaction, and the Finished Good field
+  on a subcontracted PO — the grid column and the Add Subcontract Item dialog, `purchase_order.js`
+  `po_fg_item_query`; the dialog's Service Item too): any number of words, each matched anywhere in code, name,
+  group, description or barcode, any order — "shirt 36 terrier night" finds "Terrier Mid Night Blue F/S Shirt 36"
+  (patched `item_query` in `__init__.py`). The words reach it as typed (`search_words.py` and the
+  `search_widget` patch both pass them straight through), and each word's matches are read in full — reading
+  only the first 3000 per word lost the item whenever a common word ("shirt") matched more.
 - **Every list's filter boxes** that match *contains* (ID, name, title, mobile, bill no…; `public/js/list_words.js`
   patches Frappe's filter area once): spaces become "anything between", in order.
 - **Customer / supplier searches** (Search everything, the payment prompt, Group Outstanding —

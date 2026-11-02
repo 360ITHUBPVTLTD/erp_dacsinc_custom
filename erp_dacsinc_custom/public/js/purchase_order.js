@@ -357,6 +357,14 @@ frappe.ui.form.on("Purchase Order Item", {
 // plain-purchase "Fetch Raw Materials" flow, so a row added this way never
 // hits the "Missing Fields: Rate/Amount" gap a script-added row otherwise
 // would.
+// Finished Good search, in the dialog and the grid's Finished Good column: ERPNext's item_query (as the
+// Item column uses) — every word matched anywhere in code / name / barcode / description, any order, so
+// "shi wh 42" finds "SHIRT WHITE 42". Core's own grid query only filtered, so it searched one piece only.
+const po_fg_item_query = () => ({
+    query: 'erpnext.controllers.queries.item_query',
+    filters: { is_stock_item: 1, is_sub_contracted_item: 1, default_bom: ['!=', ''] },
+});
+
 function show_add_subcontract_item_dialog(frm) {
     const dialog = new frappe.ui.Dialog({
         title: __('Add Subcontract Item'),
@@ -365,7 +373,7 @@ function show_add_subcontract_item_dialog(frm) {
             {
                 fieldtype: 'Link', options: 'Item', fieldname: 'service_item',
                 label: __('Service Item'), reqd: 1,
-                get_query: () => ({ filters: { is_stock_item: 0 } }),
+                get_query: () => ({ query: 'erpnext.controllers.queries.item_query', filters: { is_stock_item: 0 } }),
             },
             {
                 fieldtype: 'Link', options: 'Item', fieldname: 'fg_item',
@@ -376,17 +384,14 @@ function show_add_subcontract_item_dialog(frm) {
                 // BOM to explode. Without default_bom != "" here, choosing an
                 // item with no BOM at all just leads to an empty, unusable
                 // BOM field one step later.
-                get_query: () => ({
-                    filters: {
-                        is_stock_item: 1,
-                        is_sub_contracted_item: 1,
-                        default_bom: ['!=', ''],
-                    },
-                }),
+                get_query: po_fg_item_query,
                 onchange: async () => {
                     dialog.set_value('bom', '');
                     const fg_item = dialog.get_value('fg_item');
                     if (!fg_item) return;
+                    // this Finished Good's own service item, when its Subcontracting BOM names one
+                    frappe.xcall('erp_dacsinc_custom.purchase_order.default_subcontract_service_item', { fg_item })
+                        .then(item => { if (item && item !== dialog.get_value('service_item')) dialog.set_value('service_item', item); });
                     const boms = await frappe.db.get_list('BOM', {
                         filters: { item: fg_item, is_active: 1, docstatus: 1 },
                         fields: ['name'],
@@ -438,7 +443,15 @@ function show_add_subcontract_item_dialog(frm) {
             });
         },
     });
+    // Service Item comes filled in, so the cursor starts in Finished Good — on Service Item it only
+    // opened that field's dropdown over the dialog
+    dialog.no_focus = true;
+    dialog.on_page_show = () => dialog.fields_dict.fg_item.set_focus();
     dialog.show();
+    // Service Item filled in: the one most Subcontracting BOMs use (Stitching Charges) — changeable
+    frappe.xcall('erp_dacsinc_custom.purchase_order.default_subcontract_service_item').then(item => {
+        if (item && !dialog.get_value('service_item')) dialog.set_value('service_item', item);
+    });
 }
 
 // ----------------------------------------------------------------------------------
@@ -554,6 +567,8 @@ function po_check_jobber(frm) {
 }
 
 frappe.ui.form.on('Purchase Order', {
+    // after core's setup, which sets a filters-only query on this column
+    onload: function (frm) { frm.set_query('fg_item', 'items', po_fg_item_query); },
     supplier: function (frm) { po_check_jobber(frm); },
     is_subcontracted: function (frm) {
         apply_supplier_filter(frm);

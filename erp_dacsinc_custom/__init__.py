@@ -1,5 +1,7 @@
 __version__ = "0.0.1"
 
+import json
+
 import frappe
 
 def patch_notifications():
@@ -17,6 +19,17 @@ def patch_notifications():
 			notification_log._patched_send_email = True
 	except Exception:
 		pass
+
+def _item_names_matching(word):
+	"""Names of the items `word` is found in — the fields erpnext's item_query searches (Item search fields, code,
+	name, group, description, barcodes)."""
+	fields = frappe.get_meta("Item", cached=True).get_search_fields()
+	fields = list(dict.fromkeys(fields + ["name", "item_code", "item_group", "item_name", "description"]))
+	cond = " or ".join(f"`{f}` like %(txt)s" for f in fields)
+	txt = "%" + word.replace("%", "") + "%"
+	return set(frappe.db.sql_list(f"""select name from tabItem where ({cond})
+		or name in (select parent from `tabItem Barcode` where barcode like %(txt)s)""", {"txt": txt}))
+
 
 def patch_item_query():
 	try:
@@ -36,32 +49,30 @@ def patch_item_query():
 				if len(words) <= 1:
 					raw_results = original_item_query(doctype, txt, searchfield, start, page_len, filters, as_dict)
 				else:
-					matching_names_per_word = []
-					for w in words:
-						res = original_item_query(doctype, w, searchfield, 0, 3000, filters, as_dict=True)
-						names = {item['name'] for item in res if 'name' in item}
-						matching_names_per_word.append(names)
-
+					# every word must match somewhere (any order). Each word's matches are read in full by
+					# _item_names_matching — taking item_query's first 3000 per word dropped the item whenever
+					# a common word ("shirt") had more matches than that, so "shirt 36 terrier night" found nothing.
 					common_names = None
-					for names in matching_names_per_word:
-						if common_names is None:
-							common_names = names
-						else:
-							common_names = common_names.intersection(names)
+					for w in words:
+						names = _item_names_matching(w)
+						common_names = names if common_names is None else common_names & names
+						if not common_names:
+							return []
 
-					if not common_names:
-						return []
-
-					first_word_results = original_item_query(doctype, words[0], searchfield, 0, 3000, filters, as_dict)
-
-					raw_results = []
-					seen = set()
-					for item in first_word_results:
-						name = item.get('name') if as_dict else item[0]
-						if name in common_names and name not in seen:
-							seen.add(name)
-							raw_results.append(item)
-					raw_results = raw_results[start:start+page_len]
+					# item_query itself (filters, disabled / variant rules, ordering, columns) on the first
+					# word, limited to the items every word matched, and paged by it
+					if isinstance(filters, str):
+						filters = json.loads(filters)
+					names = sorted(common_names)
+					if isinstance(filters, list):
+						filters = filters + [["Item", "name", "in", names]]
+					else:
+						filters = dict(filters or {})
+						if filters.get("name") is not None:
+							keep = frappe.get_all("Item", filters={"name": filters["name"]}, pluck="name")
+							names = [n for n in names if n in set(keep)]
+						filters["name"] = ["in", names or [""]]
+					raw_results = original_item_query(doctype, words[0], searchfield, start, page_len, filters, as_dict)
 
 				import re
 				def highlight_text(text):
@@ -108,7 +119,9 @@ def patch_search_widget():
 				kwargs.pop('cmd', None)
 				
 				txt = txt.strip() if txt else ""
-				if doctype not in ["Item", "Customer", "Supplier"] or not txt:
+				# item_query matches every word itself (patch_item_query) — the per-word loop below reads 3000
+				# rows a word, which lost the item for a common word, so item_query gets the words directly
+				if doctype not in ["Item", "Customer", "Supplier"] or not txt or query == "erpnext.controllers.queries.item_query":
 					return original_search_widget(doctype, txt, query, searchfield, start, page_length, filters, filter_fields, as_dict, **kwargs)
 
 				words = [w for w in txt.split() if w]
