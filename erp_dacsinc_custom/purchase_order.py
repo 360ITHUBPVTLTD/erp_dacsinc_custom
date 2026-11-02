@@ -1845,6 +1845,20 @@ def get_item_details_for_po(item_code, uom=None):
 
 
 @frappe.whitelist()
+def default_subcontract_service_item(fg_item=None):
+	"""Service Item for the Add Subcontract Item dialog: the one on this Finished Good's active Subcontracting BOM,
+	else the one most Subcontracting BOMs use (Stitching Charges here). Only enabled, non-stock items."""
+	if fg_item:
+		item = frappe.db.get_value("Subcontracting BOM", {"finished_good": fg_item, "is_active": 1}, "service_item")
+		if item and frappe.db.get_value("Item", item, "disabled") == 0:
+			return item
+	rows = frappe.db.sql("""select sb.service_item from `tabSubcontracting BOM` sb
+		join `tabItem` i on i.name = sb.service_item and i.disabled = 0 and i.is_stock_item = 0
+		where sb.is_active = 1 group by sb.service_item order by count(*) desc limit 1""")
+	return rows[0][0] if rows else None
+
+
+@frappe.whitelist()
 def build_subcontract_item_row(service_item, fg_item, bom, qty):
     """
     Backs the "Add Subcontract Item" dialog — turns a Service Item / Finished

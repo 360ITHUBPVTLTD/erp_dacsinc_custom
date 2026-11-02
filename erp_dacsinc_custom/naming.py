@@ -5,7 +5,8 @@ The base number is 14 characters, so the amended copy ERPNext makes ("-1") is st
 "2026-2027" (SI/2026-2027/00001 = 17), hence the short year .FYS. ("26-27").
 
 The series is chosen here (before_insert, every listed doctype), never by the user: a return gets its own series
-(CN / DBN / SR / PRR), a Payment Entry RCT / PAY / CTR by payment type, a POS bill the store's code. Quotation keeps
+(CN / DBN / SR / PRR), a Payment Entry RCT / PAY / CTR by payment type, a POS bill the store's code, a subcontracted
+Purchase Order SCO. Quotation keeps
 SAL-QTN-.YYYY.- (user, 29-10-2026).
 """
 
@@ -30,6 +31,8 @@ SERIES = {
 	"Stock Reconciliation": ("STR/.FYS./.####", None),
 }
 PAYMENT = {"Receive": "RCT/.FYS./.####", "Pay": "PAY/.FYS./.####", "Internal Transfer": "CTR/.FYS./.####"}
+# a Purchase Order ticked Is Subcontracted (the jobber's PO) has its own series (user, 02-11-2026)
+SUBCONTRACTED_PO = "SCO/.FYS./.#####"
 # POS bills: the store's code by the POS warehouse; any other counter POS/…
 POS_STORE = {"JP Nagar Store - IND": "JP", "Rajajinagar Store - IND": "RN", "Varthur Store - IND": "VA",
 	"POS VV Puram - IND": "VV", "VV Puram - IND": "VV"}
@@ -47,6 +50,8 @@ def all_series(doctype):
 	if doctype == "POS Invoice":
 		return [pos_series(c) for c in dict.fromkeys([*POS_STORE.values(), POS_OTHER])]
 	normal, ret = SERIES[doctype]
+	if doctype == "Purchase Order":
+		return [normal, SUBCONTRACTED_PO]
 	return [normal] + ([ret] if ret else [])
 
 
@@ -67,6 +72,8 @@ def set_series(doc, method=None):
 	elif dt == "POS Invoice":
 		wh = doc.get("set_warehouse") or (frappe.get_cached_value("POS Profile", doc.pos_profile, "warehouse") if doc.get("pos_profile") else "")
 		series = pos_series(POS_STORE.get(wh or "", POS_OTHER))
+	elif dt == "Purchase Order" and doc.get("is_subcontracted"):
+		series = SUBCONTRACTED_PO
 	elif dt in SERIES:
 		normal, ret = SERIES[dt]
 		series = ret if ret and doc.get("is_return") else normal

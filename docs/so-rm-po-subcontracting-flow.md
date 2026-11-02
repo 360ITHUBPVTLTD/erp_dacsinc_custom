@@ -1949,6 +1949,13 @@ The Finished Good field is filtered the same way core's own grid-level
 `fg_item` query is: `is_stock_item=1, is_sub_contracted_item=1,
 default_bom != ""` — an item with no BOM at all just leads to an unusable
 BOM field one step later.
+It searches with ERPNext's `item_query` (`po_fg_item_query`, also set on the grid's
+Finished Good column) — every word, any order; see `docs/list-search.md`.
+
+Service Item comes filled in (`default_subcontract_service_item`): the one most active
+Subcontracting BOMs use (Stitching Charges); choosing a Finished Good switches it to that
+item's own Subcontracting BOM service item. Disabled or stock items are never filled in
+(Order Charges is disabled, so its one Finished Good gets Stitching Charges). It can be changed.
 
 ### "Create SC" — Raw Material Stock Check & Planning
 

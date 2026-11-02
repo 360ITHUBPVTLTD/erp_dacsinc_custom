@@ -14,6 +14,7 @@ import frappe
 from frappe.desk import search as frappe_search
 
 MIN_PIECE = 2
+ITEM_QUERY = "erpnext.controllers.queries.item_query"
 
 
 def pieces(txt):
@@ -48,7 +49,9 @@ def _merge(runs, page_length, key):
 @frappe.whitelist()
 def search_widget(doctype, txt, query=None, searchfield=None, start=0, page_length=10, filters=None,
 				  filter_fields=None, as_dict=False, reference_doctype=None, ignore_user_permissions=False):
-	pats = _patterns((txt or "").strip())
+	# ERPNext's item_query is patched (erp_dacsinc_custom/__init__.py) to match every word, any order, any number
+	# of words — it gets the words as typed; "a%b%c" would reach it as one piece and lose that
+	pats = [(txt or "").strip()] if query == ITEM_QUERY else _patterns((txt or "").strip())
 	run = lambda t: frappe_search.search_widget(doctype, t, query=query, searchfield=searchfield, start=start,
 		page_length=page_length, filters=filters, filter_fields=filter_fields, as_dict=as_dict,
 		reference_doctype=reference_doctype, ignore_user_permissions=ignore_user_permissions)
