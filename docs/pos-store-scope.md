@@ -599,11 +599,21 @@ They are built from Version 2's html, so a change to the receipt's layout is mad
 | **POS Invoice A4** | A4 | short bills fill the page (up to about 22 item lines); a longer bill continues on the next sheet |
 | **POS Invoice A5** | A5 (half A4) | bills up to about 10 item lines fill the half page; longer ones continue on a second sheet |
 | **POS Invoice Version 2** | thermal roll / receipt | no blank rows (a roll has no page bottom) |
+| **POS Invoice Thermal** | 80mm thermal (receipt) printer, 72mm print width | none — Version 2's bill laid out one under another for the narrow roll (below) |
 
 Price List Rate and Discount Amount print only on a bill with a discount (all three formats). Paper size and
 margins are in each format (`page-size` for the PDF, `@page` for the browser's print from the POS screen). The
 fill is measured for the PDF; a browser's own print margins can differ, so print one bill from the POS screen
 when a counter switches format.
+
+**POS Invoice Thermal** (for a store printing on a thermal terminal printer) is Version 2's content rearranged for
+72mm: header centred (store address, GSTIN, PAN, MSME, landline), Inv / Dt on two lines, walk-in line, then each
+item as its own block — name, then HSN / Qty / Rate / Amount, an MRP / Disc line only on a discounted line, a dashed
+line across under each item — then Qty / Pay, the totals one under another, the tax summary, terms, Thank You.
+Black only (thermal printers print no grey). The browser print has no page margin (`@page { margin: 0 }`), so the
+printer's own roll width decides the paper; the PDF is an 80mm × 297mm page. Item separators are drawn on a `div`:
+wkhtmltopdf drew a dashed table-cell border solid in places. A store uses it by choosing it in its POS Profile ›
+Print Format.
 
 ## POS paperwork: POS flags, transfer approval, closing report (`pos_notify.py`)
 
