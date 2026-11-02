@@ -37,6 +37,7 @@ SAMPLES = {
 	"POS Invoice A4": ("POS Invoice", {}, {}),
 	"POS Invoice A5": ("POS Invoice", {}, {}),
 	"POS Invoice Version 2": ("POS Invoice", {}, {}),
+	"POS Invoice Thermal": ("POS Invoice", {}, {}),
 	"Payment Receipt DAC": ("Payment Entry", {}, {}),
 }
 
