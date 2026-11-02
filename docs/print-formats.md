@@ -154,6 +154,12 @@ box shows it. Credit / Debit Note and the two older challans use `min-height` bo
 switches to a fixed height when its item lines (long names count extra) are at most 11, else plain flow.
 Box heights (mm) are measured per format on a 1-page document: the largest that stays one page, less 1.
 
+Subcontracting Order Print Format 3 (Goods Issue Note) leaves the space as **empty space with column lines only**
+(`.dacs-fill-wrap td` without top / bottom lines): the space left rarely ends on a row line, and ruled blank rows left a
+cut row with its own line just above the total. The item table, the blank space and the total row are pulled up 1px
+each (`margin-top: -1px`) so the lines where they meet are one line, in the PDF and in the preview. Its Receivable
+Product Summary has no UOM column (Sn., Item, Qty — Qty lined up with the issue table's Qty).
+
 Measured 28-Oct-2026 on the recent documents of each format: every 1-page document stays one page, the
 short ones end 1–11 mm above the page footer. Changing a font size, padding or a block's height means
 re-measuring the box height and the estimate's weights (render the recent documents, `pdfinfo` for pages).
