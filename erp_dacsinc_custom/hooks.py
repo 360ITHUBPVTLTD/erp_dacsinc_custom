@@ -35,7 +35,7 @@ app_include_js = [
     # "Print it now?" after creating SI / PO / embroidery documents (MOM 8 Oct 2026)
     "/assets/erp_dacsinc_custom/js/print_prompt.js?v=1.0.5",
     # All · Normal · Returns on the SI / DN / PI / PR lists (called by their *_list.js)
-    "/assets/erp_dacsinc_custom/js/return_list_toggle.js?v=1.0.0",
+    "/assets/erp_dacsinc_custom/js/return_list_toggle.js?v=1.0.1",
     # outstanding balance on the Customer / Supplier lists (called by their *_list.js)
     "/assets/erp_dacsinc_custom/js/party_balance_list.js?v=1.0.5",
     # one "Search everything" box on the Customer / Supplier lists (called by their *_list.js)
