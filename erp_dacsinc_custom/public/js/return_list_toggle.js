@@ -20,7 +20,15 @@ window.dacs_return_list_toggle = function (doctype) {
 	};
 	const pick = async (lv, key) => {
 		await lv.filter_area.remove("is_return");
-		if (key !== "all") await lv.filter_area.add([[doctype, "is_return", "=", cint(key)]]);
+		if (key === "0") {
+			// is_return is a standard filter (a tick box in the filter bar) on some lists, and Frappe drops a standard
+			// filter whose value is 0 (get_standard_filters keeps only truthy values): Normal went into the
+			// filter list instead, where "= 0" stays
+			await lv.filter_area.filter_list.add_filters([[doctype, "is_return", "=", 0]]);
+			lv.refresh();
+		} else if (key === "1") {
+			await lv.filter_area.add([[doctype, "is_return", "=", 1]]);
+		}
 		paint(lv);
 	};
 
