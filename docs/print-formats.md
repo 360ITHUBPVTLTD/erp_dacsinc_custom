@@ -96,6 +96,21 @@ terms lines) prints without the box, 18 mm above the footer.
 **Header details (Format 4):** only the detail rows with a value print (a pair keeps its filled half; an
 empty row is left out), so the header box is as tall as what it holds.
 
+## e-Invoice and e-Way Bill
+
+**Print (Format 4, so Multi Copy Master too):** an invoice with an IRN prints an **E-Invoice** strip under the header box —
+IRN, Ack No., Ack Date and the signed QR code (India Compliance's `get_qr_code`, 22 mm), read from its e-Invoice Log by
+the IRN ("(IRN cancelled)" when the log says so). The **Eway Bill No.** is a header detail row (shown when set). An
+invoice without an IRN prints exactly as before. The strip's height comes off Format 4's page estimate (−25 mm when
+`doc.irn`), so an e-invoiced bill falls back to plain flow sooner rather than overflowing.
+
+**Form:** Sales Invoice › its own full-width section **e-Invoice / e-Way Bill** at the top, right after the customer /
+date section (`custom_einvoice_section` + `custom_einvoice_ewaybill_html`, shown when the invoice has an IRN or an e-way bill;
+`public/js/sales_invoice.js` › `dacs_einvoice_box`, data from `einvoice_info.get_einvoice_ewaybill`). One compact row: the
+QR; e-Invoice — status, IRN, Ack No / Date, seller / buyer GSTIN, place of supply, invoice value; e-Way Bill — status, number,
+generated, valid upto, mode, vehicle no. / type, distance, LR no. / date, transporter. A cancelled IRN or e-way bill shows red
+with the cancel date (and reason).
+
 ## Font
 
 Every format loads **Liberation Sans** (Arial's letter widths; SIL Open Font License, `public/fonts`, licence beside
