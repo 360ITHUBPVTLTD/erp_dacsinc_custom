@@ -531,6 +531,11 @@ opening-entry trigger again.
 Submitting it as the store user also needs India Compliance's GST Return Log create
 right; see `docs/access-worksheets.md` (SUBMIT_WRITES).
 
+**"Not Saved" on a draft closing:** ERPNext's form sets Period End Date to "now" every time it opens a draft, so a
+saved draft — e.g. one whose closing Failed and went back to draft — always read "Not Saved" and showed only Save. Its
+bills were taken up to the saved end time and are not fetched again, so `public/js/pos_closing_entry.js` (`setup`) keeps
+a saved draft's Period End Date; a new closing still gets "now". The form opens clean and offers Submit.
+
 ### Exchanges at closing (`pos_merge.py`)
 
 Closing turns the shift's bills into one Sales Invoice and its returns into credit notes (POS Invoice Merge Log).
@@ -551,10 +556,14 @@ return; the exchange through a real POS Closing Entry submit and cancel. **After
 `POSInvoiceMergeLog.on_submit` / `on_cancel` / `cancel_linked_invoices` with `pos_merge.py` (it repeats on_submit's
 steps for exchange shifts) and re-run those cases.
 
-A return on its own needs the item's **stock history in that store**: ERPNext values the returned piece from it
-(not from the Item master). An item whose stock was never loaded in the store (e.g. DIVINE WHITE SHIRT 26 at Varthur)
-can't be returned there until it is — load it with a Stock Reconciliation. Make returns from the original bill
-(Return on it) whenever it exists.
+A return on its own (made directly, without the original bill — allowed: stores do it) is valued like any return
+when the item has stock history in that store. When it has none (e.g. its opening stock was never loaded there —
+DIVINE WHITE SHIRT 26 at Varthur, 03-11-2026), ERPNext would stop the closing ("Valuation Rate for the Item … is
+required") even with a valuation rate on the Item: for such returns it skips its own fallbacks. `merge_pos_invoice_into`
+sets the credit note line's incoming rate from the item's latest valuation in another warehouse of the company, else
+ERPNext's fallbacks (Item valuation rate, standard rate, buying Item Price). Only an item with none of these still stops
+the closing — give it a valuation rate on the Item. Tested 03-11-2026 (rolled back, through real POS Closing Entries):
+Item-rate only (330), other-warehouse only (275), none (ERPNext's error), plus a normal shift and the cancel.
 
 ## Email Receipt (`pos_receipt_email.py`)
 

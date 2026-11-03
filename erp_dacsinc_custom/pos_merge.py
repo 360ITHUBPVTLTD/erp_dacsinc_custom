@@ -13,6 +13,14 @@ The independent returns' credit note is posted one second before the closing tim
 entries strictly before its own posting time, so a credit note at the very same second would not count yet. A shift
 without such a return runs ERPNext's own code unchanged.
 
+Cost of a returned piece: ERPNext values a return from the item's stock history in that warehouse. For a return with
+no original bill it skips its own fallbacks and stops ("Valuation Rate for the Item … is required"), so an item never
+stocked in that store (e.g. its opening stock not loaded) blocked the closing even with a valuation rate on the Item.
+On a consolidated credit note, a line whose item has no stock history in its warehouse gets its incoming rate from the
+item's latest valuation in another warehouse of the company, else ERPNext's own fallbacks (stock_ledger.get_valuation_rate:
+Item valuation rate, standard rate, buying Item Price). ERPNext keeps an incoming rate already set (FIFO items); lines
+with history are left to ERPNext. With none of these, ERPNext's error stands — give the Item a valuation rate.
+
 Cancelling: ERPNext cancels only the consolidated invoice and the last credit note it noted, so a shift with more than
 one credit note (an exchange plus a return of its own bill — or, in ERPNext too, returns against several earlier
 closings) left the others submitted. Here every invoice the shift's bills were merged into is cancelled, newest first
@@ -24,7 +32,7 @@ from datetime import timedelta
 import frappe
 from erpnext.accounts.doctype.pos_invoice_merge_log.pos_invoice_merge_log import POSInvoiceMergeLog
 from erpnext.stock.utils import get_combine_datetime
-from frappe.utils import getdate
+from frappe.utils import flt, getdate
 
 
 class StorePOSInvoiceMergeLog(POSInvoiceMergeLog):
@@ -86,3 +94,30 @@ class StorePOSInvoiceMergeLog(POSInvoiceMergeLog):
 			if si.docstatus == 1:
 				si.flags.ignore_validate = True
 				si.cancel()
+
+	def merge_pos_invoice_into(self, invoice, data):
+		invoice = super().merge_pos_invoice_into(invoice, data)
+		if invoice.get("is_return"):
+			for row in invoice.get("items") or []:
+				if not flt(row.get("incoming_rate")) and row.get("item_code") and row.get("warehouse"):
+					rate = returned_piece_cost(row.item_code, row.warehouse, invoice.company, invoice.currency)
+					if rate:
+						row.incoming_rate = rate
+		return invoice
+
+
+def returned_piece_cost(item_code, warehouse, company, currency):
+	"""The cost of a returned piece of an item with no stock history in `warehouse` (None when it has history: ERPNext
+	values it from there)."""
+	if not frappe.db.get_value("Item", item_code, "is_stock_item"):
+		return None
+	if frappe.db.exists("Stock Ledger Entry", {"item_code": item_code, "warehouse": warehouse, "is_cancelled": 0}):
+		return None
+	elsewhere = frappe.db.sql("""select valuation_rate from `tabStock Ledger Entry`
+		where item_code = %s and company = %s and is_cancelled = 0 and valuation_rate > 0
+		order by posting_datetime desc, creation desc limit 1""", (item_code, company))
+	if elsewhere:
+		return flt(elsewhere[0][0])
+	return flt(frappe.db.get_value("Item", item_code, "valuation_rate")
+		or frappe.db.get_value("Item", item_code, "standard_rate")
+		or frappe.db.get_value("Item Price", {"item_code": item_code, "buying": 1, "currency": currency}, "price_list_rate")) or None
