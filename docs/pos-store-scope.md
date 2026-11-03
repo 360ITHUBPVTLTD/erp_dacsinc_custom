@@ -531,6 +531,31 @@ opening-entry trigger again.
 Submitting it as the store user also needs India Compliance's GST Return Log create
 right; see `docs/access-worksheets.md` (SUBMIT_WRITES).
 
+### Exchanges at closing (`pos_merge.py`)
+
+Closing turns the shift's bills into one Sales Invoice and its returns into credit notes (POS Invoice Merge Log).
+ERPNext books the Sales Invoice first, so an **exchange** — a customer brings back a piece bought earlier and takes the
+same item — failed whenever the store had none of it before: the sale needs the piece that only the return brings in
+("1 units of … needed in … Store"; the closing then stays a draft, status Failed). The POS screen allowed the sale (it
+counts the shift's returns). `StorePOSInvoiceMergeLog` (override_doctype_class) books the **independent returns** first —
+a return on its own, or against an already-closed bill — posted one second before the closing time (the sale's stock
+check counts only entries strictly before its own time), then the sales, then the returns of the shift's own bills,
+exactly as ERPNext (against that day's invoice). Seen on live 03-11-2026: Varthur, POS-CLO-2026-00009. A shift with no such return
+runs ERPNext's own code unchanged. The credit note is not moved before an invoice it returns against (a closing in the
+same second). **Cancelling a closing** cancels every invoice / credit note its bills were merged into, newest first —
+ERPNext cancels only the invoice and the last credit note it noted, which left any other credit note submitted.
+
+Tested 03-11-2026 (rolled back): normal shift (ERPNext's path) and its cancel; exchange of an item at 0 stock with a
+return of the shift's own bill (3 invoices) and its cancel; return against an earlier closed bill; a shift with only a
+return; the exchange through a real POS Closing Entry submit and cancel. **After an ERPNext update**, compare
+`POSInvoiceMergeLog.on_submit` / `on_cancel` / `cancel_linked_invoices` with `pos_merge.py` (it repeats on_submit's
+steps for exchange shifts) and re-run those cases.
+
+A return on its own needs the item's **stock history in that store**: ERPNext values the returned piece from it
+(not from the Item master). An item whose stock was never loaded in the store (e.g. DIVINE WHITE SHIRT 26 at Varthur)
+can't be returned there until it is — load it with a Stock Reconciliation. Make returns from the original bill
+(Return on it) whenever it exists.
+
 ## Email Receipt (`pos_receipt_email.py`)
 
 POS Profile › **Receipt Email** (exported in `custom/pos_profile.json`):
