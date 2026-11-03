@@ -89,6 +89,18 @@ frappe.ui.form.on("POS Closing Entry", {
 	custom_cash_counted(frm) { if (!dacs_cash.syncing) dacs_cash.counted_typed(frm); },
 	custom_cash_handed_over(frm) { if (!dacs_cash.syncing) dacs_cash.update(frm); },
 	custom_difference_reason(frm) { if (!dacs_cash.syncing) dacs_cash.update(frm); },
+	// ERPNext's onload sets Period End Date to "now" on every draft it opens, so a saved draft (e.g. one whose closing
+	// Failed and went back to draft) always read "Not Saved" and offered only Save. Its bills were taken up to the saved
+	// end time and are not fetched again, so a saved draft keeps that time; a new closing still gets "now" (ERPNext's).
+	setup(frm) {
+		if (frm.__dacs_keep_end) return;
+		frm.__dacs_keep_end = true;
+		const set_value = frm.set_value.bind(frm);
+		frm.set_value = function (field, value, ...rest) {
+			if (field === "period_end_date" && !frm.is_new() && frm.doc.docstatus === 0 && frm.doc.period_end_date) return Promise.resolve();
+			return set_value(field, value, ...rest);
+		};
+	},
 	onload(frm) {
 		["payment_reconciliation", "pos_transactions", "taxes"].forEach((f) => {
 			if (!Array.isArray(frm.doc[f])) frm.doc[f] = [];
