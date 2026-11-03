@@ -52,3 +52,4 @@ erp_dacsinc_custom.patches.bulk_payment_status
 erp_dacsinc_custom.patches.naming_series_fy
 erp_dacsinc_custom.patches.list_filters
 erp_dacsinc_custom.patches.so_order_stage
+erp_dacsinc_custom.patches.uniform_transfer_to_ewo

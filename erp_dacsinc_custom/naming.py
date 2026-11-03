@@ -71,7 +71,8 @@ def short_fiscal_year(doc, variable):
 	"""naming_series_variables FYS: the document's financial year as 26-27"""
 	from erpnext.accounts.utils import get_fiscal_year
 
-	date = getdate((doc.get("posting_date") or doc.get("transaction_date") or doc.get("schedule_date")) if doc else None)
+	# "date": Embroidery Work Order (EM/.FYS./.#####, its own autoname)
+	date = getdate((doc.get("posting_date") or doc.get("transaction_date") or doc.get("schedule_date") or doc.get("date")) if doc else None)
 	start, end = get_fiscal_year(date=date, company=doc.get("company") if doc else None)[1:3]
 	return f"{start.year % 100:02d}-{end.year % 100:02d}"
 

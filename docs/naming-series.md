@@ -14,6 +14,7 @@ a running number that starts again at 1 every 1 April (agreed with the user 29-1
 | Purchase Order / Subcontracting Order | PO/…/00001 · JO/…/00001 | Purchase Order ticked Is Subcontracted (jobber PO): SCO/…/00001 |
 | Purchase Receipt / Subcontracting Receipt | GRN/…/0001 · JR/…/00001 | Purchase Receipt return: PRR/…/0001 |
 | Purchase Invoice | **1661** | return (Debit Note): **41** |
+| Embroidery Work Order (Full Piece, Panel, Stock Transfer) | EM/26-27/00001 (the doctype's own autoname `EM/.FYS./.#####`) | |
 | Journal Entry / Stock Entry / Stock Reconciliation | JV/…/00001 · STE/…/0001 · STR/…/0001 | Journal Entry of Voucher Type Credit Note: **6** · Debit Note: **32** |
 | Quotation | unchanged: SAL-QTN-.YYYY.- | |
 

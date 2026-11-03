@@ -8,6 +8,9 @@
  "field_order": [
   "item_code",
   "item_name",
+  "same_item",
+  "target_item",
+  "uom",
   "column_break_okaj",
   "ordered_qty",
   "received_qty",
@@ -60,13 +63,36 @@
    "fieldtype": "Small Text",
    "hidden": 1,
    "label": "Source Pick Lists (JSON)"
+  },
+  {
+   "fieldname": "same_item",
+   "fieldtype": "Check",
+   "label": "Same Item",
+   "depends_on": "eval:parent.work_type=='Stock Transfer'",
+   "read_only": 1
+  },
+  {
+   "fieldname": "target_item",
+   "fieldtype": "Link",
+   "label": "Comes Back As (Embroidered)",
+   "options": "Item",
+   "depends_on": "eval:parent.work_type=='Stock Transfer'",
+   "read_only": 1
+  },
+  {
+   "fieldname": "uom",
+   "fieldtype": "Link",
+   "label": "UOM",
+   "options": "UOM",
+   "depends_on": "eval:parent.work_type=='Stock Transfer'",
+   "read_only": 1
   }
  ],
  "grid_page_length": 50,
  "index_web_pages_for_search": 1,
  "istable": 1,
  "links": [],
- "modified": "2026-09-24 15:11:36.573420",
+ "modified": "2026-11-03 18:00:00.000000",
  "modified_by": "Administrator",
  "module": "Erp Dacsinc Custom",
  "name": "Embroidery Work Order Item",

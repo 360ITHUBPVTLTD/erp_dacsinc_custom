@@ -55,7 +55,7 @@ TAB_DOCTYPES = {
     "picklist": ["Pick List"],
     "billing": ["Sales Invoice"],
     "accounts": ["Payment Entry", "Journal Entry", "Sales Invoice", "Purchase Invoice"],
-    "uniform": ["Uniform Embroidery Transfer"],
+    "uniform": ["Embroidery Work Order"],
     "logistics": ["Sales Invoice"],
 }
 

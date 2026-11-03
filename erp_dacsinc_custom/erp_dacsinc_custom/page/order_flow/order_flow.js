@@ -93,8 +93,9 @@ const OF_TAB_FILTERS = {
     // The Pick Lists themselves are the rows here, so any Pick List event
     // (created, submitted, delivered against) is a real change to this tab.
     picklist: { doctypes: ['Pick List'] },
-    // Lists embroidery stock transfers, which carry no Sales Order.
-    uniform:  { doctypes: ['Uniform Embroidery Transfer'] }
+    // Lists embroidery stock transfers (Embroidery Work Orders of work type Stock Transfer), which carry
+    // no Sales Order — filter_tab_rows keeps only those here, and keeps them off Job Work.
+    uniform:  { doctypes: ['Embroidery Work Order'] }
 };
 
 // Legacy alias — keeps any remaining callers using the old name working.
@@ -137,7 +138,7 @@ const OF_TABLE_DOCTYPES = {
     approval: { '*': ['Sales Order'] },
     picklist: { '*': ['Pick List'] },
     billing:  { '*': ['Delivery Note', 'Sales Invoice', 'Pick List'] },
-    uniform:  { '*': ['Uniform Embroidery Transfer'] },
+    uniform:  { '*': ['Embroidery Work Order'] },
     logistics: { '*': ['Sales Invoice'] },
 };
 
@@ -2387,7 +2388,7 @@ class OrderFlow {
         this.$body.on('click', '.of-uet-print-btn', (e) => {
             e.stopPropagation();
             const name = $(e.currentTarget).data('name');
-            if (name && window.dacs_print_url) window.open(dacs_print_url('Uniform Embroidery Transfer', name), '_blank');
+            if (name && window.dacs_print_url) window.open(dacs_print_url('Embroidery Work Order', name), '_blank');
         });
 
         // Purchase Flow tab's own Print — every row there is a plain
@@ -3178,6 +3179,12 @@ class OrderFlow {
         if (tab_name === 'tracker') {
             result = result.filter(x => x.sales_order && Number(x.so_docstatus) === 1);
         }
+
+        // An embroidery stock transfer is an Embroidery Work Order with no Sales Order behind it: it belongs
+        // to the Embroidery Transfers tab, the Full Piece / Panel work orders (always tied to an order) to Job Work.
+        const is_transfer = x => x.doctype === 'Embroidery Work Order' && !x.sales_order;
+        if (tab_name === 'uniform') result = result.filter(is_transfer);
+        if (tab_name === 'jobwork') result = result.filter(x => !is_transfer(x));
 
         if (tab_name === 'approval') {
             result = result.filter(x => Number(x.so_docstatus) === 0);
@@ -4269,6 +4276,18 @@ class OrderFlow {
                     msg = `Job Work started — PO ${doc_link} sent to subcontract vendor ${supplier_link}`;
                     border_class = 'of-feed__item--planned';
                 }
+            } else if (ev.doctype === 'Embroidery Work Order' && st.startsWith('stock transfer')) {
+                // an embroidery stock transfer (its feed status is "Stock Transfer <status>", see _EVENT_SQL)
+                if (ds === 2) {
+                    msg = `Embroidery transfer ${doc_link} cancelled — stock put back`;
+                    border_class = 'of-feed__item--blocked';
+                } else if (st.includes('completed')) {
+                    msg = `Embroidery transfer ${doc_link} received back into stock`;
+                    border_class = 'of-feed__item--ready';
+                } else {
+                    msg = `Plain stock sent to embroidery on transfer ${doc_link}`;
+                    border_class = 'of-feed__item--planned';
+                }
             } else if (ev.doctype === 'Embroidery Work Order') {
                 if (ds === 0) {
                     msg = `Embroidery Work Order ${doc_link} created (Draft) with jobber ${supplier_link}`;
@@ -4372,14 +4391,6 @@ class OrderFlow {
                         msg = `Supplier bill ${doc_link} submitted — payment pending to ${supplier_link}`;
                         border_class = 'of-feed__item--wait';
                     }
-                }
-            } else if (ev.doctype === 'Uniform Embroidery Transfer') {
-                if (st.includes('receiv')) {
-                    msg = `Embroidery transfer ${doc_link} received back into stock`;
-                    border_class = 'of-feed__item--ready';
-                } else {
-                    msg = `Plain stock sent to embroidery on transfer ${doc_link}`;
-                    border_class = 'of-feed__item--planned';
                 }
             } else if (ev.doctype === 'Comment') {
                 const author = ev.owner_fullname || ev.owner || 'User';
@@ -6252,7 +6263,7 @@ class OrderFlow {
                 </div>`).join('') + (lines.length > 3 ? `<div class="of-micro text-muted">+ ${lines.length - 3} ${__('more — expand the row')}</div>` : '');
             return `
                 <tr class="of-transfer-row">
-                    <td><i class="fa fa-caret-right of-transfer-receipts-toggle" data-id="${of_esc(t.name)}" style="cursor:pointer;margin-right:4px;color:var(--text-light);"></i><a href="/app/uniform-embroidery-transfer/${encodeURIComponent(t.name)}" target="_blank"><b>${of_esc(t.name)}</b></a>
+                    <td><i class="fa fa-caret-right of-transfer-receipts-toggle" data-id="${of_esc(t.name)}" style="cursor:pointer;margin-right:4px;color:var(--text-light);"></i><a href="/app/embroidery-work-order/${encodeURIComponent(t.name)}" target="_blank"><b>${of_esc(t.name)}</b></a>
                         <div class="of-micro text-muted">${lines.length} ${lines.length === 1 ? __('item') : __('items')}</div>
                         ${of_creator_html(t)}</td>
                     <td style="text-align:left;">${items_html || '—'}</td>
@@ -6452,7 +6463,7 @@ class OrderFlow {
                     dialog.hide();
                     frappe.show_alert({ message: __('Transfer {0} sent to embroidery with {1} line(s) ({2})', [m.transfer, lines.length, m.stock_entry || '']), indicator: 'green' });
                     this.refresh(true);
-                    if (m.transfer && window.dacs_print_prompt) dacs_print_prompt('Uniform Embroidery Transfer', m.transfer, __('Embroidery transfer'));
+                    if (m.transfer && window.dacs_print_prompt) dacs_print_prompt('Embroidery Work Order', m.transfer, __('Embroidery transfer'));
                 }).always(() => dialog.get_primary_btn().attr('disabled', false));
             },
         });
