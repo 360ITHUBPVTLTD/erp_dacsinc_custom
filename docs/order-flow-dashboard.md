@@ -2118,8 +2118,9 @@ Received, from the lines). The old single-item header fields stay hidden for his
   on it). Transfers made before this have no jobber.
 - **Print** (the row's print button, and "print now?" after sending): **Uniform Embroidery Transfer DAC**
   (`print_format/uniform_embroidery_transfer_dac/`, the doctype's default print format) — the Embroidery
-  Work Order print's layout: Issued To the jobber with their address, each line's plain item sent and the
-  item it comes back as with the qty, total, Dispatch Notes as remarks, signatures.
+  Work Order print's layout: Issued To the jobber with their address, and as on the work order the qty
+  sent per **Item Type** of the plain items (Item › custom_item_type; "Uncategorized" when empty), not
+  the items themselves; total, Dispatch Notes as remarks, signatures. The Stock Entry number is not printed.
 - **Receive** (`receive_embroidery_transfer(transfer_id, lines)`): every pending line with "Received
   now" and **its own warehouse** (a "same warehouse on every line" shortcut fills them). Each received
   line gets its own Repack Stock Entry (plain item out of WIP, embroidered item into that line's
