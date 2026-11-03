@@ -101,8 +101,9 @@ empty row is left out), so the header box is as tall as what it holds.
 **Print (Format 4, so Multi Copy Master too):** an invoice with an IRN prints an **E-Invoice** strip under the header box —
 IRN, Ack No., Ack Date and the signed QR code (India Compliance's `get_qr_code`, 22 mm), read from its e-Invoice Log by
 the IRN ("(IRN cancelled)" when the log says so). The **Eway Bill No.** is a header detail row (shown when set). An
-invoice without an IRN prints exactly as before. The strip's height comes off Format 4's page estimate (−25 mm when
-`doc.irn`), so an e-invoiced bill falls back to plain flow sooner rather than overflowing.
+invoice without an IRN prints exactly as before. An e-invoiced bill always prints as **plain flow** (no page box, no blank
+rows): the box's fixed height was measured without the strip, and on live (03-11-2026, 36871 / 36872/26-27) it squeezed
+the items under the totals.
 
 **Form:** Sales Invoice › its own full-width section **e-Invoice / e-Way Bill** at the top, right after the customer /
 date section (`custom_einvoice_section` + `custom_einvoice_ewaybill_html`, shown when the invoice has an IRN or an e-way bill;
