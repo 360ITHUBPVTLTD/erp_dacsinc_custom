@@ -82,17 +82,19 @@ doctype_js = {
     # Close the POS: tables exist and the entry loads its opening amounts / invoices
     "POS Closing Entry": "public/js/pos_closing_entry.js",
 	"Lead": "public/js/lead.js",
-	"Sales Order": ["public/js/sales_order.js", "public/js/merchant_export.js"],
+	# a typed Price List Rate is kept on Qty / UOM / Customer change; a new Price List re-prices all lines
+	# (keep_price_list_rate.js, also on Quotation and Sales Invoice)
+	"Sales Order": ["public/js/sales_order.js", "public/js/merchant_export.js", "public/js/keep_price_list_rate.js"],
 	"Item": "public/js/item.js",
 	"Purchase Order": ["public/js/so_qty_cap.js", "public/js/purchase_order.js"],
 	"Purchase Invoice": "public/js/purchase_invoice.js",
 	"Material Request": ["public/js/so_qty_cap.js", "public/js/material_request.js", "public/js/pos_stock.js"],
 	"Stock Entry": "public/js/pos_stock.js",
 	"BOM": "public/js/bom.js",
-	"Sales Invoice": ["public/js/sales_invoice.js", "public/js/merchant_export.js"],
+	"Sales Invoice": ["public/js/sales_invoice.js", "public/js/merchant_export.js", "public/js/keep_price_list_rate.js"],
 	"Delivery Note": ["public/js/delivery_note.js", "public/js/merchant_export.js"],
 	# the "Merchant Export - GST 0.1%" tick (merchant_export.py)
-	"Quotation": "public/js/merchant_export.js",
+	"Quotation": ["public/js/merchant_export.js", "public/js/keep_price_list_rate.js"],
 	# Purchase Return: Debit Note status + "Make Debit Note" (return_goods.py)
 	"Purchase Receipt": "public/js/purchase_receipt.js",
 	"Pick List": "public/js/pick_list.js",

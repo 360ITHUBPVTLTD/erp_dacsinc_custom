@@ -9,7 +9,8 @@
 		// The form's "Print Sales Invoice" format (print_format/sales_invoice_multi_copy_master):
 		// copies (Original / Duplicate …); a return (Credit Note) hands over to "Credit Note DAC".
 		"Sales Invoice": { format: "Sales Invoice Multi Copy Master", copies: 1 },
-		"Uniform Embroidery Transfer": {},
+		// print_format/uniform_embroidery_transfer_dac — laid out like the Embroidery Work Order's
+		"Uniform Embroidery Transfer": { format: "Uniform Embroidery Transfer DAC", no_letterhead: 1 },
 		// Receipt (Receive) / Voucher (Pay) / Internal Transfer — print_format/payment_receipt_dac
 		"Payment Entry": { format: "Payment Receipt DAC" },
 		// one amount for several parties (doctype Bulk Payment)

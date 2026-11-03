@@ -1,0 +1,27 @@
+{
+ "content": null,
+ "creation": "2026-11-03 12:00:00",
+ "docstatus": 0,
+ "doctype": "Page",
+ "icon": "list",
+ "idx": 0,
+ "modified": "2026-11-03 12:00:00",
+ "modified_by": "Administrator",
+ "module": "Erp Dacsinc Custom",
+ "name": "item-stock-ledger",
+ "owner": "Administrator",
+ "page_name": "item-stock-ledger",
+ "roles": [
+  {
+   "role": "Admin"
+  },
+  {
+   "role": "Production Manager"
+  }
+ ],
+ "script": null,
+ "standard": "Yes",
+ "style": null,
+ "system_page": 0,
+ "title": "Item Stock Ledger"
+}

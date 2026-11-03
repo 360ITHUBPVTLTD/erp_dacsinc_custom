@@ -2,9 +2,15 @@
  "actions": [],
  "autoname": "autoincrement",
  "creation": "2026-08-05 14:40:00",
+ "default_print_format": "Uniform Embroidery Transfer DAC",
  "doctype": "DocType",
  "engine": "InnoDB",
  "field_order": [
+  "jobber_section",
+  "supplier",
+  "supplier_name",
+  "column_break_jobber",
+  "notes",
   "items_section",
   "items",
   "total_qty",
@@ -30,47 +36,78 @@
  ],
  "fields": [
   {
+   "fieldname": "jobber_section",
+   "fieldtype": "Section Break",
+   "label": "Jobber"
+  },
+  {
+   "description": "The jobber the goods are sent to (a supplier ticked Is Jobber).",
+   "fieldname": "supplier",
+   "fieldtype": "Link",
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "label": "Embroidery Jobber",
+   "options": "Supplier",
+   "search_index": 1
+  },
+  {
+   "fetch_from": "supplier.supplier_name",
+   "fieldname": "supplier_name",
+   "fieldtype": "Data",
+   "label": "Jobber Name",
+   "read_only": 1
+  },
+  {
+   "fieldname": "column_break_jobber",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "notes",
+   "fieldtype": "Small Text",
+   "label": "Dispatch Notes"
+  },
+  {
+   "description": "Single-item transfers made before the Items table — see Items.",
    "fieldname": "source_item",
    "fieldtype": "Link",
+   "hidden": 1,
    "in_list_view": 1,
    "label": "Source Item (Plain)",
    "options": "Item",
-   "reqd": 0,
-   "hidden": 1,
    "read_only": 1,
-   "description": "Single-item transfers made before the Items table \u2014 see Items."
+   "reqd": 0
   },
   {
+   "description": "Single-item transfers made before the Items table — see Items.",
    "fieldname": "target_item",
    "fieldtype": "Link",
+   "hidden": 1,
    "in_list_view": 1,
    "label": "Target Item (Embroidered)",
    "options": "Item",
-   "reqd": 0,
-   "hidden": 1,
    "read_only": 1,
-   "description": "Single-item transfers made before the Items table \u2014 see Items."
+   "reqd": 0
   },
   {
+   "description": "Single-item transfers made before the Items table — see Items.",
    "fieldname": "qty",
    "fieldtype": "Float",
+   "hidden": 1,
    "in_list_view": 1,
    "label": "Quantity",
-   "reqd": 0,
-   "hidden": 1,
    "read_only": 1,
-   "description": "Single-item transfers made before the Items table \u2014 see Items."
+   "reqd": 0
   },
   {
    "default": "0",
-   "description": "Single-item transfers made before the Items table \u2014 see Items.",
+   "description": "Single-item transfers made before the Items table — see Items.",
    "fieldname": "received_qty",
    "fieldtype": "Float",
+   "hidden": 1,
    "in_list_view": 1,
    "label": "Received Qty",
    "read_only": 1,
-   "reqd": 0,
-   "hidden": 1
+   "reqd": 0
   },
   {
    "fieldname": "from_warehouse",
@@ -87,7 +124,7 @@
    "reqd": 1
   },
   {
-   "description": "Where the last receipt went \u2014 each receipt line has its own warehouse.",
+   "description": "Where the last receipt went — each receipt line has its own warehouse.",
    "fieldname": "to_warehouse",
    "fieldtype": "Link",
    "label": "To Warehouse (Destination, Last)",
@@ -152,8 +189,8 @@
   {
    "fieldname": "items",
    "fieldtype": "Table",
-   "options": "Uniform Embroidery Transfer Item",
    "label": "Items",
+   "options": "Uniform Embroidery Transfer Item",
    "reqd": 1
   },
   {
@@ -181,7 +218,7 @@
  "grid_page_length": 50,
  "index_web_pages_for_search": 1,
  "links": [],
- "modified": "2026-10-15 12:00:00.000000",
+ "modified": "2026-11-03 13:00:00.000000",
  "modified_by": "Administrator",
  "module": "Erp Dacsinc Custom",
  "name": "Uniform Embroidery Transfer",

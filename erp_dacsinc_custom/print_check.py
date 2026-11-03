@@ -34,6 +34,7 @@ SAMPLES = {
 	"Purchase Invoice DAC": ("Purchase Invoice", {"is_return": 0}, {}),
 	"Embroidery Work Order Print Format": ("Embroidery Work Order", {}, {"no_letterhead": 1}),
 	"Embroidery Work Order Print Format 2": ("Embroidery Work Order", {}, {}),
+	"Uniform Embroidery Transfer DAC": ("Uniform Embroidery Transfer", {}, {"no_letterhead": 1}),
 	"POS Invoice A4": ("POS Invoice", {}, {}),
 	"POS Invoice A5": ("POS Invoice", {}, {}),
 	"POS Invoice Version 2": ("POS Invoice", {}, {}),

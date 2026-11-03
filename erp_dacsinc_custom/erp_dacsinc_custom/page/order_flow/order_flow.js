@@ -6261,7 +6261,7 @@ class OrderFlow {
                         <b style="color:${received > 0 ? 'var(--of-green)' : 'inherit'};">${received}</b>
                         ${received > 0 && outstanding > 0 ? `<div style="font-size:11px; color:var(--of-orange);">${outstanding} outstanding</div>` : ''}
                     </td>
-                    <td><div style="font-size:11px; color:#555;">${of_esc(t.from_warehouse)} <i class="fa fa-long-arrow-right"></i> ${of_esc(t.wip_warehouse)}</div></td>
+                    <td>${t.supplier_name || t.supplier ? `<b>${of_esc(t.supplier_name || t.supplier)}</b>` : ''}<div style="font-size:11px; color:#555;">${of_esc(t.from_warehouse)} <i class="fa fa-long-arrow-right"></i> ${of_esc(t.wip_warehouse)}</div></td>
                     <td>${of_date(t.date_sent)}</td>
                     <td>${t.date_received ? of_date(t.date_received) : '-'}</td>
                     <td>${status_badge}</td>
@@ -6290,7 +6290,7 @@ class OrderFlow {
                                 <th>${__('Items (Plain → Embroidered × Qty)')}</th>
                                 <th>Sent Qty</th>
                                 <th>Received Qty</th>
-                                <th>Route</th>
+                                <th>${__('Jobber / Route')}</th>
                                 <th>Date Sent</th>
                                 <th>Date Received (Last)</th>
                                 <th>Status</th>
@@ -6403,6 +6403,11 @@ class OrderFlow {
                         <i class="fa fa-long-arrow-right"></i> ${__('to the embroidery jobber')} <b>Jobers Warehouse - IND</b></div>` },
                 { fieldtype: 'Data', fieldname: 'from_warehouse', label: __('From Warehouse'), hidden: 1, default: 'VV Puram - IND' },
                 { fieldtype: 'Data', fieldname: 'wip_warehouse', label: __('WIP Warehouse (Embroiderer)'), hidden: 1, default: 'Jobers Warehouse - IND' },
+                // the jobber the goods go to — only suppliers ticked Is Jobber, as on an Embroidery Work Order
+                { fieldtype: 'Link', fieldname: 'supplier', label: __('Embroidery Jobber'), options: 'Supplier', reqd: 1,
+                  get_query: () => ({ filters: { custom_is_jobber: 1, disabled: 0 } }) },
+                { fieldtype: 'Column Break' },
+                { fieldtype: 'Small Text', fieldname: 'notes', label: __('Dispatch Notes') },
                 { fieldtype: 'Section Break', label: __('Items to send') },
                 { fieldtype: 'Table', fieldname: 'lines', label: __('Lines'), cannot_add_rows: 0, in_place_edit: true,
                   data: [{}],
@@ -6422,6 +6427,7 @@ class OrderFlow {
             primary_action_label: __('Send to Embroidery'),
             primary_action: (values) => {
                 const lines = (dialog.get_value('lines') || []).filter(l => l.source_item || flt(l.qty));
+                if (!values.supplier) return frappe.msgprint(__('Choose the embroidery jobber the goods are sent to.'));
                 if (!lines.length) return frappe.msgprint(__('Add at least one line.'));
                 for (const [n, l] of lines.entries()) {
                     if (!l.source_item) return frappe.msgprint(__('Line {0}: choose the plain item.', [n + 1]));
@@ -6438,6 +6444,7 @@ class OrderFlow {
                         lines: lines.map(l => ({ source_item: l.source_item, target_item: l.same_item ? l.source_item : l.target_item,
                                                  same_item: l.same_item ? 1 : 0, qty: flt(l.qty) })),
                         from_warehouse: values.from_warehouse, wip_warehouse: values.wip_warehouse,
+                        supplier: values.supplier, notes: values.notes || null,
                     },
                     freeze: true, freeze_message: __('Sending to embroidery…'),
                 }).then(r => {
