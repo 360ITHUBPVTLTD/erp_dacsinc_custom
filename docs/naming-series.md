@@ -7,15 +7,33 @@ a running number that starts again at 1 every 1 April (agreed with the user 29-1
 |---|---|---|
 | Sales Order | SO/26-27/00001 | |
 | Delivery Note (challan) | DC/26-27/00001 | return: SR/26-27/00001 |
-| Sales Invoice | SI/26-27/00001 | return (Credit Note): CN/26-27/00001 |
+| Sales Invoice (HO bills and POS closings) | **36868/26-27** — number, then the year | return (Credit Note, HO and POS closing returns): **312** |
 | POS Invoice | JP / RN / VA / VV /26-27/00001 by the store's warehouse; other counters POS/26-27/00001 | |
 | Payment Entry | Receive RCT/26-27/0001 · Pay PAY/26-27/0001 · Internal Transfer CTR/26-27/0001 | |
 | Material Request / RFQ / Supplier Quotation | MR/…/00001 · RFQ/…/0001 · SQ/…/00001 | |
 | Purchase Order / Subcontracting Order | PO/…/00001 · JO/…/00001 | Purchase Order ticked Is Subcontracted (jobber PO): SCO/…/00001 |
 | Purchase Receipt / Subcontracting Receipt | GRN/…/0001 · JR/…/00001 | Purchase Receipt return: PRR/…/0001 |
-| Purchase Invoice | PI/26-27/00001 | return (Debit Note): DBN/26-27/0001 |
-| Journal Entry / Stock Entry / Stock Reconciliation | JV/…/00001 · STE/…/0001 · STR/…/0001 | |
+| Purchase Invoice | **1661** | return (Debit Note): **41** |
+| Journal Entry / Stock Entry / Stock Reconciliation | JV/…/00001 · STE/…/0001 · STR/…/0001 | Journal Entry of Voucher Type Credit Note: **6** · Debit Note: **32** |
 | Quotation | unchanged: SAL-QTN-.YYYY.- | |
+
+## Invoices and notes: the client's own numbers
+
+Sales / Purchase Invoices, their returns and Journal Entry Credit / Debit Notes continue the numbers of the client's old
+software (user, 03-11-2026; the numbers above are where each started on live). Only the Sales Invoice carries the year
+(36868/26-27, as the client prints it), so it starts again at 1 every April; the others are plain running numbers that
+never restart (GST asks only that a number is not repeated in the year).
+
+- Frappe can't give a name that starts with the number: with nothing before the `#`, every such series would share one
+  counter (key ""). So these series (`naming.NUMBER_ONLY`, `NUMBER_YEAR`) keep a prefix as the **counter's key** only —
+  `SI/.FYS./.#####` → counter `SI/26-27/`, `CN/.#####` → `CN/`, `PI/.#####` → `PI/`, `DBN/.#####` → `DBN/`,
+  `JCN/.#####` / `JDN/.#####` (Journal Entry by voucher type) — and `naming.autoname` (doc_events autoname) writes the
+  name without it. The naming_series field still shows which counter a document used.
+- One doctype holds two of them (an invoice and its returns, a Credit Note and a Debit Note), so their numbers can meet
+  (Credit Note 6, 7 … reaches Debit Note 32). A number already taken is **skipped**: the next free one is used.
+- An amended copy is `<original>-1` (36868/26-27-1 is 13 characters). Deleting the newest document frees its number
+  (Frappe does that for the plain numbers; `naming.release_number` for 36868/26-27).
+- A counter is changed in Document Naming Settings › Update Series Number with the series above (prefix = counter).
 
 ## Why this shape
 

@@ -391,7 +391,12 @@ doc_events = {
                         "erp_dacsinc_custom.merchant_export.guard_merchant_export"]
         # "on_cancel": "erp_dacsinc_custom.custom_script.quotation_on_cancel"
     },
+    # Journal Entry Credit Note 6 / Debit Note 32 — the client's numbers (naming.py)
+    "Journal Entry": {"autoname": "erp_dacsinc_custom.naming.autoname"},
     "Sales Invoice": {
+        # 36868/26-27, returns 312 — the client's numbers (naming.py)
+        "autoname": "erp_dacsinc_custom.naming.autoname",
+        "on_trash": "erp_dacsinc_custom.naming.release_number",
         # no second draft for the same source line (draft_guard.py)
         "before_insert": "erp_dacsinc_custom.draft_guard.guard_duplicate_draft",
         "before_validate": [
@@ -639,6 +644,8 @@ doc_events = {
         "before_cancel": "erp_dacsinc_custom.stock_hold.guard_cancel",
     },
     "Purchase Invoice": {
+        # 1661, returns 41 — the client's numbers (naming.py)
+        "autoname": "erp_dacsinc_custom.naming.autoname",
         # no second draft for the same source line (draft_guard.py)
         "before_insert": "erp_dacsinc_custom.draft_guard.guard_duplicate_draft",
         # Debit Note: received qty follows qty, or later Debit Notes are refused (return_goods.py)
