@@ -9,9 +9,16 @@ allowed it (it counts the shift's returns). Here those independent returns go fi
 the sales are booked. Returns of a bill from the same shift stay after the sales, exactly as ERPNext does: their credit
 note is made against that consolidated invoice, and their stock went out with it.
 
-The independent returns' credit note is posted one second before the closing time: the sale's stock check counts only
-entries strictly before its own posting time, so a credit note at the very same second would not count yet. A shift
-without such a return runs ERPNext's own code unchanged.
+When: the independent returns' credit note is posted at the time of the earliest of those return bills — when the
+goods really came back. ERPNext posts the shift's Sales Invoice at its last sale bill's time (merge_pos_invoice_into
+takes each bill's time) but credit notes at the closing time, so even "just before the closing" was after that invoice,
+and the sale's stock check (it counts only entries strictly before its own time) still found nothing (live, Varthur,
+03-11-2026). The time is also kept a second before the shift's Sales Invoice, and after any invoice a return is made
+against. A shift without such a return runs ERPNext's own code unchanged.
+
+Customers: ERPNext closes a shift one customer at a time (a merge log each), in the order the customers first appear in
+the closing's bills. `StorePOSClosingEntry.on_submit` (pos_closing.py) hands the bills over return bills first, so a
+customer who brought something back is closed before a customer who bought it.
 
 Cost of a returned piece: ERPNext values a return from the item's stock history in that warehouse. For a return with
 no original bill it skips its own fallbacks and stops ("Valuation Rate for the Item … is required"), so an item never
@@ -32,7 +39,7 @@ from datetime import timedelta
 import frappe
 from erpnext.accounts.doctype.pos_invoice_merge_log.pos_invoice_merge_log import POSInvoiceMergeLog
 from erpnext.stock.utils import get_combine_datetime
-from frappe.utils import flt, getdate
+from frappe.utils import flt
 
 
 class StorePOSInvoiceMergeLog(POSInvoiceMergeLog):
@@ -49,18 +56,13 @@ class StorePOSInvoiceMergeLog(POSInvoiceMergeLog):
 		credit_notes = {}
 		# a return on its own: credit note with no invoice against it; against an earlier closed bill: against
 		# that bill's consolidated invoice (distinguish_return_pos_invoices with no new invoice yet)
-		closing_time = self.posting_time
-		earlier = get_combine_datetime(self.posting_date, self.posting_time) - timedelta(seconds=1)
-		# a credit note can't be dated before the invoice it returns against (a closing made in the same second)
-		originals = [k for k in self.distinguish_return_pos_invoices(independent) if k]
-		latest = max((get_combine_datetime(*frappe.db.get_value("Sales Invoice", k, ["posting_date", "posting_time"]))
-			for k in originals), default=None)
-		if earlier.date() == getdate(self.posting_date) and (not latest or earlier > latest):
-			self.posting_time = earlier.time()
+		closing_date, closing_time = self.posting_date, self.posting_time
+		when = self.independent_returns_time(independent, sales)
+		self.posting_date, self.posting_time = when.date(), when.time()
 		try:
 			credit_notes.update(self.process_merging_into_credit_notes(self.distinguish_return_pos_invoices(independent)))
 		finally:
-			self.posting_time = closing_time
+			self.posting_date, self.posting_time = closing_date, closing_time
 
 		sales_invoice, sales_invoice_doc = "", None
 		if sales:
@@ -73,6 +75,19 @@ class StorePOSInvoiceMergeLog(POSInvoiceMergeLog):
 
 		self.save()  # consolidated_invoice / consolidated_credit_note refs on the merge log
 		self.update_pos_invoices(pos_invoice_docs, sales_invoice, credit_notes)
+
+	def independent_returns_time(self, independent, sales):
+		"""The earliest return bill's time; a second before the shift's Sales Invoice (the last sale bill's time, as
+		merge_pos_invoice_into sets it); never at or before an invoice a return is made against."""
+		when = min(get_combine_datetime(d.posting_date, d.posting_time) for d in independent)
+		if sales:
+			when = min(when, get_combine_datetime(sales[-1].posting_date, sales[-1].posting_time) - timedelta(seconds=1))
+		originals = [k for k in self.distinguish_return_pos_invoices(independent) if k]
+		latest = max((get_combine_datetime(*frappe.db.get_value("Sales Invoice", k, ["posting_date", "posting_time"]))
+			for k in originals), default=None)
+		if latest and when <= latest:
+			when = latest + timedelta(seconds=1)
+		return when
 
 	def on_cancel(self):
 		# collected before ERPNext's on_cancel clears the bills' links (update_pos_invoices)

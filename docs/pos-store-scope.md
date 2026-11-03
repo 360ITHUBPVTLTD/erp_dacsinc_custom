@@ -543,14 +543,20 @@ ERPNext books the Sales Invoice first, so an **exchange** — a customer brings 
 same item — failed whenever the store had none of it before: the sale needs the piece that only the return brings in
 ("1 units of … needed in … Store"; the closing then stays a draft, status Failed). The POS screen allowed the sale (it
 counts the shift's returns). `StorePOSInvoiceMergeLog` (override_doctype_class) books the **independent returns** first —
-a return on its own, or against an already-closed bill — posted one second before the closing time (the sale's stock
-check counts only entries strictly before its own time), then the sales, then the returns of the shift's own bills,
-exactly as ERPNext (against that day's invoice). Seen on live 03-11-2026: Varthur, POS-CLO-2026-00009. A shift with no such return
-runs ERPNext's own code unchanged. The credit note is not moved before an invoice it returns against (a closing in the
-same second). **Cancelling a closing** cancels every invoice / credit note its bills were merged into, newest first —
+a return on its own, or against an already-closed bill — **at the time of the earliest of those return bills** (when the
+goods really came back), then the sales, then the returns of the shift's own bills, exactly as ERPNext (against that
+day's invoice). ERPNext dates the shift's Sales Invoice at its last sale bill's time but credit notes at the closing
+time, and the sale's stock check counts only entries strictly before its own time — so a credit note "just before the
+closing" was still after the sales (live, 03-11-2026, sale 18:36 vs closing 18:41). The credit note is also kept a
+second before the shift's Sales Invoice and after any invoice it returns against. ERPNext closes one customer at a time
+(a merge log each, in the order the customers first appear); `StorePOSClosingEntry.on_submit` hands the bills over
+return bills first, so a customer who brought a piece back is closed before another customer who bought it. The
+closing's bill rows now carry Is Return / Return Against, as ERPNext's own closing fills them. Seen on live 03-11-2026: Varthur, POS-CLO-2026-00009. A shift with no such return
+runs ERPNext's own code unchanged. **Cancelling a closing** cancels every invoice / credit note its bills were merged into, newest first —
 ERPNext cancels only the invoice and the last credit note it noted, which left any other credit note submitted.
 
-Tested 03-11-2026 (rolled back): normal shift (ERPNext's path) and its cancel; exchange of an item at 0 stock with a
+Tested 03-11-2026 (rolled back, real POS Closing Entries with live's times — 12:54 sale, 12:55 return, 18:36 sale): live's
+exchange; return by one customer and sale to another (either first in the day); normal shift; cancels. Earlier: normal shift (ERPNext's path) and its cancel; exchange of an item at 0 stock with a
 return of the shift's own bill (3 invoices) and its cancel; return against an earlier closed bill; a shift with only a
 return; the exchange through a real POS Closing Entry submit and cancel. **After an ERPNext update**, compare
 `POSInvoiceMergeLog.on_submit` / `on_cancel` / `cancel_linked_invoices` with `pos_merge.py` (it repeats on_submit's

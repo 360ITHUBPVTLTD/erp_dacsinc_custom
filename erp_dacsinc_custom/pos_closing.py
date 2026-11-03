@@ -40,6 +40,28 @@ class StorePOSClosingEntry(POSClosingEntry):
 	made by any of the store's users. Same checks as ERPNext, without "created by the user
 	who opened the shift"."""
 
+	def on_submit(self):
+		"""ERPNext's, with the bills handed over return bills first (consolidate_returns_first)."""
+		self.consolidate_returns_first()
+		frappe.publish_realtime(f"poe_{self.pos_opening_entry}_closed", self,
+			docname=f"POS Opening Entry/{self.pos_opening_entry}")
+
+	@frappe.whitelist()
+	def retry(self):
+		"""ERPNext's Retry (a closing that Failed), in the same order as Submit."""
+		self.consolidate_returns_first()
+
+	def consolidate_returns_first(self):
+		"""ERPNext closes the shift one customer at a time (a merge log each), in the order the customers first appear
+		in the bills given to it: return bills first, so a customer who brought something back is closed before a
+		customer who bought it (pos_merge.py › Customers)."""
+		from erpnext.accounts.doctype.pos_invoice_merge_log.pos_invoice_merge_log import consolidate_pos_invoices
+
+		rows = self.get("pos_transactions") or []
+		returns = set(frappe.get_all("POS Invoice", filters={"name": ["in", [d.pos_invoice for d in rows] or [""]], "is_return": 1},
+			pluck="name"))
+		consolidate_pos_invoices(pos_invoices=sorted(rows, key=lambda d: d.pos_invoice not in returns), closing_entry=self)
+
 	def validate_pos_invoices(self):
 		invalid_rows = []
 		for d in self.pos_transactions:
@@ -82,7 +104,8 @@ def make_closing_entry(pos_opening_entry):
 	taxes = {}
 	for inv in shift_invoices(opening.pos_profile, opening.period_start_date, doc.period_end_date):
 		doc.append("pos_transactions", {"pos_invoice": inv.name, "posting_date": inv.posting_date,
-										"grand_total": inv.grand_total, "customer": inv.customer})
+										"grand_total": inv.grand_total, "customer": inv.customer,
+										"is_return": inv.is_return, "return_against": inv.return_against})
 		doc.grand_total += flt(inv.grand_total)
 		doc.net_total += flt(inv.net_total)
 		doc.total_quantity += flt(inv.total_qty)
