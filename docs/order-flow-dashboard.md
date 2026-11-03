@@ -2098,45 +2098,51 @@ each "• <date time>: Status changed…" entry in bold; the box scrolls past ~7
 Print button.
 
 
-## Embroidery Transfers: one record, several item lines, free stock only
+## Embroidery Transfers: Embroidery Work Orders of work type Stock Transfer
 
-A **Uniform Embroidery Transfer** holds several lines in its **Items** table (child doctype
-*Uniform Embroidery Transfer Item*: plain item sent, Same item, embroidered item it comes back as,
-qty sent, qty received, pending, UOM). The controller fills the embroidered item for "Same item"
-lines, keeps pending, Total Qty Sent / Total Received, and the status (Sent → Partially Received →
-Received, from the lines). The old single-item header fields stay hidden for history;
-`patches/uniform_transfer_items_table.py` moved every older transfer into one Items line.
+An embroidery transfer is an **Embroidery Work Order** with **Work Type = Stock Transfer** (user,
+03-11-2026: one doctype, one number series EM/26-27/00001 — financial year, see naming-series.md — and one track for the client). Full Piece and Panel work
+orders are unchanged: every field, check and function below applies to Stock Transfer only
+(`EmbroideryWorkOrder.is_stock_transfer`), and the Full Piece / Panel lists and counts
+(`order_flow_api._ewo_lists`' base condition), stock_hold and `held_at_jobber_by_item` (Full Piece + Sales Order only)
+never see a transfer. Unlike Full Piece / Panel (tracking only), a transfer **moves stock**.
 
+- **Fields (Stock Transfer only):** the jobber is the **Full Piece Jobber** (so the work order print shows
+  it); the lines are the Items table — Item = the plain item sent, **Same Item**, **Comes Back As**, UOM,
+  qty sent (Ordered Qty) / received / pending; the **Stock Transfer** section — From / WIP (at the jobber) /
+  To (last) warehouse, Stock Entry sent / last received, Date Received, Total Qty Sent / Received; the
+  **Receipts** table (*Embroidery Work Order Receipt*: date, item, qty, warehouse, Repack Stock Entry).
+  The controller keeps pending, totals, % received and the status (Open → Partially Received →
+  Completed, with Completed On) on save and on every receive (`before_update_after_submit` — a received
+  transfer is a submitted work order being updated). The tab still shows Sent / Partially Received /
+  Received / Cancelled (`uniform_transfer_api.TAB_STATUS`).
 - **Create Transfer** (`create_embroidery_transfers`): a lines table with each line's free stock and
   a summary (on hand, held for Sales Orders with the holding orders, free, sending). One Stock Entry
-  moves every line to the jobber's WIP warehouse and **one** transfer record holds them all. Only
+  moves every line to the jobber's WIP warehouse and **one** submitted work order holds them all. Only
   free stock may go: `_free_stock` = on hand − what stock_hold allocates to Sales Orders (Pick Lists,
   embroidery at the jobber, raw-material earmarks; held only in the hold warehouse). No override here.
-  The **Embroidery Jobber** is required, as on an Embroidery Work Order: only suppliers ticked Is Jobber
-  (and not disabled) are listed, and the server refuses any other. It is kept on the transfer (Supplier,
-  Supplier Name) with the optional Dispatch Notes; the Stock Entry is made exactly as before (no supplier
-  on it). Transfers made before this have no jobber.
-- **Print** (the row's print button, and "print now?" after sending): **Uniform Embroidery Transfer DAC**
-  (`print_format/uniform_embroidery_transfer_dac/`, the doctype's default print format) — the Embroidery
-  Work Order print's layout: Issued To the jobber with their address, and as on the work order the qty
-  sent per **Item Type** of the plain items (Item › custom_item_type; "Uncategorized" when empty), not
-  the items themselves; total, Dispatch Notes as remarks, signatures. The Stock Entry number is not printed.
+  The **Embroidery Jobber** is required: only suppliers ticked Is Jobber (and not disabled) are listed,
+  and the server refuses any other. A Stock Transfer typed in the work order form is refused — it would
+  move no stock; it is made only here (`flags.from_transfer_api`).
+- **Print** (the row's print button, and "print now?" after sending): **Embroidery Work Order Print
+  Format**, as every work order — Issued To the jobber with their address, Work Type Stock Transfer, the
+  qty sent per **Item Type** of the plain items, total, notes as remarks, signatures.
 - **Receive** (`receive_embroidery_transfer(transfer_id, lines)`): every pending line with "Received
   now" and **its own warehouse** (a "same warehouse on every line" shortcut fills them). Each received
   line gets its own Repack Stock Entry (plain item out of WIP, embroidered item into that line's
   warehouse) so each item's valuation is its own, and its own row in Receipts (with the item and the
   line it belongs to). Lines can come back in parts, any number of times.
 - **The tab** lists one row per transfer with its lines ("plain → embroidered × qty (n back)") and the
-  jobber over the route; the search box also finds a jobber's name;
-  expanding a row shows the Items with sent / received / pending and the receipt history.
-- **Deleting a transfer undoes its stock** (`UniformEmbroideryTransfer.on_trash`): its receipt Repack
+  jobber over the route; the search box also finds a jobber's name; expanding a row shows the Items with
+  sent / received / pending and the receipt history. Its activity feed shows the transfer events (an
+  Embroidery Work Order event with no Sales Order, status "Stock Transfer …"); Job Work's feed leaves them out.
+- **Cancelling a transfer undoes its stock** (`EmbroideryWorkOrder.on_cancel`): its receipt Repack
   entries (newest first) and then the sending Material Transfer are cancelled (a draft entry is
-  deleted). The transfer only points at those entries, so before this a delete left the stock at the
-  jobber / in the receiving warehouse. If an entry can't be cancelled (e.g. the embroidered items were
-  already used) or another transfer shares it, the delete is refused and nothing changes.
-- The doctype numbers from a database sequence; `patches/ensure_autoincrement_sequences.py` creates
-  any missing one ("Unknown SEQUENCE: 'uniform_embroidery_transfer_id_seq'").
-
+  deleted) — on cancel, not before, since the submitted work order's links block their cancel. If an
+  entry can't be cancelled (e.g. the embroidered items were already used) the cancel is refused and
+  nothing changes.
+- The old **Uniform Embroidery Transfer** doctype (numbered 1, 2 …) is no longer used by the tab; its
+  records stay as they were.
 
 ## Stock Tracker: VV Puram first; held, free and ordered spelled out
 

@@ -1,7 +1,7 @@
 {
  "actions": [],
  "allow_rename": 1,
- "autoname": "format:EM-{MM}-{YY}-{###}",
+ "autoname": "EM/.FYS./.#####",
  "creation": "2025-11-29 12:46:35.618592",
  "doctype": "DocType",
  "engine": "InnoDB",
@@ -23,8 +23,21 @@
   "per_received",
   "stage",
   "saels_order_id",
+  "section_break_stock_transfer",
+  "from_warehouse",
+  "wip_warehouse",
+  "to_warehouse",
+  "column_break_stock_transfer",
+  "stock_entry_sent",
+  "stock_entry_received",
+  "date_received",
+  "column_break_stock_transfer_2",
+  "total_qty",
+  "total_received",
   "section_break_jpwf",
   "items",
+  "section_break_receipts",
+  "receipts",
   "section_break_fiha",
   "notes"
  ],
@@ -86,7 +99,8 @@
    "fieldname": "completed_on",
    "fieldtype": "Datetime",
    "label": "Completed On",
-   "read_only": 1
+   "read_only": 1,
+   "allow_on_submit": 1
   },
   {
    "fieldname": "section_break_jpwf",
@@ -117,7 +131,7 @@
    "fieldname": "work_type",
    "fieldtype": "Select",
    "label": "Work Type",
-   "options": "\nFull Piece Job Work\nPanel Job Work"
+   "options": "\nFull Piece Job Work\nPanel Job Work\nStock Transfer"
   },
   {
    "allow_on_submit": 1,
@@ -158,17 +172,103 @@
    "label": "Saels Order ID",
    "options": "Sales Order",
    "read_only": 1
+  },
+  {
+   "fieldname": "section_break_stock_transfer",
+   "fieldtype": "Section Break",
+   "label": "Stock Transfer",
+   "depends_on": "eval:doc.work_type=='Stock Transfer'"
+  },
+  {
+   "fieldname": "from_warehouse",
+   "fieldtype": "Link",
+   "label": "From Warehouse",
+   "options": "Warehouse",
+   "read_only": 1
+  },
+  {
+   "fieldname": "wip_warehouse",
+   "fieldtype": "Link",
+   "label": "WIP Warehouse (at the jobber)",
+   "options": "Warehouse",
+   "read_only": 1
+  },
+  {
+   "fieldname": "to_warehouse",
+   "fieldtype": "Link",
+   "label": "To Warehouse (Last)",
+   "options": "Warehouse",
+   "read_only": 1,
+   "allow_on_submit": 1
+  },
+  {
+   "fieldname": "column_break_stock_transfer",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "stock_entry_sent",
+   "fieldtype": "Link",
+   "label": "Stock Entry (Sent)",
+   "options": "Stock Entry",
+   "read_only": 1
+  },
+  {
+   "fieldname": "stock_entry_received",
+   "fieldtype": "Link",
+   "label": "Stock Entry (Received, Last)",
+   "options": "Stock Entry",
+   "read_only": 1,
+   "allow_on_submit": 1
+  },
+  {
+   "fieldname": "date_received",
+   "fieldtype": "Date",
+   "label": "Date Received (Last)",
+   "read_only": 1,
+   "allow_on_submit": 1
+  },
+  {
+   "fieldname": "column_break_stock_transfer_2",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "total_qty",
+   "fieldtype": "Float",
+   "label": "Total Qty Sent",
+   "read_only": 1,
+   "allow_on_submit": 1
+  },
+  {
+   "fieldname": "total_received",
+   "fieldtype": "Float",
+   "label": "Total Qty Received",
+   "read_only": 1,
+   "allow_on_submit": 1
+  },
+  {
+   "fieldname": "section_break_receipts",
+   "fieldtype": "Section Break",
+   "label": "Receipts",
+   "depends_on": "eval:doc.work_type=='Stock Transfer'"
+  },
+  {
+   "fieldname": "receipts",
+   "fieldtype": "Table",
+   "label": "Receipts",
+   "options": "Embroidery Work Order Receipt",
+   "read_only": 1,
+   "allow_on_submit": 1
   }
  ],
  "grid_page_length": 50,
  "index_web_pages_for_search": 1,
  "is_submittable": 1,
  "links": [],
- "modified": "2026-02-17 19:12:30.617375",
+ "modified": "2026-11-03 19:00:00.000000",
  "modified_by": "Administrator",
  "module": "Erp Dacsinc Custom",
  "name": "Embroidery Work Order",
- "naming_rule": "Expression",
+ "naming_rule": "Expression (old style)",
  "owner": "Administrator",
  "permissions": [
   {

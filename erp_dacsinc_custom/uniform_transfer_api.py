@@ -8,6 +8,24 @@ from frappe.utils import nowdate, flt
 from erp_dacsinc_custom.order_flow_permissions import guard_act, guard_tab
 from erp_dacsinc_custom.order_flow_api import _paged_query, _attach_creator_names
 
+# Embroidery Transfers are Embroidery Work Orders of work type "Stock Transfer" (EM/26-27/00001 numbers, the same series as
+# the Full Piece / Panel ones; docs/order-flow-dashboard.md › Embroidery Transfers). The tab still speaks of
+# Sent / Partially Received / Received / Cancelled; the work order's own status is Open / Partially Received /
+# Completed and a cancelled one is docstatus 2.
+EWO = "Embroidery Work Order"
+STOCK_TRANSFER = "Stock Transfer"
+TAB_STATUS = {"Open": "Sent", "Partially Received": "Partially Received", "Completed": "Received"}
+EWO_STATUS = {v: k for k, v in TAB_STATUS.items()}
+_TAB_STATUS_SQL = """CASE WHEN ewo.docstatus = 2 THEN 'Cancelled' WHEN ewo.status = 'Completed' THEN 'Received'
+    WHEN ewo.status = 'Partially Received' THEN 'Partially Received' ELSE 'Sent' END"""
+
+
+def _transfer(transfer_id):
+    doc = frappe.get_doc(EWO, transfer_id)
+    if doc.work_type != STOCK_TRANSFER:
+        frappe.throw(f"{transfer_id} is not an embroidery stock transfer.")
+    return doc
+
 def _free_stock(item_code, warehouse):
     """What can really leave `warehouse`: stock on hand minus what is held for Sales Orders
     (stock_hold: Pick Lists, embroidery at the jobber, raw-material earmarks — held only in the
@@ -29,12 +47,12 @@ def create_embroidery_transfers(lines, from_warehouse, wip_warehouse, supplier=N
     """Embroidery Transfers tab › Create Transfer: several lines at once — each line is a plain
     (source) item, the embroidered (target) item it comes back as (the same item when it only
     goes for embroidery), and a qty. One Stock Entry moves every line from `from_warehouse` to
-    the jobber's WIP warehouse, and ONE Uniform Embroidery Transfer holds every line (Items)
-    to follow them back.
+    the jobber's WIP warehouse, and ONE submitted Embroidery Work Order (work type Stock Transfer)
+    holds every line (Items) to follow them back.
     Only free stock may go: a source item's lines together may not exceed what is not held for
     Sales Orders (_free_stock) — no override here.
     `supplier`: the embroidery jobber the goods go to (Supplier › Is Jobber), as on an Embroidery
-    Work Order — required; kept on the transfer and printed on it (the Stock Entry is as before)."""
+    Work Order — required; kept as its Full Piece Jobber, so the work order print shows it (the Stock Entry is as before)."""
     import json
     guard_tab("uniform")
     guard_act("uniform")
@@ -86,15 +104,17 @@ def create_embroidery_transfers(lines, from_warehouse, wip_warehouse, supplier=N
     se.insert(ignore_permissions=True)
     se.submit()
 
-    uet = frappe.new_doc("Uniform Embroidery Transfer")
-    uet.update({"from_warehouse": from_warehouse, "wip_warehouse": wip_warehouse, "status": "Sent",
-                "date_sent": nowdate(), "stock_entry_sent": se.name,
-                "supplier": supplier, "supplier_name": jobber.supplier_name, "notes": notes})
+    ewo = frappe.new_doc(EWO)
+    ewo.update({"work_type": STOCK_TRANSFER, "date": nowdate(), "full_piece_jobber": supplier, "notes": notes,
+                "from_warehouse": from_warehouse, "wip_warehouse": wip_warehouse, "stock_entry_sent": se.name})
     for l in clean:
-        uet.append("items", {"source_item": l["source_item"], "target_item": l["target_item"],
-                             "same_item": 1 if l["source_item"] == l["target_item"] else 0, "qty": l["qty"]})
-    uet.insert(ignore_permissions=True)
-    return {"transfers": [uet.name], "transfer": uet.name, "stock_entry": se.name}
+        ewo.append("items", {"item_code": l["source_item"], "item_name": frappe.db.get_value("Item", l["source_item"], "item_name"),
+                             "target_item": l["target_item"], "same_item": 1 if l["source_item"] == l["target_item"] else 0,
+                             "ordered_qty": l["qty"], "uom": frappe.db.get_value("Item", l["source_item"], "stock_uom")})
+    ewo.flags.from_transfer_api = True
+    ewo.insert(ignore_permissions=True)
+    ewo.submit()
+    return {"transfers": [ewo.name], "transfer": ewo.name, "stock_entry": se.name}
 
 
 @frappe.whitelist()
@@ -118,19 +138,19 @@ def receive_embroidery_transfer(transfer_id, lines=None, to_warehouse=None, qty=
     import json
     guard_tab("uniform")  # exclusively invoked from that tab's "Receive" button
     guard_act("uniform")
-    uet = frappe.get_doc("Uniform Embroidery Transfer", transfer_id)
-    if uet.status not in ("Sent", "Partially Received"):
+    ewo = _transfer(transfer_id)
+    if ewo.docstatus != 1 or ewo.status not in ("Open", "Partially Received"):
         frappe.throw(f"Transfer {transfer_id} has already been fully received or cancelled.")
     lines = json.loads(lines) if isinstance(lines, str) else (lines or [])
     if not lines:
         if not to_warehouse:
             frappe.throw("Choose where the received items go.")
-        pending = [r for r in uet.items if flt(r.qty) - flt(r.received_qty) > 0.0005]
+        pending = [r for r in ewo.items if flt(r.ordered_qty) - flt(r.received_qty) > 0.0005]
         lines = [{"row": r.name, "to_warehouse": to_warehouse,
-                  "qty": (flt(qty) if (qty not in (None, "") and len(pending) == 1) else flt(r.qty) - flt(r.received_qty))}
+                  "qty": (flt(qty) if (qty not in (None, "") and len(pending) == 1) else flt(r.ordered_qty) - flt(r.received_qty))}
                  for r in pending]
 
-    by_row = {r.name: r for r in uet.items}
+    by_row = {r.name: r for r in ewo.items}
     todo = []
     for l in lines:
         q = flt(l.get("qty"))
@@ -139,7 +159,7 @@ def receive_embroidery_transfer(transfer_id, lines=None, to_warehouse=None, qty=
         row = by_row.get(l.get("row"))
         if not row:
             frappe.throw("A line to receive is not on this transfer — refresh and try again.")
-        pending = flt(row.qty) - flt(row.received_qty)
+        pending = flt(row.ordered_qty) - flt(row.received_qty)
         if q - pending > 0.0005:
             frappe.throw(f"Row {row.idx} ({row.target_item}): cannot receive {q:g} — only {pending:g} is pending.")
         if not l.get("to_warehouse"):
@@ -152,26 +172,26 @@ def receive_embroidery_transfer(transfer_id, lines=None, to_warehouse=None, qty=
         se = frappe.new_doc("Stock Entry")
         se.purpose = "Repack"
         se.stock_entry_type = "Repack"
-        se.append("items", {"item_code": row.source_item, "qty": q, "s_warehouse": uet.wip_warehouse,
-                            "uom": frappe.db.get_value("Item", row.source_item, "stock_uom")})
+        se.append("items", {"item_code": row.item_code, "qty": q, "s_warehouse": ewo.wip_warehouse,
+                            "uom": frappe.db.get_value("Item", row.item_code, "stock_uom")})
         se.append("items", {"item_code": row.target_item, "qty": q, "t_warehouse": wh,
                             "uom": frappe.db.get_value("Item", row.target_item, "stock_uom")})
         se.insert(ignore_permissions=True)
         se.submit()
         row.received_qty = flt(row.received_qty) + q
-        uet.append("receipts", {"date": nowdate(), "qty": q, "to_warehouse": wh, "stock_entry": se.name,
-                                "source_item": row.source_item, "target_item": row.target_item, "item_row": row.name})
-        uet.to_warehouse = wh
-        uet.stock_entry_received = se.name
-    uet.date_received = nowdate()
-    uet.save(ignore_permissions=True)   # validate(): pending, totals, status
-    return {"status": uet.status, "received_qty": uet.total_received,
-            "outstanding": flt(uet.total_qty) - flt(uet.total_received)}
+        ewo.append("receipts", {"date": nowdate(), "qty": q, "to_warehouse": wh, "stock_entry": se.name,
+                                "source_item": row.item_code, "target_item": row.target_item, "item_row": row.name})
+        ewo.to_warehouse = wh
+        ewo.stock_entry_received = se.name
+    ewo.date_received = nowdate()
+    ewo.save(ignore_permissions=True)   # validate(): pending, totals, status (allowed on the submitted work order)
+    return {"status": TAB_STATUS.get(ewo.status, ewo.status), "received_qty": ewo.total_received,
+            "outstanding": flt(ewo.total_qty) - flt(ewo.total_received)}
 
 @frappe.whitelist()
 def get_embroidery_transfers(status=None, search=None, scope=None, page=1, page_size=100, **kwargs):
     """
-    Returns the list of Uniform Embroidery Transfers, filtered by status,
+    Returns the list of Embroidery Transfers (Stock Transfer work orders), filtered by status,
     scope, and/or search query — every other tab's "Open orders" / "Created
     by me" dropdown actually narrows that tab's list; this one used to accept
     `scope` and silently ignore it, so switching the dropdown here had no
@@ -185,23 +205,25 @@ def get_embroidery_transfers(status=None, search=None, scope=None, page=1, page_
     still selected in the other dropdown, not silently intersect with it.
     """
     guard_tab("uniform")
-    conditions = []
-    values = {}
+    conditions = ["ewo.work_type = %(st)s"]
+    values = {"st": STOCK_TRANSFER}
 
-    if status:
-        conditions.append("uet.status = %(status)s")
-        values["status"] = status
+    if status == "Cancelled":
+        conditions.append("ewo.docstatus = 2")
+    elif status:
+        conditions.append("ewo.docstatus = 1 AND ewo.status = %(status)s")
+        values["status"] = EWO_STATUS.get(status, status)
     elif scope == "open":
         # "Open" here means still in progress — not yet fully received.
-        conditions.append("uet.status IN ('Sent', 'Partially Received')")
+        conditions.append("ewo.docstatus = 1 AND ewo.status IN ('Open', 'Partially Received')")
 
     if scope == "mine":
-        conditions.append("uet.owner = %(me)s")
+        conditions.append("ewo.owner = %(me)s")
         values["me"] = frappe.session.user
 
     if search:
-        conditions.append("""(uet.name LIKE %(search)s OR uet.supplier_name LIKE %(search)s OR EXISTS (SELECT 1 FROM `tabUniform Embroidery Transfer Item` li
-                             WHERE li.parent = uet.name AND (li.source_item LIKE %(search)s OR li.target_item LIKE %(search)s)))""")
+        conditions.append("""(ewo.name LIKE %(search)s OR sup.supplier_name LIKE %(search)s OR EXISTS (SELECT 1 FROM `tabEmbroidery Work Order Item` li
+                             WHERE li.parent = ewo.name AND (li.item_code LIKE %(search)s OR li.target_item LIKE %(search)s)))""")
         values["search"] = f"%{search}%"
 
     # The page's custom date range ("from~to") narrows by date sent. "Last N days" is not
@@ -209,25 +231,25 @@ def get_embroidery_transfers(status=None, search=None, scope=None, page=1, page_
     days = kwargs.get("days")
     if days and "~" in str(days):
         from erp_dacsinc_custom.order_flow_api import _from_date, _to_next
-        conditions.append("uet.date_sent >= %(from_date)s AND uet.date_sent < %(to_next)s")
+        conditions.append("ewo.date >= %(from_date)s AND ewo.date < %(to_next)s")
         values["from_date"], values["to_next"] = _from_date(days), _to_next(days)
 
-    where_clause = f"WHERE {' AND '.join(conditions)}" if conditions else ""
-
     transfers = _paged_query(f"""
-        SELECT uet.name, uet.total_qty AS qty, uet.total_received AS received_qty, uet.from_warehouse, uet.wip_warehouse,
-               uet.to_warehouse, uet.status, uet.date_sent, uet.date_received, uet.stock_entry_sent,
-               uet.stock_entry_received, uet.owner, uet.supplier, uet.supplier_name, uet.notes
-        FROM `tabUniform Embroidery Transfer` uet
-        {where_clause}
-        ORDER BY uet.creation DESC
+        SELECT ewo.name, ewo.total_qty AS qty, ewo.total_received AS received_qty, ewo.from_warehouse, ewo.wip_warehouse,
+               ewo.to_warehouse, {_TAB_STATUS_SQL} AS status, ewo.date AS date_sent, ewo.date_received, ewo.stock_entry_sent,
+               ewo.stock_entry_received, ewo.owner, ewo.full_piece_jobber AS supplier, sup.supplier_name, ewo.notes
+        FROM `tabEmbroidery Work Order` ewo
+        LEFT JOIN `tabSupplier` sup ON sup.name = ewo.full_piece_jobber
+        WHERE {' AND '.join(conditions)}
+        ORDER BY ewo.creation DESC
     """, values, page, page_size)
     # each transfer's item lines (several per transfer)
     names = [r.name for r in transfers["rows"]]
     lines = {}
     if names:
-        for li in frappe.get_all("Uniform Embroidery Transfer Item", filters={"parent": ["in", names], "parenttype": "Uniform Embroidery Transfer"},
-                                 fields=["name", "parent", "idx", "source_item", "target_item", "same_item", "qty", "received_qty", "uom"],
+        for li in frappe.get_all("Embroidery Work Order Item", filters={"parent": ["in", names], "parenttype": EWO},
+                                 fields=["name", "parent", "idx", "item_code as source_item", "target_item", "same_item",
+                                         "ordered_qty as qty", "received_qty", "uom"],
                                  order_by="idx asc"):
             li.pending_qty = flt(flt(li.qty) - flt(li.received_qty), 6)
             lines.setdefault(li.parent, []).append(li)
@@ -244,12 +266,13 @@ def get_transfer_receipts(transfer_id):
     history (each receipt with its item, qty, warehouse and Stock Entry)."""
     guard_tab("uniform")
     return {
-        "items": frappe.get_all("Uniform Embroidery Transfer Item",
-            filters={"parent": transfer_id, "parenttype": "Uniform Embroidery Transfer"},
-            fields=["name", "idx", "source_item", "target_item", "same_item", "qty", "received_qty", "pending_qty", "uom"],
+        "items": frappe.get_all("Embroidery Work Order Item",
+            filters={"parent": transfer_id, "parenttype": EWO},
+            fields=["name", "idx", "item_code as source_item", "target_item", "same_item", "ordered_qty as qty", "received_qty",
+                    "pending_qty", "uom"],
             order_by="idx asc"),
-        "receipts": frappe.get_all("Uniform Embroidery Transfer Receipt",
-            filters={"parent": transfer_id, "parenttype": "Uniform Embroidery Transfer"},
+        "receipts": frappe.get_all("Embroidery Work Order Receipt",
+            filters={"parent": transfer_id, "parenttype": EWO},
             fields=["date", "qty", "to_warehouse", "stock_entry", "source_item", "target_item"], order_by="idx asc"),
     }
 

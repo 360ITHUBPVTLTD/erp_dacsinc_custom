@@ -215,14 +215,17 @@ _EVENT_SQL = """
 
     UNION ALL
 
-    -- Embroidery stock transfers are warehouse-to-warehouse moves with no Sales
-    -- Order behind them, so sales_order is NULL here. They exist in this feed so
-    -- the Embroidery Transfers tab can notify on its own records; every consumer
-    -- has to tolerate a NULL sales_order.
-    SELECT 'Uniform Embroidery Transfer' AS doctype, uet.name, NULL AS sales_order,
-           uet.modified AS ts, uet.creation AS created, uet.status, uet.docstatus, uet.owner,
-           NULL AS party, NULL AS party_name, 0 AS is_rm_tier, 0 AS is_return
-    FROM `tabUniform Embroidery Transfer` uet
+    -- Embroidery stock transfers (Embroidery Work Orders of work type Stock Transfer) are
+    -- warehouse-to-warehouse moves with no Sales Order behind them, so sales_order is NULL here.
+    -- They exist in this feed so the Embroidery Transfers tab can notify on its own records; every
+    -- consumer has to tolerate a NULL sales_order. Their status reads "Stock Transfer <status>"
+    -- so the feed words them as transfers, not as job work.
+    SELECT 'Embroidery Work Order' AS doctype, st.name, NULL AS sales_order,
+           st.modified AS ts, st.creation AS created, CONCAT('Stock Transfer ', st.status), st.docstatus, st.owner,
+           st.full_piece_jobber, st_sup.supplier_name, 0 AS is_rm_tier, 0 AS is_return
+    FROM `tabEmbroidery Work Order` st
+    LEFT JOIN `tabSupplier` st_sup ON st_sup.name = st.full_piece_jobber
+    WHERE st.work_type = 'Stock Transfer'
 """
 
 
@@ -755,11 +758,11 @@ def _event_importance(ev):
         important, text = _comment_importance(status)
         return important, (text[:160] or "Comment")
 
-    if dt == "Uniform Embroidery Transfer":
-        # Not a submittable doctype — docstatus is always 0 and the whole
-        # lifecycle lives in `status`, so the draft/submitted wording below
-        # would be meaningless here.
-        if "receiv" in st:
+    if dt == "Embroidery Work Order" and st.startswith("stock transfer"):
+        # an Embroidery Transfer (see _EVENT_SQL): sent / received back, not job work
+        if ds == 2:
+            return True, "Embroidery transfer cancelled — stock put back"
+        if "completed" in st or "receiv" in st:
             return True, "Embroidery transfer received back"
         return True, "Plain stock sent to embroidery"
 
@@ -3595,7 +3598,9 @@ def _ewo_lists(days=180, search=None, scope="open", scope_tab="jobwork",
 
     Returns {"ewo_fp", "ewo_pn", "active_count"}.
     """
-    conditions = ["ewo.docstatus < 2", "ewo.date >= %(from_date)s AND ewo.date < %(to_next)s", _NOT_DISABLED_SO]
+    # Full Piece and Panel only: a Stock Transfer work order is listed on the Embroidery Transfers tab
+    conditions = ["ewo.docstatus < 2", "ewo.work_type IN ('Full Piece Job Work', 'Panel Job Work')",
+                  "ewo.date >= %(from_date)s AND ewo.date < %(to_next)s", _NOT_DISABLED_SO]
     params = {"from_date": _from_date(days), "to_next": _to_next(days)}
 
     if scope == "open":
@@ -6392,7 +6397,7 @@ def repost_bin_qty(item_code, warehouse):
 # Every doctype that feeds the Order Flow dashboard (see hooks.py's doc_events —
 # Sales Order, Material Request, Purchase Order, Purchase Receipt, Pick List,
 # Delivery Note, Sales Invoice, Purchase Invoice, Subcontracting Order,
-# Subcontracting Receipt, Embroidery Work Order, Uniform Embroidery Transfer)
+# Subcontracting Receipt, Embroidery Work Order — Full Piece, Panel and Stock Transfer)
 # calls this on on_update/on_cancel. order_flow.js listens for this exact
 # event and silently re-fetches whatever tab is currently open — so the
 # dashboard reflects any change (anyone's, anywhere) without the user ever
