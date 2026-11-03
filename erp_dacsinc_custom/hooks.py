@@ -908,6 +908,8 @@ scheduler_events = {
 # A store's shift is shared: its closing may carry bills of any of the store's users (pos_closing.py).
 override_doctype_class = {
     "POS Closing Entry": "erp_dacsinc_custom.pos_closing.StorePOSClosingEntry",
+    # exchanges: returns not of the shift's own bills are booked before its sales (pos_merge.py)
+    "POS Invoice Merge Log": "erp_dacsinc_custom.pos_merge.StorePOSInvoiceMergeLog",
 }
 
 override_whitelisted_methods = {
