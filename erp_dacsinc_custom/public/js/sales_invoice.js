@@ -87,6 +87,7 @@ frappe.ui.form.on('Sales Invoice', {
 				: (cint(frm.doc.update_stock) ? __('Stock went out with this invoice.') : __('Stock went out with the Delivery Note.')));
 		}
 		si_remove_get_items_buttons(frm);
+		dacs_einvoice_box(frm);
 		// Create menu: Return / Credit Note stays. Payment is the "Receive Payment" button below.
 		dacs_hide_create_buttons(frm, ['Payment Request', 'Invoice Discounting', 'Maintenance Schedule',
 			'Delivery Note', 'Dunning', 'Quality Inspection(s)', 'Payment']);
@@ -194,4 +195,62 @@ if (typeof window.dacs_load_return_actions !== 'function') {
 		if (!cint(frm.doc.is_return)) { $(frm.layout.wrapper).find('.dacs-rp').remove(); return; }
 		frappe.require('/assets/erp_dacsinc_custom/js/return_actions.js', () => window.dacs_return_actions(frm));
 	};
+}
+
+// e-Invoice / e-Way Bill: its own full-width section at the top of the form (custom_einvoice_section, shown when the
+// invoice has an IRN or an e-way bill), one compact row — the QR, then the e-invoice and the e-way bill details
+// (custom_einvoice_ewaybill_html; data from einvoice_info.get_einvoice_ewaybill: India Compliance's logs + the invoice's
+// GST / transport fields). A cancelled IRN or e-way bill shows red with its date and reason.
+function dacs_einvoice_box(frm) {
+	const f = frm.fields_dict.custom_einvoice_ewaybill_html;
+	if (!f) return;
+	if (frm.is_new() || !(frm.doc.irn || frm.doc.ewaybill)) { f.$wrapper.empty(); return; }
+	frappe.call({ method: 'erp_dacsinc_custom.einvoice_info.get_einvoice_ewaybill', args: { sales_invoice: frm.doc.name } }).then(r => {
+		const d = r.message || {};
+		const esc = v => frappe.utils.escape_html(v == null ? '' : String(v));
+		const dt = v => v ? frappe.datetime.str_to_user(v) : '';
+		// label / value pairs, two pairs a line (a wide value takes the whole line); empty values are left out
+		const grid = pairs => {
+			const cells = pairs.filter(p => p[1]);
+			const L = 'color:var(--text-muted);white-space:nowrap;padding:1px 8px 1px 0;vertical-align:top;';
+			const V = 'padding:1px 14px 1px 0;vertical-align:top;overflow-wrap:anywhere;word-break:break-word;';
+			let rows = '', line = [];
+			const flush = () => { if (line.length) rows += `<tr>${line.join('')}${line.length === 1 ? '<td></td><td></td>' : ''}</tr>`; line = []; };
+			cells.forEach(([l, v, wide]) => {
+				if (wide) { flush(); rows += `<tr><td style="${L}">${l}</td><td colspan="3" style="${V}">${v}</td></tr>`; return; }
+				line.push(`<td style="${L}">${l}</td><td style="${V}">${v}</td>`);
+				if (line.length === 2) flush();
+			});
+			flush();
+			return `<table style="font-size:12px;border-collapse:collapse;width:100%;table-layout:auto;">${rows}</table>`;
+		};
+		const pill = (txt, ok) => `<span class="indicator-pill ${ok ? 'green' : 'red'}" style="margin-left:6px;font-size:11px;">${esc(txt)}</span>`;
+		const block = (title, status, body) => `<div style="flex:1 1 320px;min-width:0;">
+			<div style="font-weight:600;font-size:13px;margin-bottom:4px;">${title}${status}</div>${body}</div>`;
+		const parts = [];
+		if (d.qr) parts.push(`<img src="data:image/png;base64,${d.qr}" alt="e-Invoice QR" style="width:110px;height:110px;flex:none;border:1px solid var(--border-color);border-radius:4px;">`);
+		if (d.irn) {
+			const cx = cint(d.irn_cancelled) || d.einvoice_status === 'Cancelled';
+			parts.push(block(__('e-Invoice'), pill(cx ? __('Cancelled') : (d.einvoice_status || __('Generated')), !cx), grid([
+				[__('IRN'), `<span style="font-family:var(--font-stack-monospace,monospace);font-size:11px;">${esc(d.irn)}</span>`, 1],
+				[__('Ack No'), `<b>${esc(d.ack_no)}</b>`], [__('Ack Date'), dt(d.ack_date)],
+				[__('Seller GSTIN'), esc(d.company_gstin)], [__('Buyer GSTIN'), esc(d.billing_address_gstin)],
+				[__('Place of Supply'), esc(d.place_of_supply)], [__('Invoice Value'), d.grand_total ? format_currency(d.grand_total, frm.doc.currency) : ''],
+				[__('Cancelled on'), cx ? dt(d.irn_cancelled_on) : ''], [__('Reason'), cx ? esc(d.irn_cancel_remark) : ''],
+			])));
+		}
+		if (d.ewaybill) {
+			const cx = cint(d.ewaybill_cancelled) || d.e_waybill_status === 'Cancelled';
+			const transporter = [d.gst_transporter_id, d.transporter_name].filter(Boolean).map(esc).join(' – ');
+			parts.push(block(__('e-Way Bill'), pill(cx ? __('Cancelled') : (d.e_waybill_status || __('Generated')), !cx), grid([
+				[__('EWB No'), `<b>${esc(d.ewaybill)}</b>`], [__('Generated'), dt(d.ewaybill_date)],
+				[__('Valid Upto'), dt(d.ewaybill_valid_upto)], [__('Mode'), esc(d.mode_of_transport)],
+				[__('Vehicle No'), esc(d.vehicle_no)], [__('Vehicle Type'), esc(d.gst_vehicle_type)],
+				[__('Distance'), d.distance ? `${esc(d.distance)} km` : ''], [__('LR No / Date'), [esc(d.lr_no), dt(d.lr_date)].filter(Boolean).join(' · ')],
+				[__('Transporter'), transporter, 1],
+				[__('Cancelled on'), cx ? dt(d.ewaybill_cancelled_on) : ''],
+			])));
+		}
+		f.$wrapper.html(`<div style="display:flex;gap:16px;align-items:flex-start;flex-wrap:wrap;padding:4px 0;">${parts.join('')}</div>`);
+	});
 }
