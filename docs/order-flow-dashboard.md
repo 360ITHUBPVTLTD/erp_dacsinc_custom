@@ -2112,12 +2112,21 @@ Received, from the lines). The old single-item header fields stay hidden for his
   moves every line to the jobber's WIP warehouse and **one** transfer record holds them all. Only
   free stock may go: `_free_stock` = on hand − what stock_hold allocates to Sales Orders (Pick Lists,
   embroidery at the jobber, raw-material earmarks; held only in the hold warehouse). No override here.
+  The **Embroidery Jobber** is required, as on an Embroidery Work Order: only suppliers ticked Is Jobber
+  (and not disabled) are listed, and the server refuses any other. It is kept on the transfer (Supplier,
+  Supplier Name) with the optional Dispatch Notes; the Stock Entry is made exactly as before (no supplier
+  on it). Transfers made before this have no jobber.
+- **Print** (the row's print button, and "print now?" after sending): **Uniform Embroidery Transfer DAC**
+  (`print_format/uniform_embroidery_transfer_dac/`, the doctype's default print format) — the Embroidery
+  Work Order print's layout: Issued To the jobber with their address, each line's plain item sent and the
+  item it comes back as with the qty, total, Dispatch Notes as remarks, signatures.
 - **Receive** (`receive_embroidery_transfer(transfer_id, lines)`): every pending line with "Received
   now" and **its own warehouse** (a "same warehouse on every line" shortcut fills them). Each received
   line gets its own Repack Stock Entry (plain item out of WIP, embroidered item into that line's
   warehouse) so each item's valuation is its own, and its own row in Receipts (with the item and the
   line it belongs to). Lines can come back in parts, any number of times.
-- **The tab** lists one row per transfer with its lines ("plain → embroidered × qty (n back)");
+- **The tab** lists one row per transfer with its lines ("plain → embroidered × qty (n back)") and the
+  jobber over the route; the search box also finds a jobber's name;
   expanding a row shows the Items with sent / received / pending and the receipt history.
 - **Deleting a transfer undoes its stock** (`UniformEmbroideryTransfer.on_trash`): its receipt Repack
   entries (newest first) and then the sending Material Transfer are cancelled (a draft entry is

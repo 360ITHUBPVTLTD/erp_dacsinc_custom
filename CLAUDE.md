@@ -64,6 +64,8 @@ previously-buggy edge cases — are documented in `docs/`:
   CODE-39 only for valid values, rows removed when the barcode is cleared, old duplicates don't block saves.
 - `docs/workspace-shortcuts.md` — workspace shortcuts without a count filter aren't counted (Frappe counted
   them, and single DocTypes like GST Settings have no table → TableMissingError popup).
+- `docs/item-stock-ledger.md` — Item Stock Ledger page (Admin, Production Manager): one item's every movement from the
+  first, with jobber / SCO / PO / Sales Order, and what each jobber still has per Subcontracting Order.
 - `docs/stock-hold.md` — stock held for Sales Orders (Pick Lists, jobber, earmarks)
   can't be delivered, moved, reconciled or cancelled away by anything else.
 

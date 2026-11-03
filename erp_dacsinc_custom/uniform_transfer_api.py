@@ -25,14 +25,16 @@ def _free_stock(item_code, warehouse):
 
 
 @frappe.whitelist()
-def create_embroidery_transfers(lines, from_warehouse, wip_warehouse):
+def create_embroidery_transfers(lines, from_warehouse, wip_warehouse, supplier=None, notes=None):
     """Embroidery Transfers tab › Create Transfer: several lines at once — each line is a plain
     (source) item, the embroidered (target) item it comes back as (the same item when it only
     goes for embroidery), and a qty. One Stock Entry moves every line from `from_warehouse` to
     the jobber's WIP warehouse, and ONE Uniform Embroidery Transfer holds every line (Items)
     to follow them back.
     Only free stock may go: a source item's lines together may not exceed what is not held for
-    Sales Orders (_free_stock) — no override here."""
+    Sales Orders (_free_stock) — no override here.
+    `supplier`: the embroidery jobber the goods go to (Supplier › Is Jobber), as on an Embroidery
+    Work Order — required; kept on the transfer and printed on it (the Stock Entry is as before)."""
     import json
     guard_tab("uniform")
     guard_act("uniform")
@@ -54,6 +56,11 @@ def create_embroidery_transfers(lines, from_warehouse, wip_warehouse):
         frappe.throw("Add at least one line.")
     if not from_warehouse or not wip_warehouse:
         frappe.throw("Choose the From Warehouse and the WIP Warehouse.")
+    if not supplier:
+        frappe.throw("Choose the embroidery jobber the goods are sent to.")
+    jobber = frappe.db.get_value("Supplier", supplier, ["supplier_name", "custom_is_jobber", "disabled"], as_dict=True)
+    if not jobber or jobber.disabled or not jobber.custom_is_jobber:
+        frappe.throw(f"{supplier} is not an active jobber — choose a supplier ticked Is Jobber.")
 
     wanted = {}
     for l in clean:
@@ -81,7 +88,8 @@ def create_embroidery_transfers(lines, from_warehouse, wip_warehouse):
 
     uet = frappe.new_doc("Uniform Embroidery Transfer")
     uet.update({"from_warehouse": from_warehouse, "wip_warehouse": wip_warehouse, "status": "Sent",
-                "date_sent": nowdate(), "stock_entry_sent": se.name})
+                "date_sent": nowdate(), "stock_entry_sent": se.name,
+                "supplier": supplier, "supplier_name": jobber.supplier_name, "notes": notes})
     for l in clean:
         uet.append("items", {"source_item": l["source_item"], "target_item": l["target_item"],
                              "same_item": 1 if l["source_item"] == l["target_item"] else 0, "qty": l["qty"]})
@@ -90,10 +98,10 @@ def create_embroidery_transfers(lines, from_warehouse, wip_warehouse):
 
 
 @frappe.whitelist()
-def create_embroidery_transfer(source_item, target_item, qty, from_warehouse, wip_warehouse):
+def create_embroidery_transfer(source_item, target_item, qty, from_warehouse, wip_warehouse, supplier=None):
     """One line — kept for callers of the old single-line dialog (same rules as above)."""
     r = create_embroidery_transfers([{"source_item": source_item, "target_item": target_item, "qty": qty}],
-                                    from_warehouse, wip_warehouse)
+                                    from_warehouse, wip_warehouse, supplier=supplier)
     return r["transfer"]
 
 @frappe.whitelist()
@@ -192,7 +200,7 @@ def get_embroidery_transfers(status=None, search=None, scope=None, page=1, page_
         values["me"] = frappe.session.user
 
     if search:
-        conditions.append("""(uet.name LIKE %(search)s OR EXISTS (SELECT 1 FROM `tabUniform Embroidery Transfer Item` li
+        conditions.append("""(uet.name LIKE %(search)s OR uet.supplier_name LIKE %(search)s OR EXISTS (SELECT 1 FROM `tabUniform Embroidery Transfer Item` li
                              WHERE li.parent = uet.name AND (li.source_item LIKE %(search)s OR li.target_item LIKE %(search)s)))""")
         values["search"] = f"%{search}%"
 
@@ -209,7 +217,7 @@ def get_embroidery_transfers(status=None, search=None, scope=None, page=1, page_
     transfers = _paged_query(f"""
         SELECT uet.name, uet.total_qty AS qty, uet.total_received AS received_qty, uet.from_warehouse, uet.wip_warehouse,
                uet.to_warehouse, uet.status, uet.date_sent, uet.date_received, uet.stock_entry_sent,
-               uet.stock_entry_received, uet.owner
+               uet.stock_entry_received, uet.owner, uet.supplier, uet.supplier_name, uet.notes
         FROM `tabUniform Embroidery Transfer` uet
         {where_clause}
         ORDER BY uet.creation DESC

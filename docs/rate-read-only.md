@@ -24,6 +24,26 @@ row could show a Price List Rate and discount that don't add up to the Rate.
   Same Rate* is on (`update_docfield_property("rate", "read_only", …)`). The grid's
   `update_docfield_property` is wrapped so `rate` / `read_only` always stays 1.
 
+## A typed Price List Rate stays (Quotation, Sales Order, Sales Invoice)
+
+ERPNext fetches the Price List Rate again from Item Price whenever Qty, UOM, Customer or Price List
+changes (`transaction.js` → `apply_price_list`). With the ₹10 placeholder Item Prices that replaced the
+rate the user had typed, and the gap was left on the line as a discount (`rate` handler → Discount
+Amount), so typing the rate again gave Rate ≈ 10 with a ~99% discount.
+
+`public/js/keep_price_list_rate.js` changes which lines `apply_price_list` fetches:
+
+- **Qty, UOM or Customer changed, same Price List** — only lines with no Price List Rate yet (a new
+  item, or one cleared to 0). A line with a Price List Rate keeps it.
+- **Price List changed** — every line takes the new list's rate once (the form remembers which list
+  the lines were priced from; only a whole-document fetch moves it). After that, Qty changes keep
+  the rates again, including any typed after the change.
+
+To take the Item Price again on one line, set its Price List Rate to 0. A changed UOM does not convert
+a kept Price List Rate — type the rate for the new UOM. The server does not overwrite a Price List
+Rate on save. Documents made from another (SO → SI) still keep ERPNext's own handling: a mapped line's
+Qty change never re-fetched the price.
+
 ## What it does not cover
 
 - It is a form rule only. Code still sets Rate: the mapping (SO → PO / DN / SI, PR → PI),

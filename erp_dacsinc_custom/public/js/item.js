@@ -27,6 +27,14 @@ frappe.ui.form.on('Item', {
             return;
         }
 
+        // Item Stock Ledger page (docs/item-stock-ledger.md) on this item — same roles as the page
+        if (frappe.user.has_role(['Admin', 'Production Manager'])) {
+            frm.add_custom_button(__('Stock Ledger'), () => {
+                frappe.route_options = { item: frm.doc.name };
+                frappe.set_route('item-stock-ledger');
+            });
+        }
+
         // --- Custom Send to Embroidery Button ---
         // frm.add_custom_button(__('Send to Embroidery'), () => {
         //     const dialog = new frappe.ui.Dialog({
