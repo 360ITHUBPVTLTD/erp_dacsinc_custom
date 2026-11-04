@@ -53,7 +53,7 @@ app_include_js = [
 ]
 
 app_include_css = [
-    "/assets/erp_dacsinc_custom/style.css?v=1.0.5",
+    "/assets/erp_dacsinc_custom/style.css?v=1.0.6",
     "/assets/erp_dacsinc_custom/css/order_flow.css?v=1.0.12"
 ]
 
