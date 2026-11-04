@@ -15,3 +15,11 @@
 }
 
 
+
+
+/* India Compliance's PAN status refresh icon (Customer / Supplier forms): it asks the Income Tax portal, which drops
+   requests from the live server ("An error occurred while fetching PAN status ... RemoteDisconnected"). Hidden; the status
+   is still fetched quietly when a form opens and simply stays blank when the portal doesn't answer. */
+.refresh-pan {
+    display: none !important;
+}
