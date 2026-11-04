@@ -1,7 +1,8 @@
 """Journal Entry prompt (Order Flow › Finance › New › Journal Entry — public/js/journal_prompt.js).
 
 A short form instead of the full Journal Entry: ready-made patterns in groups (bank & cash,
-expenses & salary, taxes, customers & suppliers, loans & advances) that fill the debit and credit
+expenses & salary, provisions & prepaid, partners & capital, fixed assets, taxes, customers & suppliers,
+credit & debit notes, loans & advances) that fill the debit and credit
 lines from the company's ledgers, then account, party, debit, credit per line with a live Dr = Cr check. The entry is
 ERPNext's own Journal Entry, made as the user (their Journal Entry permissions apply), saved as a
 draft or submitted.
@@ -11,7 +12,8 @@ import frappe
 from frappe import _
 from frappe.utils import cint, flt, getdate, nowdate
 
-VOUCHER_TYPES = ("Journal Entry", "Bank Entry", "Cash Entry", "Contra Entry", "Write Off Entry")
+VOUCHER_TYPES = ("Journal Entry", "Bank Entry", "Cash Entry", "Contra Entry", "Write Off Entry", "Credit Note", "Debit Note",
+	"Depreciation Entry")
 
 
 def _acc(company, *names):
@@ -55,6 +57,30 @@ def get_setup(company=None):
 			"out_cgst": _acc(company, f"Output Tax CGST - {abbr}"),
 			"out_sgst": _acc(company, f"Output Tax SGST - {abbr}"),
 			"out_igst": _acc(company, f"Output Tax IGST - {abbr}"),
+			# credit / debit notes without GST (a GST note is made from the invoice — docs/returns.md)
+			"trade_discount": _acc(company, c.default_discount_account, f"Trade Discount A/c - {abbr}"),
+			"rate_difference": _acc(company, f"Rate Difference - {abbr}"),
+			"discount_received": _acc(company, f"Discount Received - {abbr}"),
+			# bank & cash, provisions, partners, assets, taxes, loans (the more patterns — journal_prompt.js);
+			# a ledger not found here is chosen on the line
+			"fixed_deposit": _acc(company, f"Fixed Deposit - {abbr}"),
+			"interest_received": _acc(company, f"Interest Received - {abbr}"),
+			"card_charges": _acc(company, f"Card Swipe Bank Charges - {abbr}"),
+			"expenses_payable": _acc(company, f"Expenses Payable - {abbr}"),
+			"prepaid": _acc(company, f"Prepaid Expenses - {abbr}"),
+			"drawings": _acc(company, f"Drawings - {abbr}"),
+			"interest_on_capital": _acc(company, f"Interest on Capital - {abbr}"),
+			"partner_rem": _acc(company, f"Partners' Remuneration - {abbr}", f"Salary To Partner - {abbr}"),
+			"bad_debts": _acc(company, f"Bad Debts - {abbr}"),
+			"salary_advance": _acc(company, f"Salary Advance - {abbr}"),
+			"bonus": _acc(company, f"Bonus to Staff - {abbr}"),
+			"asset_gain_loss": _acc(company, c.get("disposal_account"), f"Gain/Loss on Asset Disposal - {abbr}"),
+			"in_cgst": _acc(company, f"Input Tax CGST - {abbr}"),
+			"in_sgst": _acc(company, f"Input Tax SGST - {abbr}"),
+			"in_igst": _acc(company, f"Input Tax IGST - {abbr}"),
+			"profession_tax": _acc(company, f"Profession Tax - {abbr}"),
+			"income_tax": _acc(company, f"Income Tax - {abbr}"),
+			"interest_loan": _acc(company, f"Interest on Loan - {abbr}"),
 		},
 	}
 
@@ -98,7 +124,27 @@ def make_journal_entry(data, submit=0):
 			"debit_in_account_currency": flt(r.get("debit"), 2), "credit_in_account_currency": flt(r.get("credit"), 2),
 			"cost_center": cost_center, "user_remark": r.get("note") or None,
 		})
+	_set_company_gstin(je)
 	je.insert()
 	if submit:
 		je.submit()
 	return {"name": je.name, "docstatus": je.docstatus}
+
+
+def _set_company_gstin(je):
+	"""India Compliance refuses a Journal Entry with a GST ledger and no Company GSTIN ("Company GSTIN is mandatory if
+	any GST account is present" — GST paid, GST set-off). The prompt has no GSTIN field: a company with one GSTIN gets
+	it; with several, the check stays as it is (the full form picks one). Entries without a GST ledger are untouched."""
+	if not je.meta.has_field("company_gstin") or je.get("company_gstin"):
+		return
+	try:
+		from india_compliance.gst_india.utils import get_gst_account_gst_tax_type_map
+	except ImportError:
+		return
+	gst_accounts = get_gst_account_gst_tax_type_map() or {}
+	if not any(r.account in gst_accounts for r in je.accounts):
+		return
+	gstins = frappe.get_all("Address", filters=[["Dynamic Link", "link_doctype", "=", "Company"],
+		["Dynamic Link", "link_name", "=", je.company], ["gstin", "is", "set"], ["disabled", "=", 0]], pluck="gstin", distinct=True)
+	if len(set(gstins)) == 1:
+		je.company_gstin = gstins[0]

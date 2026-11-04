@@ -293,6 +293,11 @@ has_permission = {
 # Document numbers PREFIX/26-27/00001: .FYS. is the short financial year (naming.py, docs/naming-series.md)
 naming_series_variables = {"FYS": "erp_dacsinc_custom.naming.short_fiscal_year"}
 
+# Users' own form / list / grid settings ("Configure Columns" on a child table, list filters…) live in the
+# cache and reach the database only by the hourly sync_user_settings job; a full cache clear (every deploy's
+# bench clear-cache, and migrate) used to wipe what wasn't synced yet, so columns "reset" for some users.
+persistent_cache_keys = ["_user_settings"]
+
 # Document Events
 # ---------------
 # Hook on document methods and events

@@ -1,6 +1,7 @@
 // Journal Entry prompt — Order Flow › Finance › New › Journal Entry (journal_prompt.py).
-// Left: the kind of entry, in groups (bank & cash, expenses & salary, taxes, customers & suppliers,
-//       loans & advances, other); each shows its Dr / Cr and fills the lines from the company's ledgers.
+// Left: the kind of entry, in groups (bank & cash, expenses & salary, provisions & prepaid, partners & capital,
+//       fixed assets, taxes, customers & suppliers, credit & debit notes — without GST —, loans & advances,
+//       other), with a find box over the list; each shows its Dr / Cr and fills the lines from the company's ledgers.
 // Middle: the lines — account, party (Debtors / Creditors only), Debit or Credit — and, for every line,
 //       what it does in words ("money goes out of the bank", "expense booked", "we owe less"…), from
 //       the account's type (ERPNext's rule: Dr raises assets / expenses, Cr raises liabilities /
@@ -19,30 +20,93 @@ window.dacs_journal_prompt = function (opts) {
 		const F = {   // account pickers for lines the user chooses
 			expense: { root_type: "Expense" }, bank: { account_type: "Bank" }, liability: { root_type: "Liability" },
 			asset: { root_type: "Asset" }, tds: { account_name: ["like", "%TDS%"], root_type: "Liability" },
+			pl: { root_type: ["in", ["Income", "Expense"]] }, income: { root_type: "Income" },
+			fa: { account_type: "Fixed Asset" }, capital: { account_name: ["like", "%Capital%"], root_type: "Liability" },
+			deposit: { parent_account: ["like", "Securities and Deposits%"] },
 		};
 		const L = (key, side, o) => Object.assign({ key, side }, o || {});
+		const NOTE_BILL = __("A bill with GST is made as a Purchase Invoice (its GST goes to the returns); this entry is for a bill without GST.");
+		const NOTE_FA = __("An asset bought on a GST bill is made as a Purchase Invoice of the asset item (GST credit, and an Asset record with its depreciation). This entry only books the ledger.");
+		const NOTE_SETOFF = __("Books only: uses input GST (ITC) against output GST for the month — type each line's amount. The GST returns come from invoices.");
+		const NOTE = __("Without GST — for a discount or rate difference agreed later. A note that changes GST is made from the invoice (Finance › Returns / Notes). Then Adjust it against the invoice in the party's Account Summary.");
 		const T = [
 			{ g: __("Bank & cash"), k: "bank_charges", icon: "university", label: __("Bank charges"), type: "Bank Entry", remark: __("Bank charges"), lines: [L("bank_charges", "Dr"), L("bank", "Cr")] },
 			{ g: __("Bank & cash"), k: "interest_od", icon: "percent", label: __("Interest charged by bank (OD)"), type: "Bank Entry", remark: __("Interest on OD"), lines: [L("interest_od", "Dr", { f: "expense" }), L("bank", "Cr")] },
 			{ g: __("Bank & cash"), k: "deposit", icon: "arrow-right", label: __("Cash deposited in bank"), type: "Contra Entry", remark: __("Cash deposited in bank"), lines: [L("bank", "Dr"), L("cash", "Cr")] },
 			{ g: __("Bank & cash"), k: "withdraw", icon: "arrow-left", label: __("Cash withdrawn from bank"), type: "Contra Entry", remark: __("Cash withdrawn from bank"), lines: [L("cash", "Dr"), L("bank", "Cr")] },
+			{ g: __("Bank & cash"), k: "card_charges", icon: "credit-card", label: __("Card swipe charges"), type: "Bank Entry", remark: __("Card swipe charges"), lines: [L("card_charges", "Dr", { f: "expense" }), L("bank", "Cr")] },
+			{ g: __("Bank & cash"), k: "interest_in", icon: "plus", label: __("Interest received (bank / FD)"), type: "Bank Entry", remark: __("Interest received"), lines: [L("bank", "Dr"), L("interest_received", "Cr", { f: "income" })] },
+			{ g: __("Bank & cash"), k: "fd_open", icon: "lock", label: __("Fixed deposit made"), type: "Bank Entry", remark: __("Fixed deposit"), lines: [L("fixed_deposit", "Dr", { f: "asset" }), L("bank", "Cr")] },
+			{ g: __("Bank & cash"), k: "fd_close", icon: "unlock", label: __("Fixed deposit closed / matured"), type: "Bank Entry", remark: __("Fixed deposit closed"), lines: [L("bank", "Dr"), L("fixed_deposit", "Cr", { f: "asset" })] },
 			{ g: __("Bank & cash"), k: "bank_transfer", icon: "exchange", label: __("Bank to bank transfer"), type: "Contra Entry", remark: __("Transfer between our bank accounts"), lines: [L(null, "Dr", { f: "bank", hint: __("bank it goes to") }), L("bank", "Cr", { f: "bank" })] },
 			{ g: __("Expenses & salary"), k: "exp_cash", icon: "money", label: __("Expense paid in cash"), type: "Cash Entry", remark: "", lines: [L(null, "Dr", { f: "expense", hint: __("which expense") }), L("cash", "Cr")] },
 			{ g: __("Expenses & salary"), k: "exp_bank", icon: "credit-card", label: __("Expense paid from bank"), type: "Bank Entry", remark: "", lines: [L(null, "Dr", { f: "expense", hint: __("which expense (rent, electricity…)") }), L("bank", "Cr")] },
 			{ g: __("Expenses & salary"), k: "salary_due", icon: "users", label: __("Salary for the month (due)"), type: "Journal Entry", remark: __("Salary for the month"), lines: [L("salary", "Dr", { f: "expense" }), L("payroll_payable", "Cr", { f: "liability" })] },
 			{ g: __("Expenses & salary"), k: "salary_paid", icon: "user", label: __("Salary paid"), type: "Bank Entry", remark: __("Salary paid"), lines: [L("payroll_payable", "Dr", { f: "liability" }), L("bank", "Cr")] },
+			{ g: __("Expenses & salary"), k: "exp_credit", icon: "file-o", label: __("Expense bill on credit (no GST)"), type: "Journal Entry", remark: "", note: NOTE_BILL,
+			  lines: [L(null, "Dr", { f: "expense", hint: __("which expense") }), L("creditors", "Cr", { party_type: "Supplier" })] },
+			{ g: __("Expenses & salary"), k: "bonus_due", icon: "gift", label: __("Bonus to staff (due)"), type: "Journal Entry", remark: __("Bonus to staff"), lines: [L("bonus", "Dr", { f: "expense" }), L("payroll_payable", "Cr", { f: "liability" })] },
+			{ g: __("Expenses & salary"), k: "sal_adv_cut", icon: "cut", label: __("Salary advance recovered from salary"), type: "Journal Entry", remark: __("Salary advance recovered"), lines: [L("payroll_payable", "Dr", { f: "liability" }), L("salary_advance", "Cr", { f: "asset" })] },
 			{ g: __("Expenses & salary"), k: "depreciation", icon: "line-chart", label: __("Depreciation"), type: "Depreciation Entry", remark: __("Depreciation for the period"), lines: [L("depreciation", "Dr"), L("accum_dep", "Cr")] },
+			{ g: __("Provisions & prepaid"), k: "prov_book", icon: "hourglass-half", label: __("Expense due, not paid yet"), type: "Journal Entry", remark: __("Expense due for the month"),
+			  lines: [L(null, "Dr", { f: "expense", hint: __("which expense (rent, audit fee, electricity…)") }), L("expenses_payable", "Cr", { f: "liability" })] },
+			{ g: __("Provisions & prepaid"), k: "prov_paid", icon: "check", label: __("Expense due, now paid"), type: "Bank Entry", remark: __("Expense due paid"), lines: [L("expenses_payable", "Dr", { f: "liability" }), L("bank", "Cr")] },
+			{ g: __("Provisions & prepaid"), k: "prepaid_pay", icon: "calendar-plus-o", label: __("Expense paid in advance (prepaid)"), type: "Bank Entry", remark: __("Paid in advance"), lines: [L("prepaid", "Dr", { f: "asset" }), L("bank", "Cr")] },
+			{ g: __("Provisions & prepaid"), k: "prepaid_use", icon: "calendar-check-o", label: __("Prepaid expense for this period"), type: "Journal Entry", remark: __("Prepaid expense for the period"),
+			  lines: [L(null, "Dr", { f: "expense", hint: __("which expense (insurance, rent…)") }), L("prepaid", "Cr", { f: "asset" })] },
+			{ g: __("Partners & capital"), k: "cap_in", icon: "sign-in", label: __("Partner brings in capital"), type: "Bank Entry", remark: __("Capital introduced"), lines: [L("bank", "Dr"), L(null, "Cr", { f: "capital", hint: __("the partner's capital ledger") })] },
+			{ g: __("Partners & capital"), k: "drawings", icon: "sign-out", label: __("Partner drawings"), type: "Bank Entry", remark: __("Partner drawings"), lines: [L("drawings", "Dr"), L("bank", "Cr")] },
+			{ g: __("Partners & capital"), k: "drawings_close", icon: "compress", label: __("Drawings moved to capital (year end)"), type: "Journal Entry", remark: __("Drawings transferred to capital"),
+			  lines: [L(null, "Dr", { f: "capital", hint: __("the partner's capital ledger") }), L("drawings", "Cr")] },
+			{ g: __("Partners & capital"), k: "int_cap", icon: "percent", label: __("Interest on partner's capital"), type: "Journal Entry", remark: __("Interest on capital"),
+			  lines: [L("interest_on_capital", "Dr", { f: "expense" }), L(null, "Cr", { f: "capital", hint: __("the partner's capital ledger") })] },
+			{ g: __("Partners & capital"), k: "partner_rem", icon: "user-circle", label: __("Partner's remuneration"), type: "Journal Entry", remark: __("Partner's remuneration"),
+			  lines: [L("partner_rem", "Dr", { f: "expense" }), L(null, "Cr", { f: "capital", hint: __("the partner's capital ledger") })] },
+			{ g: __("Fixed assets"), k: "fa_bank", icon: "desktop", label: __("Asset bought, paid from bank"), type: "Bank Entry", remark: __("Asset bought"), note: NOTE_FA,
+			  lines: [L(null, "Dr", { f: "fa", hint: __("the asset ledger (furniture, computer, machine…)") }), L("bank", "Cr")] },
+			{ g: __("Fixed assets"), k: "fa_credit", icon: "truck", label: __("Asset bought on credit"), type: "Journal Entry", remark: __("Asset bought on credit"), note: NOTE_FA,
+			  lines: [L(null, "Dr", { f: "fa", hint: __("the asset ledger") }), L("creditors", "Cr", { party_type: "Supplier" })] },
+			{ g: __("Fixed assets"), k: "fa_sold", icon: "recycle", label: __("Asset sold / scrapped"), type: "Journal Entry", remark: __("Asset sold"), multi: true,
+			  lines: [L("bank", "Dr"), L("accum_dep", "Dr", { hint: __("depreciation charged on it so far") }), L(null, "Cr", { f: "fa", hint: __("the asset ledger (its cost)") }),
+			          L("asset_gain_loss", "Dr", { hint: __("loss — or move to Credit for a profit; 'Balance on the last line' works it out") })] },
 			{ g: __("Taxes"), k: "tds_paid", icon: "bank", label: __("TDS paid to government"), type: "Bank Entry", remark: __("TDS deposited (challan)"), lines: [L("tds_payable", "Dr", { f: "tds", hint: __("the TDS section ledger") }), L("bank", "Cr")] },
 			{ g: __("Taxes"), k: "gst_paid", icon: "file-text-o", label: __("GST paid to government"), type: "Bank Entry", remark: __("GST paid (challan)"), multi: true,
 			  lines: [L("out_cgst", "Dr"), L("out_sgst", "Dr"), L("out_igst", "Dr"), L("bank", "Cr")] },
 			{ g: __("Taxes"), k: "pf_paid", icon: "shield", label: __("PF / ESIC paid"), type: "Bank Entry", remark: __("PF paid"), lines: [L("pf", "Dr", { f: "liability" }), L("bank", "Cr")] },
 			{ g: __("Taxes"), k: "tds_by_cust", icon: "scissors", label: __("TDS cut by a customer"), type: "Journal Entry", remark: __("TDS deducted by customer"), lines: [L("tds_receivable", "Dr"), L("debtors", "Cr", { party_type: "Customer" })] },
+			{ g: __("Taxes"), k: "gst_setoff", icon: "exchange", label: __("GST set-off (input against output)"), type: "Journal Entry", remark: __("GST set-off for the month"), multi: true, note: NOTE_SETOFF,
+			  lines: [L("out_cgst", "Dr"), L("out_sgst", "Dr"), L("out_igst", "Dr"), L("in_cgst", "Cr"), L("in_sgst", "Cr"), L("in_igst", "Cr")] },
+			{ g: __("Taxes"), k: "tds_on_bill", icon: "scissors", label: __("TDS cut on a supplier's bill"), type: "Journal Entry", remark: __("TDS deducted"),
+			  lines: [L("creditors", "Dr", { party_type: "Supplier" }), L(null, "Cr", { f: "tds", hint: __("the TDS section ledger (contract, rent, professional…)") })] },
+			{ g: __("Taxes"), k: "pt_paid", icon: "id-card-o", label: __("Profession tax paid"), type: "Bank Entry", remark: __("Profession tax paid"), lines: [L("profession_tax", "Dr", { f: "liability" }), L("bank", "Cr")] },
+			{ g: __("Taxes"), k: "it_paid", icon: "university", label: __("Income tax / advance tax paid"), type: "Bank Entry", remark: __("Income tax paid"), lines: [L("income_tax", "Dr", { f: "liability" }), L("bank", "Cr")] },
 			{ g: __("Customers & suppliers"), k: "wo_cust", icon: "eraser", label: __("Write off a customer's small balance"), type: "Write Off Entry", remark: __("Small balance written off"), lines: [L("write_off", "Dr"), L("debtors", "Cr", { party_type: "Customer" })] },
 			{ g: __("Customers & suppliers"), k: "wo_supp", icon: "eraser", label: __("Write off a supplier's small balance"), type: "Write Off Entry", remark: __("Small balance written off"), lines: [L("creditors", "Dr", { party_type: "Supplier" }), L("write_off", "Cr")] },
 			{ g: __("Customers & suppliers"), k: "setoff", icon: "random", label: __("Set off: customer is also a supplier"), type: "Journal Entry", remark: __("Set off between receivable and payable"), lines: [L("creditors", "Dr", { party_type: "Supplier" }), L("debtors", "Cr", { party_type: "Customer" })] },
+			{ g: __("Customers & suppliers"), k: "bad_debt", icon: "ban", label: __("Bad debt written off (customer won't pay)"), type: "Write Off Entry", remark: __("Bad debt written off"),
+			  lines: [L("bad_debts", "Dr", { f: "expense" }), L("debtors", "Cr", { party_type: "Customer" })] },
+			{ g: __("Customers & suppliers"), k: "dep_given", icon: "shield", label: __("Security deposit given (rent, phone…)"), type: "Bank Entry", remark: __("Security deposit given"),
+			  lines: [L(null, "Dr", { f: "deposit", hint: __("the deposit ledger") }), L("bank", "Cr")] },
+			{ g: __("Customers & suppliers"), k: "dep_back", icon: "reply", label: __("Security deposit received back"), type: "Bank Entry", remark: __("Security deposit received back"),
+			  lines: [L("bank", "Dr"), L(null, "Cr", { f: "deposit", hint: __("the deposit ledger") })] },
+			// Credit / debit notes as Journal Entries — without GST (GSTR-1 / 3B come from invoices and their returns)
+			{ g: __("Credit & debit notes"), k: "cn_cust", icon: "minus-circle", label: __("Credit note to a customer (they pay less)"), type: "Credit Note", remark: __("Credit note: discount / rate difference"), note: NOTE,
+			  lines: [L("trade_discount", "Dr", { f: "pl", hint: __("the discount / rate difference ledger") }), L("debtors", "Cr", { party_type: "Customer" })] },
+			{ g: __("Credit & debit notes"), k: "dn_cust", icon: "plus-circle", label: __("Debit note to a customer (they pay more)"), type: "Debit Note", remark: __("Debit note: rate difference / extra charge"), note: NOTE,
+			  lines: [L("debtors", "Dr", { party_type: "Customer" }), L("rate_difference", "Cr", { f: "pl", hint: __("the income ledger (rate difference, extra charges…)") })] },
+			{ g: __("Credit & debit notes"), k: "dn_supp", icon: "minus-square", label: __("Debit note to a supplier (we pay less)"), type: "Debit Note", remark: __("Debit note: rate difference / shortage"), note: NOTE,
+			  lines: [L("creditors", "Dr", { party_type: "Supplier" }), L("discount_received", "Cr", { f: "pl", hint: __("the ledger (discount received, rate difference…)") })] },
+			{ g: __("Credit & debit notes"), k: "cn_supp", icon: "plus-square", label: __("Supplier charges more (we owe more)"), type: "Credit Note", remark: __("Supplier's extra charge"), note: NOTE,
+			  lines: [L(null, "Dr", { f: "expense", hint: __("the purchase / expense ledger") }), L("creditors", "Cr", { party_type: "Supplier" })] },
 			{ g: __("Loans & advances"), k: "staff_adv", icon: "hand-o-right", label: __("Advance / loan given to staff"), type: "Cash Entry", remark: __("Advance to staff"), lines: [L(null, "Dr", { f: "asset", hint: __("the staff's advance / loan ledger") }), L("cash", "Cr")] },
 			{ g: __("Loans & advances"), k: "loan_in", icon: "download", label: __("Loan received"), type: "Bank Entry", remark: __("Loan received"), lines: [L("bank", "Dr"), L(null, "Cr", { f: "liability", hint: __("the loan ledger") })] },
 			{ g: __("Loans & advances"), k: "loan_out", icon: "upload", label: __("Loan repaid"), type: "Bank Entry", remark: __("Loan repaid"), lines: [L(null, "Dr", { f: "liability", hint: __("the loan ledger") }), L("bank", "Cr")] },
+			{ g: __("Loans & advances"), k: "adv_back", icon: "undo", label: __("Staff advance / loan returned"), type: "Cash Entry", remark: __("Advance returned"),
+			  lines: [L("cash", "Dr"), L(null, "Cr", { f: "asset", hint: __("the staff's advance / loan ledger") })] },
+			{ g: __("Loans & advances"), k: "loan_int", icon: "percent", label: __("Interest on a loan we took (due)"), type: "Journal Entry", remark: __("Interest on loan"),
+			  lines: [L("interest_loan", "Dr", { f: "expense" }), L(null, "Cr", { f: "liability", hint: __("the loan ledger") })] },
+			{ g: __("Loans & advances"), k: "emi", icon: "calendar", label: __("Loan EMI paid (principal + interest)"), type: "Bank Entry", remark: __("Loan EMI"), multi: true,
+			  lines: [L(null, "Dr", { f: "liability", hint: __("the loan ledger — the principal part") }), L("interest_loan", "Dr", { f: "expense", hint: __("the interest part") }), L("bank", "Cr")] },
 			{ g: __("Other"), k: "blank", icon: "pencil", label: __("Other — I'll fill the lines"), type: "Journal Entry", remark: "", lines: [L(null, "Dr"), L(null, "Cr")] },
 		];
 		const short = (a) => (a || "").replace(/ - [^-]+$/, "");
@@ -63,7 +127,7 @@ window.dacs_journal_prompt = function (opts) {
 				{ fieldtype: "Currency", fieldname: "amount", label: __("Amount"), options: setup.currency,
 				  description: __("Goes on both sides of a two-line entry.") },
 				{ fieldtype: "Select", fieldname: "voucher_type", label: __("Entry Type"), default: "Journal Entry",
-				  options: ["Journal Entry", "Bank Entry", "Cash Entry", "Contra Entry", "Write Off Entry", "Depreciation Entry"].join("\n") },
+				  options: ["Journal Entry", "Bank Entry", "Cash Entry", "Contra Entry", "Write Off Entry", "Credit Note", "Debit Note", "Depreciation Entry"].join("\n") },
 				{ fieldtype: "Date", fieldname: "posting_date", label: __("Date"), reqd: 1, default: frappe.datetime.get_today() },
 				{ fieldtype: "Data", fieldname: "cheque_no", label: __("Cheque / UTR No") },
 				{ fieldtype: "Date", fieldname: "cheque_date", label: __("Cheque / UTR Date") },
@@ -81,6 +145,7 @@ window.dacs_journal_prompt = function (opts) {
 		@media (max-width: 1100px) { .djx { grid-template-columns: 1fr; } }
 		.djx-step { display: flex; align-items: center; gap: 8px; font-weight: 700; font-size: 13.5px; margin: 0 0 8px; }
 		.djx-step span { width: 22px; height: 22px; border-radius: 50%; background: #3498DB; color: #fff; display: inline-flex; align-items: center; justify-content: center; font-size: 12px; }
+		.djx-find { width: 100%; margin-bottom: 6px; border: 1px solid var(--border-color); border-radius: 8px; padding: 5px 10px; font-size: 12.5px; }
 		.djx-tpls { border: 1px solid var(--border-color); border-radius: 10px; max-height: 64vh; overflow: auto; }
 		.djx-g { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: .05em; color: var(--text-muted); background: var(--subtle-fg); padding: 6px 10px; position: sticky; top: 0; }
 		.djx-t { padding: 7px 10px; cursor: pointer; border-top: 1px solid var(--border-color); display: flex; gap: 8px; align-items: flex-start; }
@@ -117,12 +182,14 @@ window.dacs_journal_prompt = function (opts) {
 		.djs-row.dr b { color: #1f6fb2; } .djs-row.cr b { color: #b9770e; } .djs-row.is-line { border-top: 1px dashed var(--border-color); }
 		.djs-row.ok b { color: #1e8449; } .djs-row.bad b, .djs-row.bad span { color: #b03a2e; }
 		.djs-say { margin-top: 8px; font-size: 12px; padding: 6px 9px; border-radius: 6px; background: #eaf7ee; color: #1e8449; }
-		.djs-say.is-bad { background: #fdedec; color: #922b21; }`;
+		.djs-say.is-bad { background: #fdedec; color: #922b21; }
+		.djx-note { margin: 8px 0 0; font-size: 12px; padding: 7px 10px; border-radius: 6px; background: #fef9e7; color: #7d6608; border: 1px solid #f9e79f; }`;
 
 		// ── layout: entry types | lines | details + balance ────────────────────────────────
 		const groups = [...new Set(T.map(t => t.g))];
 		const $lay = d.fields_dict.layout.$wrapper.html(`<style>${css}</style><div class="djx">
 			<div><div class="djx-step"><span>1</span>${__("What kind of entry?")}</div>
+				<input type="search" class="djx-find" placeholder="${__("Find: rent, partner, asset, GST…")}">
 				<div class="djx-tpls">${groups.map(g => `<div class="djx-g">${g}</div>${T.filter(t => t.g === g).map(t =>
 					`<div class="djx-t" data-k="${t.k}"><i class="fa fa-${t.icon}"></i><div><b>${t.label}</b><small>${esc(tpl_drcr(t))}</small></div></div>`).join("")}`).join("")}</div></div>
 			<div><div class="djx-step"><span>2</span>${__("Debit and credit lines")}</div>
@@ -140,6 +207,16 @@ window.dacs_journal_prompt = function (opts) {
 		$lay.find(".djx-lines").append(d.fields_dict.lines.$wrapper);
 		$lay.find(".djx-sum").append(d.fields_dict.summary.$wrapper);
 		$lay.on("click", ".djx-t", (e) => use(T.find(t => t.k === String($(e.currentTarget).data("k")))));
+		// the list is long: words typed here keep the patterns (name, group, Dr / Cr ledgers) that have all of them
+		$lay.on("input", ".djx-find", (e) => {
+			const words = e.target.value.toLowerCase().split(/\s+/).filter(Boolean);
+			$lay.find(".djx-t").each((_, el) => {
+				const t = T.find(x => x.k === String($(el).data("k")));
+				const text = `${t.label} ${t.g} ${tpl_drcr(t)}`.toLowerCase();
+				$(el).toggle(words.every(w => text.includes(w)));
+			});
+			$lay.find(".djx-g").each((_, g) => $(g).toggle($(g).nextUntil(".djx-g", ".djx-t:visible").length > 0));
+		});
 
 		const use = (t) => {
 			tpl = t;
@@ -204,6 +281,7 @@ window.dacs_journal_prompt = function (opts) {
 					<td style="text-align:right;"><span class="djp-in cr"><i>₹</i><input type="number" min="0" step="0.01" class="djp-amt" data-k="credit" value="${flt(l.credit) ? flt(l.credit, 2) : ""}" placeholder="—"></span></td>
 					<td><button class="djp-b is-red djp-del" title="${esc(__("Remove line"))}"><i class="fa fa-times"></i></button></td></tr>`).join("")}
 				</table>${lines.length ? "" : `<div class="text-muted" style="padding:12px;">${__("Pick the kind of entry on the left — the lines fill in here.")}</div>`}
+				${tpl && tpl.note ? `<div class="djx-note"><i class="fa fa-info-circle"></i> ${esc(tpl.note)}</div>` : ""}
 				<div style="margin-top:8px;"><button class="djp-b is-line djp-add"><i class="fa fa-plus"></i> ${__("Add line")}</button></div>`);
 			$w.find("tr[data-i]").each((_, tr) => {
 				const i = Number($(tr).data("i")), l = lines[i];
@@ -263,6 +341,8 @@ window.dacs_journal_prompt = function (opts) {
 		const paint_ref = () => {
 			const bank = ["Bank Entry", "Contra Entry"].includes(d.get_value("voucher_type"));
 			["cheque_no", "cheque_date"].forEach(f => d.set_df_property(f, "hidden", bank ? 0 : 1));
+			// ERPNext requires the reference on a Bank Entry ("Reference No & Reference Date is required"): ask here
+			["cheque_no", "cheque_date"].forEach(f => d.set_df_property(f, "reqd", d.get_value("voucher_type") === "Bank Entry" ? 1 : 0));
 		};
 		d.fields_dict.voucher_type.df.onchange = paint_ref;
 

@@ -1740,14 +1740,30 @@ invoice = advance); several parties → a Bulk Payment (one Payment Entry each).
 
 **New › Journal Entry** (and **Journal Entry (guided)** on the Journal Entry list, `public/js/journal_entry_list.js`)
 opens a prompt (`public/js/journal_prompt.js`, server `journal_prompt.py`) instead of the full form, in three columns: **1 What kind of entry?** — grouped patterns, each showing its
-"Dr … · Cr …": Bank & cash (bank charges, OD interest, cash deposited / withdrawn, bank-to-bank),
-Expenses & salary (expense paid in cash / from bank, salary due, salary paid, depreciation), Taxes (TDS
-paid, GST paid — CGST / SGST / IGST lines, PF / ESIC paid, TDS cut by a customer), Customers & suppliers
-(write off a customer's / supplier's small balance, set-off when a customer is also a supplier), Loans &
-advances (staff advance, loan received / repaid), Other; ledgers come from the company (default bank /
-cash, Bank Charges, Interest on OD, Basic Salary, Payroll Payable, Depreciation, TDS Payable / Receivable,
-PF, Output GST, Write Off, Debtors / Creditors) and lines to choose are filtered (expense, bank, TDS,
-liability, asset). **2 Debit and credit lines** — a legend (Dr: money / asset comes in, expense booked,
+"Dr … · Cr …", and a find box over the list (words matched in the name, group and ledgers):
+Bank & cash (bank charges, OD interest, card swipe charges, interest received, fixed deposit made / closed, cash
+deposited / withdrawn, bank-to-bank), Expenses & salary (expense paid in cash / from bank, expense bill on credit
+without GST, salary due, bonus due, salary paid, salary advance recovered, depreciation), Provisions & prepaid
+(expense due not paid → Expenses Payable, then paid; paid in advance → Prepaid Expenses, then the period's share),
+Partners & capital (capital brought in, drawings, drawings moved to capital, interest on capital, partner's
+remuneration — the partner's capital ledger is chosen), Fixed assets (bought from bank / on credit, sold or
+scrapped: bank + accumulated depreciation against the asset's cost, the rest to Gain/Loss on Asset Disposal — an
+asset on a GST bill is a Purchase Invoice of the asset item, which also makes the Asset record), Taxes (TDS paid,
+GST paid, GST set-off of input against output — books only, PF / ESIC, profession tax, income / advance tax, TDS cut
+by a customer, TDS cut on a supplier's bill), Customers & suppliers (write off a small balance, bad debt written off,
+set-off when a customer is also a supplier, security deposit given / received back), Credit &
+debit notes (entry type Credit Note / Debit Note, so they take the client's JCN / JDN note numbers —
+docs/naming-series.md): credit note to a customer (Dr Trade Discount A/c · Cr Debtors), debit note to a
+customer (Dr Debtors · Cr Rate Difference), debit note to a supplier (Dr Creditors · Cr Discount Received),
+supplier charges more (Dr the expense ledger · Cr Creditors) — **without GST**, shown on the lines: GSTR-1 /
+3B come from invoices and their returns, so a note that changes GST is made from the invoice (docs/returns.md);
+the note is then adjusted against the invoice from the party's Account Summary. Loans & advances (staff
+advance given / returned, loan received / repaid, interest on a loan due, EMI — principal + interest), Other.
+Ledgers come from the company by name (`journal_prompt.get_setup`; one not found is chosen on the line) and lines
+to choose are filtered (expense, income, bank, TDS, liability, asset, fixed asset, partner capital, deposits). A
+pattern with several amounts (GST paid / set-off, asset sold, EMI) is typed per line. A Bank Entry asks for the
+cheque / UTR number and date (ERPNext requires them). An entry with a GST ledger gets the company's GSTIN
+(`_set_company_gstin`, when the company has one — India Compliance refuses it without). **2 Debit and credit lines** — a legend (Dr: money / asset comes in, expense booked,
 we owe less; Cr: money / asset goes out, income earned, we owe more), then per line account, party (only
 Debtors / Creditors; the type follows the account), Debit (blue) or Credit (amber) — a line is one or the
 other — and what it does in words from the account's root / account type ("money goes out of YES BANK",
