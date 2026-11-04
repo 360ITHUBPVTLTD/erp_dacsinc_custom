@@ -1005,6 +1005,22 @@ already has some qty received, an explicit "Partially Received (300 of
 600)" line now sits directly under the PO count, using the same
 `ordered_qty`/`received_qty` fields the Incoming Documents modal shows.
 
+### Production stage of Subcontract POs, and other orders' production
+
+For a Subcontract PO the cell and the View dialog also say where the goods are, read from its
+Subcontracting Order(s) (`_production_stage_by_po` in `custom_script.py`, most advanced SCO wins):
+SCO not made yet → SCO in draft → SCO made · material not sent → Part material sent to jobber →
+In production (material with jobber) → In production · part received → SCO completed / closed.
+The cell shows qty per stage under "N PO · X pending"; the dialog shows the stage and the SCO links.
+
+"Other POs" (same item, for other orders or for stock) matches a Subcontract PO on its **finished
+good** (`fg_item`, qty `fg_item_qty`), the same kind match as this order's own POs (`po_kind_match`):
+a BOM line counts only Subcontract POs making the item; a plain line counts plain POs of the item
+and Subcontract POs making it. A Subcontract PO's line `item_code` is the service item, so matching
+`item_code` alone never found another order's production of a BOM item. Submitted Subcontract POs
+there get a "⚙ stage qty" line under the Unclaimed / Reserved Elsewhere footnote. All of this is
+display only — `total_incoming_qty`, the shortfall and coverage don't read it.
+
 ### The shortfall action accounts for what's already on order
 
 Every branch that shows a shortfall used to offer a fresh "Purchase Order"
