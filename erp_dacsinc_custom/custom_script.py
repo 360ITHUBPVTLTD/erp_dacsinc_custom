@@ -2538,6 +2538,34 @@ import frappe
 from frappe.utils import flt
 from collections import defaultdict
 
+# Where a Subcontract PO's goods are, read from its Subcontracting Order(s) — for display only
+# (the Incoming column / View dialog); no quantity or coverage uses it. Most advanced SCO wins.
+_SCO_STAGE = {  # SCO status: (rank, text)
+    "Open": (2, "SCO made · material not sent"),
+    "Partial Material Transferred": (3, "Part material sent to jobber"),
+    "Material Transferred": (4, "In production (material with jobber)"),
+    "Partially Received": (5, "In production · part received"),
+    "Completed": (6, "SCO completed"),
+    "Closed": (6, "SCO closed"),
+}
+
+
+def _production_stage_by_po(po_names):
+    po_names = tuple({p for p in po_names if p})
+    if not po_names:
+        return {}
+    out = {p: {"stage": "SCO not made yet", "rank": 0, "scos": []} for p in po_names}
+    for r in frappe.db.sql("""
+        SELECT name, purchase_order, status, docstatus FROM `tabSubcontracting Order`
+        WHERE purchase_order IN %(pos)s AND docstatus < 2 ORDER BY creation
+    """, {"pos": po_names}, as_dict=1):
+        o = out[r.purchase_order]
+        o["scos"].append(r.name)
+        rank, text = (1, "SCO in draft") if r.docstatus == 0 else _SCO_STAGE.get(r.status, (2, r.status))
+        if rank > o["rank"]:
+            o["rank"], o["stage"] = rank, text
+    return out
+
 @frappe.whitelist()
 def get_item_stock_details_bulk(item_bom_pairs, sales_order_name):
     if isinstance(item_bom_pairs, str):
@@ -3137,7 +3165,11 @@ def get_item_stock_details_bulk(item_bom_pairs, sales_order_name):
             entry["ordered_qty"] += flt(r.ordered_qty)
             entry["received_qty"] += flt(r.received_qty)
 
+        sc_stage = _production_stage_by_po([n for n, e in unique_pos.items() if e["is_subcontracted"]])
         for entry in unique_pos.values():
+            if entry["name"] in sc_stage:  # display only
+                entry["production_stage"] = sc_stage[entry["name"]]["stage"]
+                entry["scos"] = sc_stage[entry["name"]]["scos"]
             incoming_stock.append(entry)
             total_incoming_qty += entry["pending_qty"]
             total_incoming_po_count += 1
@@ -3267,28 +3299,31 @@ def get_item_stock_details_bulk(item_bom_pairs, sales_order_name):
         # this is precisely how PUR-ORD-2026-00064 (a direct PO wrongly
         # raised for "Item 2 with BOM" via a duplicate bom_no-less Sales
         # Order Item row) kept showing as legitimate incoming stock here.
-        other_po_bom_gate = "AND po.is_subcontracted = 1" if bom_no else ""
+        # On a Subcontract PO the line's item_code is the SERVICE item; the good being
+        # made is fg_item (qty fg_item_qty). Matching item_code alone never found the
+        # production of a BOM item for other orders / stock — same kind match as
+        # po_kind_match above. Display only: no shortfall / coverage uses these totals.
         other_po_data = frappe.db.sql(f"""
             SELECT
                 po.name, po.supplier, sup.supplier_name, poi.sales_order,
                 so.customer_name AS so_customer_name,
-                po.status AS po_status, po.docstatus AS po_docstatus,
+                po.status AS po_status, po.docstatus AS po_docstatus, po.is_subcontracted,
                 MIN(COALESCE(poi.expected_delivery_date, poi.schedule_date, po.schedule_date)) AS expected_delivery_date,
                 MAX(poi.warehouse) AS warehouse,
-                SUM(poi.qty - poi.received_qty) AS pending_qty,
-                SUM(poi.qty) AS ordered_qty,
+                SUM(CASE WHEN po.is_subcontracted = 1 THEN poi.fg_item_qty ELSE poi.qty END - poi.received_qty) AS pending_qty,
+                SUM(CASE WHEN po.is_subcontracted = 1 THEN poi.fg_item_qty ELSE poi.qty END) AS ordered_qty,
                 SUM(poi.received_qty) AS received_qty
             FROM `tabPurchase Order Item` poi
             JOIN `tabPurchase Order` po ON poi.parent = po.name
             LEFT JOIN `tabSupplier` sup ON po.supplier = sup.name
             LEFT JOIN `tabSales Order` so ON so.name = poi.sales_order
             WHERE
-                poi.item_code = %(item)s AND po.docstatus IN (0, 1)
+                {po_kind_match} AND po.docstatus IN (0, 1)
                 AND (poi.sales_order != %(so)s OR poi.sales_order IS NULL OR poi.sales_order = '')
-                AND (poi.qty - poi.received_qty) > 0
-                {other_po_bom_gate}
-            GROUP BY po.name, po.supplier, sup.supplier_name, poi.sales_order, so.customer_name, po.status, po.docstatus
+                AND (CASE WHEN po.is_subcontracted = 1 THEN poi.fg_item_qty ELSE poi.qty END - poi.received_qty) > 0
+            GROUP BY po.name, po.supplier, sup.supplier_name, poi.sales_order, so.customer_name, po.status, po.docstatus, po.is_subcontracted
         """, {"so": sales_order_name, "item": item_code}, as_dict=1)
+        other_sc_stage = _production_stage_by_po([r.name for r in other_po_data if r.is_subcontracted and r.po_docstatus == 1])
 
         for row in other_po_data:
             qty = flt(row.pending_qty)
@@ -3307,6 +3342,9 @@ def get_item_stock_details_bulk(item_bom_pairs, sales_order_name):
                 "expected_delivery_date": row.expected_delivery_date,
                 "pending_qty": qty, "is_draft": is_draft,
                 "ordered_qty": flt(row.ordered_qty), "received_qty": flt(row.received_qty),
+                "is_subcontracted": row.is_subcontracted,
+                "production_stage": (other_sc_stage.get(row.name) or {}).get("stage"),
+                "scos": (other_sc_stage.get(row.name) or {}).get("scos") or [],
             })
         total_other_po_count = sum(1 for row in other_po_data if row.po_docstatus == 1)
         # ------------- MODIFICATION ENDS HERE (Other SO POs) ------------------

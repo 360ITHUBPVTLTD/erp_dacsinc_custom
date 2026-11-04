@@ -1936,6 +1936,28 @@ function _build_pick_btn_data(item, qty, frm, d) {
     return `'${ic}', ${flt(qty)}, '${so}', '${cus}', '${wh}', '${sin}', '${uom}'`;
 }
 
+// Subcontract POs → "In production (material with jobber) 40 · SCO not made yet 20" (qty per stage).
+// production_stage comes from the server (_production_stage_by_po); display only.
+function so_stage_summary(pos) {
+    const by = {};
+    pos.forEach(p => {
+        const s = p.production_stage || __('SCO not made yet');
+        by[s] = (by[s] || 0) + flt(p.pending_qty);
+    });
+    return Object.keys(by).map(s => `${esc(s)} ${flt(by[s])}`).join(' &middot; ');
+}
+
+function so_production_stage_line(pos) {
+    const sc = (pos || []).filter(p => flt(p.is_subcontracted) === 1);
+    return sc.length
+        ? `<div class="so-brk__sub" style="color:var(--so-info);" title="Subcontracting Order stage"><i class="fa fa-cogs"></i> ${so_stage_summary(sc)}</div>`
+        : '';
+}
+
+function so_sco_links(p) {
+    return (p.scos || []).map(n => `<div class="so-micro">${link_id_name('Subcontracting Order', n)}</div>`).join('');
+}
+
 // Helper: build incoming PO HTML cell
 function _build_incoming_html(item, d, pair_key) {
     let html = '<div class="so-stack">';
@@ -1989,6 +2011,7 @@ function _build_incoming_html(item, d, pair_key) {
             html += `<div class="so-brk">
                 <div class="so-brk__label">${pending_pos.length} PO · ${flt(po_qty)} ${__('pending')}${is_subcon ? ` <span class="so-chip so-chip--sc">SC</span>` : ''}</div>
                 ${partial_note}
+                ${so_production_stage_line(pending_pos)}
                 ${suppliers.length ? `<div class="so-brk__sub so-truncate" style="max-width:140px;" title="${esc(suppliers.join(', '))}">${esc(suppliers[0])}${suppliers.length > 1 ? ` +${suppliers.length - 1}` : ''}</div>` : ''}
                 ${due_dates.length ? `<div class="so-brk__sub">Due ${fmt_date(due_dates[0])}</div>` : ''}
             </div>`;
@@ -2072,6 +2095,13 @@ function _build_incoming_html(item, d, pair_key) {
         html += `<div class="so-micro" title="Neither figure counts toward this row's own need — general stock is unclaimed and could still help, reserved stock already belongs to a different Sales Order">
             +${flt(other_general_qty)} Unclaimed${other_reserved_qty > 0 ? ` &middot; +${flt(other_reserved_qty)} Reserved Elsewhere` : ''} (Other POs)
         </div>`;
+        // Subcontract POs of the same item for other orders / stock: where the goods are now.
+        const other_sc = other_list.filter(p => !p.is_draft && flt(p.is_subcontracted) === 1 && flt(p.pending_qty) > 0);
+        if (other_sc.length) {
+            html += `<div class="so-micro" style="color:var(--so-info);" title="Subcontract POs of this item for other orders / stock — not counted for this row">
+                <i class="fa fa-cogs"></i> ${so_stage_summary(other_sc)}
+            </div>`;
+        }
     }
     // A draft "other PO" (not yet submitted, so excluded from the count
     // above) still has its own View button showing via has_docs below —
@@ -4822,7 +4852,8 @@ function show_details_modal(pair_key, type, extra) {
                 ? link_name_id('Supplier', doc.jobber_id, doc.jobber_name || doc.info)
                 : link_name_id('Supplier', doc.supplier, doc.supplier_name || doc.info);
             const note = flt(doc.is_subcontracted) === 1
-                ? `<div style="margin-top:4px;"><span class="so-chip so-chip--sc">Subcontract</span></div>`
+                ? `<div style="margin-top:4px;"><span class="so-chip so-chip--sc">Subcontract</span></div>
+                   ${doc.production_stage ? `<div class="so-micro" style="color:var(--so-info);">${esc(doc.production_stage)}</div>` : ''}${so_sco_links(doc)}`
                 : (is_ewo
                     ? `<div class="so-micro" style="margin-top:4px;">${esc(doc.stage || 'In process')}</div>`
                     : `<div class="so-micro" style="margin-top:4px;">Standard</div>`);
@@ -4871,7 +4902,10 @@ function show_details_modal(pair_key, type, extra) {
                     ${po.ordered_qty != null ? `<div class="so-micro" style="margin-top:2px;">${flt(po.received_qty || 0)} of ${flt(po.ordered_qty)} received</div>` : ''}
                 </td>
                 <td class="so-meta">${fmt_date(po.expected_delivery_date)}</td>
-                <td>${so_doc_status(po.status)}</td>
+                <td>${so_doc_status(po.status)}${flt(po.is_subcontracted) === 1
+                ? `<div style="margin-top:4px;"><span class="so-chip so-chip--sc">Subcontract</span></div>
+                   ${po.production_stage ? `<div class="so-micro" style="color:var(--so-info);">${esc(po.production_stage)}</div>` : ''}${so_sco_links(po)}`
+                : ''}</td>
             </tr>`).join('');
 
         const rcpt_rows = (d.completed_receipt_docs || []).map(r => `
