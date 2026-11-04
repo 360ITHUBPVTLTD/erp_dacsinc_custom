@@ -88,6 +88,7 @@ frappe.ui.form.on('Sales Invoice', {
 		}
 		si_remove_get_items_buttons(frm);
 		dacs_einvoice_box(frm);
+		dacs_gstin_update_button(frm);
 		// Create menu: Return / Credit Note stays. Payment is the "Receive Payment" button below.
 		dacs_hide_create_buttons(frm, ['Payment Request', 'Invoice Discounting', 'Maintenance Schedule',
 			'Delivery Note', 'Dunning', 'Quality Inspection(s)', 'Payment']);
@@ -253,4 +254,58 @@ function dacs_einvoice_box(frm) {
 		}
 		f.$wrapper.html(`<div style="display:flex;gap:16px;align-items:flex-start;flex-wrap:wrap;padding:4px 0;">${parts.join('')}</div>`);
 	});
+}
+
+// Customer's GSTIN given after the invoice was submitted (invoice_gstin.py, docs/invoice-gstin-update.md): Accounts
+// Manager / Admin, same-state GSTIN only, no e-Invoice / e-Way Bill yet; taxes and ledger stay as they are.
+// Pick the address → a Before / After confirmation → update → result alert (and the e-Invoice reminder).
+function dacs_gstin_update_button(frm) {
+	if (frm.doc.docstatus !== 1 || cint(frm.doc.is_return) || cint(frm.doc.is_pos) || frm.doc.irn || frm.doc.ewaybill
+		|| !frappe.user.has_role(['Accounts Manager', 'Admin'])) return;
+	frappe.xcall('erp_dacsinc_custom.invoice_gstin.get_gstin_update', { invoice: frm.doc.name }).then(r => {
+		if (!r || frm.doc.docstatus !== 1) return;
+		frm.add_custom_button(__('Update Customer GSTIN'), () => dacs_gstin_update_dialog(frm, r));
+	});
+}
+
+function dacs_gstin_update_dialog(frm, r) {
+	const esc = frappe.utils.escape_html;
+	const by_name = {};
+	r.addresses.forEach(a => by_name[a.name] = a);
+	const opts = r.addresses.map(a => ({ value: a.name, label: `${a.gstin} — ${[a.address_line1, a.city, a.state].filter(Boolean).join(', ')}` }));
+	const d = new frappe.ui.Dialog({
+		title: __('Update Customer GSTIN — {0}', [frm.doc.name]),
+		fields: [
+			{ fieldtype: 'HTML', options: `<div class="alert alert-info small mb-3">${__('Use this only when the customer gave their GSTIN after the invoice was made. The new GSTIN is of the same state, so the taxes, totals and accounting entries stay exactly as they are; only the invoice\'s GST details change (B2C → B2B in GSTR-1).')}</div>` },
+			{ fieldname: 'address', fieldtype: 'Select', label: __("Customer's GST address"), options: opts, default: opts[0].value, reqd: 1 },
+		],
+		primary_action_label: __('Next'),
+		primary_action: v => {
+			const a = by_name[v.address];
+			const row = (label, before, after) => `<tr><td>${label}</td><td>${esc(before || '—')}</td><td><b>${esc(after || '—')}</b></td></tr>`;
+			const msg = `<p>${__('Please check before updating invoice <b>{0}</b> ({1}):', [esc(frm.doc.name), esc(frm.doc.customer_name)])}</p>
+				<table class="table table-bordered table-sm small">
+					<tr><th></th><th>${__('Before')}</th><th>${__('After')}</th></tr>
+					${row(__('GSTIN'), r.current.gstin, a.gstin)}
+					${row(__('GST Category'), r.current.gst_category, a.gst_category)}
+					${row(__('Billing Address'), r.current.address, [a.name, a.city, a.state, a.pincode].filter(Boolean).join(', '))}
+					${row(__('Place of Supply'), frm.doc.place_of_supply, frm.doc.place_of_supply)}
+					${row(__('Grand Total'), format_currency(frm.doc.grand_total, frm.doc.currency), format_currency(frm.doc.grand_total, frm.doc.currency) + ' ' + __('(no change)'))}
+				</table>
+				<div class="alert alert-warning small">${__('This cannot be undone from here. After the update the invoice is B2B: if e-Invoicing applies, generate the e-Invoice for it straight away.')}</div>`;
+			frappe.confirm(msg, () => {
+				d.hide();
+				frappe.xcall('erp_dacsinc_custom.invoice_gstin.update_customer_gstin', { invoice: frm.doc.name, address: v.address }, __('Updating GSTIN…'))
+					.then(res => {
+						frappe.msgprint({
+							title: __('Customer GSTIN updated'), indicator: 'green',
+							message: res.changes.map(esc).join('<br>') + '<br><br>' + __('Taxes, totals and accounting entries are unchanged. A note is added to the invoice.')
+								+ (res.einvoice_status === 'Pending' ? '<br><br><b>' + __('Next: generate the e-Invoice for this invoice.') + '</b>' : ''),
+						});
+						frm.reload_doc();
+					});
+			});
+		},
+	});
+	d.show();
 }
