@@ -2566,6 +2566,44 @@ def _production_stage_by_po(po_names):
             o["rank"], o["stage"] = rank, text
     return out
 
+def _other_so_demand_by_item(item_codes, sales_order_name):
+    """Other open Sales Orders still needing each item — for planning, display only (the Incoming
+    Documents dialog). Per order: ordered, delivered, on a Pick List (submitted: picked and not yet
+    delivered; draft: its qty) and what is still to pick. Submitted orders not Closed / Completed /
+    disabled; lines with nothing left to deliver are left out."""
+    item_codes = tuple(i for i in item_codes if i)
+    if not item_codes:
+        return {}
+    out = defaultdict(list)
+    for r in frappe.db.sql("""
+        SELECT soi.item_code, so.name AS sales_order, so.customer, so.customer_name, so.status,
+               so.transaction_date, MIN(IFNULL(soi.delivery_date, so.delivery_date)) AS delivery_date,
+               SUM(soi.qty) AS ordered, SUM(soi.delivered_qty) AS delivered,
+               SUM(IFNULL(pk.picked, 0)) AS picked, SUM(IFNULL(pk.picked_draft, 0)) AS picked_draft
+        FROM `tabSales Order Item` soi
+        JOIN `tabSales Order` so ON so.name = soi.parent
+        LEFT JOIN (
+            SELECT pli.sales_order_item,
+                   SUM(CASE WHEN pl.docstatus = 1 THEN GREATEST(IFNULL(pli.picked_qty, 0) - IFNULL(pli.delivered_qty, 0), 0) ELSE 0 END) AS picked,
+                   SUM(CASE WHEN pl.docstatus = 0 THEN IFNULL(pli.qty, 0) ELSE 0 END) AS picked_draft
+            FROM `tabPick List Item` pli
+            JOIN `tabPick List` pl ON pl.name = pli.parent
+            WHERE pli.item_code IN %(items)s AND pl.docstatus < 2 AND pl.status NOT IN ('Completed', 'Cancelled')
+            GROUP BY pli.sales_order_item
+        ) pk ON pk.sales_order_item = soi.name
+        WHERE soi.item_code IN %(items)s AND so.docstatus = 1 AND so.name != %(so)s
+          AND so.status NOT IN ('Closed', 'Completed')
+          AND IFNULL(so.custom_old_record_item_is_disabled, 0) = 0
+          AND soi.qty - IFNULL(soi.delivered_qty, 0) > 0
+        GROUP BY soi.item_code, so.name, so.customer, so.customer_name, so.status, so.transaction_date
+        ORDER BY delivery_date, so.name
+    """, {"items": item_codes, "so": sales_order_name or ""}, as_dict=1):
+        pending = max(0, flt(r.ordered) - flt(r.delivered))
+        r["to_pick"] = max(0, pending - flt(r.picked) - flt(r.picked_draft))
+        r["pending"] = pending
+        out[r.item_code].append(r)
+    return out
+
 @frappe.whitelist()
 def get_item_stock_details_bulk(item_bom_pairs, sales_order_name):
     if isinstance(item_bom_pairs, str):
@@ -2732,6 +2770,8 @@ def get_item_stock_details_bulk(item_bom_pairs, sales_order_name):
     # {rm_code: [(item_code, qty of this order's stock it took)]} — so a later line can
     # name which earlier line used the stock ("20 m used by BBQ Shirt 36 of this order").
     rm_alloc_lines = defaultdict(list)
+    # Other open orders still needing each item (planning view in the Incoming dialog; display only).
+    other_so_demand = _other_so_demand_by_item(all_pair_item_codes, sales_order_name)
 
     results = {}
     for pair in item_bom_pairs:
@@ -3301,8 +3341,12 @@ def get_item_stock_details_bulk(item_bom_pairs, sales_order_name):
         # Order Item row) kept showing as legitimate incoming stock here.
         # On a Subcontract PO the line's item_code is the SERVICE item; the good being
         # made is fg_item (qty fg_item_qty). Matching item_code alone never found the
-        # production of a BOM item for other orders / stock — same kind match as
-        # po_kind_match above. Display only: no shortfall / coverage uses these totals.
+        # production of a BOM item for other orders / stock. Both kinds are listed for
+        # every line, with or without a BOM — a normal PO buying the item ready-made and a
+        # Subcontract PO making it (user, 06-11). Display only: no shortfall / coverage uses
+        # these totals, so the BOM-line rule of po_kind_match (this order's own incoming) stays.
+        other_kind_match = ("((po.is_subcontracted = 0 AND poi.item_code = %(item)s) "
+                            "OR (po.is_subcontracted = 1 AND poi.fg_item = %(item)s))")
         other_po_data = frappe.db.sql(f"""
             SELECT
                 po.name, po.supplier, sup.supplier_name, poi.sales_order,
@@ -3318,7 +3362,7 @@ def get_item_stock_details_bulk(item_bom_pairs, sales_order_name):
             LEFT JOIN `tabSupplier` sup ON po.supplier = sup.name
             LEFT JOIN `tabSales Order` so ON so.name = poi.sales_order
             WHERE
-                {po_kind_match} AND po.docstatus IN (0, 1)
+                {other_kind_match} AND po.docstatus IN (0, 1)
                 AND (poi.sales_order != %(so)s OR poi.sales_order IS NULL OR poi.sales_order = '')
                 AND (CASE WHEN po.is_subcontracted = 1 THEN poi.fg_item_qty ELSE poi.qty END - poi.received_qty) > 0
             GROUP BY po.name, po.supplier, sup.supplier_name, poi.sales_order, so.customer_name, po.status, po.docstatus, po.is_subcontracted
@@ -4127,6 +4171,7 @@ def get_item_stock_details_bulk(item_bom_pairs, sales_order_name):
             "draft_purchase_orders": draft_purchase_orders, "draft_material_requests": draft_material_requests,
             "total_other_po_qty": total_other_po_qty, "total_other_po_qty_draft": total_other_po_qty_draft,
             "total_other_po_count": total_other_po_count, "other_po_list": other_po_list,
+            "other_so_demand": other_so_demand.get(item_code, []),
             "is_bom_item": bool(bom_no), "bom_no": bom_no,
             "is_sub_contracted_item": bool(item_meta.get("is_sub_contracted_item")),
             "subcontract_service_item": sc_defaults.get("service_item"),
