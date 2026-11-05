@@ -27,11 +27,20 @@ without-amount format; `patches/dn_print_buttons_to_app.py` disables it (only wh
 those buttons). Letter head "DAC Letter Header" is put in the same bordered box as "DAC Letter Header
 quotation" by `patches/letter_head_border.py` (styling only; its own text stays).
 
+**Letter heads.** "DAC Letter Header quotation" is the default (new documents take it). The Sales Invoice has its
+own, **"DAC Letter Header Sales Invoice"** (same box, accounts contact: Mob.No. 6364096611, accounts@dacsinc.in;
+created by `patches/si_letter_head.py`, not default): Sales Invoice Multi Copy Master prints it as the page header on
+every invoice, old ones too, whatever the invoice's Letter Head field says (the quotation one when it's missing or
+disabled). Its text is edited in Letter Head itself. Format 4 opened straight from the Print menu still shows the
+invoice's own Letter Head field.
+
 ## Copies (Original / Duplicate / Triplicate / Quadruplicate)
 
 URL parameters on `download_pdf`: a draft always prints **DRAFT COPY**; `print_all=1` → all four;
+`print_all=3` → Original, Duplicate, Triplicate (Sales Invoice Multi Copy Master only);
 `copy_name=Duplicate` → that one; nothing → Original. The choice comes from
-`public/js/print_prompt.js › dacs_print_copies` (Original … Quadruplicate, **All 4 copies**), used by
+`public/js/print_prompt.js › dacs_print_copies` (Original … Quadruplicate, **All 4 copies**, and on a Sales
+Invoice that isn't a return **3 copies (Original, Duplicate, Triplicate)**), used by
 the Sales Invoice form's **Print Sales Invoice** button (Print Credit Note on a return), every Order
 Flow › Finance row and the "print it now?" question after submit.
 
@@ -45,7 +54,7 @@ renames that block to `class="dacs-copy-head"` so each copy keeps its own header
 
 **Sizes:** heading strip 12pt title + 9pt No / Date (the copy chip on the right where there is one),
 party / header details 8.5pt, items and totals 9pt, grand total 10pt, amount in words 8.5pt, bank line
-8pt, terms 7.5pt, signature 8.5pt with a ~11 mm signing gap.
+8pt, terms 7.5pt, signature 8.5pt with a ~11 mm signing gap (Sales Invoice Format 4: ~26 mm).
 
 **Item columns:** Price List Rate and Discount (Credit / Debit Note: List Rate, Disc.) print only when the
 document has a discount — a line with a discount amount, or a rate below its price list rate; otherwise the
@@ -94,7 +103,9 @@ items, +1 per 140 characters): 3.8 mm a line less 10.4 mm (short terms fit in th
 terms lines) prints without the box, 18 mm above the footer.
 
 **Header details (Format 4):** only the detail rows with a value print (a pair keeps its filled half; an
-empty row is left out), so the header box is as tall as what it holds.
+empty row is left out), so the header box is as tall as what it holds. **L.R. No.** is the exception: always
+printed, blank when not set, for writing in by hand. **Delivery At** (when the invoice has a shipping address) has the customer's name in
+bold next to its label, on the same line; the address follows as before.
 
 ## e-Invoice and e-Way Bill
 
@@ -131,7 +142,10 @@ and footer in each copy and prints the letter head once as the page header; each
 label) in its body. Credit / Debit Note and
 Purchase Invoice DAC do the same. From page 2 on, a small "… No: … | Date: … (continued)" line prints at the top
 right, above the letter head (positioned absolutely, so it takes no room; hidden on page 1 by the page number the
-PDF engine passes to the header); the item table's column headings repeat on the next page as well. Proforma
+PDF engine passes to the header). In Sales Invoice Multi Copy Master's several-copy PDF the line shows only on a
+copy's 2nd page onwards: every copy has the same page count, so pages per copy = total pages / copies, and a copy's
+first page (Duplicate, Triplicate …) is not "continued". "Page X of Y" prints only on a single copy; a 3 / 4-copy
+print has no page numbers (each copy is its own document); the item table's column headings repeat on the next page as well. Proforma
 Invoice Quotation and the Quotation PDF print the same line from their `print_heading_template` block (builder
 formats render it inside the page header) via `templates/print/quotation_contd.html`. A format with a page header must not carry a `.print-format { margin-top }` rule — it squeezes the
 header out. The challans and Embroidery Work Order 1 draw their own header on every chunked page.
@@ -152,6 +166,13 @@ rows with the same columns, clipped. A **page box** — the page made a vertical
 box of the printable height, the items section stretching — gives the clipped rows exactly the space
 left, so the item table runs down to the totals whatever the header, address, items or terms take.
 No JavaScript runs in the PDF, so nothing is counted.
+
+Two guards in Format 4 (Sales Invoice): terms typed in the text editor arrive wrapped in `.ql-editor.read-mode`,
+whose `height: unset` the PDF engine doesn't know — it fell back to Quill's `height: 100%` and stretched the terms
+against the page box, squeezing the item rows under the totals; the format's CSS sets `.ql-editor` back to
+`height: auto`. And the items section has a `min-height` from the estimated item lines, so on a document near the
+page limit the box can't shrink the item rows under the totals (it then ends a little higher instead of filling the
+page). A `min-height` page box (in place of the fixed height) was tried: it stopped filling ordinary documents.
 
 wkhtmltopdf's legacy box has two traps, which shape how it is used:
 - `min-height` on the box is ignored on some documents (blank space left); a fixed `height` is honoured.

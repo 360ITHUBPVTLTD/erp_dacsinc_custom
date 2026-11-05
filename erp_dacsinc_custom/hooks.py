@@ -33,7 +33,7 @@ app_include_js = [
     "/assets/erp_dacsinc_custom/js/workflow.js?v=1.0.7",
     "/assets/erp_dacsinc_custom/js/toogle.js?v=1.0.5",
     # "Print it now?" after creating SI / PO / embroidery documents (MOM 8 Oct 2026)
-    "/assets/erp_dacsinc_custom/js/print_prompt.js?v=1.0.5",
+    "/assets/erp_dacsinc_custom/js/print_prompt.js?v=1.0.6",
     # All · Normal · Returns on the SI / DN / PI / PR lists (called by their *_list.js)
     "/assets/erp_dacsinc_custom/js/return_list_toggle.js?v=1.0.1",
     # outstanding balance on the Customer / Supplier lists (called by their *_list.js)
@@ -125,6 +125,8 @@ doctype_list_js = {
 	# Receive / Pay and the Journal Entry prompt, as on Order Flow › Finance › New
 	"Payment Entry": "public/js/payment_entry_list.js",
 	"Journal Entry": "public/js/journal_entry_list.js",
+	# no "Add Stock Entry" for a Merchandiser User (docs/merchandiser-purchase.md)
+	"Stock Entry": "public/js/stock_entry_list.js",
 }
 
 # Svg Icons

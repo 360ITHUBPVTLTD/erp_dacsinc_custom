@@ -202,7 +202,11 @@ const OF_TABLE_FILTERS = {
     // yet invoiced, fully or partly; "All orders" shows the whole queue (order_flow_api.get_billing_flow).
     'billing': [['invoice', 'select', [['all', 'All orders']], 'Waiting for invoice', 'Yes (incl. partly invoiced)'],
         ['stage', 'select', [['deliver', 'Ready for Delivery Note'], ['bill', 'Needs invoice']], 'Stage'], ['customer', 'link', 'Customer']],
+    // e-Invoice / e-Way Bill (order_flow_api._EINV_CHOICES / _EWB_CHOICES): any of them may be a paid
+    // invoice, so each one switches to All orders (the third value).
     'accounts.receivables': [['status', 'status', 'inv', 'Payment'], ['goods', 'select', OF_GOODS('delivered'), 'Delivery'],
+        ['einvoice', 'select', [['generated', 'Generated', 1], ['pending', 'Not generated (pending)', 1], ['cancelled', 'Cancelled', 1], ['na', 'Not applicable', 1]], 'e-Invoice'],
+        ['ewaybill', 'select', [['generated', 'Generated', 1], ['pending', 'Not generated (pending)', 1], ['cancelled', 'Cancelled', 1], ['na', 'Not applicable', 1]], 'e-Way Bill'],
         ['customer', 'link', 'Customer'], ['pos', 'pos']],
     'accounts.supplier': [['status', 'status', 'inv', 'Payment'], ['goods', 'select', OF_GOODS('received'), 'Receipt'], ['supplier', 'link', 'Supplier']],
     'accounts.jobber': [['status', 'status', 'inv', 'Payment'], ['goods', 'select', OF_GOODS('received'), 'Receipt'], ['supplier', 'link', 'Supplier', 'Jobber']],
@@ -5486,6 +5490,7 @@ class OrderFlow {
                 <td style="color:var(--of-green);">${of_money(s.paid_amount, s.currency)}${of_payment_lines(s.payments, s.currency, s.name)}</td>
                 <td style="color:${out > 0 ? 'var(--of-red)' : 'var(--text-muted)'};font-weight:700;">${of_money(out, s.currency)}</td>
                 <td>${status_pill}${of_return_chips(s.returns, 'Sales Invoice')}</td>
+                <td>${of_gst_docs_html(s)}</td>
                 <td><div class="of-po-actions">
                     ${out > 0 && data.can_pay && flt_of(s.docstatus) === 1 ? `<button class="of-btn of-btn--success of-pay-btn" data-doctype="Sales Invoice" data-name="${of_esc(s.name)}">
                         <i class="fa fa-inr"></i> ${__('Receive')}</button>` : ''}
@@ -5602,8 +5607,8 @@ class OrderFlow {
                     <table class="of-table">
                         <thead><tr><th style="min-width:160px;">Sales Invoice</th><th style="min-width:160px;">Customer</th>
                             <th>Sales Order</th><th>Dates</th><th>Total Amount</th><th>Received</th>
-                            <th>Outstanding (Receivable)</th><th>Status</th><th>Action</th></tr></thead>
-                        <tbody>${si_rows || of_empty_row(9)}</tbody>
+                            <th>Outstanding (Receivable)</th><th>Status</th><th style="min-width:150px;">e-Invoice / e-Way Bill</th><th>Action</th></tr></thead>
+                        <tbody>${si_rows || of_empty_row(10)}</tbody>
                     </table>`,
                     `<a class="of-btn of-btn--primary" href="/app/sales-invoice/new" target="_blank">
                         <i class="fa fa-plus"></i> ${__('Create Sales Invoice')}
@@ -7432,6 +7437,45 @@ function of_invoice_status_html(d) {
     const tone = /^(Delivered|Received)$/.test(g) ? 'var(--of-green)' : (/^Partly/.test(g) ? 'var(--of-orange)' : 'var(--text-muted)');
     const icon = /^(Delivered|Received)$/.test(g) ? 'check-circle' : (/^Partly/.test(g) ? 'adjust' : 'circle-o');
     return `${pill}<div class="of-micro" style="margin-top:4px;color:${tone};font-weight:600;white-space:nowrap;"><i class="fa fa-${icon}"></i> ${of_esc(__(g))}</div>`;
+}
+
+// Finance › Receivables: e-Invoice and e-Way Bill of the invoice (order_flow_api._attach_si_gst_docs) —
+// a flag each; when made, the IRN acknowledgement number + date and the e-Way Bill number, date, valid upto.
+function of_gst_dt(v) {
+    return v ? (frappe.datetime.str_to_user(String(v).slice(0, 16)) || of_esc(v)) : '';
+}
+function of_gst_docs_html(s) {
+    if (flt_of(s.docstatus) !== 1) return `<span class="of-micro text-muted">${__('Draft')}</span>`;
+    const g = s.gst_docs;
+    if (!g) return '<span class="of-micro text-muted">—</span>';
+    const line = (ok, tone, icon, text, sub) => `<div class="of-micro" style="color:${tone};font-weight:600;white-space:nowrap;">
+        <i class="fa fa-${icon}"></i> ${text}</div>${sub ? `<div class="of-micro text-muted" style="white-space:nowrap;">${sub}</div>` : ''}`;
+    const GREEN = 'var(--of-green)', ORANGE = 'var(--of-orange)', RED = 'var(--of-red)', MUTED = 'var(--text-muted)';
+    const ei = g.einvoice_status || '';
+    let html;
+    if (/^(Generated|Manually Generated)$/.test(ei)) {
+        const sub = [g.ack_no ? `${__('Ack')} ${of_esc(g.ack_no)}` : '', g.ack_date ? of_gst_dt(g.ack_date) : ''].filter(Boolean).join('<br>');
+        html = line(1, GREEN, 'check-circle', __('e-Invoice'), sub || (g.irn ? `IRN ${of_esc(String(g.irn).slice(0, 12))}…` : ''));
+    } else if (/Cancel/.test(ei)) {
+        html = line(0, RED, 'times-circle', `${__('e-Invoice')} ${__('cancelled')}`);
+    } else if (/^(Pending|Auto-Retry|Failed)$/.test(ei)) {
+        html = line(0, ORANGE, 'exclamation-circle', `${__('e-Invoice')} ${__('not generated')}`);
+    } else {
+        html = line(0, MUTED, 'minus-circle', `${__('e-Invoice')} ${__('not applicable')}`);
+    }
+    const ew = g.e_waybill_status || '';
+    if (g.ewaybill) {
+        const sub = [of_esc(g.ewaybill), g.ewb_date ? of_gst_dt(g.ewb_date) : '',
+            g.ewb_valid_upto ? `${__('Valid upto')} ${of_gst_dt(g.ewb_valid_upto)}` : ''].filter(Boolean).join('<br>');
+        html += line(1, GREEN, 'check-circle', __('e-Way Bill'), sub);
+    } else if (/Cancel/.test(ew)) {
+        html += line(0, RED, 'times-circle', `${__('e-Way Bill')} ${__('cancelled')}`);
+    } else if (/^(Pending|Auto-Retry)$/.test(ew)) {
+        html += line(0, ORANGE, 'exclamation-circle', `${__('e-Way Bill')} ${__('not generated')}`);
+    } else {
+        html += line(0, MUTED, 'minus-circle', `${__('e-Way Bill')} ${__('not applicable')}`);
+    }
+    return html;
 }
 
 // ── Finance › Returns / Notes ─────────────────────────────────────────────────────────────

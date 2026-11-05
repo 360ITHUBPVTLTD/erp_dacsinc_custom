@@ -4026,6 +4026,9 @@ def get_accounts_flow(days=120, search=None, scope="open", merchandiser=None,
                      "si.posting_date >= %(from_date)s AND si.posting_date < %(to_next)s", _NOT_DISABLED_SO]
     _add_party_filter(si_conditions, params, customer="si.customer", list_key="accounts.receivables")
     _add_choice_filter(si_conditions, "accounts.receivables", "goods", _done_choices(_SI_DONE_SQL))
+    if _gst_fields_ready():
+        _add_choice_filter(si_conditions, "accounts.receivables", "einvoice", _EINV_CHOICES)
+        _add_choice_filter(si_conditions, "accounts.receivables", "ewaybill", _EWB_CHOICES)
     _add_status_filter(si_conditions, "accounts.receivables", "si")
     if scope == "open":
         # still something to collect (an invoice cleared by its credit note is not open)
@@ -4181,6 +4184,7 @@ def get_accounts_flow(days=120, search=None, scope="open", merchandiser=None,
 
     _attach_creator_names(sales_invoices["rows"], supplier_invoices["rows"], jobber_invoices["rows"])
     _attach_si_delivery_status(sales_invoices["rows"])
+    _attach_si_gst_docs(sales_invoices["rows"])
     _attach_pi_receipt_status(supplier_invoices["rows"] + jobber_invoices["rows"])
     _attach_returns("Sales Invoice", sales_invoices["rows"])
     _attach_returns("Purchase Invoice", supplier_invoices["rows"] + jobber_invoices["rows"])
@@ -4526,6 +4530,48 @@ def _attach_si_delivery_status(rows):
     for r in rows:
         d = got.get(r.name)
         r["goods_status"] = _goods_status(d.done, d.qty, ("Delivered", "Partly Delivered", "Not Delivered")) if d else None
+
+
+# Finance › Receivables "e-Invoice" / "e-Way Bill" filters (India Compliance's status fields on the invoice).
+_EINV_DONE = "('Generated', 'Manually Generated')"
+_EINV_CHOICES = {
+    "generated": f"si.einvoice_status IN {_EINV_DONE}",
+    "pending": "si.docstatus = 1 AND si.einvoice_status IN ('Pending', 'Auto-Retry', 'Failed')",
+    "cancelled": "si.einvoice_status IN ('Cancelled', 'Manually Cancelled', 'Pending Cancellation')",
+    "na": "si.docstatus = 1 AND IFNULL(si.einvoice_status, '') IN ('', 'Not Applicable')",
+}
+_EWB_CHOICES = {
+    "generated": "IFNULL(si.ewaybill, '') != ''",
+    "pending": "si.docstatus = 1 AND IFNULL(si.ewaybill, '') = '' AND si.e_waybill_status IN ('Pending', 'Auto-Retry')",
+    "cancelled": "IFNULL(si.ewaybill, '') = '' AND si.e_waybill_status IN ('Cancelled', 'Manually Cancelled')",
+    "na": "si.docstatus = 1 AND IFNULL(si.ewaybill, '') = '' AND IFNULL(si.e_waybill_status, '') IN ('', 'Not Applicable')",
+}
+
+
+def _gst_fields_ready():
+    return all(frappe.db.has_column("Sales Invoice", c) for c in ("irn", "einvoice_status", "ewaybill", "e_waybill_status"))
+
+
+def _attach_si_gst_docs(rows):
+    """Finance › Receivables: e-Invoice / e-Way Bill of each Sales Invoice — the status India Compliance
+    keeps on the invoice, and from its logs the IRN acknowledgement (number, date) and the e-Way Bill
+    date / valid-upto. Display only."""
+    names = [r.name for r in rows]
+    if not names or not _gst_fields_ready():
+        return
+    got = {d.name: d for d in frappe.db.sql("""
+        SELECT si.name, si.irn, si.einvoice_status, si.ewaybill, si.e_waybill_status,
+               eil.acknowledgement_number AS ack_no, eil.acknowledged_on AS ack_date,
+               ewl.created_on AS ewb_date, ewl.valid_upto AS ewb_valid_upto
+        FROM `tabSales Invoice` si
+        LEFT JOIN `tabe-Invoice Log` eil ON eil.name = si.irn AND IFNULL(si.irn, '') != ''
+        LEFT JOIN `tabe-Waybill Log` ewl ON ewl.name = si.ewaybill AND IFNULL(si.ewaybill, '') != ''
+        WHERE si.name IN %(names)s
+    """, {"names": names}, as_dict=1)}
+    for r in rows:
+        d = got.get(r.name) or {}
+        r["gst_docs"] = {k: d.get(k) for k in ("irn", "einvoice_status", "ewaybill", "e_waybill_status",
+                                                "ack_no", "ack_date", "ewb_date", "ewb_valid_upto")}
 
 
 def _attach_pi_receipt_status(rows):

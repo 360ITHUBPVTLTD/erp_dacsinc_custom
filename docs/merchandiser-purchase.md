@@ -15,6 +15,9 @@ purchase POs are the Purchase team's.
   `so_is_scoped_merchandiser`). Subcontract PO creation is unchanged.
 - **Stock Entry:** only jobber transfers (Send to Subcontractor) of their own orders
   (`get_stock_entry_merchandiser_conditions` / `has_stock_entry_merchandiser_permission`).
+  The Stock Entry list has no **Add Stock Entry** button for them (`public/js/stock_entry_list.js`, same
+  merchandiser test as `so_is_scoped_merchandiser`): they make transfers from the Subcontracting Order /
+  Order Flow. Administrator / System Manager / Super Admin / Admin keep it.
 
 Which orders are "theirs" is the Sales Order scoping in `docs/sales-order-sharing.md`:
 their customers, customers with no merchandiser, orders they own or are Lead Owner of.
