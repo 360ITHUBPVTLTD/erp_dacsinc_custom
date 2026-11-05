@@ -4337,6 +4337,10 @@ class OrderFlow {
                     } else if (is_st('return')) {
                         msg = `Sales Invoice ${doc_link} is a customer return`;
                         border_class = 'of-feed__item--blocked';
+                    } else if (is_st('submitted')) {
+                        // no Sales Invoice access: the server hides paid / unpaid / overdue (invoice_money.py)
+                        msg = `Sales Invoice ${doc_link} submitted`;
+                        border_class = 'of-feed__item--dn';
                     } else {
                         msg = `Sales Invoice ${doc_link} submitted — customer payment due`;
                         border_class = 'of-feed__item--dn';
@@ -4391,6 +4395,9 @@ class OrderFlow {
                     } else if (is_st('overdue', 'overdue and discounted')) {
                         msg = `Supplier bill ${doc_link} to ${supplier_link} is OVERDUE`;
                         border_class = 'of-feed__item--blocked';
+                    } else if (is_st('submitted')) {
+                        msg = `Supplier bill ${doc_link} submitted`;
+                        border_class = 'of-feed__item--wait';
                     } else {
                         msg = `Supplier bill ${doc_link} submitted — payment pending to ${supplier_link}`;
                         border_class = 'of-feed__item--wait';
@@ -5222,7 +5229,8 @@ class OrderFlow {
                 body = `<table class="of-table">
                     <thead><tr><th>Pick List</th><th>Warehouse</th><th>Sales Order</th><th>Qty</th></tr></thead>
                     <tbody>${rows.map(x => `<tr>
-                        <td><a href="/app/pick-list/${encodeURIComponent(x.name)}" target="_blank">${of_esc(x.name)}</a></td>
+                        <td><a href="/app/pick-list/${encodeURIComponent(x.name)}" target="_blank">${of_esc(x.name)}</a>
+                            ${typeof so_pl_people_html === 'function' ? so_pl_people_html(x) : ''}</td>
                         <td>${of_esc(x.warehouse || '')}</td>
                         <td>${x.sales_order ? `${of_so_link(x.sales_order)}
                             ${x.customer_name ? `<div class="of-micro text-muted">${of_esc(x.customer_name)}</div>` : ''}` : ''}</td>

@@ -29,7 +29,7 @@ previously-buggy edge cases — are documented in `docs/`:
   while a draft for the same source line exists.
   PO lines from a Material Request may not ask for more than it has open (save and submit).
 - `docs/merchandiser-purchase.md` — Merchandiser User sees and creates only
-  subcontracted POs; Stock Entries only for their orders' jobber transfers.
+  subcontracted POs; Stock Entries only for their orders' jobber transfers; no invoice amounts / payment status.
 - `docs/crm-admin-review-dashboard.md` — CRM Admin Review dashboard (a DB-stored HTML
   block): Draft Pipeline, Visits & Follow-ups (new vs existing), unique Lead / Contact counts.
 - `docs/chart-of-accounts.md` — chart of accounts corrections (patch run on migrate: moves, Tax

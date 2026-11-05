@@ -1043,6 +1043,25 @@ with N (the ready qty), editable down for a part pick; 0 or more than N is refus
 List is made with that qty (`create_pick_list_for_items` only ever lowers a line's qty, never raises it). The bulk
 **Create Pick List** button is unchanged.
 
+### Whom to ask about another order's Pick List
+
+Stock held on another Sales Order's Pick List can only be freed by someone who may change that Pick List,
+so every place that lists one names them (`pick_people.py`, display only — no permission is changed):
+
+- **Created by** — the Pick List's creator.
+- **Merchandiser** — the order's customer's Merchandiser User; "none assigned — any merchandiser can open
+  it" when the customer has none.
+- **Can reduce qty** — first that order's people who may write a Pick List (its creator, the customer's
+  merchandiser, the Sales Order's creator and Lead Owner — the same rule as
+  `custom_script._so_linked_has_permission`), then everyone who may write any Pick List without a
+  merchandiser scope (stock, production, warehouse, admin roles).
+- **Can delete** — users whose role may delete a Pick List (a Merchandiser User cannot).
+
+Roles are read from the Pick List's permissions and users' roles, so the names follow the access sheet.
+Shown in: SO › **Stock Conflicts** (Who is holding it), the Incoming dialog's **Other orders waiting for
+this item** (merchandiser under the order, each open Pick List under On Pick List), the **stale Pick
+Lists** prompt, and Order Flow › Stock › draft / submitted Pick List reservation details.
+
 ### The shortfall action accounts for what's already on order
 
 Every branch that shows a shortfall used to offer a fresh "Purchase Order"

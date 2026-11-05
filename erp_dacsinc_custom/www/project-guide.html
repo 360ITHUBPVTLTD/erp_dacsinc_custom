@@ -259,7 +259,7 @@
         requirements, how to build and deploy, and the task list — delivered, open from the 8 Oct meeting, and Phase 2.</p>
     </div>
     <div class="actions no-print">
-      <a class="btn" href="/assets/erp_dacsinc_custom/docs/project-guide.pdf?v=30" download="Dacsinc ERP - Project Guide.pdf" data-dl-name="Dacsinc ERP - Project Guide">⤓ Download PDF</a>
+      <a class="btn" href="/assets/erp_dacsinc_custom/docs/project-guide.pdf?v=31" download="Dacsinc ERP - Project Guide.pdf" data-dl-name="Dacsinc ERP - Project Guide">⤓ Download PDF</a>
       <button class="btn outline" type="button" id="btn-pdf">⎙ Print all</button>
       <button class="btn outline" type="button" id="btn-tab">⎙ Print this tab</button>
       <button class="btn outline" type="button" id="btn-html">⤓ HTML copy</button>
@@ -725,7 +725,7 @@ const FLOW = [
 const ROLES = [
   {r: "DAC CRM", job: "Sales executive", does: ["Leads, follow-ups, quotations", "Creates Sales Orders"], tabs: ["Sales Tracker (as given on the sheet)"], ctl: ["Own customers only (O)"]},
   {r: "DAC CRM Head", job: "Sales manager", does: ["Team's CRM and reports", "Sales Orders"], tabs: ["Sales Tracker"], ctl: ["Head view in CRM"]},
-  {r: "Merchandiser User", job: "Merchandiser", does: ["Approves orders (merchandiser step)", "Plans raw material, Request RM", "Subcontract POs; sends material to jobber (own orders)", "Pick Lists, embroidery"], tabs: ["SO Approvals", "Sales Tracker", "Pick Lists", "Job Work", "Stock (requested — MOM 8 Oct)"], ctl: ["Sees orders they created; a toggle adds their customers' orders", "Only subcontracted POs", "Stock Entry only for own jobber transfers; no Add Stock Entry on the list"]},
+  {r: "Merchandiser User", job: "Merchandiser", does: ["Approves orders (merchandiser step)", "Plans raw material, Request RM", "Subcontract POs; sends material to jobber (own orders)", "Pick Lists, embroidery"], tabs: ["SO Approvals", "Sales Tracker", "Pick Lists", "Job Work", "Stock (requested — MOM 8 Oct)"], ctl: ["Sees orders they created; a toggle adds their customers' orders", "Only subcontracted POs", "Stock Entry only for own jobber transfers; no Add Stock Entry on the list", "Sees that an order is invoiced, never invoice amounts, outstanding or paid / unpaid / overdue"]},
   {r: "Sales Order Final Approver", job: "Management", does: ["Final approval / rejection"], tabs: ["SO Approvals › Pending Final SO Approval", "Rejected"], ctl: ["Set user-wise in Admin Settings", "Never approves own order"]},
   {r: "Purchase Executive / Manager", job: "Purchase", does: ["Material Requests, plain POs", "Receipts, purchase invoices"], tabs: ["Purchase Flow", "Sales Tracker › Material Requests"], ctl: ["PO price check if listed in Admin Settings"]},
   {r: "Production Manager / Assistant", job: "Production", does: ["BOMs, subcontracting, embroidery"], tabs: ["Job Work", "Embroidery Transfers", "Stock (requested — MOM 8 Oct)"], ctl: ["Subcontracting PO analysis report (requested — MOM 8 Oct)"]},

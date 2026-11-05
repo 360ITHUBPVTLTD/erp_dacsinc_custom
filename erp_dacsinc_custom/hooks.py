@@ -566,11 +566,14 @@ doc_events = {
             "erp_dacsinc_custom.custom_customer.guard_protected_customer_fields",
             "erp_dacsinc_custom.tax_category.customer_validate",
         ],
-        "on_update": "erp_dacsinc_custom.custom_customer.update_customer_sharing"
+        "on_update": "erp_dacsinc_custom.custom_customer.update_customer_sharing",
+        # no "Billing this year / Total Unpaid" for users without invoice access (invoice_money.py)
+        "onload": "erp_dacsinc_custom.invoice_money.hide_party_dashboard_money",
     },
     # Tax Category follows the supplier's GSTIN / address (tax_category.py)
     "Supplier": {
         "validate": "erp_dacsinc_custom.tax_category.supplier_validate",
+        "onload": "erp_dacsinc_custom.invoice_money.hide_party_dashboard_money",
     },
     "Purchase Order": {
         # no second draft for the same source line (draft_guard.py)
