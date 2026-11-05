@@ -34,7 +34,8 @@
 		if (f.format) url += `&format=${encodeURIComponent(f.format)}`;
 		if (f.copies) {
 			url += "&no_letterhead=0";
-			if (opts.print_all) url += "&print_all=1";
+			// print_all: 1 = all 4 copies; 3 = Original, Duplicate, Triplicate (Sales Invoice only)
+			if (opts.print_all) url += `&print_all=${cint(opts.print_all) === 3 ? 3 : 1}`;
 			else if (opts.copy_name) url += `&copy_name=${encodeURIComponent(opts.copy_name)}`;
 		}
 		if (f.no_letterhead) url += `&no_letterhead=1&letterhead=${encodeURIComponent(f.letterhead || "No Letterhead")}`;
@@ -67,10 +68,12 @@
 			const d = new frappe.ui.Dialog({
 				title: `${title} — ${name}`,
 				fields: [{ fieldtype: "Select", fieldname: "copy", label: __("Copy"), reqd: 1, default: "Original",
-					options: COPIES.map(c => ({ label: __(c), value: c })).concat([{ label: __("All 4 copies"), value: "__all" }]) }],
+					options: COPIES.map(c => ({ label: __(c), value: c })).concat([{ label: __("All 4 copies"), value: "__all" }])
+						// a Sales Invoice (not a credit note) also prints the first 3 copies, without Quadruplicate
+						.concat(doctype === "Sales Invoice" && !is_return ? [{ label: __("3 copies (Original, Duplicate, Triplicate)"), value: "__three" }] : []) }],
 				primary_action_label: __("Print"),
 				primary_action(v) {
-					go(v.copy === "__all" ? { print_all: 1 } : { copy_name: v.copy });
+					go(v.copy === "__all" ? { print_all: 1 } : v.copy === "__three" ? { print_all: 3 } : { copy_name: v.copy });
 					d.hide();
 				},
 			});
