@@ -2097,6 +2097,13 @@ function _build_incoming_html(item, d, pair_key) {
         </div>`;
         // Subcontract POs of the same item for other orders / stock: where the goods are now.
         const other_sc = other_list.filter(p => !p.is_draft && flt(p.is_subcontracted) === 1 && flt(p.pending_qty) > 0);
+        const other_buy_qty = other_list.filter(p => !p.is_draft && flt(p.is_subcontracted) !== 1)
+            .reduce((s, p) => s + flt(p.pending_qty || 0), 0);
+        if (other_buy_qty > 0) {
+            html += `<div class="so-micro" title="Normal POs buying this item ready-made, for other orders / stock — not counted for this row">
+                <i class="fa fa-shopping-cart"></i> ${__('Purchase (ready-made)')} ${flt(other_buy_qty)}
+            </div>`;
+        }
         if (other_sc.length) {
             html += `<div class="so-micro" style="color:var(--so-info);" title="Subcontract POs of this item for other orders / stock — not counted for this row">
                 <i class="fa fa-cogs"></i> ${so_stage_summary(other_sc)}
@@ -2130,7 +2137,8 @@ function _build_incoming_html(item, d, pair_key) {
         || (active_completed_rcvd.length > 0)
         || (draft_pos.filter(p => flt(p.qty) > 0).length > 0)
         || (draft_mrs.filter(m => flt(m.qty) > 0).length > 0)
-        || (draft_receipts.filter(r => flt(r.qty) > 0).length > 0);
+        || (draft_receipts.filter(r => flt(r.qty) > 0).length > 0)
+        || ((d.other_so_demand || []).some(r => flt(r.to_pick) > 0));
 
     if (has_docs) {
         html += `<button class="so-btn so-btn--view" onclick="show_details_modal('${js_str(pair_key)}','incoming_docs')"><i class="fa fa-eye"></i> View</button>`;
@@ -2647,20 +2655,45 @@ function generate_sales_invoice_table(frm) {
  * Called from inline onclick buttons in the stock table.
  */
 function create_pick_list_for_item(item_code, qty, so_name, customer, warehouse, so_item_name, uom) {
-    frappe.confirm(
-        `Create a Pick List for <b>${flt(qty)} ${esc(uom || '')}</b> × <b>${esc(item_code)}</b>`
-        + ` against <b>${esc(so_name)}</b>`
-        + `${customer ? ` (${esc((cur_frm && cur_frm.doc && cur_frm.doc.customer_name) || customer)})` : ''}?`
-        + (warehouse ? `<br><small class="text-muted">Warehouse: ${esc(warehouse)}</small>` : '')
-        + `<br><small class="text-muted">This will create a draft Pick List immediately without leaving the page.</small>`,
-        () => {
+    // Asks how many to pick: the full ready qty by default, less for a part pick, never more.
+    const max_qty = flt(qty);
+    const party = customer ? ` (${esc((cur_frm && cur_frm.doc && cur_frm.doc.customer_name) || customer)})` : '';
+    const d = new frappe.ui.Dialog({
+        title: __('Create Pick List'),
+        fields: [
+            {
+                fieldtype: 'HTML', fieldname: 'info',
+                options: `<div style="margin-bottom:8px;"><b>${esc(item_code)}</b> ${__('against')} <b>${esc(so_name)}</b>${party}`
+                    + (warehouse ? `<div class="text-muted small">${__('Warehouse')}: ${esc(warehouse)}</div>` : '')
+                    + `<div class="text-muted small">${__('Ready to pick')}: <b>${max_qty} ${esc(uom || '')}</b></div></div>`,
+            },
+            {
+                fieldtype: 'Float', fieldname: 'qty', label: __('Qty to pick') + (uom ? ` (${uom})` : ''),
+                reqd: 1, default: max_qty,
+                description: __('Up to {0}. A draft Pick List is made without leaving the page.', [max_qty]),
+            },
+        ],
+        primary_action_label: __('Create Pick List'),
+        primary_action(values) {
+            const q = flt(values.qty);
+            if (q <= 0) {
+                frappe.msgprint(__('Enter a qty more than 0.'));
+                return;
+            }
+            if (q > max_qty) {
+                frappe.msgprint(__('You can pick at most {0} {1}.', [max_qty, uom || '']));
+                return;
+            }
+            d.hide();
             so_open_pick_list_draft(so_name, [{
                 sales_order_item: so_item_name,
                 item_code: item_code,
-                qty: flt(qty)
+                qty: q
             }]);
-        }
-    );
+        },
+    });
+    d.show();
+    setTimeout(() => d.fields_dict.qty.$input && d.fields_dict.qty.$input.select(), 300);
 }
 
 /**
@@ -4905,7 +4938,7 @@ function show_details_modal(pair_key, type, extra) {
                 <td>${so_doc_status(po.status)}${flt(po.is_subcontracted) === 1
                 ? `<div style="margin-top:4px;"><span class="so-chip so-chip--sc">Subcontract</span></div>
                    ${po.production_stage ? `<div class="so-micro" style="color:var(--so-info);">${esc(po.production_stage)}</div>` : ''}${so_sco_links(po)}`
-                : ''}</td>
+                : `<div class="so-micro" style="margin-top:4px;">${__('Purchase (ready-made)')}</div>`}</td>
             </tr>`).join('');
 
         const rcpt_rows = (d.completed_receipt_docs || []).map(r => `
@@ -4959,12 +4992,93 @@ function show_details_modal(pair_key, type, extra) {
                 <td>${so_doc_status('Draft')}</td>
             </tr>`).join('');
 
+        // Other open orders still needing this item (custom_script._other_so_demand_by_item) — for
+        // production planning: what they still want against what is on other POs. Display only.
+        const demand = d.other_so_demand || [];
+        const dem_to_pick = demand.reduce((s, r) => s + flt(r.to_pick), 0);
+        const dem_picked = demand.reduce((s, r) => s + flt(r.picked) + flt(r.picked_draft), 0);
+        const dem_pending = demand.reduce((s, r) => s + flt(r.pending), 0);
+        const demand_rows = demand.map(r => `
+            <tr>
+                <td>${link_id_name('Sales Order', r.sales_order, r.customer_name)}
+                    <div class="so-micro">${fmt_date(r.transaction_date)}</div></td>
+                <td class="so-meta">${fmt_date(r.delivery_date)}</td>
+                <td>${so_qty(r.ordered)}</td>
+                <td>${so_qty(r.delivered, flt(r.delivered) > 0 ? 'pos' : null)}</td>
+                <td>${so_qty(flt(r.picked) + flt(r.picked_draft), (flt(r.picked) + flt(r.picked_draft)) > 0 ? 'info' : null)}
+                    ${flt(r.picked_draft) > 0 ? `<div class="so-micro" style="color:var(--so-orange);">${flt(r.picked_draft)} ${__('on a draft Pick List')}</div>` : ''}</td>
+                <td>${so_qty(r.to_pick, flt(r.to_pick) > 0 ? 'warn' : null)}</td>
+                <td>${so_doc_status(r.status)}</td>
+            </tr>`).join('');
+        const other_buy = (d.other_po_list || []).filter(p => !p.is_draft && flt(p.is_subcontracted) !== 1).reduce((s, p) => s + flt(p.pending_qty), 0);
+        const other_make = (d.other_po_list || []).filter(p => !p.is_draft && flt(p.is_subcontracted) === 1).reduce((s, p) => s + flt(p.pending_qty), 0);
+        const plan_note = demand.length
+            ? `<div class="so-micro" style="margin:-4px 0 10px;font-size:12px;">
+                <b>${__('Other orders still to pick')}: ${flt(dem_to_pick)}</b> ${d.stock_uom ? esc(d.stock_uom) : ''}
+                (${demand.length === 1 ? __('1 order') : __('{0} orders', [demand.length])}, ${__('{0} not delivered, {1} already on a Pick List', [flt(dem_pending), flt(dem_picked)])})
+                &middot; ${__('Coming on other POs')}: ${flt(other_buy)} ${__('ready-made')} + ${flt(other_make)} ${__('subcontract')}
+               </div>`
+            : '';
+
+        // Planning sum for this item: what every open order still needs against what is free now and on
+        // the way. fg_pending_to_cover / fg_free_stock already take picks and holds off the same way the
+        // other orders' "still to pick" does, so the parts add up. Display only — the row's shortfall
+        // and buttons use their own figures.
+        const rps = d.rm_procurement_status || {};
+        const need_this = flt(rps.fg_pending_to_cover || 0);
+        const need_total = need_this + flt(dem_to_pick);
+        const free_now = flt(rps.fg_free_stock || 0);
+        const coming_this = flt(d.total_incoming_qty || 0);
+        const coming_other = flt(d.total_other_po_qty || 0);
+        const supply_total = free_now + coming_this + coming_other;
+        const net = flt(supply_total - need_total, 3);
+        const mr_open = flt(d.total_mr_pending_qty || 0);
+        const drafts_qty = (d.draft_purchase_orders || []).reduce((s, p) => s + flt(p.qty), 0) + flt(d.total_other_po_qty_draft || 0);
+        const uom = d.stock_uom ? ` ${esc(d.stock_uom)}` : '';
+        const pl_line = (label, v, tone) => `<div style="display:flex;justify-content:space-between;gap:12px;padding:2px 0;">
+            <span>${label}</span><b style="${tone ? `color:var(--so-${tone});` : ''}">${flt(v)}${uom}</b></div>`;
+        const verdict = net < 0
+            ? `<div style="background:#fdecea;color:#b42318;border-radius:6px;padding:8px 10px;font-weight:700;">
+                 <i class="fa fa-exclamation-triangle"></i> ${__('Short by {0} — produce / buy {0} more', [`${flt(-net)}${uom}`])}
+                 ${mr_open > 0 ? `<div class="so-micro" style="font-weight:400;color:inherit;">${__('{0} more is requested on a Material Request (not ordered yet)', [`${flt(mr_open)}${uom}`])}${mr_open >= -net ? ` — ${__('enough once it is ordered')}` : ''}</div>` : ''}
+               </div>`
+            : `<div style="background:#e7f6ec;color:#166534;border-radius:6px;padding:8px 10px;font-weight:700;">
+                 <i class="fa fa-check-circle"></i> ${net > 0
+                    ? __('Covered — {0} left over after every open order', [`${flt(net)}${uom}`])
+                    : __('Exactly covered — nothing left over')}
+                 <div class="so-micro" style="font-weight:400;color:inherit;">${__('No more production needed for the open orders')}</div>
+               </div>`;
+        const plan_box = `<div class="so-modal__section">
+            <div class="so-modal__h">${__('Production plan for this item')} <small>${__('all open orders against stock and everything on the way')}</small></div>
+            <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:12px;margin-bottom:10px;">
+                <div style="border:1px solid var(--border-color,#e2e8f0);border-radius:6px;padding:8px 12px;">
+                    <div class="so-micro" style="font-weight:700;margin-bottom:4px;">${__('NEEDED')}</div>
+                    ${pl_line(__('This order — still to cover'), need_this)}
+                    ${pl_line(__('Other orders — still to pick ({0})', [demand.length]), dem_to_pick)}
+                    <div style="border-top:1px dashed var(--border-color,#cbd5e1);margin-top:4px;"></div>
+                    ${pl_line(`<b>${__('Total needed')}</b>`, need_total, need_total > 0 ? 'orange' : null)}
+                </div>
+                <div style="border:1px solid var(--border-color,#e2e8f0);border-radius:6px;padding:8px 12px;">
+                    <div class="so-micro" style="font-weight:700;margin-bottom:4px;">${__('AVAILABLE / COMING')}</div>
+                    ${pl_line(__('Free stock now'), free_now)}
+                    ${pl_line(__('Coming for this order (POs / EWOs)'), coming_this)}
+                    ${pl_line(__('Coming on other POs ({0} ready-made + {1} subcontract)', [flt(other_buy), flt(other_make)]), coming_other)}
+                    <div style="border-top:1px dashed var(--border-color,#cbd5e1);margin-top:4px;"></div>
+                    ${pl_line(`<b>${__('Total available / coming')}</b>`, supply_total, 'green')}
+                </div>
+            </div>
+            ${verdict}
+            ${drafts_qty > 0 ? `<div class="so-micro" style="margin-top:6px;color:var(--so-orange);"><i class="fa fa-file-o"></i> ${__('{0} more on draft POs — not counted until submitted', [`${flt(drafts_qty)}${uom}`])}</div>` : ''}
+        </div>`;
+
         body_html = so_stats([
             { label: 'Pending for this SO', value: flt(d.total_incoming_qty || 0), unit: d.stock_uom, tone: 'warn' },
             { label: 'Requested (MR)', value: flt(d.total_mr_pending_qty || 0) },
             { label: 'On other POs', value: flt(d.total_other_po_qty || 0) },
+            { label: 'Other orders to pick', value: flt(dem_to_pick), tone: dem_to_pick > 0 ? 'warn' : null },
             { label: 'Already received', value: (d.completed_receipt_docs || []).reduce((s, r) => s + flt(r.received_qty), 0), tone: 'pos' }
         ])
+            + plan_box
             + so_section('Material Requests', `
             <table class="so-table">
                 <thead><tr><th>Material Request</th><th>Type</th><th>Requested</th><th>Ordered</th><th>Not yet ordered</th><th>Needed by</th><th>Status</th></tr></thead>
@@ -4980,6 +5094,11 @@ function show_details_modal(pair_key, type, extra) {
                 <thead><tr><th>Purchase Order</th><th>Supplier</th><th>Reserved for</th><th>Pending</th><th>Expected</th><th>Status</th></tr></thead>
                 <tbody>${other_rows}</tbody>
             </table>`, other_rows, 'Not reserved for this order')
+            + so_section('Other orders waiting for this item', plan_note + `
+            <table class="so-table">
+                <thead><tr><th>Sales Order</th><th>Delivery by</th><th>Ordered</th><th>Delivered</th><th>On Pick List</th><th>Still to pick</th><th>Status</th></tr></thead>
+                <tbody>${demand_rows}</tbody>
+            </table>`, demand_rows, 'Other open Sales Orders with this item — for planning production')
             + so_section('Already received against this SO', `
             <table class="so-table">
                 <thead><tr><th>Receipt</th><th>Supplier</th><th>Against PO</th><th>Qty</th><th>Date</th></tr></thead>

@@ -1013,13 +1013,35 @@ SCO not made yet → SCO in draft → SCO made · material not sent → Part mat
 In production (material with jobber) → In production · part received → SCO completed / closed.
 The cell shows qty per stage under "N PO · X pending"; the dialog shows the stage and the SCO links.
 
-"Other POs" (same item, for other orders or for stock) matches a Subcontract PO on its **finished
-good** (`fg_item`, qty `fg_item_qty`), the same kind match as this order's own POs (`po_kind_match`):
-a BOM line counts only Subcontract POs making the item; a plain line counts plain POs of the item
-and Subcontract POs making it. A Subcontract PO's line `item_code` is the service item, so matching
-`item_code` alone never found another order's production of a BOM item. Submitted Subcontract POs
-there get a "⚙ stage qty" line under the Unclaimed / Reserved Elsewhere footnote. All of this is
+"Other POs" (same item, for other orders or for stock) lists **both kinds on every line, with or without a
+BOM**: normal POs buying the item ready-made (`item_code`, qty `qty`) and Subcontract POs making it (`fg_item`,
+qty `fg_item_qty` — a Subcontract PO's line `item_code` is the service item, so matching `item_code` alone never
+found them). The cell's footnote splits them: "🛒 Purchase (ready-made) qty" and "⚙ stage qty" for submitted
+Subcontract POs; the View dialog marks each row Purchase (ready-made) or Subcontract + stage + SCO links. This
+order's own incoming keeps `po_kind_match` (a BOM line counts only Subcontract POs). All of this is
 display only — `total_incoming_qty`, the shortfall and coverage don't read it.
+
+The same dialog lists **Other orders waiting for this item** (`_other_so_demand_by_item`, batched once per call):
+every other submitted Sales Order not Closed / Completed / disabled with this item still to deliver — ordered,
+delivered, on a Pick List (submitted: picked not yet delivered; draft: its qty), **still to pick** (= not delivered
+− on a Pick List), delivery date, status. A tile "Other orders to pick" and one line put that demand beside what
+is coming on other POs (ready-made + subcontract), for planning production. The View button also shows when only
+such orders exist. Display only, like the rest of this section.
+
+At the top of that dialog, **Production plan for this item** adds it up: *Needed* = this order still to cover
+(`rm_procurement_status.fg_pending_to_cover`) + other orders still to pick; *Available / coming* = free stock
+(`fg_free_stock`) + coming for this order (`total_incoming_qty`) + submitted other POs (`total_other_po_qty`,
+ready-made + subcontract). Both stock figures already take picks and holds off the way "still to pick" does, so
+the parts add up. The result says **Short by N — produce / buy N more** (with any open Material Request qty and
+whether it would cover it) or **Covered — N left over**; draft POs are noted, not counted. Display only — the
+row's shortfall and buttons keep their own figures.
+
+### The Pick button asks how many
+
+A row's **Pick N** / **Pick N more** (`create_pick_list_for_item`) opens a small dialog: **Qty to pick**, filled
+with N (the ready qty), editable down for a part pick; 0 or more than N is refused in the dialog. The draft Pick
+List is made with that qty (`create_pick_list_for_items` only ever lowers a line's qty, never raises it). The bulk
+**Create Pick List** button is unchanged.
 
 ### The shortfall action accounts for what's already on order
 
