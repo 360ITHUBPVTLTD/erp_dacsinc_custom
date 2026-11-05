@@ -1804,6 +1804,24 @@ The refund prompt on returns (`public/js/payment_prompt.js › of_refund_prompt`
 Frappe's global `flt`, so every number field read "42,784.00" as 42. It was removed; the file
 uses Frappe's `flt` (same arguments).
 
+## Finance tab: e-Invoice / e-Way Bill on Receivables
+
+Receivables has an **e-Invoice / e-Way Bill** column (`of_gst_docs_html`; data from
+`order_flow_api._attach_si_gst_docs`, display only). From India Compliance's fields on the invoice
+(`einvoice_status`, `irn`, `ewaybill`, `e_waybill_status`) and its logs:
+- **e-Invoice:** ✓ when Generated / Manually Generated, with the **Ack number and Ack date** from the
+  e-Invoice Log (`eil.name = si.irn`); otherwise *not generated* (Pending / Auto-Retry / Failed),
+  *cancelled*, or *not applicable*.
+- **e-Way Bill:** ✓ with its number, date and **valid upto** from the e-Waybill Log
+  (`ewl.name = si.ewaybill`); otherwise *not generated* / *cancelled* / *not applicable*.
+- A draft invoice shows "Draft".
+
+Two table filters, **e-Invoice** and **e-Way Bill** (Generated · Not generated (pending) · Cancelled
+· Not applicable; `_EINV_CHOICES` / `_EWB_CHOICES`). Each option switches to All orders, because an
+invoice that is paid is still in or out of the e-Invoice list. The date range is the page's own date
+filter (Last N days / **Custom range…**, on the invoice's posting date). On a site without India
+Compliance's fields the column shows "—" and the filters do nothing (`_gst_fields_ready`).
+
 ## Finance tab: invoice status and delivery / receipt
 
 Each row's **Status** is the invoice's own ERPNext status (`si.status` / `pi.status`):
@@ -1979,7 +1997,7 @@ filters Receipts or To Bill. One dropdown per question:
 | Job Work › Sub POs | Received · Billed · Overdue · Subcontracting order (Made / Not made) · Jobber |
 | Stock Tracker | Warehouse · Stock (In / No stock) |
 | Pending DN/SI | **Waiting for invoice** (on by default: only orders with delivered qty not yet invoiced, fully or partly — billing as the primary stage or the secondary action; "All orders" = the whole queue) · Stage (Ready for DN / Needs invoice) · Customer |
-| Finance › Receivables | Payment · Delivery (`_SI_DONE_SQL`) · Customer · POS |
+| Finance › Receivables | Payment · Delivery (`_SI_DONE_SQL`) · e-Invoice · e-Way Bill · Customer · POS |
 | Finance › Supplier / Jobber Payables | Payment · Receipt (`_PI_DONE_SQL`) · Supplier / Jobber |
 | Embroidery Transfers | Status |
 | Logistics | LR No. (Missing / Filled) · Signed copy (Missing / Uploaded) · Customer · Transporter · POS |
