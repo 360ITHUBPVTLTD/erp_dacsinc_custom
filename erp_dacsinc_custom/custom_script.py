@@ -2602,6 +2602,13 @@ def _other_so_demand_by_item(item_codes, sales_order_name):
         r["to_pick"] = max(0, pending - flt(r.picked) - flt(r.picked_draft))
         r["pending"] = pending
         out[r.item_code].append(r)
+    # whose Pick Lists hold it and which merchandiser looks after each order (pick_people.py)
+    from erp_dacsinc_custom import pick_people
+    all_rows = [r for rows in out.values() for r in rows]
+    pls = pick_people.open_pick_lists(item_codes, [r.sales_order for r in all_rows])
+    pick_people.attach_merchandiser(all_rows)
+    for r in all_rows:
+        r["pick_lists"] = pls.get((r.sales_order, r.item_code), [])
     return out
 
 @frappe.whitelist()
@@ -3133,6 +3140,9 @@ def get_item_stock_details_bulk(item_bom_pairs, sales_order_name):
                 WHERE x.held_qty > 0
             """
             conflict_details = frappe.db.sql(conflict_sql, (item_code, sales_order_name), as_dict=1)
+            # who made each Pick List and which merchandiser looks after that order (pick_people.py)
+            from erp_dacsinc_custom import pick_people
+            pick_people.attach(conflict_details)
 
         picked_for_others_qty = sum(flt(r.held_qty) for r in conflict_details if r.docstatus == 1)
         draft_qty_for_others = sum(flt(r.held_qty) for r in conflict_details if r.docstatus == 0)
@@ -3521,6 +3531,9 @@ def get_item_stock_details_bulk(item_bom_pairs, sales_order_name):
              "sales_order": b.sales_order, "qty": flt(b.qty), "so_delivered": flt(b.so_delivered)}
             for b in blockers if flt(b.so_delivered) >= flt(b.qty) > 0
         ]
+        if stale_blockers:
+            from erp_dacsinc_custom import pick_people
+            pick_people.attach(stale_blockers, pl_key="pick_list")
         blocked_qty = sum(flt(b.held_qty) for b in blockers)
         stale_blocked_qty = sum(b["held_qty"] for b in stale_blockers)
 
@@ -6126,6 +6139,19 @@ def get_linked_sales_invoices(sales_order_name):
         return []
 
     # Get the details for those Sales Invoices
+    if not frappe.has_permission("Sales Invoice", "read"):
+        # No Sales Invoice access (e.g. Merchandiser User): that an invoice exists is shown,
+        # never its amount, due date, outstanding or paid / unpaid / overdue (invoice_money.py).
+        from erp_dacsinc_custom.invoice_money import neutral_invoice_status
+        rows = frappe.db.get_all(
+            "Sales Invoice",
+            filters={"name": ["in", si_names]},
+            fields=["name", "customer", "customer_name", "posting_date", "status"],
+            order_by="posting_date desc"
+        )
+        for r in rows:
+            r["status"] = neutral_invoice_status(r.status)
+        return rows
     return frappe.db.get_all(
         "Sales Invoice",
         filters={"name": ["in", si_names]},

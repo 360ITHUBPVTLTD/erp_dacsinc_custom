@@ -117,6 +117,15 @@ frappe.ui.form.on('Sales Order', {
             }
         });
 
+        // --- No invoice / payment money for users without Sales Invoice access
+        //     (e.g. Merchandiser User): Advance Paid and the Payment Terms schedule
+        //     (amounts and due dates) are hidden; "% Amount Billed" stays as an
+        //     indication (invoice_money.py, docs/merchandiser-purchase.md). ---
+        if (!frappe.model.can_read('Sales Invoice')) {
+            ['advance_paid', 'payment_terms_section', 'payment_terms_template', 'payment_schedule']
+                .forEach(f => frm.fields_dict[f] && frm.toggle_display(f, false));
+        }
+
         // --- Reset cached stock data ---
         frm.custom_stock_data = {};
 
@@ -2610,6 +2619,24 @@ function generate_sales_invoice_table(frm) {
                 $body.attr('class', 'so-empty so-empty--sm').html('No Sales Invoices yet.');
                 return;
             }
+            // No Sales Invoice access (e.g. Merchandiser User): the server sends no amounts —
+            // number, customer, date and status only (invoice_money.py).
+            const no_money = rows[0].grand_total === undefined;
+            if (no_money) {
+                $body.attr('class', 'so-card').html(`
+                    <div class="so-scroll"><table class="so-table">
+                        <thead><tr><th>Invoice</th><th>Customer</th><th>Date</th><th>Status</th></tr></thead>
+                        <tbody>${rows.map(si => `
+                            <tr>
+                                <td>${link_id_name('Sales Invoice', si.name)}</td>
+                                <td>${link_name_id('Customer', si.customer, si.customer_name)}</td>
+                                <td class="so-meta">${fmt_date(si.posting_date)}</td>
+                                <td>${so_doc_status(si.status)}</td>
+                            </tr>`).join('')}</tbody>
+                        <tfoot><tr><td colspan="4" class="so-num">${rows.length} invoice${rows.length === 1 ? '' : 's'}</td></tr></tfoot>
+                    </table></div>`);
+                return;
+            }
             const total_value = rows.reduce((s, si) => s + flt(si.grand_total), 0);
             const total_outstanding = rows.reduce((s, si) => s + flt(si.outstanding_amount), 0);
             const rows_html = rows.map(si => `
@@ -2714,7 +2741,7 @@ function so_fix_stale_pick_lists(item_code) {
 
     const list = blockers.map(b =>
         `<li><b>${esc(b.pick_list)}</b> — holding ${flt(b.held_qty)} for `
-        + `${esc(b.sales_order || '')} (already delivered ${flt(b.so_delivered)}/${flt(b.qty)})</li>`
+        + `${esc(b.sales_order || '')} (already delivered ${flt(b.so_delivered)}/${flt(b.qty)})${so_pl_people_html(b)}</li>`
     ).join('');
 
     frappe.confirm(
@@ -5001,12 +5028,15 @@ function show_details_modal(pair_key, type, extra) {
         const demand_rows = demand.map(r => `
             <tr>
                 <td>${link_id_name('Sales Order', r.sales_order, r.customer_name)}
-                    <div class="so-micro">${fmt_date(r.transaction_date)}</div></td>
+                    <div class="so-micro">${fmt_date(r.transaction_date)}</div>
+                    ${so_pl_merch_html(r)}</td>
                 <td class="so-meta">${fmt_date(r.delivery_date)}</td>
                 <td>${so_qty(r.ordered)}</td>
                 <td>${so_qty(r.delivered, flt(r.delivered) > 0 ? 'pos' : null)}</td>
                 <td>${so_qty(flt(r.picked) + flt(r.picked_draft), (flt(r.picked) + flt(r.picked_draft)) > 0 ? 'info' : null)}
-                    ${flt(r.picked_draft) > 0 ? `<div class="so-micro" style="color:var(--so-orange);">${flt(r.picked_draft)} ${__('on a draft Pick List')}</div>` : ''}</td>
+                    ${flt(r.picked_draft) > 0 ? `<div class="so-micro" style="color:var(--so-orange);">${flt(r.picked_draft)} ${__('on a draft Pick List')}</div>` : ''}
+                    ${(r.pick_lists || []).map(pl => `<div style="margin-top:4px;">${link_id_name('Pick List', pl.name)}
+                        <span class="so-micro">${flt(pl.qty)}${flt(pl.docstatus) === 0 ? ' · ' + __('draft') : ''}</span>${so_pl_people_html(pl, true)}</div>`).join('')}</td>
                 <td>${so_qty(r.to_pick, flt(r.to_pick) > 0 ? 'warn' : null)}</td>
                 <td>${so_doc_status(r.status)}</td>
             </tr>`).join('');
@@ -5306,7 +5336,7 @@ function show_picked_others_details_modal(pair_key) {
             : (is_submitted ? c.picked_qty : c.qty) || 0);
         return `
         <tr>
-            <td>${link_id_name('Pick List', c.pick_list_name)}</td>
+            <td>${link_id_name('Pick List', c.pick_list_name)}${so_pl_people_html(c)}</td>
             <td>${link_id_name('Sales Order', c.sales_order)}</td>
             <td>${link_name_id('Customer', c.so_customer || c.customer, c.so_customer_name || c.customer_name)}</td>
             <td class="so-meta">${fmt_date(c.so_delivery_date)}</td>
@@ -5344,7 +5374,7 @@ function show_picked_others_details_modal(pair_key) {
                 </tr></tfoot>
             </table>`, true)
         + `<p class="so-hint"><i class="fa fa-lightbulb-o" style="margin-top:2px;"></i>
-             <span>Cancel or reduce a draft Pick List above to release stock back to this order.</span></p>`);
+             <span>Cancel or reduce a draft Pick List above to release stock back to this order — ask a person shown under it.</span></p>`);
 }
 
 
@@ -5356,6 +5386,30 @@ function show_picked_others_details_modal(pair_key) {
 // so a top-level `function flt` replaced Frappe's global flt for the whole desk. Frappe's
 // flt(value, precision) takes the same arguments and also reads "42,784.00" correctly;
 // a parseFloat copy turned it into 42 in every number field after this file loaded.
+
+// Whom to ask about another order's Pick List (server: pick_people.py) — who made it, the
+// order's merchandiser, who can reduce its qty, who can delete it. `no_merch`: the merchandiser
+// is already shown on the row (Other orders waiting).
+function so_pl_people_html(r, no_merch) {
+    if (!r || r.pl_created_by === undefined) return '';
+    const bits = [];
+    if (r.pl_created_by) bits.push(`${__('Created by')} <b>${esc(r.pl_created_by)}</b>`);
+    if (!no_merch) bits.push(so_pl_merch_text(r));
+    const ed = r.can_edit || [], dl = r.can_delete || [];
+    const who = [ed.length ? `${__('Can reduce qty')}: ${ed.map(esc).join(', ')}` : '',
+                 dl.length ? `${__('Can delete')}: ${dl.map(esc).join(', ')}` : ''].filter(Boolean).join(' · ');
+    return `<div class="so-micro" style="margin-top:2px;"><i class="fa fa-user"></i> ${bits.join(' · ')}</div>`
+        + (who ? `<div class="so-micro text-muted">${who}</div>` : '');
+}
+function so_pl_merch_text(r) {
+    return r.any_merchandiser
+        ? `${__('Merchandiser')}: <i>${__('none assigned — any merchandiser can open it')}</i>`
+        : `${__('Merchandiser')} <b>${esc(r.merchandiser)}</b>`;
+}
+function so_pl_merch_html(r) {
+    return r && r.merchandiser !== undefined
+        ? `<div class="so-micro"><i class="fa fa-user"></i> ${so_pl_merch_text(r)}</div>` : '';
+}
 
 function so_format_currency(val, currency) {
     if (val === undefined || val === null) return '--';

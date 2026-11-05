@@ -167,18 +167,40 @@ box of the printable height, the items section stretching — gives the clipped 
 left, so the item table runs down to the totals whatever the header, address, items or terms take.
 No JavaScript runs in the PDF, so nothing is counted.
 
-Two guards in Format 4 (Sales Invoice): terms typed in the text editor arrive wrapped in `.ql-editor.read-mode`,
-whose `height: unset` the PDF engine doesn't know — it fell back to Quill's `height: 100%` and stretched the terms
-against the page box, squeezing the item rows under the totals; the format's CSS sets `.ql-editor` back to
-`height: auto`. And the items section has a `min-height` from the estimated item lines, so on a document near the
-page limit the box can't shrink the item rows under the totals (it then ends a little higher instead of filling the
-page). A `min-height` page box (in place of the fixed height) was tried: it stopped filling ordinary documents.
+**Format 4 (Sales Invoice) has no page box.** The box fills by *shrinking* an oversized items section, and its
+items section also holds the totals (Block 7): when the content was taller than the box, the item rows slid under
+the totals (live 36880/26-27, 05-11-2026); and in Sales Invoice Multi Copy Master the box ended ~50 mm above the
+page bottom. Instead the page is plain flow and `.dacs-fill-wrap` gets a **fixed height: the estimated free space,
+less 2.5 mm** — nothing can be squeezed, and it is the same in Format 4 and in the copies. The estimate adds the
+measured height of each part (mm, heading to last line; a page holds 232 of it in plain flow):
+- header block, the taller of its columns, plus 27 for the e-Invoice strip (IRN, Ack, QR) on an e-invoiced bill:
+  - left: 47 for 6 address lines and no Delivery At; +3.9 per address line beyond 6 (a line over 54 letters wraps),
+    +4.5 + 3.9 a line for the Delivery At address, +4.5 for a customer name over 45 letters, +3.9 for a mobile;
+  - right: 18.6 + 6.3 per row of Block 3's list (Order No / D.C. / Boxes, Due Date / L.R. / Transport / Transport
+    Details / Transporter / e-Way Bill), +3.6 per wrapped line (a value wider than 6 em in a two-pair row, 22 em alone);
+- items: 8.2 + per item 3.4 + 3.97 a line, the item name wrapped word by word by its **letter widths** (Arial, in em)
+  in the Item Name column (19.5 em of 9pt text; 14.8 when the Price List Rate / Discount columns print);
+- totals: the larger of 23.6 + 6.6 per right-side line (tax, charge, line / overall discount, round off) and
+  26.2 + 4.6 per HSN code;
+- terms: 53 (the signature column) up to 8 lines of terms (95 letters a line), then 4.2 a line; +4 per 100 letters of remarks.
+
+When the content is clearly over a page (free space below −12) and the terms go to the next page, the blank rows
+fill page 1 down to its bottom instead (free space + terms). A closer call prints plain: the header estimate can be
+a few mm high, and filling page 1 would then push the terms of a 1-page bill on to a second page. Not with notes /
+supplied items (not measured). An invoice whose item rows themselves run past page 1 prints plain.
+
+Measured 05-11-2026 on the 16 live invoices of 02–05 Nov (their e-Invoice Logs copied to the local site for the
+QR), the local invoices and generated ones (1–9 items, short / 2-line names): within ~1 mm for item rows, totals
+and terms, a few mm high for some headers; every invoice keeps its page count, 1-page ones end 2–8 mm above the
+footer. Rejected (they fail in this PDF engine): a `min-height` on the items section (it stops the blank rows from
+growing); a `min-height` page box; blank rows in their own section; the page as a CSS table (the engine moves a
+table row to the next page even with 40 mm to spare).
 
 wkhtmltopdf's legacy box has two traps, which shape how it is used:
 - `min-height` on the box is ignored on some documents (blank space left); a fixed `height` is honoured.
 - On a document longer than one page the box spoils page breaking (gaps, overlapping blocks).
 
-So on the builder formats and Format 4 the box (with a fixed height) is switched on **only when the
+So on the builder formats the box (with a fixed height) is switched on **only when the
 document surely fits on one page**: a Jinja estimate of the free space at the page bottom (mm) from the
 content — item lines (long names count extra), address lines, HSN codes, tax lines, terms / notes length,
 supplied items — with weights fitted to measured documents (each format's estimate never exceeds the
@@ -187,7 +209,7 @@ A document **outside the measured range** — more item lines, address lines, HS
 items or a longer party name than any measured document of that format — also prints as plain flow: the estimate
 is not trusted there, and a wrong fixed page height squeezes the item rows under the totals (seen on live: an
 invoice with two long addresses). A longer document prints as plain flow (no blank rows); `.dacs-fill-wrap` is `display: none` unless the
-box shows it. Credit / Debit Note and the two older challans use `min-height` boxes (they behave there); Purchase Invoice DAC
+box shows it. (Format 4 no longer uses the box — see above.) Credit / Debit Note and the two older challans use `min-height` boxes (they behave there); Purchase Invoice DAC
 switches to a fixed height when its item lines (long names count extra) are at most 11, else plain flow.
 Box heights (mm) are measured per format on a 1-page document: the largest that stays one page, less 1.
 

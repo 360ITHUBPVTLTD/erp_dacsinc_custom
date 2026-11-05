@@ -21,3 +21,27 @@ purchase POs are the Purchase team's.
 
 Which orders are "theirs" is the Sales Order scoping in `docs/sales-order-sharing.md`:
 their customers, customers with no merchandiser, orders they own or are Lead Owner of.
+
+## No invoice money
+
+A Merchandiser User cannot read Sales / Purchase Invoices or Payment Entries. They still see
+**that** an order is invoiced — the invoice number, Billed / To Bill / % billed, the stage,
+"Needs Invoice" — but never an invoice's amount, outstanding, due date or payment status
+(Paid / Unpaid / Overdue / Partly Paid). The rule is keyed on Sales Invoice (Purchase Invoice)
+read access, not on the role name, so any role without that access gets the same
+(`invoice_money.py`):
+
+- **Sales Order › Related Sales Invoices** (`custom_script.get_linked_sales_invoices`): number,
+  customer, date and status only; a payment status reads "Submitted". No Total column.
+- **Sales Order form:** Advance Paid and the Payment Terms section (template and schedule)
+  are hidden (`sales_order.js` refresh). "% Amount Billed" stays.
+- **Customer / Supplier form:** ERPNext's "Billing this year / Total Unpaid" dashboard is
+  emptied (`hide_party_dashboard_money`, Customer / Supplier `onload` hook). The Account
+  Summary box was already Accounts-only (`party_balance.can_see_balances`).
+- **Order Flow notifications** (`order_flow_api.get_activity`): an invoice's payment status is
+  sent as "Submitted", so the feed says "Sales Invoice … submitted" instead of
+  "fully paid / part-paid / OVERDUE / payment due".
+
+Left as they are: the Sales Order and Subcontract PO amounts (documents they can open), and
+the finance reports, which already refuse them (no report access on Sales Invoice /
+Purchase Invoice / GL Entry).

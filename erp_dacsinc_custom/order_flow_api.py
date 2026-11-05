@@ -3223,11 +3223,17 @@ def get_activity(days=21, limit=80, merchandiser=None, scope="open", search=None
     # Keep only real milestones, annotate seen status and what this means for
     # the session user.
     ctx = _user_context()
+    # A user who cannot read invoices (e.g. Merchandiser User) is told an invoice was raised /
+    # submitted, never paid / part-paid / overdue (invoice_money.py).
+    from erp_dacsinc_custom.invoice_money import neutral_invoice_status
+    no_inv_read = {dt for dt in ("Sales Invoice", "Purchase Invoice") if not frappe.has_permission(dt, "read")}
     important_rows = []
     for row in rows:
         important, label = _event_importance(row)
         if not important:
             continue
+        if row.get("doctype") in no_inv_read:
+            row["status"] = neutral_invoice_status(row.get("status"))
 
         # Seen is per tab, so the row carries the set of tabs it has been
         # cleared on rather than one flat flag.
@@ -5553,7 +5559,9 @@ def get_stock_reservation_details(item_code, warehouse, kind):
         wh_cond = ""
         if warehouse:
             wh_cond = "AND pli.warehouse = %(warehouse)s"
-        return frappe.db.sql(f"""
+        from erp_dacsinc_custom import pick_people
+        # who made it / which merchandiser looks after the order (pick_people.py)
+        return pick_people.attach(frappe.db.sql(f"""
             SELECT pl.name, pli.warehouse, pli.sales_order, so.customer_name, pli.stock_qty AS qty
             FROM `tabPick List Item` pli
             JOIN `tabPick List` pl ON pl.name = pli.parent
@@ -5565,13 +5573,15 @@ def get_stock_reservation_details(item_code, warehouse, kind):
               AND pli.docstatus != 2
               {wh_cond}
             ORDER BY pl.creation DESC
-        """, params, as_dict=1)
+        """, params, as_dict=1), pl_key="name")
 
     if kind == "pick_submitted":
         wh_cond = ""
         if warehouse:
             wh_cond = "AND pli.warehouse = %(warehouse)s"
-        return frappe.db.sql(f"""
+        from erp_dacsinc_custom import pick_people
+        # who made it / which merchandiser looks after the order (pick_people.py)
+        return pick_people.attach(frappe.db.sql(f"""
             SELECT pl.name, pli.warehouse, pli.sales_order, so.customer_name,
                    (pli.picked_qty - IFNULL(pli.delivered_qty, 0)) AS qty
             FROM `tabPick List Item` pli
@@ -5584,7 +5594,7 @@ def get_stock_reservation_details(item_code, warehouse, kind):
               AND pli.docstatus != 2
               {wh_cond}
             ORDER BY pl.creation DESC
-        """, params, as_dict=1)
+        """, params, as_dict=1), pl_key="name")
 
     frappe.throw(_("Unknown reservation kind: {0}").format(kind))
 
