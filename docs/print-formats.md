@@ -144,8 +144,8 @@ Purchase Invoice DAC do the same. From page 2 on, a small "… No: … | Date: �
 right, above the letter head (positioned absolutely, so it takes no room; hidden on page 1 by the page number the
 PDF engine passes to the header). In Sales Invoice Multi Copy Master's several-copy PDF the line shows only on a
 copy's 2nd page onwards: every copy has the same page count, so pages per copy = total pages / copies, and a copy's
-first page (Duplicate, Triplicate …) is not "continued". "Page X of Y" prints only on a single copy; a 3 / 4-copy
-print has no page numbers (each copy is its own document); the item table's column headings repeat on the next page as well. Proforma
+first page (Duplicate, Triplicate …) is not "continued". Page numbers print only when the invoice continues: per copy
+("Page 1 of 2", "Page 2 of 2" in each copy), none on a one-page invoice (single copy or several); the item table's column headings repeat on the next page as well. Proforma
 Invoice Quotation and the Quotation PDF print the same line from their `print_heading_template` block (builder
 formats render it inside the page header) via `templates/print/quotation_contd.html`. A format with a page header must not carry a `.print-format { margin-top }` rule — it squeezes the
 header out. The challans and Embroidery Work Order 1 draw their own header on every chunked page.

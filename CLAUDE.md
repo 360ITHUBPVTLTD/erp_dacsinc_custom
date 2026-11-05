@@ -37,6 +37,8 @@ previously-buggy edge cases — are documented in `docs/`:
   by section, vendors as Suppliers).
 - `docs/returns.md` — Credit / Debit Notes, Sales / Purchase Returns: settlement (adjust vs refund),
   Finance › Returns / Notes, tracker / logistics / receipts handling, form rules, return print formats.
+- `docs/einvoice-list.md` — Sales Invoice list: e-Invoice / e-Way Bill columns and filters, Ack No / Ack Date
+  copied from the e-Invoice Log, Invoice Date and Ack Date from–to boxes.
 - `docs/invoice-gstin-update.md` — customer's GSTIN given after the Sales Invoice was submitted: same-state only, no
   IRN / e-Way Bill, Accounts Manager / Admin; GST details updated, taxes and ledger untouched.
 - `docs/print-formats.md` — Sales Invoice copies (Multi Copy Master over Format 4, why its header is
