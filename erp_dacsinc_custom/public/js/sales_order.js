@@ -5388,7 +5388,8 @@ function show_picked_others_details_modal(pair_key) {
 // a parseFloat copy turned it into 42 in every number field after this file loaded.
 
 // Whom to ask about another order's Pick List (server: pick_people.py) — who made it, the
-// order's merchandiser, who can reduce its qty, who can delete it. `no_merch`: the merchandiser
+// order's merchandiser, and who can really reduce its qty / delete it (Frappe's own permission
+// check per user, merchandiser scope included). `no_merch`: the merchandiser
 // is already shown on the row (Other orders waiting).
 function so_pl_people_html(r, no_merch) {
     if (!r || r.pl_created_by === undefined) return '';
@@ -5396,7 +5397,9 @@ function so_pl_people_html(r, no_merch) {
     if (r.pl_created_by) bits.push(`${__('Created by')} <b>${esc(r.pl_created_by)}</b>`);
     if (!no_merch) bits.push(so_pl_merch_text(r));
     const ed = r.can_edit || [], dl = r.can_delete || [];
-    const who = [ed.length ? `${__('Can reduce qty')}: ${ed.map(esc).join(', ')}` : '',
+    // submitted: reducing means Revert to Draft / Cancel (cancel right), deleting means cancel + delete
+    const ed_lbl = r.submitted ? __('Can revert & reduce qty') : __('Can reduce qty');
+    const who = [ed.length ? `${ed_lbl}: ${ed.map(esc).join(', ')}` : '',
                  dl.length ? `${__('Can delete')}: ${dl.map(esc).join(', ')}` : ''].filter(Boolean).join(' · ');
     return `<div class="so-micro" style="margin-top:2px;"><i class="fa fa-user"></i> ${bits.join(' · ')}</div>`
         + (who ? `<div class="so-micro text-muted">${who}</div>` : '');

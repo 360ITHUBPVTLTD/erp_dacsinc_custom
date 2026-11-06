@@ -1051,13 +1051,16 @@ so every place that lists one names them (`pick_people.py`, display only — no 
 - **Created by** — the Pick List's creator.
 - **Merchandiser** — the order's customer's Merchandiser User; "none assigned — any merchandiser can open
   it" when the customer has none.
-- **Can reduce qty** — first that order's people who may write a Pick List (its creator, the customer's
-  merchandiser, the Sales Order's creator and Lead Owner — the same rule as
-  `custom_script._so_linked_has_permission`), then everyone who may write any Pick List without a
-  merchandiser scope (stock, production, warehouse, admin roles).
-- **Can delete** — users whose role may delete a Pick List (a Merchandiser User cannot).
+- **Can reduce qty** (draft) / **Can revert & reduce qty** (submitted) and **Can delete** — worked out
+  per Pick List by running Frappe's own permission check (`frappe.has_permission`) for every user who
+  holds a Pick List role, so the merchandiser scope (`custom_script._so_linked_has_permission`: their
+  customers, customers with no merchandiser, orders they created or are Lead Owner of, Pick Lists they
+  created) and user permissions count exactly as when that person opens it:
+  - draft: reduce = write, delete = delete;
+  - submitted: reduce = cancel (Cancel, or Revert to Draft, which checks cancel), delete = cancel and
+    delete (it is cancelled first). Warehouse roles that can edit but not cancel are left out here.
 
-Roles are read from the Pick List's permissions and users' roles, so the names follow the access sheet.
+The names follow the access sheet (role permissions) and Customer › Merchandiser User; nothing is stored.
 Shown in: SO › **Stock Conflicts** (Who is holding it), the Incoming dialog's **Other orders waiting for
 this item** (merchandiser under the order, each open Pick List under On Pick List), the **stale Pick
 Lists** prompt, and Order Flow › Stock › draft / submitted Pick List reservation details.

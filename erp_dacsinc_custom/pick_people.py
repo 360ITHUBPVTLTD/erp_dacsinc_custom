@@ -2,17 +2,18 @@
 
 Shown wherever a Pick List of another Sales Order is listed (SO › Stock Conflicts, Other orders
 waiting, stale Pick Lists; Order Flow › Stock › reservation details), so a merchandiser who needs
-the stock knows whom to ask. Display only. Per Pick List:
+the stock knows whom to ask. Display only — no permission is set or changed here. Per Pick List:
 
   pl_created_by     who made it
-  merchandiser      the order's customer's Merchandiser User ("" = none assigned, then every
-                    merchandiser can open it: any_merchandiser = 1)
-  can_edit          who can open and change it (reduce qty): first that order's people — its
-                    creator, the customer's merchandiser, the Sales Order's creator and Lead Owner
-                    (the rule in custom_script._so_linked_has_permission), each only if a role of
-                    theirs may write a Pick List — then everyone who may write any Pick List
-                    without a merchandiser scope (stock, production, warehouse, admin)
-  can_delete        users whose role may delete a Pick List (a Merchandiser User cannot)
+  merchandiser      the order's customer's Merchandiser User ("" = none assigned: any_merchandiser = 1)
+  submitted         1 when the Pick List is submitted
+  can_edit          who can really reduce its qty — Frappe's own permission check
+                    (frappe.has_permission: role permissions, the merchandiser scope in
+                    custom_script._so_linked_has_permission, user permissions) run for every user:
+                      draft      write
+                      submitted  cancel (Cancel, or Revert to Draft — so_embroidery.revert_pick_list
+                                 checks cancel)
+  can_delete        draft: delete; submitted: cancel and delete (it is cancelled first)
 
 See docs/so-rm-po-subcontracting-flow.md › "Whom to ask about another order's Pick List".
 """
@@ -21,27 +22,27 @@ from collections import defaultdict
 import frappe
 
 
-def _role_users(ptype):
-	"""Enabled desk users (not Administrator) holding a role that may `ptype` a Pick List.
-	Kept for the request: the Stock Conflicts call asks once per item line."""
-	memo = getattr(frappe.local, "pick_people_role_users", None)
-	if memo is None:
-		memo = frappe.local.pick_people_role_users = {}
-	if ptype not in memo:
-		memo[ptype] = _role_users_uncached(ptype)
-	return memo[ptype]
+def _memo():
+	m = getattr(frappe.local, "pick_people_memo", None)
+	if m is None:
+		m = frappe.local.pick_people_memo = {}
+	return m
 
 
-def _role_users_uncached(ptype):
-	roles = {r.role for r in frappe.get_all("Custom DocPerm", filters={"parent": "Pick List", "permlevel": 0, ptype: 1},
-	                                        fields=["role"])}
-	roles.discard("All")
-	if not roles:
-		return set()
-	return {r[0] for r in frappe.db.sql("""
-		SELECT DISTINCT u.name FROM `tabHas Role` hr JOIN `tabUser` u ON u.name = hr.parent
-		WHERE hr.parenttype = 'User' AND hr.role IN %(roles)s AND u.enabled = 1
-		  AND u.user_type = 'System User' AND u.name NOT IN ('Administrator', 'Guest')""", {"roles": tuple(roles)})}
+def _candidates():
+	"""Enabled desk users (not Administrator) holding any role that may read a Pick List — the
+	only people a permission check can say yes for. Kept for the request."""
+	m = _memo()
+	if "candidates" not in m:
+		roles = {r.role for r in frappe.get_all("Custom DocPerm", filters={"parent": "Pick List", "permlevel": 0, "read": 1},
+		                                        fields=["role"])}
+		roles.discard("All")
+		m["candidates"] = sorted({r[0] for r in frappe.db.sql("""
+			SELECT DISTINCT u.name FROM `tabHas Role` hr JOIN `tabUser` u ON u.name = hr.parent
+			WHERE hr.parenttype = 'User' AND hr.role IN %(roles)s AND u.enabled = 1
+			  AND u.user_type = 'System User' AND u.name NOT IN ('Administrator', 'Guest')""",
+			{"roles": tuple(roles)})}) if roles else []
+	return m["candidates"]
 
 
 def _full_names(users):
@@ -52,47 +53,60 @@ def _full_names(users):
 		"User", filters={"name": ["in", users]}, fields=["name", "full_name"])}
 
 
+def _can(pl_doc, ptype, user):
+	m = _memo()
+	key = ("perm", pl_doc.name, ptype, user)
+	if key not in m:
+		m[key] = bool(frappe.has_permission("Pick List", ptype, doc=pl_doc, user=user))
+	return m[key]
+
+
+def _who(pl_name):
+	"""(can_edit users, can_delete users, submitted) for one Pick List."""
+	m = _memo()
+	key = ("who", pl_name)
+	if key not in m:
+		doc = frappe.get_doc("Pick List", pl_name)
+		submitted = doc.docstatus == 1
+		edit, delete = [], []
+		for u in _candidates():
+			if submitted:
+				if _can(doc, "cancel", u):
+					edit.append(u)
+					if _can(doc, "delete", u):
+						delete.append(u)
+			else:
+				if _can(doc, "write", u):
+					edit.append(u)
+				if _can(doc, "delete", u):
+					delete.append(u)
+		m[key] = (edit, delete, 1 if submitted else 0, doc.owner)
+	return m[key]
+
+
 def people(pairs):
 	"""pairs: [(pick_list, sales_order)] → {(pick_list, sales_order): {pl_created_by, merchandiser,
-	any_merchandiser, can_edit, can_delete}}."""
+	any_merchandiser, submitted, can_edit, can_delete}}."""
 	pairs = {(p, s) for p, s in pairs if p}
 	if not pairs:
 		return {}
-	pls = {p for p, _ in pairs}
 	sos = {s for _, s in pairs if s}
-	owners = {p.name: p.owner for p in frappe.get_all("Pick List", filters={"name": ["in", list(pls)]},
-	                                                   fields=["name", "owner"])}
-	so_info = {r.name: r for r in frappe.db.sql("""
-		SELECT so.name, so.owner, so.custom_lead_owner AS lead_owner, cust.custom_merchandiser_user AS merch
-		FROM `tabSales Order` so LEFT JOIN `tabCustomer` cust ON cust.name = so.customer
-		WHERE so.name IN %(sos)s""", {"sos": tuple(sos)}, as_dict=1)} if sos else {}
-	writers, deleters = _role_users("write"), _role_users("delete")
-	# writers a merchandiser scope does not hold back (stock, production, warehouse, admin): they
-	# can change every Pick List, so they are named on every one
-	from erp_dacsinc_custom.order_flow_api import is_scoped_merchandiser_for_doctype
-	memo = frappe.local.pick_people_role_users
-	if "unscoped" not in memo:
-		memo["unscoped"] = {u for u in writers if not is_scoped_merchandiser_for_doctype("Pick List", u)}
-	unscoped = memo["unscoped"]
-	names = _full_names(list(owners.values()) + list(deleters) + list(unscoped)
-	                    + [u for s in so_info.values() for u in (s.owner, s.lead_owner, s.merch)])
-	can_delete = sorted(names.get(u, u) for u in deleters)
+	merch = dict(frappe.db.sql("""SELECT so.name, cust.custom_merchandiser_user FROM `tabSales Order` so
+		LEFT JOIN `tabCustomer` cust ON cust.name = so.customer WHERE so.name IN %(sos)s""", {"sos": tuple(sos)})) if sos else {}
+	who = {p: _who(p) for p, _ in pairs}
+	names = _full_names([u for w in who.values() for u in w[0] + w[1] + [w[3]]] + list(merch.values()))
+	nm = lambda u: names.get(u, u or "")
 	out = {}
 	for p, s in pairs:
-		so = so_info.get(s) or frappe._dict()
-		edit = []
-		for u in (owners.get(p), so.merch, so.owner, so.lead_owner):
-			if u and u in writers and names.get(u, u) not in edit:
-				edit.append(names.get(u, u))
-		for n in sorted(names.get(u, u) for u in unscoped):
-			if n not in edit:
-				edit.append(n)
+		edit, delete, submitted, owner = who[p]
+		mu = merch.get(s) or ""
 		out[(p, s)] = {
-			"pl_created_by": names.get(owners.get(p), owners.get(p) or ""),
-			"merchandiser": names.get(so.merch, so.merch or ""),
-			"any_merchandiser": 0 if so.merch else 1,
-			"can_edit": edit,
-			"can_delete": can_delete,
+			"pl_created_by": nm(owner),
+			"merchandiser": nm(mu),
+			"any_merchandiser": 0 if mu else 1,
+			"submitted": submitted,
+			"can_edit": sorted(nm(u) for u in edit),
+			"can_delete": sorted(nm(u) for u in delete),
 		}
 	return out
 

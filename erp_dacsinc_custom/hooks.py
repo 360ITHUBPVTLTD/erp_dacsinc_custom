@@ -89,7 +89,7 @@ doctype_js = {
 	"Purchase Order": ["public/js/so_qty_cap.js", "public/js/purchase_order.js"],
 	"Purchase Invoice": "public/js/purchase_invoice.js",
 	"Material Request": ["public/js/so_qty_cap.js", "public/js/material_request.js", "public/js/pos_stock.js"],
-	"Stock Entry": "public/js/pos_stock.js",
+	"Stock Entry": ["public/js/pos_stock.js", "public/js/stock_entry_type_filter.js"],
 	"BOM": "public/js/bom.js",
 	"Sales Invoice": ["public/js/sales_invoice.js", "public/js/merchant_export.js", "public/js/keep_price_list_rate.js"],
 	"Delivery Note": ["public/js/delivery_note.js", "public/js/merchant_export.js"],
@@ -206,6 +206,8 @@ doctype_list_js = {
 # one by URL. Registering only the first is what let a merchandiser reach any
 # hidden order by pasting its link.
 permission_query_conditions = {
+    # User list / report view: only Admin, HR Manager, System Manager see every user (user_scope.py)
+    "User": "erp_dacsinc_custom.user_scope.get_user_list_conditions",
     "Sales Order": "erp_dacsinc_custom.custom_script.get_sales_order_permission_query_conditions",
     "Pick List": "erp_dacsinc_custom.custom_script.get_pick_list_permission_query_conditions",
     "Purchase Order": "erp_dacsinc_custom.custom_script.get_purchase_order_permission_query_conditions",

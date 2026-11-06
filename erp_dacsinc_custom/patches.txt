@@ -54,3 +54,4 @@ erp_dacsinc_custom.patches.list_filters
 erp_dacsinc_custom.patches.so_order_stage
 erp_dacsinc_custom.patches.uniform_transfer_to_ewo
 erp_dacsinc_custom.patches.si_letter_head
+erp_dacsinc_custom.patches.employee_select_only_on_user
