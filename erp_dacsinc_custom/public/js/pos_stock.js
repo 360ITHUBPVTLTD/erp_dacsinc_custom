@@ -13,6 +13,16 @@
 //   POS stores and VV Puram. Set every time, not only when empty: ERPNext pre-fills
 //   Stock Settings › Default Warehouse (VV Puram) on new documents.
 // - POS Admin: defaults on a new document only, nothing locked.
+// Frappe v15's set_headline APPENDS a block (layout.show_message); refresh runs more than once
+// (load, save, reload), so the same message would repeat. Skip it when it is already shown —
+// a form may carry two different messages (request status and warehouse approval), so not a clear.
+function pos_headline(frm, text, color) {
+	const $msg = frm.layout && frm.layout.message;
+	const plain = $("<div>").html(text).text().trim();
+	if ($msg && $msg.find(".form-message").toArray().some((el) => $(el).text().trim() === plain)) return;
+	frm.dashboard.set_headline(text, color);
+}
+
 function pos_defaults(frm) {
 	if (!frm.__pos_defaults) {
 		frm.__pos_defaults = frappe.call({ method: "erp_dacsinc_custom.pos_scope.get_my_pos_defaults" }).then((r) => r.message || {});
@@ -154,7 +164,7 @@ function pos_request_form(frm) {
 	frappe.call({ method: "erp_dacsinc_custom.pos_request.get_request", args: { name: frm.doc.name } }).then((r) => {
 		const d = r.message || {}, can = d.can || {};
 		if (frm.doc.docstatus === 0) frm.page.clear_primary_action();
-		const head = (text, color) => frm.dashboard.set_headline(text, color);
+		const head = (text, color) => pos_headline(frm, text, color);
 		if (status === "Draft") {
 			head(__("Draft — send it to HO for approval when it's ready. HO approves it and sends the stock."), "blue");
 		} else if (status === "Rejected") {
@@ -207,10 +217,10 @@ function pos_transfer_approval_state(frm) {
 		const st = r.message || {};
 		if (!st.needs_approval) return;
 		if (st.can_approve) {
-			frm.dashboard.set_headline(__("POS transfer to / from the supply warehouse — waiting for your approval."), "orange");
+			pos_headline(frm, __("POS transfer to / from the supply warehouse — waiting for your approval."), "orange");
 			frm.page.set_primary_action(__("Approve"), () => frm.savesubmit());
 		} else {
-			frm.dashboard.set_headline(__("Waiting for warehouse approval — Warehouse Incharge, Warehouse Executive or POS Admin submits this transfer."), "orange");
+			pos_headline(frm, __("Waiting for warehouse approval — Warehouse Incharge, Warehouse Executive or POS Admin submits this transfer."), "orange");
 			frm.page.clear_primary_action();
 		}
 	});
@@ -225,11 +235,11 @@ function pos_request_transfer_state(frm) {
 		const st = r.message || {};
 		if (!st.store) return;
 		if (st.can_submit) {
-			frm.dashboard.set_headline((st.requests || []).length
+			pos_headline(frm, (st.requests || []).length
 				? __("Stock sent by HO for request {0}. Check what arrived — lower a qty if less came — then Submit.", [st.requests.join(", ")])
 				: __("Transfer from {0} to your store. Check what arrived — lower a qty if less came — then Submit to accept it.", [st.source]), "blue");
 		} else {
-			frm.dashboard.set_headline(st.is_sender
+			pos_headline(frm, st.is_sender
 				? __("Sent to {0}. A POS user there accepts it (Submit) when the stock arrives; until then it is In Transit.", [st.store])
 				: __("In transit to {0} — the store checks what arrived and submits it.", [st.store]), "orange");
 			frm.page.clear_primary_action();
@@ -244,7 +254,7 @@ frappe.ui.form.on("Stock Entry", {
 		pos_apply_store_defaults(frm);
 		pos_request_transfer_state(frm);
 		if (frm.doc.custom_is_pos_transfer && frm.doc.docstatus === 1 && frm.doc.custom_approved_by) {
-			frm.dashboard.set_headline(__("Warehouse approval: approved by {0}", [frappe.user.full_name(frm.doc.custom_approved_by)]), "green");
+			pos_headline(frm, __("Warehouse approval: approved by {0}", [frappe.user.full_name(frm.doc.custom_approved_by)]), "green");
 		}
 		pos_transfer_approval_state(frm);
 	},

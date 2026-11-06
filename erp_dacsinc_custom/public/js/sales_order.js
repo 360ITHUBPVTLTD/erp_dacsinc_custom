@@ -76,6 +76,10 @@ frappe.ui.form.on('Sales Order', {
                     }
 
                     html += so_stage_alert_html(info.stage, frm);
+                    // Frappe v15's set_headline APPENDS a block (layout.show_message) — refresh runs
+                    // more than once (load, save, reload after an action), so clear first or the
+                    // banner shows twice.
+                    frm.dashboard.clear_headline();
                     if (html) {
                         frm.dashboard.set_headline(html);
                     } else {
