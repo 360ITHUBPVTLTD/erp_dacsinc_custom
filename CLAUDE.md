@@ -70,6 +70,8 @@ previously-buggy edge cases — are documented in `docs/`:
   them, and single DocTypes like GST Settings have no table → TableMissingError popup).
 - `docs/item-stock-ledger.md` — Item Stock Ledger page (Admin, Production Manager): one item's every movement from the
   first, with jobber / SCO / PO / Sales Order, and what each jobber still has per Subcontracting Order.
+- `docs/user-list-access.md` — only Admin / HR Manager / System Manager see every user; others see their own
+  record in the User list, can't open other users, and still pick any user in Link fields.
 - `docs/stock-hold.md` — stock held for Sales Orders (Pick Lists, jobber, earmarks)
   can't be delivered, moved, reconciled or cancelled away by anything else.
 

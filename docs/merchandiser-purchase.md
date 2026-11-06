@@ -18,6 +18,11 @@ purchase POs are the Purchase team's.
   The Stock Entry list has no **Add Stock Entry** button for them (`public/js/stock_entry_list.js`, same
   merchandiser test as `so_is_scoped_merchandiser`): they make transfers from the Subcontracting Order /
   Order Flow. Administrator / System Manager / Super Admin / Admin keep it.
+  On the Stock Entry form the **Stock Entry Type** list is by role (`stock_entry_types.py`, display only;
+  an entry already made with another type opens as before): `ROLE_TYPES` keeps a Merchandiser User to Send to
+  Subcontractor, Material Transfer and Repack (jobber, Uniform tab). Anyone who also holds another role that may
+  create / edit Stock Entries (Production Manager, Admin, Stock Manager, warehouse, POS…) gets every type — the
+  broader role wins; several restricted roles add up. Administrator always gets every type.
 
 Which orders are "theirs" is the Sales Order scoping in `docs/sales-order-sharing.md`:
 their customers, customers with no merchandiser, orders they own or are Lead Owner of.
