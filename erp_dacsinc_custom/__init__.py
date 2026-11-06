@@ -224,7 +224,19 @@ def patch_overall_discount():
 		except Exception:
 			pass
 
+def patch_pdf_fill():
+	# blank space in prints measured from a first PDF (pdf_fill.py); a failure leaves PDFs as frappe makes them
+	try:
+		from erp_dacsinc_custom import pdf_fill
+		pdf_fill.patch()
+	except Exception:
+		try:
+			frappe.logger("erp_dacsinc_custom").exception("pdf_fill patch failed")
+		except Exception:
+			pass
+
 patch_notifications()
+patch_pdf_fill()
 patch_overall_discount()
 patch_item_query()
 patch_search_widget()

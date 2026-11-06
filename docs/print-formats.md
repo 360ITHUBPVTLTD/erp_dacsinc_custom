@@ -161,11 +161,27 @@ that fills page 1 locally still fits on live (a print on live came out a few mm 
 
 ## Blank rows instead of empty space
 
-The item table is followed, inside a `.dacs-items-box`, by a `.dacs-fill-wrap`: a table of 60 empty
-rows with the same columns, clipped. A **page box** — the page made a vertical (legacy `-webkit-box`)
-box of the printable height, the items section stretching — gives the clipped rows exactly the space
-left, so the item table runs down to the totals whatever the header, address, items or terms take.
-No JavaScript runs in the PDF, so nothing is counted.
+The item table is followed by a `.dacs-fill-wrap`: a table of 60 empty rows with the same columns, clipped, hidden
+in HTML previews. In the PDF it is made as tall as the room left on the page, so the item table runs down to the
+totals whatever the header, address, items or terms take. No JavaScript runs in the PDF, so the room is found one of
+two ways — never with a stretching page box any more (see the traps below):
+
+**Measured (`pdf_fill.py`)** — Delivery Note Version 3 and Without Amount Version 3, Sales Order Print Format 3,
+Purchase Order Print Format, Embroidery Work Order Print Format 2, POS Invoice A4 / A5, the quotation formats
+(`templates/print/quotation_body.html`). The block carries `data-dacs-fill`. Every PDF goes through
+`pdfkit.from_string`; for such a page the app makes it twice: first with the block at 0 height and two invisible 1px
+markers (where the block is, and the end of its document — its `.page-break`, one per copy), then with the block as
+tall as the room under that last line, when it is on the block's page (else 0), less 3 mm. The page's last line may
+go down to 15 mm above the paper edge (A4, measured; wkhtmltopdf's own 10 mm default is too low with frappe's
+footer), or the format's own value on the marker — `data-dacs-fill="25"` on POS Invoice A5 (measured: 24.5 mm). If
+the second PDF has more pages, it is tried once 6 mm shorter, then printed without the block: the blank space can
+never push anything to another page or squeeze it. A print takes two (sometimes three) PDF runs.
+Measured 06-11-2026 on recent live documents (40 Delivery Notes ×2 formats, 30 Sales Orders, 30 Purchase Orders,
+13 Embroidery Work Orders, 30 POS bills ×2, 30 Quotations): every page count unchanged, 1-page documents end at the
+same place (A4 ~12 mm above the footer line). A multi-page document fills only the page its item table ends on, and
+only when its totals end on that page too.
+
+**Estimated in the template** — Format 4 and the Goods Issue Note (below), done first.
 
 **Format 4 (Sales Invoice) has no page box.** The box fills by *shrinking* an oversized items section, and its
 items section also holds the totals (Block 7): when the content was taller than the box, the item rows slid under
@@ -196,22 +212,12 @@ footer. Rejected (they fail in this PDF engine): a `min-height` on the items sec
 growing); a `min-height` page box; blank rows in their own section; the page as a CSS table (the engine moves a
 table row to the next page even with 40 mm to spare).
 
-wkhtmltopdf's legacy box has two traps, which shape how it is used:
-- `min-height` on the box is ignored on some documents (blank space left); a fixed `height` is honoured.
-- On a document longer than one page the box spoils page breaking (gaps, overlapping blocks).
-
-So on the builder formats the box (with a fixed height) is switched on **only when the
-document surely fits on one page**: a Jinja estimate of the free space at the page bottom (mm) from the
-content — item lines (long names count extra), address lines, HSN codes, tax lines, terms / notes length,
-supplied items — with weights fitted to measured documents (each format's estimate never exceeds the
-real free space of any measured document, and no 2-page document passes the threshold, +8 mm safety).
-A document **outside the measured range** — more item lines, address lines, HSN codes, terms, notes, supplied
-items or a longer party name than any measured document of that format — also prints as plain flow: the estimate
-is not trusted there, and a wrong fixed page height squeezes the item rows under the totals (seen on live: an
-invoice with two long addresses). A longer document prints as plain flow (no blank rows); `.dacs-fill-wrap` is `display: none` unless the
-box shows it. (Format 4 no longer uses the box — see above.) Credit / Debit Note and the two older challans use `min-height` boxes (they behave there); Purchase Invoice DAC
-switches to a fixed height when its item lines (long names count extra) are at most 11, else plain flow.
-Box heights (mm) are measured per format on a 1-page document: the largest that stays one page, less 1.
+The stretching page box (the page a `-webkit-box` of fixed height, the items section flexing) was dropped
+everywhere: in this PDF engine it fills by *shrinking* an oversized items section, so when the estimate that switched
+it on was wrong the item rows slid under the totals; it ignored `min-height` on some documents; it ended early in
+multi-copy prints; and its fitted estimates switched it off on documents outside their measured range (empty space
+left at the bottom). Credit / Debit Note DAC, Purchase Invoice DAC and the two older Delivery Note challans still use
+`min-height` boxes, which can't squeeze anything (a Credit Note ends ~24 mm above the footer).
 
 Subcontracting Order Print Format 3 (Goods Issue Note): the issue table (Sn., Issue Item Details, UOM, Qty, Total
 Issued Qty) is plain; the space is under the **Receivable Product Summary** (Sn., Item to be Received, Qty, and an
@@ -219,10 +225,12 @@ empty **Remark** column for the user to write in — same column widths as the i
 column lines only** (`.dacs-fill-wrap td` without top / bottom lines): the space left rarely ends on a row line, and
 ruled blank rows left a cut row with its own line just above the total. The receivable rows, the space and the Total
 Qty row are pulled up 1px each (`margin-top: -1px`) so the lines where they meet are one line, in the PDF and the preview.
-
-Measured 28-Oct-2026 on the recent documents of each format: every 1-page document stays one page, the
-short ones end 1–11 mm above the page footer. Changing a font size, padding or a block's height means
-re-measuring the box height and the estimate's weights (render the recent documents, `pdfinfo` for pages).
+It has **no page box** (as Format 4): the old one switched off on orders with many address lines (it counted every
+address field on the order, not the printed supplier address — SCO/26-27/00099) and, when on, stopped ~30 mm above
+the page bottom. The space is a fixed height = 236 − 2 − the estimated content (mm, heading to the signature line),
+measured 06-11-2026 on the 60 recent live orders: header 27.9 + 4.5 a line on the supplier side (name + printed
+address lines, at least 2); issue table 20.1 + 7.9 a row; receivable table 15.9 + 7.9 a row; remarks + signatures
+52.2; a wrapped line +4.5 (letter widths, as Format 4). All 60 stay one page and end at the same place.
 
 The form button used to come from a DB Client Script "sales invoice Form new" (no All 4 choice);
 `patches/si_print_button_to_app.py` disables that script (only while its sole live code is that

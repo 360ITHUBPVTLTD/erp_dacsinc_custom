@@ -36,39 +36,8 @@ tr { page-break-inside: avoid; page-break-after: auto; }
 </style>
 
 {#- Shared body of "Proforma Invoice Quotation" and "Quotation print format 7Apr" (each sets dacs_title, dacs_gstin
-    and includes this file). docs/print-formats.md › Blank rows.
-    Page box only when the document surely fits on one page: estimated free space (mm) at the page bottom without
-    blank rows — weights fitted to measured quotations (never above the real free space). Lines are counted per
-    line break (descriptions and terms are often written one entry per line). -#}
-{%- set dacs_nl = namespace(fl=0, fa=0, tl=0) -%}
-{%- for it in (doc.get('items') or []) -%}
-{%- set nm = namespace(n=0) -%}
-{%- for p in (it.item_name or '').replace('<br />', '\n').replace('<br/>', '\n').replace('<br>', '\n').split('\n') if p | striptags | trim -%}{%- set nm.n = nm.n + 1 + (p | striptags | trim | length) // 45 -%}{%- endfor -%}
-{%- set dacs_nl.fl = dacs_nl.fl + ([nm.n, 1] | max) -%}
-{%- for p in (it.description or '').replace('<br />', '\n').replace('<br/>', '\n').replace('<br>', '\n').replace('</p>', '\n').replace('</div>', '\n').replace('</li>', '\n').split('\n') if p | striptags | trim -%}{%- set dacs_nl.fl = dacs_nl.fl + 1 + (p | striptags | trim | length) // 45 -%}{%- endfor -%}
-{%- endfor -%}
-{%- for fld in ["address_display", "shipping_address_display", "shipping_address", "supplier_address_display", "billing_address_display", "dispatch_address"] if doc.get(fld) is string -%}{%- for p in doc.get(fld).split('<br>') if p | striptags | trim -%}{%- set dacs_nl.fa = dacs_nl.fa + 1 + (p | striptags | trim | length) // 50 -%}{%- endfor -%}{%- endfor -%}
-{%- for p in (doc.terms or '').replace('<br />', '\n').replace('<br/>', '\n').replace('<br>', '\n').replace('</p>', '\n').replace('</div>', '\n').replace('</li>', '\n').split('\n') if p | striptags | trim -%}{%- set dacs_nl.tl = dacs_nl.tl + 1 + (p | striptags | trim | length) // 95 -%}{%- endfor -%}
-{%- set dacs_n = (doc.get('items') or []) | length -%}
-{%- set dacs_hsn = (doc.get('items') or []) | map(attribute='gst_hsn_code') | select | unique | list | length -%}
-{%- set dacs_free = (101.5 if dacs_gstin else 105.6) - 5 * dacs_nl.fl - 3 * dacs_n - 4.5 * dacs_hsn - 4.5 * dacs_nl.fa -%}
-{#- out of the measured range (more item lines, items, HSN codes, address or terms lines, a longer name than any
-    measured quotation): plain flow — the estimate is not trusted there, and a wrong fixed page height would
-    squeeze the item rows under the totals. Threshold: the free space under the box (16.3 / 19.3mm) + 8mm -#}
-{%- if dacs_free >= (24.3 if dacs_gstin else 27.3) and dacs_nl.fl <= 17 and dacs_n <= 6 and dacs_hsn <= 4 and dacs_nl.fa <= 7 and dacs_nl.tl <= 8 and ((doc.get('customer_name') or '') | length) <= 68 and not ((doc.get('notes') or '') | striptags | trim) %}<style>
-/* Page box (docs/print-formats.md › Blank rows): the page is a vertical box of at least the printable height
-   (224mm: the largest height that stays one page, 237mm, less 13mm); the items part stretches into the space left and
-   its blank rows — a clipped table of empty rows after the items — fill it. Content taller than the page flows
-   on to the next page; the box never shrinks it. */
-.print-format .page-break { display: -webkit-box; -webkit-box-orient: vertical; height: 224mm; /* dacs page height */ }
-.print-format .page-break > .section-break[data-label="Items"] { -webkit-box-flex: 1; display: -webkit-box; -webkit-box-orient: vertical; }
-.print-format .page-break > .section-break[data-label="Items"] > .column-break { -webkit-box-flex: 1; float: none; display: -webkit-box; -webkit-box-orient: vertical; }
-.print-format .page-break > .section-break[data-label="Items"] > .column-break > div:first-child { -webkit-box-flex: 1; display: -webkit-box; -webkit-box-orient: vertical; }
-.dacs-items-box { -webkit-box-flex: 1; display: -webkit-box; -webkit-box-orient: vertical; }
-.dacs-fill-wrap { -webkit-box-flex: 1; height: 0; overflow: hidden; display: block !important; }
-.dacs-pf { display: -webkit-box; -webkit-box-orient: vertical; -webkit-box-flex: 1; }
-.dacs-pf .dacs-items-box { -webkit-box-flex: 1; }
-</style>{%- endif %}
+    and includes this file). Blank rows under the items, as tall as the room left on the page (pdf_fill.py,
+    docs/print-formats.md › Blank rows). -#}
 <div class="dacs-pf">
 <!-- TITLE -->
 <div style="text-align: center; margin: 0 0 5px 0; line-height: 1.2;">
@@ -181,7 +150,7 @@ tr { page-break-inside: avoid; page-break-after: auto; }
 </tr>
 {% endfor %}
 </table>
-<div class="dacs-fill-wrap">
+<div class="dacs-fill-wrap" data-dacs-fill="1">
 <table class="dacs-items{{ '' if dacs_disc else ' dacs-nodisc' }}" style="table-layout: fixed; margin: -1px 0 0 0;">
 <colgroup><col style="width: 4%;"><col><col style="width: 10%;"><col style="width: 7%;"><col class="dacs-d" style="width: 11%;"><col style="width: 11%;"><col style="width: 9%;"><col style="width: 13%;"></colgroup>
 <tbody>
