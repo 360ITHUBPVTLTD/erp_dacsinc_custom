@@ -331,11 +331,11 @@
     "",
     "",
     "",
-    "VNES",
+    "VNESCD",
     "",
     "",
     "",
-    "VNESC",
+    "VNESCD",
     "",
     "",
     "VNES",
@@ -424,7 +424,7 @@
     "VNESC",
     "",
     "",
-    "",
+    "V",
     "",
     "",
     "VNES",
@@ -611,7 +611,6 @@
    ]
   },
   "letters": "VNESCDO",
-  "note": "Role Permission Manager \u00b7 Administrator: Production Manager \u00b7 Uniform Embroidery Transfer: VNE \u2192 VNED",
   "roles": [
    "Accounts Executive",
    "Accounts Manager",
@@ -633,10 +632,10 @@
   ],
   "saved_by": "Administrator",
   "saved_by_name": "Administrator",
-  "saved_on": "2026-11-03 15:06:36.781485",
-  "version": 44
+  "saved_on": "2026-11-10 11:18:25.022858",
+  "version": 47
  },
- "fingerprint": "1646f4d055d8d0c8020ba846a841a8ffc56610f8",
+ "fingerprint": "48aedb5918a215ff1510f917c4d22e127466e602",
  "tab_access": {
   "cells": {
    "Embroidery Transfers": [
