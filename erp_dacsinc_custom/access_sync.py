@@ -59,6 +59,7 @@ from collections import defaultdict
 from frappe.permissions import setup_custom_perms
 
 from erp_dacsinc_custom.access_worksheet import STATE_PARENT, load_sheet
+from erp_dacsinc_custom.order_flow_permissions import DEFAULT_TAB_ROLES
 
 INITIAL_ROLES = [
 	"Accounts Executive", "Accounts Manager", "DAC CRM", "DAC CRM Head",
@@ -211,7 +212,7 @@ TAB_KEYS = {
 	"SO Approvals": "approval", "Sales Tracker": "tracker", "Pick Lists": "picklist",
 	"Purchase Flow": "purchase", "Job Work": "jobwork", "Stock Tracker": "stock",
 	"Pending DN/SI": "billing", "Finance": "accounts", "Embroidery Transfers": "uniform",
-	"Logistics": "logistics",
+	"Logistics": "logistics", "Kits": "kit",
 }
 SUBTAB_KEYS = {
 	"SO Approvals": {"1. Pending Approval (my orders)": "merchandiser", "2. Merchandiser Unassigned Orders": "unassigned",
@@ -1056,6 +1057,7 @@ TAB_DOCS = {
 	"Finance › Jobber Payables": ["Purchase Invoice", "Payment Entry"],
 	"Finance › Returns / Notes": ["Sales Invoice", "Purchase Invoice", "Payment Entry"],
 	"Embroidery Transfers": ["Uniform Embroidery Transfer"], "Logistics": ["Delivery Note", "Sales Invoice"],
+	"Kits": ["Stock Entry"],
 }
 
 
@@ -1078,6 +1080,11 @@ def derive_tab_cells(doc_sheet):
 			docs = TAB_DOCS.get(key) or TAB_DOCS.get(tab) or []
 			act = ("S",) if tab == "SO Approvals" else ("N", "E", "S")
 			row = []
+			if TAB_KEYS.get(tab) in DEFAULT_TAB_ROLES:
+				# Kits: its default role (Production Manager), not everyone who may make a Stock Entry
+				# (merchandisers make jobber transfers) — order_flow_permissions.DEFAULT_TAB_ROLES
+				out[key] = ["A" if r in DEFAULT_TAB_ROLES[TAB_KEYS[tab]] else "" for r in roles]
+				continue
 			for i in range(len(roles)):
 				if roles[i] in NO_ORDER_FLOW_ROLES:
 					row.append("")

@@ -24,6 +24,8 @@ Subcontracting/Embroidery → Pick List → Delivery Note → Invoice.
 - **Purchase Flow**, **Job Work**, **Stock Tracker**, **Pending DN/SI**,
   **Finance**, **Embroidery Transfers**, **Logistics** — each a different
   lens on the same underlying documents.
+- **Kits** — make kits from separate items and break them back (Repack Stock Entries;
+  Production Manager only — `docs/kits.md`).
 
 ## Pick Lists tab
 

@@ -649,6 +649,8 @@ doc_events = {
         "on_cancel": [
             "erp_dacsinc_custom.order_flow_api.broadcast_order_flow_change",
             "erp_dacsinc_custom.pos_request.update_from_stock_entry",
+            # Make Kit / Break Kit cancelled from the form: history line (kit_api.py)
+            "erp_dacsinc_custom.kit_api.on_cancel_comment",
         ],
     },
     "Stock Reconciliation": {

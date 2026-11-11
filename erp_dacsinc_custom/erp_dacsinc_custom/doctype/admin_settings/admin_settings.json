@@ -51,6 +51,7 @@
   "of_tab_accounts_roles",
   "of_tab_uniform_roles",
   "of_tab_logistics_roles",
+  "of_tab_kit_roles",
   "of_subtab_section",
   "of_sub_approval_merchandiser_roles",
   "of_sub_approval_unassigned_roles",
@@ -88,6 +89,7 @@
   "of_tab_accounts_act_roles",
   "of_tab_uniform_act_roles",
   "of_tab_logistics_act_roles",
+  "of_tab_kit_act_roles",
   "of_sub_act_section",
   "of_sub_approval_merchandiser_act_roles",
   "of_sub_approval_unassigned_act_roles",
@@ -417,6 +419,13 @@
    "options": "Order Flow Tab Role"
   },
   {
+   "description": "Kits tab (Make Kit / Break Kit). Empty = Production Manager (order_flow_permissions.DEFAULT_TAB_ROLES), never everyone.",
+   "fieldname": "of_tab_kit_roles",
+   "fieldtype": "Table MultiSelect",
+   "label": "Kits — Allowed Roles",
+   "options": "Order Flow Tab Role"
+  },
+  {
    "description": "Which roles may open each sub-tab of the Order Flow dashboard. Leave a sub-tab empty to show it to everyone who can see its main tab. System Manager, Admin and Administrator always see every sub-tab.",
    "fieldname": "of_subtab_section",
    "fieldtype": "Section Break",
@@ -719,6 +728,13 @@
    "options": "Order Flow Tab Role"
   },
   {
+   "description": "Kits tab. Empty = everyone who can see it may act.",
+   "fieldname": "of_tab_kit_act_roles",
+   "fieldtype": "Table MultiSelect",
+   "label": "Kits — Can Act",
+   "options": "Order Flow Tab Role"
+  },
+  {
    "description": "Which roles may act from each sub-tab. A role here also sees the sub-tab. Empty = everyone who can see the sub-tab may act.",
    "fieldname": "of_sub_act_section",
    "fieldtype": "Section Break",
@@ -935,7 +951,7 @@
  "index_web_pages_for_search": 1,
  "issingle": 1,
  "links": [],
- "modified": "2026-10-19 12:00:00.000000",
+ "modified": "2026-11-11 12:30:00.000000",
  "modified_by": "Administrator",
  "module": "Erp Dacsinc Custom",
  "name": "Admin Settings",

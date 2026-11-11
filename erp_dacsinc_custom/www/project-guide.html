@@ -259,7 +259,7 @@
         requirements, how to build and deploy, and the task list — delivered, open from the 8 Oct meeting, and Phase 2.</p>
     </div>
     <div class="actions no-print">
-      <a class="btn" href="/assets/erp_dacsinc_custom/docs/project-guide.pdf?v=31" download="Dacsinc ERP - Project Guide.pdf" data-dl-name="Dacsinc ERP - Project Guide">⤓ Download PDF</a>
+      <a class="btn" href="/assets/erp_dacsinc_custom/docs/project-guide.pdf?v=33" download="Dacsinc ERP - Project Guide.pdf" data-dl-name="Dacsinc ERP - Project Guide">⤓ Download PDF</a>
       <button class="btn outline" type="button" id="btn-pdf">⎙ Print all</button>
       <button class="btn outline" type="button" id="btn-tab">⎙ Print this tab</button>
       <button class="btn outline" type="button" id="btn-html">⤓ HTML copy</button>
@@ -728,7 +728,7 @@ const ROLES = [
   {r: "Merchandiser User", job: "Merchandiser", does: ["Approves orders (merchandiser step)", "Plans raw material, Request RM", "Subcontract POs; sends material to jobber (own orders)", "Pick Lists, embroidery"], tabs: ["SO Approvals", "Sales Tracker", "Pick Lists", "Job Work", "Stock (requested — MOM 8 Oct)"], ctl: ["Sees orders they created; a toggle adds their customers' orders", "Only subcontracted POs", "Stock Entry only for own jobber transfers; no Add Stock Entry on the list", "Sees that an order is invoiced, never invoice amounts, outstanding or paid / unpaid / overdue"]},
   {r: "Sales Order Final Approver", job: "Management", does: ["Final approval / rejection"], tabs: ["SO Approvals › Pending Final SO Approval", "Rejected"], ctl: ["Set user-wise in Admin Settings", "Never approves own order"]},
   {r: "Purchase Executive / Manager", job: "Purchase", does: ["Material Requests, plain POs", "Receipts, purchase invoices"], tabs: ["Purchase Flow", "Sales Tracker › Material Requests"], ctl: ["PO price check if listed in Admin Settings"]},
-  {r: "Production Manager / Assistant", job: "Production", does: ["BOMs, subcontracting, embroidery"], tabs: ["Job Work", "Embroidery Transfers", "Stock (requested — MOM 8 Oct)"], ctl: ["Subcontracting PO analysis report (requested — MOM 8 Oct)"]},
+  {r: "Production Manager / Assistant", job: "Production", does: ["BOMs, subcontracting, embroidery"], tabs: ["Job Work", "Embroidery Transfers", "Kits", "Stock (requested — MOM 8 Oct)"], ctl: ["Subcontracting PO analysis report (requested — MOM 8 Oct)"]},
   {r: "Warehouse Incharge / Executive", job: "Warehouse / Inward", does: ["Receipts, stock entries, picking", "Approves POS supply transfers", "Approves POS store requests and makes the transfer (POS HO workspace)"], tabs: ["Pick Lists", "Stock Tracker"], ctl: ["Held stock protected unless listed in Admin Settings › Stock Hold"]},
   {r: "Packing Team", job: "Packing", does: ["Pick Lists"], tabs: ["Pick Lists"], ctl: []},
   {r: "Accounts Executive / Manager", job: "Accounts", does: ["Delivery Notes, Sales Invoices", "Purchase invoices"], tabs: ["Pending DN/SI", "Finance"], ctl: ["Only roles that may print / export customer, supplier and price data"]},
@@ -801,6 +801,7 @@ const FRD = [
 
 // [status, module, task, source, phase, priority, date, owner, remarks]
 const TASKS = [
+  ["Done", "Stock", "Order Flow › Kits tab: Make Kit (separate items out — e.g. 2 Shirt + 1 Pant per kit — kit item in) and Break Kit (the reverse), each one submitted Repack Stock Entry; free stock only, value kept exact (Break Kit splits the kit value over the parts); Production Manager only — set in Admin Settings › Order Flow and the access sheet's Kits row (docs/kits.md)", "Delivered", "1", "", "2026-11-11", "360ithub", ""],
   ["Done", "Accounts", "Job work accounting: stitching on a Subcontracting Receipt now waits in the liability 'Job Work Received But Not Billed' (was Cost of Goods Sold — profit looked higher, jobber dues unseen) until the jobber's bill clears it; service Purchase Receipts take the account their Subcontracting Receipt booked. Subcontract PO: Add Subcontract Item drops the empty row; print asked for the Subcontracting Order, not the PO; panel embroidery print at Step 2 and Step 4", "Delivered", "1", "", "2026-10-23", "360ithub", ""],
   ["Done", "Accounts", "GST 0.1% for merchant exporters: template GST 0.1% - IND (CGST 0.05 + SGST 0.05 / IGST 0.1, same ledgers as 5%) listed last on every GST item (never picked by itself); a sales line may use it only for a customer ticked Merchant Exporter (0.1% GST); the tick Merchant Export - GST 0.1% on Quotation / SO / DN / SI puts every line on it (untick: back to normal GST), or a single line is set by hand (docs/item-taxes.md)", "Delivered", "1", "", "2026-10-29", "360ithub", ""],
   ["Done", "Accounts", "GST: Tax Category always In-State / Out-State from the place of supply on Quotation / SO / DN / SI (SEZ & other states → Out-State) and on Customers from their address — an SEZ invoice took 18% instead of 5% because the customer had no Tax Category; 25 customers corrected by patch (list in Excel)", "Delivered", "1", "", "2026-10-23", "360ithub", ""],
