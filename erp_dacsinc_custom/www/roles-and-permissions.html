@@ -702,6 +702,7 @@
     ["Finance", ["Receivables", "Supplier Payables", "Jobber Payables", "Returns / Notes"]],
     ["Embroidery Transfers", []],
     ["Logistics", []],
+    ["Kits", []],
   ];
   (function buildWorksheet() {
     const esc = (t) => String(t).replace(/&/g, "&amp;").replace(/</g, "&lt;");
@@ -870,7 +871,11 @@
     "Finance › Jobber Payables": ["Purchase Invoice", "Payment Entry"],
     "Finance › Returns / Notes": ["Sales Invoice", "Purchase Invoice", "Payment Entry"],
     "Embroidery Transfers": ["Uniform Embroidery Transfer"], "Logistics": ["Delivery Note", "Sales Invoice"],
+    "Kits": ["Stock Entry"],
   };
+  // Tabs whose suggestion is a fixed role list, not "who may use its documents" (Kits: Production
+  // Manager only — merchandisers make Stock Entries too). Same as order_flow_permissions.DEFAULT_TAB_ROLES.
+  const TAB_DEFAULT_ROLES = { "Kits": ["Production Manager"] };
   const TAB_ROWS = [];                          // [key, tab, sub|null]
   WS_TABS.forEach(([tab, subs]) => { TAB_ROWS.push([tab, tab, null]); subs.forEach(sb => TAB_ROWS.push([`${tab} › ${sb}`, tab, sb])); });
   TAB_ROWS.forEach(([key, tab, sub]) => { if (!TAB_DOCS[key]) TAB_DOCS[key] = TAB_DOCS[tab] || []; });
@@ -886,7 +891,13 @@
     if (!saved || !saved.cells) return null;
     const idx = ROLE_NAMES.map(n => (saved.roles || []).indexOf(n));
     const out = {};
-    rows.forEach(r => { const v = saved.cells[r]; out[r] = idx.map(j => (v && j >= 0 ? v[j] || "" : "")); });
+    rows.forEach(r => {
+      const v = saved.cells[r];
+      // a tab added after this sheet was saved (Kits): start from its default roles, so the next
+      // save does not hide it from everyone
+      if (!v && TAB_DEFAULT_ROLES[r]) { out[r] = ROLE_NAMES.map(n => TAB_DEFAULT_ROLES[r].includes(n) ? "A" : ""); return; }
+      out[r] = idx.map(j => (v && j >= 0 ? v[j] || "" : ""));
+    });
     return out;
   }
   const clone = (o) => JSON.parse(JSON.stringify(o));
@@ -1579,6 +1590,7 @@
     const out = emptyTabs();
     TAB_ROWS.forEach(([key, tab, sub]) => {
       const act = tab === "SO Approvals" ? /S/ : /[NES]/;    // approving = submitting the Sales Order
+      if (TAB_DEFAULT_ROLES[key]) { out[key] = ROLE_NAMES.map(r => TAB_DEFAULT_ROLES[key].includes(r) ? "A" : ""); return; }
       out[key] = ROLE_NAMES.map((r, i) => {
         if (NO_ORDER_FLOW.includes(r)) return "";
         const vals = (TAB_DOCS[key] || []).map(d => (DOCS.cur[d] || [])[i] || "");

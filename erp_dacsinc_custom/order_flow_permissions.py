@@ -31,7 +31,7 @@ from frappe import _
 # Orders that have a Delivery Note but still need to be billed (its key
 # stays "billing" for the same reason — of_tab_billing_roles keeps applying
 # unchanged even though the on-screen label has changed twice since).
-OF_TABS = ("approval", "tracker", "picklist", "purchase", "jobwork", "stock", "billing", "accounts", "uniform", "logistics")
+OF_TABS = ("approval", "tracker", "picklist", "purchase", "jobwork", "stock", "billing", "accounts", "uniform", "logistics", "kit")
 
 OF_TAB_LABELS = {
     "approval": "SO Approvals",
@@ -44,6 +44,7 @@ OF_TAB_LABELS = {
     "accounts": "Finance",
     "uniform": "Embroidery Transfers",
     "logistics": "Logistics",
+    "kit": "Kits",
 }
 
 TAB_DOCTYPES = {
@@ -57,6 +58,15 @@ TAB_DOCTYPES = {
     "accounts": ["Payment Entry", "Journal Entry", "Sales Invoice", "Purchase Invoice"],
     "uniform": ["Embroidery Work Order"],
     "logistics": ["Sales Invoice"],
+    "kit": ["Stock Entry"],
+}
+
+# Roles a tab has while Admin Settings names none for it (kit_api.py, docs/kits.md): Kits is for
+# Production Manager only (agreed 11-11-2026); admins always. Never "unconfigured" — an
+# unconfigured tab would widen the Order Flow page to LEGACY_PAGE_ROLES (sync_order_flow_page_roles).
+# The patch kits_tab_roles copies it into Admin Settings › Kits; the access sheet changes it from there.
+DEFAULT_TAB_ROLES = {
+    "kit": ["Production Manager"],
 }
 
 
@@ -178,7 +188,7 @@ def get_tab_roles():
     except Exception:
         frappe.log_error(title="Order Flow: could not read tab role config",
                          message=frappe.get_traceback())
-        return {tab: [] for tab in OF_TABS}
+        return {tab: list(DEFAULT_TAB_ROLES.get(tab, [])) for tab in OF_TABS}
 
     roles = {}
     for tab in OF_TABS:
@@ -186,6 +196,8 @@ def get_tab_roles():
             roles[tab] = [d.role for d in (settings.get(_tab_field(tab)) or []) if d.role]
         except Exception:
             roles[tab] = []
+        if not roles[tab] and tab in DEFAULT_TAB_ROLES:
+            roles[tab] = list(DEFAULT_TAB_ROLES[tab])
     return roles
 
 
@@ -635,6 +647,10 @@ def sync_admin_settings_tab_roles():
     for tab, doctypes in TAB_DOCTYPES.items():
         fieldname = f"of_tab_{tab}_roles"
         if not settings.meta.has_field(fieldname):
+            continue
+        if tab in DEFAULT_TAB_ROLES:
+            # Kits: its own default roles (or the access sheet), never "everyone who reads
+            # Stock Entry" — that would hand it to merchandisers (docs/kits.md)
             continue
 
         roles = get_roles_with_read_access(doctypes)

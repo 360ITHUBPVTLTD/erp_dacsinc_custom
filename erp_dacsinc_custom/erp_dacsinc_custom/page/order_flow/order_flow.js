@@ -95,7 +95,9 @@ const OF_TAB_FILTERS = {
     picklist: { doctypes: ['Pick List'] },
     // Lists embroidery stock transfers (Embroidery Work Orders of work type Stock Transfer), which carry
     // no Sales Order — filter_tab_rows keeps only those here, and keeps them off Job Work.
-    uniform:  { doctypes: ['Embroidery Work Order'] }
+    uniform:  { doctypes: ['Embroidery Work Order'] },
+    // Make Kit / Break Kit Stock Entries (kit_api.py) — no notification stream.
+    kit:      { doctypes: ['__no_notifications__'] }
 };
 
 // Legacy alias — keeps any remaining callers using the old name working.
@@ -119,7 +121,8 @@ const OF_TABS = [
     { key: 'billing',  label: 'Pending DN/SI',         icon: 'fa-truck' },
     { key: 'accounts', label: 'Finance',              icon: 'fa-calculator' },
     { key: 'uniform',  label: 'Embroidery Transfers', icon: 'fa-random' },
-    { key: 'logistics', label: 'Logistics',           icon: 'fa-flag-checkered' }
+    { key: 'logistics', label: 'Logistics',           icon: 'fa-flag-checkered' },
+    { key: 'kit',      label: 'Kits',                 icon: 'fa-gift' }
 ];
 
 // Tab display names, for messages that name the tab being acted on.
@@ -140,6 +143,7 @@ const OF_TABLE_DOCTYPES = {
     billing:  { '*': ['Delivery Note', 'Sales Invoice', 'Pick List'] },
     uniform:  { '*': ['Embroidery Work Order'] },
     logistics: { '*': ['Sales Invoice'] },
+    kit:      { '*': ['Stock Entry'] },
 };
 
 // Toolbar Status filter, per list (order_flow_api._STATUS_SQL has the conditions).
@@ -305,6 +309,7 @@ class OrderFlow {
             approval: { page: 1, page_size: 100 },
             uniform: { page: 1, page_size: 100 },
             logistics: { page: 1, page_size: 100 },
+            kit: { page: 1, page_size: 100 },
         };
 
         this.cache = {};
@@ -997,7 +1002,7 @@ class OrderFlow {
             '.of-action-btn:not([data-action="open_doc"])', '.of-approve-btn', '.of-reject-btn', '#of-new-so-btn',
             '#of-bulk-approve-btn', '#of-bulk-reject-btn', '.of-approval-select', '.of-sco-btn', '.of-pl-submit',
             '.of-pl-revert', '.of-ewo-send-btn', '.of-ewo-receive-panel-btn', '.of-ewo-close-btn', '.of-ewo-receive-fp-btn',
-            '.of-ewo-receive-btn', '.of-receive-btn', '#of-create-transfer-btn', '.of-logi-update-btn', '.of-pay-btn', '.of-submit-draft-btn',
+            '.of-ewo-receive-btn', '.of-receive-btn', '#of-create-transfer-btn', '.of-kit-btn', '.of-kit-cancel-btn', '.of-kit-delete-btn', '.of-logi-update-btn', '.of-pay-btn', '.of-submit-draft-btn',
             '.of-refund-btn', '.of-adjust-btn', '.of-fin-new',
             'a.of-btn[href$="/new"]', 'a.of-btn[href*="/new?"]',
             '.so-btn:not(.so-btn--view):not(#btn-refresh-stock-table)',
@@ -1223,6 +1228,7 @@ class OrderFlow {
                 <div id="of-panel-approval" class="of-hidden"></div>
                 <div id="of-panel-uniform" class="of-hidden"></div>
                 <div id="of-panel-logistics" class="of-hidden"></div>
+                <div id="of-panel-kit" class="of-hidden"></div>
             </div>
         `);
 
@@ -2476,6 +2482,10 @@ class OrderFlow {
         });
 
         // Embroidery Transfer Create Click Handler
+        // Kits tab (kit_api.py): Make Kit / Break Kit dialogs
+        this.$body.on('click', '.of-kit-btn', (e) => this.prompt_kit($(e.currentTarget).data('kind')));
+        this.$body.on('click', '.of-kit-cancel-btn', (e) => this.kit_cancel_or_delete(String($(e.currentTarget).data('name')), 'cancel'));
+        this.$body.on('click', '.of-kit-delete-btn', (e) => this.kit_cancel_or_delete(String($(e.currentTarget).data('name')), 'delete'));
         this.$body.on('click', '#of-create-transfer-btn', () => {
             this.prompt_create_transfer();
         });
@@ -2735,7 +2745,8 @@ class OrderFlow {
             accounts: __('Search Invoice #, Customer, Supplier, Sales Order…'),
             approval: __('Search Sales Order #, Customer…'),
             uniform: __('Search transfers…'),
-            logistics: __('Search Sales Invoice #, Customer…')
+            logistics: __('Search Sales Invoice #, Customer…'),
+            kit: __('Search Stock Entry #, item…')
         };
         this.$body.find('#of-search').attr('placeholder', placeholders[tab] || __('Search…'));
 
@@ -2802,7 +2813,8 @@ class OrderFlow {
             accounts: 'erp_dacsinc_custom.order_flow_api.get_accounts_flow',
             approval: 'erp_dacsinc_custom.order_flow_api.get_pending_approvals',
             uniform:  'erp_dacsinc_custom.uniform_transfer_api.get_embroidery_transfers',
-            logistics: 'erp_dacsinc_custom.order_flow_api.get_logistics_flow'
+            logistics: 'erp_dacsinc_custom.order_flow_api.get_logistics_flow',
+            kit:      'erp_dacsinc_custom.kit_api.get_kit_entries'
         }[this.active];
 
         // merchandiser only narrows Approvals and Tracker — every other tab
@@ -3694,6 +3706,7 @@ class OrderFlow {
             if (this.active === 'approval') html = this.approval_html(data);
             if (this.active === 'uniform')  html = this.uniform_html(data);
             if (this.active === 'logistics') html = this.logistics_html(data);
+            if (this.active === 'kit')      html = this.kit_html(data);
             const focus = this.park_shared_controls();
             panel.html(html);
             this.mount_table_filters();
@@ -6331,6 +6344,235 @@ class OrderFlow {
         `;
     }
 
+    // ── Tab: kit ────────────────────────────────────────────────
+    // Make Kit / Break Kit (kit_api.py, docs/kits.md): one submitted Repack Stock Entry each —
+    // parts out and the kit item in (or the reverse). Free stock only (not held for Sales Orders).
+    kit_html(data) {
+        data = data || {};
+        this.cache_last_kit = data;
+        const rows = data.rows || [];
+        this.$body.find('#of-count').text(data.total ? __('{0} entr(ies) match', [data.total]) : '');
+        const rows_html = rows.map(r => {
+            const make = r.kind === 'make';
+            const cancelled = flt_of(r.docstatus) === 2;
+            const kind = `<span class="of-pill ${cancelled ? 'of-pill--blocked' : (make ? 'of-pill--ready' : 'of-pill--dn')}">
+                ${cancelled ? __('Cancelled') : (make ? __('Kit made') : __('Kit broken'))}</span>`;
+            const parts = (r.parts || []).map(p => `<div class="of-micro" style="text-align:left;">
+                ${of_esc(p.item_code)}${p.item_name && p.item_name !== p.item_code ? ` <span class="text-muted">${of_esc(p.item_name)}</span>` : ''}
+                — <b>${of_round2(p.qty_per_kit)}</b> ${__('per kit')} · ${make ? '−' : '+'}${of_round2(p.qty)} ${of_esc(p.uom || '')}</div>`).join('');
+            return `<tr>
+                <td><a href="/app/stock-entry/${encodeURIComponent(r.name)}" target="_blank"><b>${of_esc(r.name)}</b></a>
+                    ${of_creator_html(r)}</td>
+                <td>${of_date(r.posting_date)}</td>
+                <td>${kind}</td>
+                <td style="text-align:left;"><b>${of_esc(r.kit_item)}</b>${r.kit_item_name && r.kit_item_name !== r.kit_item ? `<div class="of-micro text-muted">${of_esc(r.kit_item_name)}</div>` : ''}</td>
+                <td><b>${make ? '+' : '−'}${of_round2(r.kits)}</b> ${of_esc(r.uom || '')}</td>
+                <td>${parts || '—'}</td>
+                <td class="of-meta">${of_esc(r.warehouse || '')}</td>
+                <td style="text-align:center;">
+                    ${cancelled ? `<div class="of-micro" style="color:var(--of-red);">${__('Cancelled by {0}', [of_esc(r.cancelled_by || '')])}
+                        ${r.cancel_reason ? `<div class="text-muted">${__('Reason')}: ${of_esc(r.cancel_reason)}</div>` : ''}</div>` : ''}
+                    ${flt_of(r.can_cancel) ? `<button class="of-btn of-btn--warning of-kit-cancel-btn" data-name="${of_esc(r.name)}"><i class="fa fa-undo"></i> ${__('Cancel')}</button>` : ''}
+                    ${flt_of(r.can_delete) ? `<button class="of-btn of-btn--danger of-kit-delete-btn" data-name="${of_esc(r.name)}"><i class="fa fa-trash"></i> ${__('Delete')}</button>` : ''}
+                    <a class="of-micro" href="/app/stock-entry/${encodeURIComponent(r.name)}" target="_blank" title="${__('Full history is in the Stock Entry timeline')}"><i class="fa fa-history"></i> ${__('History')}</a>
+                </td>
+            </tr>`;
+        }).join('');
+        return `
+            <div class="of-card">
+                <div class="of-card__head" style="padding:12px 16px; border-bottom:1px solid var(--border-color); display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:8px;">
+                    <div style="font-size:14px; font-weight:600;"><i class="fa fa-gift"></i> ${__('Kits — made from separate items / broken back')}</div>
+                    <div style="display:flex; gap:6px;">
+                        <button class="of-btn of-btn--primary of-kit-btn" data-kind="make"><i class="fa fa-plus"></i> ${__('Make Kit')}</button>
+                        <button class="of-btn of-btn--warning of-kit-btn" data-kind="break"><i class="fa fa-scissors"></i> ${__('Break Kit')}</button>
+                    </div>
+                </div>
+                <div class="of-scroll-hint"><i class="fa fa-arrows-h"></i> ${__('Scroll sideways to see every column')}</div>
+                <div class="of-scroll">
+                    <table class="of-table">
+                        <thead><tr>
+                            <th>${__('Stock Entry')}</th><th>${__('Date')}</th><th>${__('Type')}</th><th>${__('Kit item')}</th>
+                            <th>${__('Kits')}</th><th>${__('Parts (per kit · stock change)')}</th><th>${__('Warehouse')}</th><th>${__('Action')}</th>
+                        </tr></thead>
+                        <tbody>${rows_html || `<tr><td colspan="8" class="of-empty"><i class="fa fa-inbox"></i>${__('No kits made or broken yet.')}</td></tr>`}</tbody>
+                    </table>
+                </div>
+                ${of_pagination_html('kit', null, data)}
+            </div>`;
+    }
+
+    // Make Kit / Break Kit dialog. kind 'make': parts out, kit in; 'break': kit out, parts in.
+    // Parts are chosen by hand (qty in ONE kit); Break Kit fills them from the last Make Kit of
+    // that item. Shows free stock of what goes out and refuses more than is free.
+    prompt_kit(kind) {
+        const make = kind === 'make';
+        const stock = {};  // item -> {actual_qty, held_qty, net_available, stock_uom}
+        const item_query = () => ({ filters: { is_stock_item: 1, disabled: 0, has_variants: 0, has_serial_no: 0, has_batch_no: 0 } });
+        const d = new frappe.ui.Dialog({
+            title: make ? __('Make Kit') : __('Break Kit'),
+            size: 'extra-large',
+            fields: [
+                { fieldtype: 'HTML', fieldname: 'intro', options: `<div class="of-micro" style="font-size:12px; margin-bottom:6px; color:var(--text-muted);">${make
+                    ? __('Choose the kit item and how many kits to make, then each part with its qty in ONE kit (e.g. Shirt 2, Pant 1). The parts\' stock goes down by qty per kit × kits, the kit item\'s stock goes up. Only free stock (not held for Sales Orders) can be used.')
+                    : __('Choose the kit item and how many kits to break, and the parts each kit gives back (filled from the last time this kit was made — change if needed). The kit item\'s stock goes down, the parts\' stock goes up, at the kit\'s value.')}</div>` },
+                { fieldtype: 'Link', fieldname: 'kit_item', label: __('Kit item'), options: 'Item', reqd: 1, get_query: item_query,
+                  onchange: () => { refresh_stock(); if (!make) fill_recipe(); } },
+                { fieldtype: 'Float', fieldname: 'kits', label: make ? __('Kits to make') : __('Kits to break'), reqd: 1, default: 1,
+                  onchange: () => paint() },
+                { fieldtype: 'Column Break' },
+                // fixed: kits are made and broken at VV Puram only (kit_api.KIT_WAREHOUSE enforces it)
+                { fieldtype: 'Link', fieldname: 'warehouse', label: __('Warehouse'), options: 'Warehouse', reqd: 1, default: 'VV Puram - IND', read_only: 1 },
+                { fieldtype: 'Small Text', fieldname: 'notes', label: __('Notes') },
+                { fieldtype: 'Section Break', label: make ? __('Parts in ONE kit (stock goes down)') : __('Parts each kit gives back (stock goes up)') },
+                { fieldtype: 'Table', fieldname: 'parts', label: __('Parts'), in_place_edit: true, data: [{}],
+                  fields: [
+                      { fieldtype: 'Link', fieldname: 'item_code', options: 'Item', label: __('Part item'), in_list_view: 1, columns: 3,
+                        get_query: item_query, onchange: () => setTimeout(refresh_stock, 50) },
+                      { fieldtype: 'Float', fieldname: 'qty_per_kit', label: __('Qty in one kit'), in_list_view: 1, columns: 1,
+                        onchange: () => setTimeout(paint, 50) },
+                      { fieldtype: 'Data', fieldname: 'total', label: make ? __('Total out') : __('Total in'), in_list_view: 1, columns: 1, read_only: 1 },
+                      { fieldtype: 'Data', fieldname: 'on_hand', label: __('Stock now'), in_list_view: 1, columns: 2, read_only: 1 },
+                      { fieldtype: 'Data', fieldname: 'free', label: __('Free now'), in_list_view: 1, columns: 1, read_only: 1 },
+                      { fieldtype: 'Data', fieldname: 'after', label: __('Stock after'), in_list_view: 1, columns: 2, read_only: 1 },
+                  ] },
+                { fieldtype: 'HTML', fieldname: 'check_html' },
+            ],
+            primary_action_label: make ? __('Make Kit') : __('Break Kit'),
+            primary_action: (v) => {
+                const parts = rows().filter(p => p.item_code || flt_of(p.qty_per_kit));
+                const problems = check(v, parts);
+                if (problems.length) return frappe.msgprint({ title: __('Please check'), indicator: 'red', message: problems.join('<br>') });
+                const kits = flt_of(v.kits);
+                const st = (i) => stock[i] || {};
+                const kit_line = { item: v.kit_item, qty: kits, before: flt_of(st(v.kit_item).actual_qty), uom: st(v.kit_item).stock_uom, rate: flt_of(st(v.kit_item).valuation_rate) };
+                const part_lines = parts.map(p => ({ item: p.item_code, qty: flt_of(p.qty_per_kit) * kits, per_kit: flt_of(p.qty_per_kit),
+                    before: flt_of(st(p.item_code).actual_qty), uom: st(p.item_code).stock_uom, rate: flt_of(st(p.item_code).valuation_rate) }));
+                // values as the entry will book them: Make — the kit carries the parts' value;
+                // Break — the kits' value is split over the parts by their own value (kit_api._split_value)
+                const parts_value = part_lines.reduce((t, l) => t + l.rate * l.qty, 0);
+                if (make) kit_line.rate = kits ? parts_value / kits : 0;
+                else {
+                    const kit_value = kit_line.rate * kits, w = parts_value || part_lines.reduce((t, l) => t + l.qty, 0);
+                    part_lines.forEach(l => { const lw = parts_value ? l.rate * l.qty : l.qty; l.rate = w && l.qty ? kit_value * lw / w / l.qty : 0; });
+                }
+                of_kit_confirm({
+                    title: make ? __('Confirm — Make {0} kit(s)', [kits]) : __('Confirm — Break {0} kit(s)', [kits]),
+                    action: make ? __('Make Kit') : __('Break Kit'),
+                    warehouse: v.warehouse, notes: v.notes,
+                    out: make ? part_lines : [kit_line],
+                    in: make ? [kit_line] : part_lines,
+                }, () => submit_kit(v, parts));
+            },
+        });
+        const submit_kit = (v, parts) => {
+                d.get_primary_btn().attr('disabled', true);
+                frappe.call({
+                    method: make ? 'erp_dacsinc_custom.kit_api.make_kit' : 'erp_dacsinc_custom.kit_api.break_kit',
+                    args: { kit_item: v.kit_item, kits: flt_of(v.kits), warehouse: v.warehouse, notes: v.notes || null,
+                            parts: parts.map(p => ({ item_code: p.item_code, qty_per_kit: flt_of(p.qty_per_kit) })) },
+                    freeze: true, freeze_message: make ? __('Making kits…') : __('Breaking kits…'),
+                }).then(r => {
+                    const se = (r.message || {}).stock_entry;
+                    d.hide();
+                    frappe.show_alert({ message: make ? __('{0} × {1} made ({2})', [flt_of(v.kits), v.kit_item, se])
+                                                     : __('{0} × {1} broken into parts ({2})', [flt_of(v.kits), v.kit_item, se]), indicator: 'green' });
+                    this.refresh(true);
+                }).always(() => d.get_primary_btn().attr('disabled', false));
+        };
+        const rows = () => d.fields_dict.parts.grid.get_data() || [];
+        const refresh_stock = () => {
+            const wh = d.get_value('warehouse');
+            const need = [...new Set(rows().map(p => p.item_code).concat([d.get_value('kit_item')]).filter(Boolean))].filter(i => !stock[i]);
+            if (!wh) return paint();
+            Promise.all(need.map(i => frappe.call({ method: 'erp_dacsinc_custom.kit_api.get_item_stock', args: { item_code: i, warehouse: wh } })
+                .then(r => { stock[i] = r.message || {}; }))).then(paint);
+        };
+        const fill_recipe = () => {
+            const kit = d.get_value('kit_item');
+            if (!kit) return;
+            frappe.call({ method: 'erp_dacsinc_custom.kit_api.last_recipe', args: { kit_item: kit } }).then(r => {
+                const rec = r.message || [];
+                if (!rec.length) return;
+                d.fields_dict.parts.df.data = rec.map(x => ({ item_code: x.item_code, qty_per_kit: x.qty_per_kit }));
+                d.fields_dict.parts.grid.refresh();
+                refresh_stock();
+            });
+        };
+        // Problems that stop the entry (the server checks the same again).
+        const check = (v, parts) => {
+            const out = [], kits = flt_of(v.kits), seen = {};
+            if (!v.kit_item) out.push(__('Choose the kit item.'));
+            if (!(kits > 0)) out.push(__('Enter how many kits.'));
+            if (!parts.length) out.push(__('Add at least one part.'));
+            parts.forEach((p, n) => {
+                if (!p.item_code) out.push(__('Part line {0}: choose the item.', [n + 1]));
+                else if (p.item_code === v.kit_item) out.push(__('{0} is the kit item itself — it cannot also be a part.', [of_esc(p.item_code)]));
+                else if (seen[p.item_code]) out.push(__('{0} is added twice — put its total qty per kit on one line.', [of_esc(p.item_code)]));
+                if (p.item_code) seen[p.item_code] = 1;
+                if (!(flt_of(p.qty_per_kit) > 0)) out.push(__('Part line {0}: enter the qty in one kit.', [n + 1]));
+            });
+            short().forEach(x => out.push(x));
+            return out;
+        };
+        const short = () => {
+            const kits = flt_of(d.get_value('kits')), need = {};
+            if (make) rows().forEach(p => { if (p.item_code) need[p.item_code] = (need[p.item_code] || 0) + flt_of(p.qty_per_kit) * kits; });
+            else if (d.get_value('kit_item')) need[d.get_value('kit_item')] = kits;
+            return Object.entries(need).filter(([i, q]) => stock[i] && q - flt_of(stock[i].net_available) > 0.0005)
+                .map(([i, q]) => __('{0}: needs {1}, only {2} free', [of_esc(i), of_round2(q), of_round2(stock[i].net_available)]));
+        };
+        const paint = () => {
+            const kits = flt_of(d.get_value('kits'));
+            rows().forEach(p => {
+                p.total = p.item_code && flt_of(p.qty_per_kit) ? `${make ? '−' : '+'}${of_round2(flt_of(p.qty_per_kit) * kits)}` : '';
+                const st = stock[p.item_code];
+                const ch = (make ? -1 : 1) * flt_of(p.qty_per_kit) * kits;
+                p.free = st ? `${of_round2(st.net_available)}` : '';
+                p.on_hand = st ? `${of_round2(st.actual_qty)} ${st.stock_uom || ''}` : '';
+                p.after = st && p.item_code && flt_of(p.qty_per_kit) ? `${of_round2(flt_of(st.actual_qty) + ch)} ${st.stock_uom || ''}` : '';
+            });
+            d.fields_dict.parts.grid.refresh();
+            const kit = d.get_value('kit_item'), ks = stock[kit];
+            const bad = short();
+            d.fields_dict.check_html.$wrapper.html(`<div class="of-micro" style="font-size:12px; margin-top:6px;">
+                ${kit ? `<div><b>${__('Kit item')} ${of_esc(kit)}</b>: ${make ? '+' : '−'}${of_round2(kits)}
+                    ${ks ? ` · ${__('stock now')} ${of_round2(ks.actual_qty)} → ${__('after')} <b>${of_round2(flt_of(ks.actual_qty) + (make ? 1 : -1) * kits)}</b> ${ks.stock_uom || ''} · ${__('free now')} ${of_round2(ks.net_available)}` : ''}</div>` : ''}
+                ${bad.length ? `<div style="color:var(--of-red); margin-top:4px;"><i class="fa fa-exclamation-triangle"></i> ${bad.join('<br>')}</div>` : ''}
+            </div>`);
+        };
+        d.show();
+    }
+
+    // Cancel (reverses the stock — reason required) or Delete (a cancelled entry only) a kit entry,
+    // after a confirmation that shows exactly what the stock does (kit_api.cancel_kit / delete_kit).
+    kit_cancel_or_delete(name, what) {
+        const row = (((this.cache_last_kit || {}).rows) || []).find(r => r.name === name);
+        if (!row) return;
+        const make = row.kind === 'make';
+        const items = [{ item: row.kit_item, qty: row.kits, uom: row.uom }].concat((row.parts || []).map(p => ({ item: p.item_code, qty: p.qty, uom: p.uom })));
+        Promise.all(items.map(x => frappe.call({ method: 'erp_dacsinc_custom.kit_api.get_item_stock', args: { item_code: x.item, warehouse: row.warehouse } })
+            .then(r => { const m = r.message || {}; x.before = flt_of(m.actual_qty); x.rate = flt_of(m.valuation_rate); x.uom = x.uom || m.stock_uom; })))
+        .then(() => {
+            const kit = items[0], parts = items.slice(1);
+            if (what === 'delete') {
+                return of_kit_confirm({
+                    title: __('Delete {0}?', [name]), action: __('Delete'), danger: true, warehouse: row.warehouse,
+                    message: __('This entry is already cancelled — its stock was reversed then. Deleting removes the entry itself; nothing moves in stock now. A copy stays in Deleted Documents and the history stays on the kit item.'),
+                    out: [], in: [],
+                }, () => frappe.call({ method: 'erp_dacsinc_custom.kit_api.delete_kit', args: { name }, freeze: true })
+                    .then(() => { frappe.show_alert({ message: __('{0} deleted', [name]), indicator: 'green' }); this.refresh(true); }));
+            }
+            // cancelling a Make Kit takes the kits back out and returns the parts; a Break Kit the reverse
+            of_kit_confirm({
+                title: __('Cancel {0}?', [name]), action: __('Cancel entry'), danger: true, warehouse: row.warehouse, reason: true,
+                message: make ? __('Cancelling this Make Kit takes the kits out again and puts the parts back.')
+                              : __('Cancelling this Break Kit takes the parts out again and puts the kits back.'),
+                out: make ? [kit] : parts, in: make ? parts : [kit],
+            }, (reason) => frappe.call({ method: 'erp_dacsinc_custom.kit_api.cancel_kit', args: { name, reason }, freeze: true, freeze_message: __('Cancelling…') })
+                .then(() => { frappe.show_alert({ message: __('{0} cancelled — stock reversed', [name]), indicator: 'green' }); this.refresh(true); }));
+        });
+    }
+
     // ── Tab: logistics ──────────────────────────────────────────
     // Submitted Sales Invoices still missing an LR Number or a Signed Copy —
     // see get_logistics_flow/logistics_tab.py. A row drops off this list the
@@ -7777,6 +8019,55 @@ function of_submit_draft_prompt(doctype, name, on_done) {
         dlg.fields_dict.checked.$wrapper.addClass('of-cm-check');
         dlg.show();
     });
+}
+
+// Strong confirmation for the Kits tab: what goes OUT and comes IN with stock before → after and the
+// approximate value, the warehouse, who is doing it and when; the button works only after "I have
+// checked" is ticked (and a reason is given when asked). on_ok(reason).
+function of_kit_confirm(o, on_ok) {
+    const fmt = (v) => of_round2(v);
+    const val = (l) => flt_of(l.rate) * flt_of(l.qty);
+    const table = (lines, sign, title, color) => lines.length ? `
+        <div style="font-weight:600; margin:10px 0 4px; color:${color};">${title}</div>
+        <table class="of-confirm-table" style="width:100%; border:1px solid var(--border-color);">
+            <thead><tr><th>${__('Item')}</th><th style="text-align:right;">${sign > 0 ? __('Adding') : __('Deducting')}</th>
+                <th style="text-align:right;">${__('Stock now')}</th><th style="text-align:right;">${__('Stock after')}</th>
+                <th style="text-align:right;">${__('≈ Value')}</th></tr></thead>
+            <tbody>${lines.map(l => `<tr${sign < 0 && flt_of(l.before) - flt_of(l.qty) < -0.0005 ? ' class="is-over"' : ''}>
+                <td>${of_esc(l.item)}${l.per_kit ? ` <span class="text-muted">(${fmt(l.per_kit)} ${__('per kit')})</span>` : ''}</td>
+                <td style="text-align:right; font-weight:700; color:${color};">${sign > 0 ? '+' : '−'}${fmt(l.qty)} ${of_esc(l.uom || '')}</td>
+                <td style="text-align:right;">${fmt(l.before)}</td>
+                <td style="text-align:right; font-weight:700;">${fmt(flt_of(l.before) + sign * flt_of(l.qty))}</td>
+                <td style="text-align:right;">${val(l) ? format_currency(val(l)) : '—'}</td></tr>`).join('')}</tbody></table>` : '';
+    const who = frappe.session.user_fullname || frappe.session.user;
+    const d = new frappe.ui.Dialog({
+        title: o.title, size: 'large',
+        fields: [
+            { fieldtype: 'HTML', fieldname: 'body', options: `<div style="font-size:13px;">
+                ${o.message ? `<div style="margin-bottom:6px;">${o.message}</div>` : ''}
+                <div class="of-micro" style="font-size:12px;"><i class="fa fa-user"></i> ${__('Done by')} <b>${of_esc(who)}</b>
+                    · ${frappe.datetime.str_to_user(frappe.datetime.now_datetime())}${o.warehouse ? ` · <i class="fa fa-building"></i> ${of_esc(o.warehouse)}` : ''}</div>
+                ${table(o.out || [], -1, __('Going OUT of stock'), 'var(--of-red)')}
+                ${table(o.in || [], 1, __('Coming IN to stock'), 'var(--of-green)')}
+                ${o.notes ? `<div class="of-micro" style="margin-top:6px;">${__('Notes')}: ${of_esc(o.notes)}</div>` : ''}
+                <div class="of-micro text-muted" style="margin-top:6px;">${__('Value is approximate (current valuation); the entry uses the exact FIFO value. Everything is recorded in the Stock Entry history.')}</div>
+            </div>` },
+            ...(o.reason ? [{ fieldtype: 'Small Text', fieldname: 'reason', label: __('Reason'), reqd: 1 }] : []),
+            { fieldtype: 'Check', fieldname: 'checked', label: __('I have checked the items, quantities and stock above') },
+        ],
+        primary_action_label: o.action,
+        primary_action: (v) => {
+            if (!v.checked) return frappe.msgprint(__('Tick "I have checked…" to go ahead.'));
+            if (o.reason && !(v.reason || '').trim()) return frappe.msgprint(__('Give the reason.'));
+            d.hide();
+            on_ok((v.reason || '').trim());
+        },
+    });
+    d.show();
+    const $btn = d.get_primary_btn();
+    if (o.danger) $btn.removeClass('btn-primary').addClass('btn-danger');
+    $btn.prop('disabled', true);
+    d.fields_dict.checked.$input.on('change', () => $btn.prop('disabled', !d.get_value('checked')));
 }
 
 function of_empty_row(cols) {
