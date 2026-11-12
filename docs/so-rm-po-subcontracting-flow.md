@@ -1043,6 +1043,43 @@ with N (the ready qty), editable down for a part pick; 0 or more than N is refus
 List is made with that qty (`create_pick_list_for_items` only ever lowers a line's qty, never raises it). The bulk
 **Create Pick List** button is unchanged.
 
+### Same item on more than one line
+
+The same item with the same BOM (or none) can sit on several lines of one order, e.g. at two rates. The widget
+used to key everything by item + BOM, so every such row showed the lines' **total** (qty, Pick Lists, DN / SI,
+ready to pick), and the order summary and the bulk Pick total counted it once per row. Asking for one line's
+Pick List also picked the other lines, because `create_pick_list_for_items` matched by item as well as by line.
+
+Now each of those lines is its own row:
+
+- **Key.** `so_stock_pair_key` sends `ITEM||BOM||<SO Item row>` for such a line (plain `ITEM||BOM` otherwise, so
+  every other order is exactly as before). `get_item_stock_details_bulk` then answers for that one line: its qty,
+  delivered, DN / SI rows, POs, receipts, MRs (by `sales_order_item`). A document not tied to any of the item's
+  lines (no line link) counts on the **earliest** line only, so two rows never both count it. The Order Flow
+  callers (`order_flow_api`) still send `ITEM||BOM` and still get the lines together.
+- **Time order** (`_so_line_time_rank`): earliest line **delivery date** first, then row order.
+- **Pick Lists** (`_split_picks_by_line`): a Pick List row linked to a line is that line's. An unlinked one (old
+  Pick Lists) fills the lines in time order, oldest Pick List first. The other lines' picks still hold their stock
+  (`picked_*_other_rows`).
+- **Free stock**: the earlier lines take it first. A row shows what the earlier lines keep
+  (`taken_by_earlier_lines`, "Stock kept: 5 for line 2"), and its Ready / Pick qty is what is left. The row also
+  carries a "Line N · rate · due date" tag (`so_line_tag_html`).
+- **Picking.** A request naming a line is for that line only (no fallback to the item). ERPNext's mapper shares
+  the stock it finds in **row** order and leaves out a line it has nothing for.
+  `_share_same_item_lines_in_time_order` re-shares that same total in time order, adding the missing line's row
+  from its sibling. It applies to the per-row Pick, the bulk Create Pick List and the Pick Lists made on Sales
+  Order submit (`_create_pick_lists_one_per_item`); `_split_and_insert_pick_lists` also inserts those lines in time
+  order. Example: 10 in stock, line 1 (10, due 22-11), line 2 (5, due 15-11) → line 2 gets 5, line 1 gets 5.
+  Before, line 1 took 10 and line 2 got nothing.
+- **Submit Pick List** on a row submits **every** draft Pick List of that line (`so_confirm_submit_pick_list` takes
+  the names comma-joined), listed with a total and the line tag. It used to submit only the first draft: a line with
+  10 + 4 in draft submitted 10. The prompt's HTML sits inside `.so-modal`, where the table header colours are
+  defined. Outside it the header was white on white.
+- The time order is guidance, not a lock: the per-row Pick of a later line is offered only what is left after the
+  earlier lines. Free-stock checks (`stock_hold.fit_pick_list_to_free`) still apply as for any Pick List.
+- **Not split:** buying (Purchase Order / Material Request buttons) still works by item, as before. Lines of the
+  same item with **different** BOMs stay separate rows as before, and don't share free stock in time order.
+
 ### Whom to ask about another order's Pick List
 
 Stock held on another Sales Order's Pick List can only be freed by someone who may change that Pick List,

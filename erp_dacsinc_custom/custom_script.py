@@ -2611,6 +2611,57 @@ def _other_so_demand_by_item(item_codes, sales_order_name):
         r["pick_lists"] = pls.get((r.sales_order, r.item_code), [])
     return out
 
+
+def _so_line_time_rank(line, so_doc=None):
+    """Time order of a Sales Order's lines: earliest delivery date first, then row order.
+    (docs/so-rm-po-subcontracting-flow.md, "Same item on more than one line")"""
+    from frappe.utils import cint, getdate
+    d = line.get("delivery_date") or (so_doc.get("delivery_date") if so_doc else None)
+    return (getdate(d) if d else getdate("2999-12-31"), cint(line.get("idx")))
+
+
+def _split_picks_by_line(picks, lines, ewo_qty_line=None, ewo_qty=0):
+    """Which line of a split item each Pick List row belongs to, and what each line still needs
+    from free stock after its own picks. A row linked to a line (sales_order_item) is that line's;
+    an unlinked one (old Pick Lists) fills the lines in time order (`lines` comes sorted),
+    oldest Pick List first, the last line taking any excess. Same caps as the widget's own
+    picked_sub_undelivered / picked_draft_qty_so."""
+    names = [l.name for l in lines]
+    outstanding = {l.name: max(0.0, flt(l.qty) - flt(l.delivered_qty)) for l in lines}
+    room = dict(outstanding)
+    sub, draft, line_of = defaultdict(float), defaultdict(float), {}
+    linked = [p for p in picks if p.get("so_line") in room]
+    unlinked = sorted((p for p in picks if p.get("so_line") not in room),
+                      key=lambda p: (str(p.get("pl_creation") or ""), p.get("pick_list_item") or ""))
+    for p in linked + unlinked:
+        ln = p.so_line if p.get("so_line") in room else next((n for n in names if room[n] > 0.0005), names[-1])
+        line_of[p.pick_list_item] = ln
+        if p.docstatus == 1:
+            held = max(0.0, flt(p.picked_qty) - flt(p.delivered_qty))
+            sub[ln] += held
+        else:
+            held = flt(p.qty)
+            draft[ln] += held
+        room[ln] -= held
+    pending = {}
+    for n in names:
+        o = outstanding[n]
+        s_ = min(sub[n], o)
+        d_ = min(draft[n], max(0.0, o - s_))
+        pending[n] = max(0.0, o - s_ - d_ - (flt(ewo_qty) if n == ewo_qty_line else 0))
+    return {"line_of": line_of, "pending": pending}
+
+
+def _split_line_owns(so_item, line_name, group_lines, takes_unlinked):
+    """A document row for one line of a split item: its own line's, or — not tied to any of the
+    item's lines — the earliest line's (takes_unlinked)."""
+    if so_item == line_name:
+        return True
+    if so_item and so_item in {l.name for l in group_lines}:
+        return False
+    return takes_unlinked
+
+
 @frappe.whitelist()
 def get_item_stock_details_bulk(item_bom_pairs, sales_order_name):
     if isinstance(item_bom_pairs, str):
@@ -2690,7 +2741,9 @@ def get_item_stock_details_bulk(item_bom_pairs, sales_order_name):
     # pair (or, for the BOM raw-material item_name fallback, once per BOM
     # line) — a Sales Order with many line items used to mean many repeated
     # single-row `Item`/`BOM` fetches for facts that don't change per pair.
-    parsed_pairs = [(p.split('||', 1)[0].strip(), p.split('||', 1)[1].strip()) for p in item_bom_pairs]
+    # A key may carry a third part — "ITEM||BOM||<SO Item row>" — to ask for ONE line of an item that is on
+    # several lines (see "Same item on more than one line" below); the item / BOM parts are read the same way.
+    parsed_pairs = [(p.split('||')[0].strip(), p.split('||')[1].strip()) for p in item_bom_pairs]
 
     all_pair_item_codes = tuple({ic for ic, _ in parsed_pairs}) or ("",)
     item_master_map = {
@@ -2780,13 +2833,42 @@ def get_item_stock_details_bulk(item_bom_pairs, sales_order_name):
     # Other open orders still needing each item (planning view in the Incoming dialog; display only).
     other_so_demand = _other_so_demand_by_item(all_pair_item_codes, sales_order_name)
 
+    # Same item on more than one line (same BOM, e.g. two rates). A plain "ITEM||BOM" key answers for
+    # all those lines together, as always. "ITEM||BOM||<SO Item row>" answers for that ONE line: its
+    # own qty, delivered, Delivery Notes / Invoices and Pick Lists, and the free stock shared out
+    # between the lines in time order — earliest delivery date first, then row order. Only the
+    # Sales Order page asks this way, and only when an item + BOM is on several lines.
+    line_by_name = {i.name: i for i in so_items_list}
+    split_groups = {}  # (item, bom_key) -> its lines in time order
+    for p in item_bom_pairs:
+        bits = p.split('||')
+        if len(bits) > 2 and bits[2].strip() in line_by_name:
+            gk = (bits[0].strip(), bits[1].strip())
+            if gk not in split_groups:
+                split_groups[gk] = sorted(so_groups.get(gk, []), key=lambda i: _so_line_time_rank(i, so_doc))
+    split_pick_cache = {}  # (item, bom_key) -> {"line_of": {pick_list_item: line}, "pending": {line: qty}}
+    # Who shows the order's own Full Piece embroidery (EWOs are per item, not per line): the first key
+    # of the item, as before — for a line-split item, its earliest line.
+    ewo_claimant = {}
+    for p in item_bom_pairs:
+        bits = p.split('||')
+        ic, gk = bits[0].strip(), (bits[0].strip(), bits[1].strip())
+        if ic not in ewo_claimant:
+            ewo_claimant[ic] = (split_groups[gk][0].name
+                                if len(bits) > 2 and bits[2].strip() in line_by_name and split_groups.get(gk) else p)
+
     results = {}
     for pair in item_bom_pairs:
         # 1. INITIALIZE ALL VARIABLES
-        parts = pair.split('||', 1)
+        parts = pair.split('||')
         item_code = parts[0].strip()
         bom_key = parts[1].strip()
         bom_no = bom_key if bom_key != 'no_bom' else None
+        line_name = parts[2].strip() if len(parts) > 2 and parts[2].strip() in line_by_name else None
+        group_lines = split_groups.get((item_code, bom_key)) if line_name else None
+        # Documents not tied to a line (no Sales Order Item link) belong to the item: on a split item
+        # they go to its earliest line only, so two lines never both count them.
+        takes_unlinked = not line_name or group_lines[0].name == line_name
         
         total_other_po_qty = 0
         total_other_po_qty_draft = 0
@@ -2798,7 +2880,7 @@ def get_item_stock_details_bulk(item_bom_pairs, sales_order_name):
         total_incoming_ewo_count = 0
         
         # 2. Get Grouped SO Item details
-        so_items = so_groups.get((item_code, bom_key), [])
+        so_items = [line_by_name[line_name]] if line_name else so_groups.get((item_code, bom_key), [])
         required_qty = sum(flt(i.qty) for i in so_items)
         delivered_qty = sum(flt(i.delivered_qty) for i in so_items)
         warehouse = next((i.warehouse for i in so_items if i.warehouse), None)
@@ -2908,7 +2990,7 @@ def get_item_stock_details_bulk(item_bom_pairs, sales_order_name):
             if r.sales_order_item:
                 if r.sales_order_item in so_item_names:
                     completed_receipt_docs.append(r)
-            else:
+            elif takes_unlinked:
                 if bom_no:
                     if r.bom == bom_no:
                         completed_receipt_docs.append(r)
@@ -2954,7 +3036,7 @@ def get_item_stock_details_bulk(item_bom_pairs, sales_order_name):
             if r.sales_order_item:
                 if r.sales_order_item in so_item_names:
                     draft_receipt_docs.append(r)
-            else:
+            elif takes_unlinked:
                 if bom_no:
                     if r.bom == bom_no:
                         draft_receipt_docs.append(r)
@@ -2973,7 +3055,8 @@ def get_item_stock_details_bulk(item_bom_pairs, sales_order_name):
                 pli.qty, pli.picked_qty, IFNULL(pli.delivered_qty, 0) AS delivered_qty,
                 pli.stock_qty, pli.conversion_factor, pli.uom,
                 pli.warehouse, pli.item_name,
-                pli.stock_uom, pl.purpose, soi.bom_no
+                pli.stock_uom, pl.purpose, soi.bom_no,
+                pli.sales_order_item AS so_line, pl.creation AS pl_creation
             FROM `tabPick List Item` pli
             JOIN `tabPick List` pl ON pli.parent = pl.name
             LEFT JOIN `tabSales Order Item` soi ON pli.sales_order_item = soi.name
@@ -3005,6 +3088,20 @@ def get_item_stock_details_bulk(item_bom_pairs, sales_order_name):
             ]
         else:
             current_picks = list(raw_picks)
+
+        # One line of a split item: only the Pick Lists that are this line's. Linked ones by their
+        # Sales Order Item; an unlinked one fills the lines in time order, oldest Pick List first.
+        # The other lines' picks stay in other_picks_this_so below, so they still hold their stock.
+        if line_name:
+            gk = (item_code, bom_key)
+            if gk not in split_pick_cache:
+                split_pick_cache[gk] = _split_picks_by_line(
+                    current_picks, group_lines,
+                    ewo_qty_line=ewo_claimant.get(item_code),
+                    ewo_qty=sum(max(0, flt(e.ordered_qty) - flt(e.received_qty))
+                                for e in so_direct_ewos_by_item.get(item_code, [])))
+            line_of = split_pick_cache[gk]["line_of"]
+            current_picks = [p for p in current_picks if line_of.get(p.pick_list_item) == line_name]
 
         # Per Pick List: can a SUBMITTED one still go back to draft (no DN made
         # from it, nothing delivered), which DNs lock it, and how much of a
@@ -3190,7 +3287,7 @@ def get_item_stock_details_bulk(item_bom_pairs, sales_order_name):
             if r.sales_order_item:
                 if r.sales_order_item in so_item_names:
                     filtered_po_items.append(r)
-            else:
+            elif takes_unlinked:
                 if bom_no:
                     if r.bom == bom_no:
                         filtered_po_items.append(r)
@@ -3248,7 +3345,7 @@ def get_item_stock_details_bulk(item_bom_pairs, sales_order_name):
             if r.sales_order_item:
                 if r.sales_order_item in so_item_names:
                     filtered_draft_po_items.append(r)
-            else:
+            elif takes_unlinked:
                 if bom_no:
                     if r.bom == bom_no:
                         filtered_draft_po_items.append(r)
@@ -3301,7 +3398,7 @@ def get_item_stock_details_bulk(item_bom_pairs, sales_order_name):
             if r.sales_order_item:
                 if r.sales_order_item in so_item_names:
                     filtered_ewos.append(r)
-            else:
+            elif takes_unlinked:
                 if bom_no:
                     if r.po_bom == bom_no:
                         filtered_ewos.append(r)
@@ -3414,6 +3511,7 @@ def get_item_stock_details_bulk(item_bom_pairs, sales_order_name):
                 mr.per_ordered, mr.per_received,
                 mri.name AS mr_item, mri.qty, mri.ordered_qty, mri.received_qty,
                 mri.stock_qty, mri.uom, mri.stock_uom, mri.warehouse, mri.schedule_date,
+                mri.sales_order_item,
                 GREATEST(IFNULL(mri.qty, 0) - IFNULL(mri.ordered_qty, 0), 0) AS pending_qty,
                 GREATEST(IFNULL(mri.qty, 0) - IFNULL(mri.received_qty, 0), 0) AS awaiting_receipt_qty
             FROM `tabMaterial Request Item` mri
@@ -3424,6 +3522,8 @@ def get_item_stock_details_bulk(item_bom_pairs, sales_order_name):
               AND mr.status NOT IN ('Stopped', 'Cancelled')
             ORDER BY mr.transaction_date DESC
         """, {"item": item_code, "so": sales_order_name}, as_dict=1)
+        if line_name:
+            mr_data = [r for r in mr_data if _split_line_owns(r.sales_order_item, line_name, group_lines, takes_unlinked)]
 
         material_requests = []
         total_mr_qty = 0
@@ -3479,12 +3579,15 @@ def get_item_stock_details_bulk(item_bom_pairs, sales_order_name):
         # total_mr_pending_qty. Shown separately, for reference only.
         draft_mr_data = frappe.db.sql("""
             SELECT mr.name, mr.material_request_type, mr.transaction_date,
-                   mri.qty, mri.uom, mri.stock_uom, mri.schedule_date
+                   mri.qty, mri.uom, mri.stock_uom, mri.schedule_date, mri.sales_order_item
             FROM `tabMaterial Request Item` mri
             JOIN `tabMaterial Request` mr ON mr.name = mri.parent
             WHERE mri.item_code = %(item)s AND mri.sales_order = %(so)s AND mr.docstatus = 0
             ORDER BY mr.transaction_date DESC
         """, {"item": item_code, "so": sales_order_name}, as_dict=1)
+        if line_name:
+            draft_mr_data = [r for r in draft_mr_data
+                             if _split_line_owns(r.sales_order_item, line_name, group_lines, takes_unlinked)]
 
         draft_material_requests = [{
             "name": row.name, "material_request_type": row.material_request_type,
@@ -3554,7 +3657,7 @@ def get_item_stock_details_bulk(item_bom_pairs, sales_order_name):
 
         embroidery_held_qty = flt(embroidery_held_by_item.get(item_code, 0), 3)
         so_direct_ewos = []
-        if item_code not in so_direct_ewo_claimed:
+        if item_code not in so_direct_ewo_claimed and ewo_claimant.get(item_code) == (line_name or pair):
             so_direct_ewo_claimed.add(item_code)
             so_direct_ewos = so_direct_ewos_by_item.get(item_code, [])
         embroidery_this_so_qty = flt(sum(max(0, flt(e.ordered_qty) - flt(e.received_qty))
@@ -3580,6 +3683,21 @@ def get_item_stock_details_bulk(item_bom_pairs, sales_order_name):
         # Qty already picked for THIS order (draft or submitted Pick List) counts as produced/staged:
         # any quantity for which a Pick List is created should not have raw material calculated for it
         # or be demanded for production/subcontracting.
+        # One line of a split item: the free stock goes to the earlier lines (time order) first.
+        taken_by_earlier_lines, earlier_line_takes = 0.0, []
+        if line_name:
+            pending = split_pick_cache[(item_code, bom_key)]["pending"]
+            left = truly_available_fg
+            for l in group_lines:
+                if l.name == line_name:
+                    break
+                take = min(pending.get(l.name, 0), left)
+                left -= take
+                if take > 0.0005:
+                    earlier_line_takes.append({"line": l.name, "idx": l.idx, "qty": flt(take, 3),
+                                               "rate": flt(l.rate), "delivery_date": l.delivery_date})
+            taken_by_earlier_lines = flt(truly_available_fg - left, 3)
+            truly_available_fg = max(0, left)
         total_picked_this_so = picked_sub_undelivered + picked_draft_qty_so
         pending_fg_for_so = max(0, required_qty - delivered_qty - total_picked_this_so - embroidery_this_so_qty)
         fg_shortfall = max(0, pending_fg_for_so - truly_available_fg)
@@ -4195,7 +4313,11 @@ def get_item_stock_details_bulk(item_bom_pairs, sales_order_name):
             "customer_name": (so_doc.customer_name or so_doc.customer) if so_doc else None,
             "item_name": (so_items[0].item_name if so_items else item_master_map.get(item_code, {}).get("item_name")),
             "warehouse": warehouse, "stock_uom": stock_uom, "fg_shortfall_for_ewO": fg_shortfall,
-            "embroidery_history": so_emb_history.get(item_code, []),
+            "embroidery_history": so_emb_history.get(item_code, []) if takes_unlinked else [],
+            # Set only for one line of a split item (see "Same item on more than one line").
+            "line_name": line_name,
+            "taken_by_earlier_lines": taken_by_earlier_lines,
+            "earlier_line_takes": earlier_line_takes,
             "so_route_lock": so_route_lock,
 
         }
@@ -4730,6 +4852,59 @@ def get_linked_procurement_docs(sales_order_name):
     }
 
 
+def _share_same_item_lines_in_time_order(doc, want_stock_by_line):
+    """ERPNext's Pick List mapper shares the stock it finds between a Sales Order's lines in ROW
+    order (a line it has nothing left for gets no row at all). When the same item is on several of
+    the lines in want_stock_by_line, share that same total out in TIME order instead — earliest
+    delivery date first, then row order — each line up to its want (stock units); a line ERPNext
+    left out gets a row copied from its sibling. Only when the item's rows are one per line in one
+    warehouse; anything else stays as ERPNext made it. Rows left with nothing get _time_drop.
+    (docs/so-rm-po-subcontracting-flow.md, "Same item on more than one line")"""
+    wanted = {k: flt(v) for k, v in (want_stock_by_line or {}).items() if flt(v) > 0.0005}
+    if not wanted:
+        return
+    rows = {r.name: r for r in frappe.get_all(
+        "Sales Order Item", filters={"name": ["in", list(wanted)]},
+        fields=["name", "item_code", "delivery_date", "idx", "parent", "uom", "conversion_factor"])}
+    so_dates = {r.name: r.delivery_date for r in frappe.get_all(
+        "Sales Order", filters={"name": ["in", list({r.parent for r in rows.values()}) or [""]]},
+        fields=["name", "delivery_date"])}
+    rank = lambda n: _so_line_time_rank(rows[n], frappe._dict(delivery_date=so_dates.get(rows[n].parent)))
+    by_item = defaultdict(list)
+    for n, r in rows.items():
+        by_item[r.item_code].append(n)
+    for item_code, lines in by_item.items():
+        # The pool is what ERPNext found free for ALL of the item's lines here — also a line not
+        # asked for (the caller drops that row), so a lone later-dated line can't keep it.
+        item_locs = [l for l in doc.locations if l.item_code == item_code and l.get("sales_order_item")]
+        if not item_locs or len({l.sales_order_item for l in item_locs} | set(lines)) < 2:
+            continue  # the item is on one line only: nothing to share
+        if len({l.sales_order_item for l in item_locs}) != len(item_locs) \
+                or len({l.get("warehouse") for l in item_locs}) != 1 or not item_locs[0].get("warehouse"):
+            continue
+        pool = sum(flt(l.stock_qty) for l in item_locs)
+        have = {l.sales_order_item: l for l in item_locs}
+        for n in lines:
+            if n not in have:
+                row = {k: v for k, v in item_locs[0].as_dict().items()
+                       if k not in ("name", "idx", "parent", "parentfield", "parenttype", "creation", "modified")}
+                row.update({"sales_order_item": n, "uom": rows[n].uom or row.get("uom"),
+                            "conversion_factor": flt(rows[n].conversion_factor) or 1,
+                            "qty": 0, "stock_qty": 0, "picked_qty": 0})
+                have[n] = doc.append("locations", row)
+        for n, loc in have.items():
+            if n not in wanted:
+                loc._time_drop = True
+        left = pool
+        for n in sorted(lines, key=rank):
+            loc = have[n]
+            take = flt(min(wanted[n], left), 3)
+            left = flt(left - take, 3)
+            loc.stock_qty = take
+            loc.qty = flt(take / (flt(loc.get("conversion_factor")) or 1), 3)
+            loc._time_drop = take <= 0.0005
+
+
 @frappe.whitelist()
 def create_pick_list_for_items(sales_order, items=None):
     """
@@ -4801,13 +4976,27 @@ def create_pick_list_for_items(sales_order, items=None):
         wanted_by_row, wanted_by_item = {}, {}
         for r in items:
             qty = flt(r.get("qty")) or None
+            # A request naming its line is for that line only. Falling back to the item as well
+            # made a pick for one line also pick every other line of the same item on the order.
             if r.get("sales_order_item"):
                 wanted_by_row[r["sales_order_item"]] = qty
-            if r.get("item_code"):
+            elif r.get("item_code"):
                 wanted_by_item[r["item_code"]] = qty
+
+        # Same item on several of the requested lines: ERPNext shared the stock in row order —
+        # share it in time order, each line up to what was asked for it.
+        # A line asked for without a qty wants what it still has open.
+        _so_open = {r.name: (r, max(0.0, flt(r.stock_qty) - flt(r.picked_qty))) for r in frappe.get_all(
+            "Sales Order Item", filters={"parent": sales_order, "name": ["in", list(wanted_by_row) or [""]]},
+            fields=["name", "stock_qty", "picked_qty", "conversion_factor"])}
+        _share_same_item_lines_in_time_order(doc, {
+            n: (flt(q) * (flt(_so_open[n][0].conversion_factor) or 1) if q else _so_open[n][1])
+            for n, q in wanted_by_row.items() if n in _so_open})
 
         keep = []
         for loc in doc.locations:
+            if loc.get("_time_drop"):
+                continue
             if loc.sales_order_item in wanted_by_row:
                 new_qty = wanted_by_row[loc.sales_order_item]
             elif loc.item_code in wanted_by_item:
@@ -6803,8 +6992,30 @@ def _split_and_insert_pick_lists(merged_doc):
     sales_order_name = (merged_doc.locations[0].sales_order
                          if merged_doc.locations and merged_doc.locations[0].get("sales_order") else "?")
 
+    # Each insert takes the free stock left by the ones before it (fit_pick_list_to_free), so when the
+    # same item is on several lines, insert those lines in time order — earliest delivery date, then
+    # row order — in the slots they already had. Other lines keep their order.
+    keys = list(by_line)
+    line_rows = {r.name: r for r in frappe.get_all(
+        "Sales Order Item", filters={"name": ["in", keys or [""]]},
+        fields=["name", "item_code", "delivery_date", "idx", "parent"])}
+    so_dates = {r.name: r.delivery_date for r in frappe.get_all(
+        "Sales Order", filters={"name": ["in", list({r.parent for r in line_rows.values()}) or [""]]},
+        fields=["name", "delivery_date"])}
+    slots_by_item = defaultdict(list)
+    for pos, key in enumerate(keys):
+        if key in line_rows:
+            slots_by_item[line_rows[key].item_code].append(pos)
+    for slots in slots_by_item.values():
+        if len(slots) > 1:
+            ranked = sorted((keys[i] for i in slots), key=lambda k: _so_line_time_rank(
+                line_rows[k], frappe._dict(delivery_date=so_dates.get(line_rows[k].parent))))
+            for i, k in zip(slots, ranked):
+                keys[i] = k
+
     created = []
-    for key, locs in by_line.items():
+    for key in keys:
+        locs = by_line[key]
         try:
             pl = frappe.get_doc({**header, "doctype": "Pick List", "locations": locs})
             for idx, loc in enumerate(pl.locations, start=1):
@@ -6826,6 +7037,14 @@ def _create_pick_lists_one_per_item(sales_order_name):
     order), then hands off to _split_and_insert_pick_lists.
     """
     merged = create_pick_list(sales_order_name)
+    if not merged.get("locations"):
+        return []
+    # Same item on several lines: the stock ERPNext found goes to them by delivery date, each up to
+    # what the line still has open (stock units).
+    open_by_line = {r.name: max(0.0, flt(r.stock_qty) - flt(r.picked_qty)) for r in frappe.get_all(
+        "Sales Order Item", filters={"parent": sales_order_name}, fields=["name", "stock_qty", "picked_qty"])}
+    _share_same_item_lines_in_time_order(merged, open_by_line)
+    merged.set("locations", [l for l in merged.locations if not l.get("_time_drop")])
     if not merged.get("locations"):
         return []
     return _split_and_insert_pick_lists(merged)

@@ -259,7 +259,7 @@
         requirements, how to build and deploy, and the task list — delivered, open from the 8 Oct meeting, and Phase 2.</p>
     </div>
     <div class="actions no-print">
-      <a class="btn" href="/assets/erp_dacsinc_custom/docs/project-guide.pdf?v=33" download="Dacsinc ERP - Project Guide.pdf" data-dl-name="Dacsinc ERP - Project Guide">⤓ Download PDF</a>
+      <a class="btn" href="/assets/erp_dacsinc_custom/docs/project-guide.pdf?v=34" download="Dacsinc ERP - Project Guide.pdf" data-dl-name="Dacsinc ERP - Project Guide">⤓ Download PDF</a>
       <button class="btn outline" type="button" id="btn-pdf">⎙ Print all</button>
       <button class="btn outline" type="button" id="btn-tab">⎙ Print this tab</button>
       <button class="btn outline" type="button" id="btn-html">⤓ HTML copy</button>
@@ -801,6 +801,7 @@ const FRD = [
 
 // [status, module, task, source, phase, priority, date, owner, remarks]
 const TASKS = [
+  ["Done", "Sales", "Same item on two lines of a Sales Order (e.g. two rates): the Item Stock & Action Plan shows each line with its own qty, Pick Lists, Delivery Notes and share of the free stock — earliest delivery date first, then row order ('Stock kept: 5 for line 2'); picking one line no longer picks the other; Pick Lists made on submit / bulk / per row share the stock by delivery date; Submit Pick List submits all of the line's drafts and its prompt header shows again (docs/so-rm-po-subcontracting-flow.md)", "Delivered", "1", "", "2026-11-12", "360ithub", ""],
   ["Done", "Stock", "Order Flow › Kits tab: Make Kit (separate items out — e.g. 2 Shirt + 1 Pant per kit — kit item in) and Break Kit (the reverse), each one submitted Repack Stock Entry; free stock only, value kept exact (Break Kit splits the kit value over the parts); Production Manager only — set in Admin Settings › Order Flow and the access sheet's Kits row (docs/kits.md)", "Delivered", "1", "", "2026-11-11", "360ithub", ""],
   ["Done", "Accounts", "Job work accounting: stitching on a Subcontracting Receipt now waits in the liability 'Job Work Received But Not Billed' (was Cost of Goods Sold — profit looked higher, jobber dues unseen) until the jobber's bill clears it; service Purchase Receipts take the account their Subcontracting Receipt booked. Subcontract PO: Add Subcontract Item drops the empty row; print asked for the Subcontracting Order, not the PO; panel embroidery print at Step 2 and Step 4", "Delivered", "1", "", "2026-10-23", "360ithub", ""],
   ["Done", "Accounts", "GST 0.1% for merchant exporters: template GST 0.1% - IND (CGST 0.05 + SGST 0.05 / IGST 0.1, same ledgers as 5%) listed last on every GST item (never picked by itself); a sales line may use it only for a customer ticked Merchant Exporter (0.1% GST); the tick Merchant Export - GST 0.1% on Quotation / SO / DN / SI puts every line on it (untick: back to normal GST), or a single line is set by hand (docs/item-taxes.md)", "Delivered", "1", "", "2026-10-29", "360ithub", ""],
