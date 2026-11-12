@@ -849,8 +849,11 @@ function generate_stock_overview_table(frm, callback) {
         return;
     }
 
-    // Build item_bom_pairs exactly as the Python API expects: "ITEM_CODE||bom_no_or_no_bom"
-    const item_bom_pairs = items.map(i => `${i.item_code}||${i.bom_no || 'no_bom'}`);
+    // Build item_bom_pairs exactly as the Python API expects: "ITEM_CODE||bom_no_or_no_bom".
+    // The same item + BOM on more than one line gets one key PER LINE ("…||<SO Item row>"):
+    // each row then shows its own qty, Pick Lists and share of the free stock (earliest
+    // delivery date first) instead of the lines' total on every row. See so_stock_pair_key.
+    const item_bom_pairs = [...new Set(items.map(i => so_stock_pair_key(frm, i)))];
 
     frappe.call({
         method: 'erp_dacsinc_custom.custom_script.get_item_stock_details_bulk',
@@ -907,8 +910,8 @@ function generate_stock_overview_table(frm, callback) {
             const so_summary = { needs_invoice_qty: 0, ready_to_ship_qty: 0, shortfall_qty: 0 };
 
             const rows_html = items.map(item => {
-                // The API key is "ITEM_CODE||bom_or_no_bom"
-                const pair_key = `${item.item_code}||${item.bom_no || 'no_bom'}`;
+                // The API key is "ITEM_CODE||bom_or_no_bom" (plus "||<line>" when the item is on several lines)
+                const pair_key = so_stock_pair_key(frm, item);
                 const d = dataMap[pair_key];
                 if (!d) return '';
 
@@ -993,7 +996,8 @@ function generate_stock_overview_table(frm, callback) {
                 const embroidery_held = flt(d.embroidery_held_qty || 0);
                 const at_embroidery = flt(d.embroidery_this_so_qty || 0);
                 const all_reservation = picked_submitted_undeliv + picked_draft_so + picked_for_others + draft_for_others
-                    + picked_submitted_other_rows + picked_draft_other_rows + rm_earmarked + embroidery_held;
+                    + picked_submitted_other_rows + picked_draft_other_rows + rm_earmarked + embroidery_held
+                    + flt(d.taken_by_earlier_lines || 0);   // same item on an earlier line (by delivery date) goes first
                 const truly_available_stock = Math.max(0, total_actual_stock - all_reservation);
 
                 const total_committed_pipeline = delivered + picked_submitted_undeliv;
@@ -1036,7 +1040,8 @@ function generate_stock_overview_table(frm, callback) {
                             so_item_name: item.name,
                             line_qty: item.qty,
                             delivered_qty: item.delivered_qty,
-                            unpicked_qty: line_unpicked
+                            // A line of an item that is on several lines asks only for its own share.
+                            unpicked_qty: d.line_name ? Math.min(line_unpicked, can_fulfill_qty) : line_unpicked
                         });
                     }
                     eligible_for_picking = true;
@@ -1134,7 +1139,12 @@ function generate_stock_overview_table(frm, callback) {
                     // Draft pick list exists → submit it.
                     status_html = so_pill('draft', 'clock-o', 'Awaiting Pick');
                     if (draft_pl) {
-                        action_parts.push(so_cmd_btn(`so_confirm_submit_pick_list('${js_str(draft_pl)}')`, 'check', 'Submit Pick List', true));
+                        // Every draft of THIS line, not only the first — a line with two drafts (10 + 4)
+                        // submitted only 10 while the cell said 14 In Draft.
+                        const line_drafts = [...new Set(picks.filter(p => flt(p.docstatus) === 0).map(p => p.pick_list_name))];
+                        const line_label = d.line_name ? `${__('Line')} ${item.idx}` : '';
+                        action_parts.push(so_cmd_btn(`so_confirm_submit_pick_list('${js_str(line_drafts.join(','))}','${js_str(line_label)}')`, 'check',
+                            line_drafts.length > 1 ? `Submit ${line_drafts.length} Pick Lists` : 'Submit Pick List', true));
                         action_parts.push(so_cmd_btn(`so_open_doc('Pick List','${js_str(draft_pl)}')`, 'external-link', 'Open Pick List'));
                     }
 
@@ -1509,6 +1519,7 @@ function generate_stock_overview_table(frm, callback) {
                                 </div>
                                 ${show_name ? `<div class="so-meta so-truncate" title="${esc(item_name)}">${esc(item_name)}</div>` : ''}
                                 <div>${bom_chip}</div>
+                                ${so_line_tag_html(frm, item, d)}
                             </div>
                         </td>
                         <td>
@@ -3636,7 +3647,9 @@ function so_make_material_request(so_name) {
         // delivered - picked (submitted, undelivered) - picked (draft).
         after_map: (doc) => {
             (doc.items || []).forEach(row => {
-                const cached = get_cached_stock_row(`${row.item_code}||no_bom`);
+                // A line of an item that is on several lines has its own entry (so_stock_pair_key).
+                const cached = (row.sales_order_item && (cur_frm && cur_frm.custom_stock_data || {})[`${row.item_code}||no_bom||${row.sales_order_item}`])
+                    || get_cached_stock_row(`${row.item_code}||no_bom`);
                 if (!cached) return;
                 const needed = flt(cached.required_qty) - flt(cached.delivered_qty)
                     - flt(cached.picked_submitted_undelivered_qty) - flt(cached.picked_draft_qty_so);
@@ -3873,6 +3886,7 @@ function so_collect_pending_rm(frm, only_pair_key) {
 // The one Sales Order line a widget row represents, or null when the row
 // groups several (same item, same BOM, more than one line).
 function so_resolve_single_so_line(frm, pair_key, d) {
+    if (d && d.line_name) return d.line_name;   // the row is one line of an item on several lines
     const bom_key = String(pair_key || '').split('||')[1] || 'no_bom';
     const matches = (frm.doc.items || []).filter(i =>
         i.item_code === d.item_code && ((i.bom_no || 'no_bom') === bom_key));
@@ -4692,50 +4706,73 @@ function so_submit_pick_list(pick_list, pair_key) {
 // confirmation dialog, then submit in place, never a redirect away from the
 // Sales Order. No qty edit here (rows: []) — open the Pick List itself first
 // if the quantity needs adjusting before submitting.
-function so_confirm_submit_pick_list(pick_list) {
-    if (!pick_list) {
+// pick_lists: one Pick List name, or several joined by "," (every draft of one line).
+function so_confirm_submit_pick_list(pick_lists, line_label) {
+    const names = [...new Set(String(pick_lists || '').split(',').map(x => x.trim()).filter(Boolean))];
+    if (!names.length) {
         frappe.msgprint(__('No draft Pick List found for this line.'));
         return;
     }
-    // Show what is on it before asking — the items and quantities, not only its id.
-    frappe.call({
+    // Show what is on them before asking — the items and quantities, not only the ids.
+    Promise.all(names.map(n => frappe.call({
         method: 'erp_dacsinc_custom.order_flow_api.get_pick_list_rows',
-        args: { pick_list: pick_list },
-    }).then(r => so_confirm_submit_pick_list_ask(pick_list, (r && r.message) || []),
-            () => so_confirm_submit_pick_list_ask(pick_list, []));
+        args: { pick_list: n },
+    }).then(r => ({ name: n, lines: (r && r.message) || [] }), () => ({ name: n, lines: [] }))))
+        .then(found => so_confirm_submit_pick_list_ask(found, line_label));
 }
 
-function so_confirm_submit_pick_list_ask(pick_list, lines) {
-    const items_html = lines.length ? `
+function so_confirm_submit_pick_list_ask(found, line_label) {
+    const many = found.length > 1;
+    const rows = [];
+    let total = 0, uom = '';
+    found.forEach(f => f.lines.forEach(l => {
+        total += flt(l.qty);
+        uom = uom || l.uom || l.stock_uom || '';
+        rows.push(`<tr>
+            ${many ? `<td>${esc(f.name)}</td>` : ''}
+            <td>${so_item_cell(l.item_code, l.item_name)}</td>
+            <td>${flt(l.qty)} ${esc(l.uom || l.stock_uom || '')}</td>
+            <td>${esc(l.warehouse || '')}</td>
+        </tr>`);
+    }));
+    const items_html = rows.length ? `
         <table class="so-table" style="margin-top:8px;">
-            <thead><tr><th>${__('Item')}</th><th>${__('Qty')}</th><th>${__('Warehouse')}</th></tr></thead>
-            <tbody>${lines.map(l => `<tr>
-                <td>${so_item_cell(l.item_code, l.item_name)}</td>
-                <td>${flt(l.qty)} ${esc(l.uom || l.stock_uom || '')}</td>
-                <td>${esc(l.warehouse || '')}</td>
-            </tr>`).join('')}</tbody>
+            <thead><tr>${many ? `<th>${__('Pick List')}</th>` : ''}<th>${__('Item')}</th><th>${__('Qty')}</th><th>${__('Warehouse')}</th></tr></thead>
+            <tbody>${rows.join('')}</tbody>
+            ${many ? `<tfoot><tr><td colspan="2">${__('Total')}</td><td>${flt(total)} ${esc(uom)}</td><td></td></tr></tfoot>` : ''}
         </table>` : '';
+    const names = found.map(f => f.name);
+    const title = many
+        ? __('Submit these {0} Pick Lists?', [names.length])
+        : __('Submit Pick List <b>{0}</b>?', [esc(names[0])]);
+    // Wrapped in .so-modal: the table header colours are defined there (white text on blue), so a
+    // plain confirm box showed white on white.
     frappe.confirm(
-        __('Submit Pick List <b>{0}</b>?', [esc(pick_list)])
+        `<div class="so-modal">${title}${line_label ? ` <span class="so-chip">${esc(line_label)}</span>` : ''}`
         + items_html
-        + `<br><small class="text-muted">${__('Submitting reserves the stock and cannot be undone without cancelling. Open the Pick List first if the quantity needs adjusting.')}</small>`,
+        + `<br><small class="text-muted">${__('Submitting reserves the stock and cannot be undone without cancelling. Open the Pick List first if the quantity needs adjusting.')}</small></div>`,
         () => {
-            frappe.call({
-                method: 'erp_dacsinc_custom.custom_script.update_and_submit_pick_list',
-                args: { pick_list: pick_list, rows: [], submit: 1 },
-                freeze: true,
-                freeze_message: __('Submitting Pick List…'),
-                callback: (r) => {
-                    if (!r.message) return;   // server threw; Frappe has shown the error
-                    frappe.show_alert({
-                        message: __('Pick List {0} submitted.', [r.message.name]),
-                        indicator: 'green'
-                    }, 5);
-                    if (typeof cur_frm !== 'undefined' && cur_frm) {
-                        generate_stock_overview_table(cur_frm);
-                    }
+            const done = [];
+            const next = (i) => {
+                if (i >= names.length) {
+                    if (done.length) frappe.show_alert({ message: __('Pick List {0} submitted.', [done.join(', ')]), indicator: 'green' }, 5);
+                    if (typeof cur_frm !== 'undefined' && cur_frm) generate_stock_overview_table(cur_frm);
+                    return;
                 }
-            });
+                frappe.call({
+                    method: 'erp_dacsinc_custom.custom_script.update_and_submit_pick_list',
+                    args: { pick_list: names[i], rows: [], submit: 1 },
+                    freeze: true,
+                    freeze_message: __('Submitting Pick List {0}…', [names[i]]),
+                    callback: (r) => {
+                        if (!r.message) return next(names.length);   // server threw; Frappe showed why — stop here
+                        done.push(r.message.name);
+                        next(i + 1);
+                    },
+                    error: () => next(names.length),
+                });
+            };
+            next(0);
         }
     );
 }
@@ -6274,6 +6311,30 @@ function so_open_modal(title, body_html) {
 
 // Read a cached item payload by its "ITEM||BOM" key. Falls back to a prefix
 // match so a bare item_code still resolves.
+// Key of a line in the Item Stock & Action Plan: "ITEM||BOM", or "ITEM||BOM||<SO Item row>" when
+// the same item + BOM is on more than one line of the order (each line then gets its own figures).
+function so_stock_pair_key(frm, item) {
+    const base = `${item.item_code}||${item.bom_no || 'no_bom'}`;
+    const same = (frm.doc.items || []).filter(i => i.item_code && `${i.item_code}||${i.bom_no || 'no_bom'}` === base);
+    return (same.length > 1 && item.name && !String(item.name).startsWith('new-')) ? `${base}||${item.name}` : base;
+}
+
+// "Line 2 · ₹450 · due 15-11-2026" under the item, only when the item is on several lines, plus
+// how much of the free stock the earlier lines of the same item take first.
+function so_line_tag_html(frm, item, d) {
+    if (!d || !d.line_name) return '';
+    const rate = flt(item.rate) ? ` &middot; ${format_currency(item.rate, frm.doc.currency)}` : '';
+    const due = item.delivery_date ? ` &middot; ${__('due')} ${frappe.datetime.str_to_user(item.delivery_date)}` : '';
+    let html = `<div class="so-micro" style="margin-top:2px;"><span class="so-chip">${__('Line')} ${item.idx}</span>${rate}${due}</div>`;
+    const takes = d.earlier_line_takes || [];
+    if (takes.length) {
+        const txt = takes.map(t => `${flt(t.qty)} ${__('for line')} ${t.idx}`).join(', ');
+        html += `<div class="so-micro" style="color:var(--so-orange,#d97706);" title="${esc(__('The same item is on an earlier line (earlier delivery date, then row order) — free stock goes to that line first.'))}">`
+            + `<i class="fa fa-level-up"></i> ${__('Stock kept')}: ${esc(txt)}</div>`;
+    }
+    return html;
+}
+
 function get_cached_stock_row(pair_key) {
     const cache = (typeof cur_frm !== 'undefined' && cur_frm) ? cur_frm.custom_stock_data : null;
     if (!cache) return null;
