@@ -71,7 +71,11 @@ app_include_css = [
 # include js in page
 # page_js = {"page" : "public/js/file.js"}
 # Point of Sale: walk-in name / mobile under the customer, loading indicator (pos_walkin.py)
-page_js = {"point-of-sale": "public/js/pos_page_extend.js"}
+page_js = {
+    "point-of-sale": "public/js/pos_page_extend.js",
+    # Print view: a POS Invoice opens in its own POS Profile's print format (pos_print.py)
+    "print": "public/js/pos_print_format.js",
+}
 
 # include js in doctype views  
 doctype_js = {

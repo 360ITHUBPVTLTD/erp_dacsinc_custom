@@ -655,6 +655,23 @@ printer's own roll width decides the paper; the PDF is an 80mm × 297mm page. It
 wkhtmltopdf drew a dashed table-cell border solid in places. A store uses it by choosing it in its POS Profile ›
 Print Format.
 
+### Printing: the bill's own POS Profile decides the format
+
+Where each print takes its format:
+
+| Printed from | Format |
+|---|---|
+| POS screen (Print Receipt, Ctrl+P, print on complete, Recent Orders) | ERPNext: the open POS Profile's print format (`frm.pos_print_format`) |
+| Email receipt | the bill's POS Profile (`pos_receipt_email.py`), Version 2 when none |
+| POS Invoice form › Print / Ctrl+P, a print link (`/app/print/POS Invoice/…`) | **the bill's own POS Profile** (`public/js/pos_print_format.js`, `pos_print.get_pos_print_format`) |
+| POS Invoice list › several selected › Print | one format for all (Frappe's bulk print); defaults to the POS Invoice default, Version 2 |
+
+The print view hook (`page_js` for the `print` page) replaces `PrintView.set_default_print_format` for POS
+Invoices only. Frappe kept whichever format was picked last as long as it was valid for the doctype, so a
+Rajajinagar bill opened right after a VV Puram one printed in VV Puram's format. Otherwise it fell back to the POS
+Invoice default (Version 2) for every store. The user can still pick another format in the selector. A profile
+with no print format, or a disabled one, keeps Frappe's behaviour.
+
 ## POS paperwork: POS flags, transfer approval, closing report (`pos_notify.py`)
 
 **Created by POS User** (read-only check, exported in `custom/material_request.json` /
