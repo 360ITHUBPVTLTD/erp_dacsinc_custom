@@ -75,17 +75,15 @@ frappe.ui.form.on('Sales Invoice', {
 	onload: function(frm) {
 		frm.trigger('make_linked_rows_read_only');
 	},
+	is_return: function(frm) {
+		si_update_stock_hint(frm);
+	},
 	onload_post_render: function(frm) {
 		si_remove_get_items_buttons(frm);
 	},
 	refresh: function(frm) {
 		frm.trigger('make_linked_rows_read_only');
-		// Update Stock is set on save (si_stock.py): direct invoice ticks it, from Delivery Notes unticks it
-		if (!cint(frm.doc.is_return)) {
-			frm.set_df_property('update_stock', 'description', frm.doc.docstatus === 0
-				? __('Set on save — ticked for a direct invoice (the goods leave the warehouse with it), unticked when billed from Delivery Notes.')
-				: (cint(frm.doc.update_stock) ? __('Stock went out with this invoice.') : __('Stock went out with the Delivery Note.')));
-		}
+		si_update_stock_hint(frm);
 		si_remove_get_items_buttons(frm);
 		dacs_einvoice_box(frm);
 		dacs_gstin_update_button(frm);
@@ -176,6 +174,21 @@ if (typeof window.dacs_hide_create_buttons !== 'function') {
 		remover();
 		[300, 800, 1500, 2500].forEach(delay => setTimeout(remover, delay));
 	};
+}
+
+// Update Stock is set on save (si_stock.py) — the line under it says by which rule.
+function si_update_stock_hint(frm) {
+	// invoice: direct ticks it, from Delivery Notes unticks it
+	if (!cint(frm.doc.is_return)) {
+		frm.set_df_property('update_stock', 'description', frm.doc.docstatus === 0
+			? __('Set on save — ticked for a direct invoice (the goods leave the warehouse with it), unticked when billed from Delivery Notes.')
+			: (cint(frm.doc.update_stock) ? __('Stock went out with this invoice.') : __('Stock went out with the Delivery Note.')));
+	} else if (!cint(frm.doc.is_pos)) {
+		// Credit Note: same rule, the goods coming back (si_stock.set_return_update_stock)
+		frm.set_df_property('update_stock', 'description', frm.doc.docstatus === 0
+			? __('Set on save — ticked when the goods come back with this note (a direct return, or a note on a direct invoice); unticked when they went out with a Delivery Note (use Update Stock (return the goods) / Make Sales Return).')
+			: (cint(frm.doc.update_stock) ? __('The goods came back into stock with this note.') : __('No stock moved with this note.')));
+	}
 }
 
 // Credit / Debit Note actions on the form: public/js/return_actions.js (shared with Purchase Invoice).
