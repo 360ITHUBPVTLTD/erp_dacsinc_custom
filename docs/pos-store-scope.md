@@ -641,15 +641,38 @@ They are built from Version 2's html, so a change to the receipt's layout is mad
 | **POS Invoice Version 2** | thermal roll / receipt | no blank rows (a roll has no page bottom) |
 | **POS Invoice Thermal** | 80mm thermal (receipt) printer, 72mm print width | none — Version 2's bill laid out one under another for the narrow roll (below) |
 
-Price List Rate and Discount Amount print only on a bill with a discount (all three formats). Paper size and
+Each item line prints its prices with GST added and its GST %, so the bill has no separate HSN / tax breakup
+table under the items: **S.No · Item · HSN · Qty · Rate incl. GST · GST % · Amount incl. GST** (MRP and Disc,
+when printed, also with GST). GST % is the line's CGST + SGST + IGST (+ cess) rate.
+
+- MRP / Disc / Rate = the ERPNext value × (1 + GST %): a ₹199 MRP item at 18%, stored as 168.64, prints 199.00.
+- Amount = the line amount plus the GST actually charged on it (`cgst_amount` + `sgst_amount` + … over
+  `taxable_value`), so the amounts add up to the bill total to the paisa. 3 × 199.00 prints 596.98 when that is
+  what was charged; the Round Off line takes it to 597.00. A line with a bill discount on it uses the GST rate
+  instead (its taxable value is after the discount).
+
+The totals box shows only amounts with GST — no Gross Total / Taxable / Total Tax, which read as a different
+bill next to the GST-inclusive lines:
+
+| Row | When | Value |
+|---|---|---|
+| Total | bill discount | grand total + discount (discount on Grand Total), else the sum of the item amounts |
+| Bill Disc (−) | bill discount | the discount, with GST |
+| Round Off | rounding on the bill | `rounding_adjustment` |
+| **TOTAL** | always | `rounded_total` (else `grand_total`) — what the customer pays, same as "Pay" |
+
+Item figures print without the ₹ sign so the columns fit A5; the totals keep it.
+
+MRP (Price List Rate) and Disc (Discount Amount) print only on a bill with a discount (all formats). Paper size and
 margins are in each format (`page-size` for the PDF, `@page` for the browser's print from the POS screen). The
 fill is measured for the PDF; a browser's own print margins can differ, so print one bill from the POS screen
 when a counter switches format.
 
 **POS Invoice Thermal** (for a store printing on a thermal terminal printer) is Version 2's content rearranged for
 72mm: header centred (store address, GSTIN, PAN, MSME, landline), Inv / Dt on two lines, walk-in line, then each
-item as its own block — name, then HSN / Qty / Rate / Amount, an MRP / Disc line only on a discounted line, a dashed
-line across under each item — then Qty / Pay, the totals one under another, the tax summary, terms, Thank You.
+item as its own block — S.No and name, then HSN · GST % / Qty / Rate / Amount (with GST), an MRP / Disc line
+(with GST) only on a discounted line, a dashed line across under each item — then Qty / Pay, the same totals rows
+one under another, terms, Thank You.
 Black only (thermal printers print no grey). The browser print has no page margin (`@page { margin: 0 }`), so the
 printer's own roll width decides the paper; the PDF is an 80mm × 297mm page. Item separators are drawn on a `div`:
 wkhtmltopdf drew a dashed table-cell border solid in places. A store uses it by choosing it in its POS Profile ›
