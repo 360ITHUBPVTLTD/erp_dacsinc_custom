@@ -90,7 +90,7 @@ def get_item_ledger(item_code, warehouse=None, from_date=None, to_date=None):
 			"party": c.get("party"), "remarks": c.get("remarks"),
 			"sco": line.get("sco") or c.get("sco"), "po": line.get("po") or c.get("po"),
 			"so": sorted(set(line.get("so") or []) | set(c.get("so") or [])),
-			"pick_list": line.get("pick_list"), "is_return": c.get("is_return"),
+			"pick_list": line.get("pick_list"), "is_return": c.get("is_return"), "ewo": c.get("ewo"),
 		}
 		if not qin and not qout:   # a stock count that changed nothing
 			r["to_wh"], r["to_balance"] = e.warehouse, e.qty_after_transaction
@@ -120,6 +120,10 @@ def _kind(vt, c, line, from_wh, to_wh, jobber_whs):
 		return ("opening", _("Opening stock")) if c.get("purpose") == "Opening Stock" else ("count", _("Stock count"))
 	if vt == "Stock Entry":
 		t = c.get("type") or ""
+		if c.get("ewo_way") == "sent":
+			return "to_jobber", _("Sent for embroidery")
+		if c.get("ewo_way") == "back":
+			return "from_jobber", _("Back from embroidery")
 		if t == "Send to Subcontractor" or (to_jobber and not from_jobber and from_wh):
 			return "to_jobber", _("Sent to jobber")
 		if from_jobber and to_wh and not to_jobber:
@@ -164,6 +168,7 @@ def _voucher_context(sles):
 			put("Stock Entry", d.name, type=d.stock_entry_type or d.purpose, sco=d.subcontracting_order, party=d.supplier_name,
 				po=d.purchase_order, remarks=d.remarks or d.custom_reference_id)
 			if d.subcontracting_order: scos.add(d.subcontracting_order)
+		_embroidery_transfers(names, put)
 	if names := by_type.get("Subcontracting Receipt"):
 		for d in frappe.get_all("Subcontracting Receipt", filters={"name": ["in", list(names)]},
 								fields=["name", "supplier_name", "is_return", "remarks", "supplier_delivery_note"]):
@@ -218,6 +223,30 @@ def _voucher_context(sles):
 			if holder.get("po"):
 				holder["so"] = sorted(set(holder.get("so") or []) | so_of_po.get(holder["po"], set()))
 	return ctx
+
+
+def _embroidery_transfers(se_names, put):
+	"""Stock Entries of an Embroidery Transfer (Order Flow › Embroidery Transfers: an Embroidery Work Order of work
+	type Stock Transfer): the sending Material Transfer (stock_entry_sent) and each receipt's Repack (Embroidery Work
+	Order Receipt) get the transfer (EM/…), its jobber and its notes — read from the transfer, so entries made before
+	their Remarks named it show it too."""
+	sent = frappe.get_all("Embroidery Work Order", filters={"stock_entry_sent": ["in", list(se_names)], "work_type": "Stock Transfer"},
+						  fields=["name", "stock_entry_sent as se"])
+	back = frappe.get_all("Embroidery Work Order Receipt", filters={"stock_entry": ["in", list(se_names)], "parenttype": "Embroidery Work Order"},
+						  fields=["parent as name", "stock_entry as se"])
+	if not sent and not back:
+		return
+	ewos = {d.name: d for d in frappe.get_all("Embroidery Work Order", filters={"name": ["in", list({r.name for r in sent + back})]},
+											 fields=["name", "full_piece_jobber", "notes"])}
+	jobbers = {d.name: d.supplier_name for d in frappe.get_all("Supplier", filters={
+		"name": ["in", list({e.full_piece_jobber for e in ewos.values() if e.full_piece_jobber}) or [""]]}, fields=["name", "supplier_name"])}
+	for rows, way in ((sent, "sent"), (back, "back")):
+		for r in rows:
+			e = ewos.get(r.name)
+			if not e:
+				continue
+			put("Stock Entry", r.se, ewo=e.name, ewo_way=way, party=jobbers.get(e.full_piece_jobber) or e.full_piece_jobber,
+				remarks=(e.notes or "").strip() or None)
 
 
 def _with_jobbers(item_code):
