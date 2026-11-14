@@ -25,11 +25,15 @@ Filters: Item (any words, any order — `item_query`), Warehouse, From, To (empt
    - jobber / supplier / customer, and **For**: SCO, PO, Sales Order(s), Pick List — from the document line where it
      has one (Purchase Receipt and Delivery Note lines, Subcontracting Receipt lines and supplied items), else from
      the document; a PO's Sales Orders come from its lines;
+   - an **Embroidery Transfer**'s entries (Order Flow › Embroidery Transfers) read **Sent for embroidery** (the sending
+     Material Transfer) and **Back from embroidery** (each receipt's Repack), with the jobber, an **Embroidery** link to
+     the transfer (EM/…) under For, and the transfer's notes — taken from the transfer, so entries made before their
+     Remarks named it show it too (`_embroidery_transfers`);
    - From → To with what each warehouse had left after it; a transfer (two entries of one Stock Entry line) is one row
      with the qty in **Moved**, not in In / Out;
    - **Total after** — the stock of all shown warehouses after the row, worked out from the rows (ERPNext writes a
      Stock Entry's outgoing entries before its incoming ones, so a running sum of the entries dipped mid-transfer).
-   Chips filter by kind; the search box matches document, party, SCO, PO, SO, warehouse, user. With a From date the
+   Chips filter by kind; the search box matches document, party, SCO, PO, SO, Embroidery Transfer, notes, warehouse, user. With a From date the
    first row is the opening stock. At most 20,000 movements (then: choose a From date or a warehouse).
 
 **Print** opens the page's tables on A4 landscape.

@@ -71,6 +71,7 @@ frappe.pages["item-stock-ledger"].on_page_load = function (wrapper) {
 		r.po ? `<span class="isl-ref"><i>PO</i>${link("Purchase Order", r.po)}</span>` : "",
 		...(r.so || []).map((s) => `<span class="isl-ref"><i>SO</i>${link("Sales Order", s)}</span>`),
 		r.pick_list ? `<span class="isl-ref"><i>Pick</i>${link("Pick List", r.pick_list)}</span>` : "",
+		r.ewo ? `<span class="isl-ref"><i>${__("Embroidery")}</i>${link("Embroidery Work Order", r.ewo)}</span>` : "",
 	].join("");
 	const is_jobber_wh = (w) => w && (data.jobber_warehouses || []).includes(w);
 	const wh = (w, bal) => w ? `<span class="isl-wh ${is_jobber_wh(w) ? "jobber" : ""}">${esc(w)}</span><small>${__("left {0}", [n(bal)])}</small>` : "";
@@ -151,7 +152,7 @@ frappe.pages["item-stock-ledger"].on_page_load = function (wrapper) {
 		const words = q.toLowerCase().split(/\s+/).filter(Boolean);
 		return data.rows.filter((r) => (kind === "all" || r.kind === kind)
 			&& (!sco_filter || r.sco === sco_filter)
-			&& (!words.length || words.every((w) => [r.voucher_no, r.party, r.sco, r.po, ...(r.so || []), r.from_wh, r.to_wh, r.label, r.by]
+			&& (!words.length || words.every((w) => [r.voucher_no, r.party, r.sco, r.po, ...(r.so || []), r.ewo, r.remarks, r.from_wh, r.to_wh, r.label, r.by]
 				.some((v) => (v || "").toLowerCase().includes(w)))));
 	}
 
@@ -160,7 +161,7 @@ frappe.pages["item-stock-ledger"].on_page_load = function (wrapper) {
 		data.rows.forEach((r) => { counts[r.kind] = (counts[r.kind] || 0) + 1; });
 		const $tools = $body.find(".isl-tools").html(KINDS.filter(([k]) => k === "all" || counts[k]).map(([k, label]) =>
 			`<button type="button" data-k="${k}" class="${k === kind ? "is-on" : ""}">${label}<span>${k === "all" ? data.rows.length : counts[k]}</span></button>`).join("")
-			+ `<input type="search" placeholder="${__("Search document, jobber, SCO, PO, SO…")}" value="${esc(q)}">`);
+			+ `<input type="search" placeholder="${__("Search document, jobber, SCO, PO, SO, EM, notes…")}" value="${esc(q)}">`);
 		$body.find(".isl-scoline").html(sco_filter ? `<div class="isl-sco-on">${__("Only Subcontracting Order {0}", [`<b>${esc(sco_filter)}</b>`])} · <a class="isl-sco-clear">${__("show all")}</a></div>` : "");
 		const rows = shown_rows();
 		let tin = 0, tout = 0;

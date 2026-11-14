@@ -26,6 +26,38 @@ def _transfer(transfer_id):
         frappe.throw(f"{transfer_id} is not an embroidery stock transfer.")
     return doc
 
+def _remarks(ewo, sent, jobber_name=None):
+    """The Remarks of a transfer's Stock Entry: which Embroidery Transfer it is, the jobber and the notes —
+    so the entry explains itself on its form, in the stock ledger and on the Item Stock Ledger page."""
+    jobber_name = jobber_name or frappe.db.get_value("Supplier", ewo.full_piece_jobber, "supplier_name") or ewo.full_piece_jobber or ""
+    text = (f"Embroidery Transfer {ewo.name} — " + (f"sent to {jobber_name}" if sent else f"received back from {jobber_name}"))
+    if (ewo.notes or "").strip():
+        text += f". Notes: {ewo.notes.strip()}"
+    return text
+
+
+@frappe.whitelist()
+def transfer_of_stock_entry(stock_entry):
+    """Stock Entry form (public/js/stock_entry_embroidery.js): the Embroidery Transfer a Stock Entry belongs to —
+    the sending Material Transfer (stock_entry_sent) or a receipt's Repack (Embroidery Work Order Receipt) —
+    with its jobber, notes and status. Read from the transfer, so entries made before their Remarks were filled
+    show it too. Only for a user who may read the Stock Entry."""
+    if not frappe.has_permission("Stock Entry", "read", doc=stock_entry):
+        return None
+    name, sent = frappe.db.get_value(EWO, {"stock_entry_sent": stock_entry, "work_type": STOCK_TRANSFER}, "name"), True
+    if not name:
+        name, sent = frappe.db.get_value("Embroidery Work Order Receipt", {"stock_entry": stock_entry, "parenttype": EWO}, "parent"), False
+    if not name:
+        return None
+    d = frappe.db.get_value(EWO, name, ["name", "full_piece_jobber", "notes", "status", "docstatus", "date"], as_dict=True)
+    if not d:
+        return None
+    return {"transfer": d.name, "sent": sent, "jobber": d.full_piece_jobber,
+            "jobber_name": frappe.db.get_value("Supplier", d.full_piece_jobber, "supplier_name") if d.full_piece_jobber else None,
+            "notes": d.notes, "date": d.date,
+            "status": "Cancelled" if d.docstatus == 2 else TAB_STATUS.get(d.status, d.status)}
+
+
 def _free_stock(item_code, warehouse):
     """What can really leave `warehouse`: stock on hand minus what is held for Sales Orders
     (stock_hold: Pick Lists, embroidery at the jobber, raw-material earmarks — held only in the
@@ -52,7 +84,8 @@ def create_embroidery_transfers(lines, from_warehouse, wip_warehouse, supplier=N
     Only free stock may go: a source item's lines together may not exceed what is not held for
     Sales Orders (_free_stock) — no override here.
     `supplier`: the embroidery jobber the goods go to (Supplier › Is Jobber), as on an Embroidery
-    Work Order — required; kept as its Full Piece Jobber, so the work order print shows it (the Stock Entry is as before)."""
+    Work Order — required; kept as its Full Piece Jobber, so the work order print shows it. The Stock Entry's
+    Remarks name the transfer, the jobber and the notes (_remarks)."""
     import json
     guard_tab("uniform")
     guard_act("uniform")
@@ -102,7 +135,6 @@ def create_embroidery_transfers(lines, from_warehouse, wip_warehouse, supplier=N
                             "uom": frappe.db.get_value("Item", l["source_item"], "stock_uom"),
                             "s_warehouse": from_warehouse, "t_warehouse": wip_warehouse})
     se.insert(ignore_permissions=True)
-    se.submit()
 
     ewo = frappe.new_doc(EWO)
     ewo.update({"work_type": STOCK_TRANSFER, "date": nowdate(), "full_piece_jobber": supplier, "notes": notes,
@@ -113,6 +145,10 @@ def create_embroidery_transfers(lines, from_warehouse, wip_warehouse, supplier=N
                              "ordered_qty": l["qty"], "uom": frappe.db.get_value("Item", l["source_item"], "stock_uom")})
     ewo.flags.from_transfer_api = True
     ewo.insert(ignore_permissions=True)
+    # the work order is numbered now: the sending entry's Remarks name it, the jobber and the notes before it is
+    # submitted (so its GL entries carry the same text)
+    se.remarks = _remarks(ewo, True, jobber.supplier_name)
+    se.submit()
     ewo.submit()
     return {"transfers": [ewo.name], "transfer": ewo.name, "stock_entry": se.name}
 
@@ -168,10 +204,12 @@ def receive_embroidery_transfer(transfer_id, lines=None, to_warehouse=None, qty=
     if not todo:
         frappe.throw("Enter the quantity received for at least one line.")
 
+    back_remarks = _remarks(ewo, False)
     for row, q, wh in todo:
         se = frappe.new_doc("Stock Entry")
         se.purpose = "Repack"
         se.stock_entry_type = "Repack"
+        se.remarks = back_remarks
         se.append("items", {"item_code": row.item_code, "qty": q, "s_warehouse": ewo.wip_warehouse,
                             "uom": frappe.db.get_value("Item", row.item_code, "stock_uom")})
         se.append("items", {"item_code": row.target_item, "qty": q, "t_warehouse": wh,

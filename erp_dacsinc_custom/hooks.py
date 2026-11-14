@@ -93,7 +93,7 @@ doctype_js = {
 	"Purchase Order": ["public/js/so_qty_cap.js", "public/js/purchase_order.js"],
 	"Purchase Invoice": "public/js/purchase_invoice.js",
 	"Material Request": ["public/js/so_qty_cap.js", "public/js/material_request.js", "public/js/pos_stock.js"],
-	"Stock Entry": ["public/js/pos_stock.js", "public/js/stock_entry_type_filter.js"],
+	"Stock Entry": ["public/js/pos_stock.js", "public/js/stock_entry_type_filter.js", "public/js/stock_entry_embroidery.js"],
 	"BOM": "public/js/bom.js",
 	"Sales Invoice": ["public/js/sales_invoice.js", "public/js/merchant_export.js", "public/js/keep_price_list_rate.js"],
 	"Delivery Note": ["public/js/delivery_note.js", "public/js/merchant_export.js"],

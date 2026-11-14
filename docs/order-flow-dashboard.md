@@ -2160,6 +2160,13 @@ never see a transfer. Unlike Full Piece / Panel (tracking only), a transfer **mo
   The **Embroidery Jobber** is required: only suppliers ticked Is Jobber (and not disabled) are listed,
   and the server refuses any other. A Stock Transfer typed in the work order form is refused — it would
   move no stock; it is made only here (`flags.from_transfer_api`).
+- **Its Stock Entries explain themselves.** The sending Material Transfer's Remarks read "Embroidery Transfer
+  EM/… — sent to <jobber>. Notes: …", each receipt's Repack "… — received back from <jobber>. Notes: …"
+  (`uniform_transfer_api._remarks`; the work order is inserted as a draft first so the entry has its number before
+  it is submitted). The Stock Entry form shows the same at the top — transfer link, jobber, status, notes — read
+  from the transfer (`transfer_of_stock_entry`, `public/js/stock_entry_embroidery.js`), so entries made before the
+  Remarks were filled show it too; the Item Stock Ledger page labels them Sent for / Back from embroidery
+  (docs/item-stock-ledger.md).
 - **Print** (the row's print button, and "print now?" after sending): **Embroidery Work Order Print
   Format**, as every work order — Issued To the jobber with their address, Work Type Stock Transfer, the
   qty sent per **Item Type** of the plain items, total, notes as remarks, signatures.
