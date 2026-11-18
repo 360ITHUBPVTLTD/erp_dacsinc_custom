@@ -57,3 +57,4 @@ erp_dacsinc_custom.patches.si_letter_head
 erp_dacsinc_custom.patches.employee_select_only_on_user
 erp_dacsinc_custom.patches.kits_tab_roles
 erp_dacsinc_custom.patches.so_final_approval_edit_admin
+erp_dacsinc_custom.patches.so_pending_states_edit_rows

@@ -505,17 +505,44 @@ reword without touching any client-side logic.
 ## Who can edit a draft Sales Order in each workflow state
 
 The Sales Order Workflow (`order_flow_api.setup_sales_order_workflow`) makes a draft read-only for everyone except
-the state's one "Only Allow Edit For" role — Write permission on Sales Order is not enough:
+the state's "Only Allow Edit For" roles — Write permission on Sales Order is not enough. A state has one role per
+row, but Frappe's form reads every row of a state (`frappe.workflow.get_document_state_roles`), so a second row for
+the same state adds a role:
 
 | State | Edit |
 |---|---|
 | Draft, Rejected | All |
-| Pending Merchandiser Approval | Merchandiser User |
-| Pending Final Approval | **Admin** (`patches/so_final_approval_edit_admin.py`; was System Manager — every System Manager user also holds Admin) |
+| Pending Merchandiser Approval | Merchandiser User, **Admin**, **Sales Order Final Approver** |
+| Pending Final Approval | **Admin**, **Sales Order Final Approver** |
 | Approved (submitted) | System Manager |
 
-The patch sets only that one field: it does not rebuild the workflow, so a site's own transitions stay as they are.
-Approving is separate (the transitions: Sales Order Final Approver, Super Admin, System Manager).
+Sales Order Final Approver is the role kept on exactly the users of Admin Settings › Sales Order Final Approval
+(`order_flow_permissions.sync_sales_order_final_approver_role`). The rows are added by
+`patches/so_final_approval_edit_admin.py` (Pending Final Approval: System Manager → Admin; every System Manager user
+also holds Admin) and `patches/so_pending_states_edit_rows.py` (the extra rows, after the existing ones). Neither
+rebuilds the workflow, so a site's own transitions stay; approving is unchanged. Editing still needs Write on Sales
+Order from a real role.
+
+**A browser keeps the old rule** until its cache is cleared: the form's workflow comes with the Sales Order DocType,
+which the browser keeps until the DocType itself changes. After such a change each user clicks their picture ›
+**Reload** (or reloads twice within 5 seconds).
+
+## Final Approve: items and prices
+
+On the dashboard's **Final Approve** of one order (SO Approvals, `handle_final_approval`) the first step lists the
+order's lines — item, qty, Price List Rate, discount, Rate, Amount, Net / Grand Total. **Only the Price List Rate can
+be changed** — the rule everywhere: Rate stays read-only, the price is changed through the Price List Rate
+(docs/rate-read-only.md); each line keeps its own discount and margin. **Save & continue** saves the changed lines
+(`so_price_edit.save_price_lines`): their Rate is cleared and ERPNext's own calculation on save sets it from the
+Price List Rate, the discount % and any margin, then the taxes, the bill discount and the totals — the same result as
+the form (checked line and totals). A line discounted by an amount keeps that amount (Rate = Price List Rate −
+discount amount). **Continue** (nothing changed) saves nothing. Then, as before, the BOM split
+check and the customer details.
+
+- Only an admin or a user in Admin Settings › Sales Order Final Approval, only on a draft in Pending Merchandiser /
+  Final Approval, and only if the order was not changed since the prompt opened (`modified`).
+- A comment on the order records how many lines changed and who changed them.
+- Bulk Final Approve and the form's Approve button are unchanged (no price step).
 
 ## Final approval: BOM rows vs normal rows
 

@@ -6172,6 +6172,11 @@ def setup_sales_order_workflow(force=False):
     workflow.append("states", {"state": "Pending Final Approval", "doc_status": 0, "allow_edit": "Admin"})
     workflow.append("states", {"state": "Approved", "doc_status": 1, "allow_edit": "System Manager"})
     workflow.append("states", {"state": "Rejected", "doc_status": 0, "allow_edit": "All"})
+    # More roles may edit an order waiting for approval (user, 18-11-2026): a second row for the same state adds a
+    # role (Frappe's form reads every row) — patches/so_pending_states_edit_rows.py adds the same on existing sites.
+    workflow.append("states", {"state": "Pending Merchandiser Approval", "doc_status": 0, "allow_edit": "Admin"})
+    workflow.append("states", {"state": "Pending Merchandiser Approval", "doc_status": 0, "allow_edit": "Sales Order Final Approver"})
+    workflow.append("states", {"state": "Pending Final Approval", "doc_status": 0, "allow_edit": "Sales Order Final Approver"})
     
     # allow_self_approval=1 here too: approve_sales_orders() auto-submits a
     # Draft straight through this transition before applying "Approve" in
