@@ -15,7 +15,7 @@
  "icon": "accounting",
  "idx": 0,
  "indicator_color": "green",
- "is_hidden": 0,
+ "is_hidden": 1,
  "label": "DAC Accounts",
  "links": [
   {
@@ -591,7 +591,7 @@
    "type": "Link"
   }
  ],
- "modified": "2026-08-28 20:21:52.471368",
+ "modified": "2026-11-11 15:43:00.007461",
  "modified_by": "Administrator",
  "module": "Erp Dacsinc Custom",
  "name": "DAC Accounts",
@@ -644,7 +644,7 @@
    "role": "Admin"
   }
  ],
- "sequence_id": 5.1,
+ "sequence_id": 21.0,
  "shortcuts": [
   {
    "color": "Grey",

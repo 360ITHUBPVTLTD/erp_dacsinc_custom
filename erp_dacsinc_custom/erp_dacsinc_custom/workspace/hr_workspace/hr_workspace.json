@@ -29,7 +29,7 @@
  "is_hidden": 0,
  "label": "HR Workspace",
  "links": [],
- "modified": "2026-11-10 14:41:44.058133",
+ "modified": "2026-11-11 15:42:59.648091",
  "modified_by": "Administrator",
  "module": "Erp Dacsinc Custom",
  "name": "HR Workspace",
@@ -55,7 +55,7 @@
    "role": "Admin"
   }
  ],
- "sequence_id": 39.0,
+ "sequence_id": 11.0,
  "shortcuts": [
   {
    "color": "Grey",

@@ -1,7 +1,7 @@
 {
  "charts": [],
  "content": "[{\"id\": \"posHoBoard\", \"type\": \"custom_block\", \"data\": {\"custom_block_name\": \"POS Requests Board\", \"col\": 12}}, {\"id\": \"posHoSpace\", \"type\": \"spacer\", \"data\": {\"col\": 12}}, {\"id\": \"posHoLinks\", \"type\": \"header\", \"data\": {\"text\": \"<span class=\\\"h4\\\"><b>Documents</b></span>\", \"col\": 12}}, {\"id\": \"posHoSc0\", \"type\": \"shortcut\", \"data\": {\"shortcut_name\": \"POS Requests\", \"col\": 3}}, {\"id\": \"posHoSc1\", \"type\": \"shortcut\", \"data\": {\"shortcut_name\": \"Stock Entry\", \"col\": 3}}, {\"id\": \"posHoSc2\", \"type\": \"shortcut\", \"data\": {\"shortcut_name\": \"Purchase Order\", \"col\": 3}}, {\"id\": \"posHoSc3\", \"type\": \"shortcut\", \"data\": {\"shortcut_name\": \"Stock Balance\", \"col\": 3}}]",
- "creation": "2026-10-13 12:00:00.000000",
+ "creation": "2026-10-13 12:00:00",
  "custom_blocks": [
   {
    "custom_block_name": "POS Requests Board",
@@ -17,7 +17,7 @@
  "is_hidden": 0,
  "label": "POS HO",
  "links": [],
- "modified": "2026-10-13 12:00:00.000000",
+ "modified": "2026-11-11 17:13:10.939728",
  "modified_by": "Administrator",
  "module": "Erp Dacsinc Custom",
  "name": "POS HO",
@@ -46,7 +46,7 @@
    "role": "Admin"
   }
  ],
- "sequence_id": 40.0,
+ "sequence_id": 8.0,
  "shortcuts": [
   {
    "color": "Grey",
