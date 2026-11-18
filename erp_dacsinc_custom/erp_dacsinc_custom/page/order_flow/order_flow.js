@@ -710,9 +710,15 @@ class OrderFlow {
             ? `<a href="#" class="of-tf-clear" data-list="${key}" title="${__('Clear the filters of this table')}"><i class="fa fa-times"></i> ${__('Clear filters')}</a>` : ''}</div>`;
     }
 
-    merch_filter_allowed() {
+    // The Merchandiser filter: final approvers / admins on SO Approvals and Sales Tracker; everyone
+    // else on Sales Tracker only — except a scoped Merchandiser User, who sees only their own customers'
+    // orders anyway (picking another merchandiser would just empty the list). It only narrows: the
+    // server applies each user's own limits first (docs/order-flow-dashboard.md).
+    merch_filter_allowed(tab) {
+        tab = tab || this.active;
         const can_final = !!(this.perms && this.perms.is_final_approver);
-        return can_final || frappe.user_roles.includes('System Manager') || frappe.session.user === 'Administrator';
+        if (can_final || frappe.user_roles.includes('System Manager') || frappe.session.user === 'Administrator') return true;
+        return tab === 'tracker' && !(this.perms && this.perms.scoped_merchandiser);
     }
 
     // Mount the Link boxes (Customer / Supplier / Warehouse…) of the table filters, and keep
@@ -2695,9 +2701,7 @@ class OrderFlow {
     }
 
     update_merchandiser_visibility() {
-        const can_final = !!(this.perms && this.perms.is_final_approver);
-        const is_admin = frappe.user_roles.includes("System Manager") || frappe.session.user === "Administrator";
-        const show = (this.active === 'approval' || this.active === 'tracker') && (can_final || is_admin);
+        const show = (this.active === 'approval' || this.active === 'tracker') && this.merch_filter_allowed();
         this.$body.find('#of-merchandiser').toggle(show);
     }
 
@@ -2819,7 +2823,8 @@ class OrderFlow {
 
         // merchandiser only narrows Approvals and Tracker — every other tab
         // stays unscoped by it (see update_merchandiser_visibility)
-        const merch = (this.active === 'approval' || this.active === 'tracker') ? (this.merchandiser_filter || null) : null;
+        const merch = ((this.active === 'approval' || this.active === 'tracker') && this.merch_filter_allowed())
+            ? (this.merchandiser_filter || null) : null;
         const args = { days: this.days, search: this.search || null, scope: this.scope, merchandiser: merch, approval_stage: this.approval_stage_filter || null };
         if (this.active === 'tracker') {
             args.stage_filter = this.stage_filter;
@@ -3117,7 +3122,7 @@ class OrderFlow {
             args: {
                 days: this.days,
                 limit: 40,
-                merchandiser: this.merchandiser_filter,
+                merchandiser: this.merch_filter_allowed() ? this.merchandiser_filter : null,
                 scope: this.scope,
                 search: this.search || null,
                 ...this.party_args(this.active)
