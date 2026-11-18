@@ -11855,18 +11855,28 @@ def _merch_stock_entry_clause(user, se="`tabStock Entry`"):
 def get_stock_entry_merchandiser_conditions(user=None):
     from erp_dacsinc_custom.order_flow_api import is_scoped_merchandiser_for_doctype
 
+    from erp_dacsinc_custom import ops_manager
+
     user = user or frappe.session.user
     if not is_scoped_merchandiser_for_doctype("Stock Entry", user):
-        return ""
+        # Operations Manager: the jobber transfers of every order (ops_manager.py)
+        return ops_manager.stock_entry_clause(user) if ops_manager.is_limited("Stock Entry", user) else ""
     return _merch_stock_entry_clause(user)
 
 
 def has_stock_entry_merchandiser_permission(doc, ptype=None, user=None):
     from erp_dacsinc_custom.order_flow_api import is_scoped_merchandiser_for_doctype
 
+    from erp_dacsinc_custom import ops_manager
+
     user = user or frappe.session.user
-    if not is_scoped_merchandiser_for_doctype("Stock Entry", user) or doc.is_new():
+    if doc.is_new():
         return None
+    if not is_scoped_merchandiser_for_doctype("Stock Entry", user):
+        if not ops_manager.is_limited("Stock Entry", user):
+            return None
+        return bool(frappe.db.sql("select 1 from `tabStock Entry` where name = %s and "
+                                  + ops_manager.stock_entry_clause(user), doc.name))
     return bool(frappe.db.sql("select 1 from `tabStock Entry` where name = %s and " + _merch_stock_entry_clause(user), doc.name))
 
 
@@ -11874,9 +11884,16 @@ def guard_merchandiser_plain_po(doc, method=None):
     """Purchase Order validate: a Merchandiser User raises only Subcontract POs
     (is_subcontracted = 1) — the POs behind their orders' Subcontracting Orders. A plain
     purchase PO is the purchase team's. Admins are never limited (is_scoped_...)."""
+    from erp_dacsinc_custom import ops_manager
     from erp_dacsinc_custom.order_flow_api import is_scoped_merchandiser_for_doctype
 
-    if doc.get("is_subcontracted") or not is_scoped_merchandiser_for_doctype("Purchase Order", frappe.session.user):
+    if doc.get("is_subcontracted"):
+        return
+    if ops_manager.is_limited("Purchase Order"):
+        frappe.throw(_("As an Operations Manager you can create only Subcontract POs (Is Subcontracted ticked). "
+                       "A normal purchase PO is raised by the purchase team."), frappe.PermissionError,
+                     title=_("Subcontract PO only"))
+    if not is_scoped_merchandiser_for_doctype("Purchase Order", frappe.session.user):
         return
     frappe.throw(_("As a Merchandiser you can create only Subcontract POs (Is Subcontracted ticked). "
                    "A normal purchase PO is raised by the purchase team."), frappe.PermissionError,
@@ -11895,15 +11912,25 @@ def has_pick_list_permission(doc, ptype=None, user=None):
 # orders they may see — the POs behind their orders' Subcontracting Orders — never a plain
 # purchase PO. (View only: the access sheet gives them no create / submit.)
 def get_purchase_order_permission_query_conditions(user=None):
+    from erp_dacsinc_custom import ops_manager
+
     cond = _so_linked_query_conditions("Purchase Order", user)
-    return f"(`tabPurchase Order`.`is_subcontracted` = 1 and {cond})" if cond else ""
+    if cond:
+        return f"(`tabPurchase Order`.`is_subcontracted` = 1 and {cond})"
+    # Operations Manager: every order's Subcontract POs, no plain purchase PO (ops_manager.py)
+    if ops_manager.is_limited("Purchase Order", user or frappe.session.user):
+        return "(`tabPurchase Order`.`is_subcontracted` = 1)"
+    return ""
 
 
 def has_purchase_order_permission(doc, ptype=None, user=None):
     from erp_dacsinc_custom.order_flow_api import is_scoped_merchandiser_for_doctype
 
-    if (is_scoped_merchandiser_for_doctype("Purchase Order", user or frappe.session.user)
-            and not doc.is_new() and not doc.get("is_subcontracted")):
+    from erp_dacsinc_custom import ops_manager
+
+    if (not doc.is_new() and not doc.get("is_subcontracted")
+            and (is_scoped_merchandiser_for_doctype("Purchase Order", user or frappe.session.user)
+                 or ops_manager.is_limited("Purchase Order", user or frappe.session.user))):
         return False
     return _so_linked_has_permission("Purchase Order", doc, user)
 

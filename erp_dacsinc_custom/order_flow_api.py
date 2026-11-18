@@ -28,6 +28,7 @@ from erp_dacsinc_custom.order_flow_permissions import (
     is_admin,
     is_scoped_to_own_customers,
 )
+from erp_dacsinc_custom.ops_manager import is_ops_manager
 from erp_dacsinc_custom.custom_script import (
     _so_has_submitted_dn, _so_has_submitted_stock_si, _so_draft_delivery_notes,
     check_bom_raw_materials_in_stock,
@@ -936,6 +937,8 @@ def _user_context():
         "user": user,
         "is_admin": is_admin,
         "is_merchandiser": "Merchandiser User" in roles,
+        # Operations Manager: the merchandiser step of every customer's orders (ops_manager.py)
+        "is_ops_manager": "Operations Manager" in roles and not is_admin,
         "is_final_approver": bool(is_admin or user in final_users),
     }
 
@@ -969,8 +972,9 @@ def _event_relevance(ev, ctx):
         if ws == "Pending Final Approval" and ctx["is_final_approver"]:
             reasons.insert(0, _("Waiting for your final approval"))
             action = 1
-        elif ws in ("Pending Merchandiser Approval", "Draft", "") and ctx["is_merchandiser"] \
-                and (not merch or merch == user):
+        elif ws in ("Pending Merchandiser Approval", "Draft", "") and (
+                (ctx["is_merchandiser"] and (not merch or merch == user))
+                or (ws == "Pending Merchandiser Approval" and ctx.get("is_ops_manager"))):
             reasons.insert(0, _("Waiting for your merchandiser approval"))
             action = 1
         elif ws == "Rejected" and (ev.get("so_owner") == user or (merch and merch == user)):
@@ -1539,10 +1543,12 @@ def get_sales_tracker(days=120, search=None, scope="open", stage_filter=None, me
     # (Pending DN/SI) shows, so a user without of_tab_billing_roles access
     # must not see those orders here either — otherwise Tracker would leak
     # everything the billing tab exists to restrict.
-    billing_visible = can_view_tab("billing") or is_scoped_to_own_customers("tracker")
+    billing_visible = (can_view_tab("billing") or is_scoped_to_own_customers("tracker")
+                       or is_ops_manager())
     # ...except a Merchandiser User, whose tracker holds only their own orders anyway: they
     # follow those orders through every stage (Ready for Delivery, Need to Bill) without
-    # being given the Pending DN/SI tab, which lists everyone's.
+    # being given the Pending DN/SI tab, which lists everyone's. An Operations Manager follows
+    # every order the same way (stage counts only — no invoice amounts, no Pending DN/SI tab).
     # Completed orders are excluded at the SQL level under scope="open" (see
     # _get_tracker_rows) — force scope to "all" so clicking the "Completed"
     # stage tile can actually find them, same override get_summary already
@@ -3920,10 +3926,12 @@ def get_summary(days=120, scope="open", search=None, merchandiser=None, approval
     # (labelled "Pending DN/SI") shows — a user without of_tab_billing_roles
     # access must not see those counts here either, or the billing tab's own
     # restriction would be pointless (see docs/order-flow-dashboard.md).
-    billing_visible = can_view_tab("billing") or is_scoped_to_own_customers("tracker")
+    billing_visible = (can_view_tab("billing") or is_scoped_to_own_customers("tracker")
+                       or is_ops_manager())
     # ...except a Merchandiser User, whose tracker holds only their own orders anyway: they
     # follow those orders through every stage (Ready for Delivery, Need to Bill) without
-    # being given the Pending DN/SI tab, which lists everyone's.
+    # being given the Pending DN/SI tab, which lists everyone's. An Operations Manager follows
+    # every order the same way (stage counts only — no invoice amounts, no Pending DN/SI tab).
     # To compute accurate summary counts for all stages (including completed ones),
     # we override "open" scope to "all". "mine" scope is preserved to only count the user's orders.
     summary_scope = "all" if scope == "open" else scope
@@ -6177,6 +6185,9 @@ def setup_sales_order_workflow(force=False):
     workflow.append("states", {"state": "Pending Merchandiser Approval", "doc_status": 0, "allow_edit": "Admin"})
     workflow.append("states", {"state": "Pending Merchandiser Approval", "doc_status": 0, "allow_edit": "Sales Order Final Approver"})
     workflow.append("states", {"state": "Pending Final Approval", "doc_status": 0, "allow_edit": "Sales Order Final Approver"})
+    # Operations Manager: the merchandiser step for every customer (patches/operations_manager_role.py on existing sites)
+    if frappe.db.exists("Role", "Operations Manager"):
+        workflow.append("states", {"state": "Pending Merchandiser Approval", "doc_status": 0, "allow_edit": "Operations Manager"})
     
     # allow_self_approval=1 here too: approve_sales_orders() auto-submits a
     # Draft straight through this transition before applying "Approve" in
@@ -6239,6 +6250,14 @@ def setup_sales_order_workflow(force=False):
         "next_state": "Rejected",
         "allowed": "Sales Order Final Approver"
     })
+    # Operations Manager approves / rejects the merchandiser step like a merchandiser, for every customer
+    # (docs/operations-manager.md).
+    if frappe.db.exists("Role", "Operations Manager"):
+        workflow.append("transitions", {"state": "Pending Merchandiser Approval", "action": "Approve",
+                                        "next_state": "Pending Final Approval", "allowed": "Operations Manager",
+                                        "allow_self_approval": 1})
+        workflow.append("transitions", {"state": "Pending Merchandiser Approval", "action": "Reject",
+                                        "next_state": "Rejected", "allowed": "Operations Manager"})
     workflow.append("transitions", {
         "state": "Pending Final Approval",
         "action": "Approve",

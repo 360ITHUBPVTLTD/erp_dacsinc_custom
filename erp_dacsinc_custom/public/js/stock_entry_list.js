@@ -1,12 +1,15 @@
-// Stock Entry list: no "Add Stock Entry" for a Merchandiser User (docs/merchandiser-purchase.md).
+// Stock Entry list: no "Add Stock Entry" for a Merchandiser User (docs/merchandiser-purchase.md)
+// or an Operations Manager kept to jobber transfers (docs/operations-manager.md).
 // They only make jobber transfers of their own orders, from the Subcontracting Order / Order Flow.
 // Same "merchandiser" test as sales_order.js so_is_scoped_merchandiser: Administrator, System
 // Manager, Super Admin and Admin keep the button. ERPNext's own list settings are kept (wrapped).
 (() => {
     const is_merchandiser = () => {
         const r = frappe.user_roles || [];
-        return r.includes('Merchandiser User') && frappe.session.user !== 'Administrator'
-            && !['System Manager', 'Super Admin', 'Admin'].some((x) => r.includes(x));
+        return (r.includes('Merchandiser User') && frappe.session.user !== 'Administrator'
+            && !['System Manager', 'Super Admin', 'Admin'].some((x) => r.includes(x)))
+            // Operations Manager kept to jobber transfers (ops_manager.is_limited, sent at boot)
+            || !!(frappe.boot.dacs_ops_limited || {})['Stock Entry'];
     };
     const settings = (frappe.listview_settings['Stock Entry'] = frappe.listview_settings['Stock Entry'] || {});
     const base_onload = settings.onload;

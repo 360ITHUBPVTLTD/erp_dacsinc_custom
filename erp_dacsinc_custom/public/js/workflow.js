@@ -182,7 +182,7 @@ class WorkflowOverride extends frappe.ui.form.States {
                                         me.frm.reload_doc();
                                     });
                                 }, __('Enter Rejection Comment'));
-                            } else if (d.action === "Approve" || (d.action === "Submit for Merchandiser Approval" && frappe.user_roles.includes("Merchandiser User"))) {
+                            } else if (d.action === "Approve" || (d.action === "Submit for Merchandiser Approval" && (frappe.user_roles.includes("Merchandiser User") || frappe.user_roles.includes("Operations Manager")))) {
                                 if (me.frm.doc.workflow_state === "Draft" || me.frm.doc.workflow_state === "Rejected" || me.frm.doc.workflow_state === "Pending Merchandiser Approval" || me.frm.doc.workflow_state === "Pending Final Approval") {
                                     frappe.call({
                                         method: 'erp_dacsinc_custom.order_flow_api.verify_customer_details',

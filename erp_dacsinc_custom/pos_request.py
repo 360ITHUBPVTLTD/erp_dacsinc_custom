@@ -704,6 +704,59 @@ def _store_transfers(store=None, received=False):
 	return out
 
 
+def _store_returns(store=None):
+	"""Draft POS transfers sending stock back INTO the supply warehouse (VV Puram - IND) — a store
+	returning stock. They wait for warehouse approval (pos_notify.needs_warehouse_approval), not
+	for a store, so _store_transfers never lists them. Through the user's own Stock Entry
+	permissions: POS Admin / HO see all, a store sees what it sent."""
+	from erp_dacsinc_custom.pos_scope import pos_source_warehouse
+
+	supply = pos_source_warehouse()
+	if not supply:
+		return []
+	heads = frappe.get_list("Stock Entry", filters={"docstatus": 0, "purpose": "Material Transfer", "custom_is_pos_transfer": 1},
+							fields=["name", "owner", "creation"], order_by="creation asc", limit_page_length=500)
+	if not heads:
+		return []
+	lines = {}
+	for r in frappe.get_all("Stock Entry Detail", filters={"parent": ["in", [h.name for h in heads]]},
+							fields=["parent", "item_code", "qty", "uom", "s_warehouse", "t_warehouse"], order_by="idx asc"):
+		lines.setdefault(r.parent, []).append(r)
+	labels, approver, out = _store_labels(), N.can_approve(), []
+	for h in heads:
+		its = lines.get(h.name, [])
+		if supply not in {r.t_warehouse for r in its}:
+			continue
+		sources = {r.s_warehouse for r in its if r.s_warehouse}
+		if store and store not in sources:
+			continue
+		out.append({
+			"kind": "return", "name": h.name, "status": "Waiting for Approval", "owner": h.owner,
+			"owner_name": frappe.utils.get_fullname(h.owner), "sent_on": h.creation,
+			"waiting_days": (now_datetime() - h.creation).days,
+			"from": ", ".join(sorted(labels.get(w, w) for w in sources)), "to": supply,
+			"items": [{"item_code": r.item_code, "qty": flt(r.qty), "uom": r.uom} for r in its],
+			"total_qty": sum(flt(r.qty) for r in its),
+			"can": {"approve": approver},
+		})
+	return out
+
+
+@frappe.whitelist()
+def approve_return(name):
+	"""Board › Returns to HO › Approve: submit a store's return to the supply warehouse. The same
+	checks as the form's Approve run on submit (pos_notify.guard_pos_approval records Approved By)."""
+	doc = frappe.get_doc("Stock Entry", name)
+	if doc.docstatus != 0 or not N.needs_warehouse_approval(doc):
+		frappe.throw(_("{0} is not a store return waiting for approval.").format(name))
+	if not N.can_approve():
+		frappe.throw(_("Only Warehouse Incharge, Warehouse Executive or POS Admin approves a store's return."),
+					 frappe.PermissionError)
+	doc.check_permission("submit")
+	doc.submit()
+	return {"name": doc.name, "approved_by": doc.get("custom_approved_by")}
+
+
 def _store_labels():
 	return {p.warehouse: (p.custom_store_name or p.name) for p in frappe.get_all(
 		"POS Profile", filters={"disabled": 0}, fields=["name", "warehouse", "custom_store_name"]) if p.warehouse}
@@ -725,16 +778,18 @@ def get_board(tab=None, store=None, limit=50):
 			  for k, t in TABS.items()}
 	store_transfers = _store_transfers(store)
 	counts["transfers"] = len(store_transfers)
+	store_returns = _store_returns(store)
+	counts["returns"] = len(store_returns)
 	received_transfers = _store_transfers(store, received=True)
 	recent = [["modified", ">=", frappe.utils.add_days(now_datetime(), -RECEIVED_DAYS)]]
 	counts["received"] = frappe.get_list("Material Request", filters=base + TABS["received"]["filters"] + recent,
 										 fields=["count(name) as n"])[0].n + len(received_transfers)
-	if tab not in TABS and tab != "transfers":
-		order = ("pending", "dispatch", "transit", "transfers", "draft", "received") if approver and not is_store else \
-			("transit", "transfers", "draft", "pending", "dispatch", "received")
+	if tab not in TABS and tab not in ("transfers", "returns"):
+		order = ("pending", "dispatch", "transit", "transfers", "returns", "draft", "received") if approver and not is_store else \
+			("transit", "transfers", "draft", "pending", "dispatch", "returns", "received")
 		tab = next((k for k in order if counts.get(k)), order[0])
 	t = TABS.get(tab) or {"filters": [["name", "=", ""]], "order": "modified desc"}
-	docs = [] if tab == "transfers" else frappe.get_list("Material Request", order_by=t["order"],
+	docs = [] if tab in ("transfers", "returns") else frappe.get_list("Material Request", order_by=t["order"],
 						   filters=base + t["filters"] + (recent if tab == "received" else []),
 						   limit_page_length=min(cint(limit) or 50, 200),
 						   fields=["name", "set_warehouse", "set_from_warehouse", "owner", "transaction_date", "schedule_date",
@@ -797,15 +852,19 @@ def get_board(tab=None, store=None, limit=50):
 										   limit_page_length=0)) or ("",)})[0][0]
 	if tab == "transfers":
 		rows = store_transfers[:min(cint(limit) or 50, 200)]
+	elif tab == "returns":
+		rows = store_returns[:min(cint(limit) or 50, 200)]
 	elif tab == "received":
 		# received requests and accepted store transfers together, newest first
 		rows = sorted(rows + received_transfers, key=lambda r: str(r.get("accepted_on") or r.get("modified") or ""),
 					  reverse=True)[:min(cint(limit) or 50, 200)]
 	tabs = [{"key": k, "label": v["label"], "count": counts[k]} for k, v in TABS.items()]
 	tabs.insert(4, {"key": "transfers", "label": "Store Transfers", "count": counts["transfers"]})
+	tabs.insert(5, {"key": "returns", "label": "Returns to HO", "count": counts["returns"]})
 	return {"tab": tab, "tabs": tabs,
 			"late": late, "late_days": LATE_DAYS,
 			"late_transfers": sum(1 for r in store_transfers if r["waiting_days"] >= LATE_DAYS),
+			"late_returns": sum(1 for r in store_returns if r["waiting_days"] >= LATE_DAYS),
 			"rows": rows, "stores": stores, "is_approver": approver, "is_store": is_store,
 			"can_create": frappe.has_permission("Material Request", "create") and is_store,
 			"can_transfer": frappe.has_permission("Stock Entry", "create") and is_store}
