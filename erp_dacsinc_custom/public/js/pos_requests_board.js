@@ -4,6 +4,8 @@
 //   requests of the chosen stage, each with the one action that moves it on.
 // - "Store Transfers": draft transfers into a store not made for a request (store to store),
 //   waiting for the receiving store to accept them (pos_request.guard_transfer_submit).
+// - "Returns to HO": draft POS transfers back into the supply warehouse (VV Puram - IND), waiting
+//   for warehouse approval (pos_notify.guard_pos_approval); Approve submits it (approve_return).
 // - The same dialogs (send, review, dispatch, receive, purchase shortfall) are used by the
 //   Material Request form (pos_stock.js), so the board and the form always behave alike.
 // What a user may do comes from the server (row.can / get_request().can); the server
@@ -17,13 +19,14 @@
 		"Draft": "gray", "Pending HO Approval": "orange", "Rejected": "red", "Approved": "blue",
 		"In Transit": "purple", "Partly Received": "yellow", "Received": "green", "Cancelled": "gray",
 	};
-	const TAB_COLORS = { pending: "#d97706", draft: "#6b7280", dispatch: "#2563eb", transit: "#7c3aed", transfers: "#0891b2", received: "#16a34a" };
+	const TAB_COLORS = { pending: "#d97706", draft: "#6b7280", dispatch: "#2563eb", transit: "#7c3aed", transfers: "#0891b2", returns: "#be185d", received: "#16a34a" };
 	const HINTS = {
 		pending: __("Waiting for HO to approve"),
 		draft: __("Not sent yet, or sent back by HO"),
 		dispatch: __("Approved — HO makes the transfer"),
 		transit: __("Transfer made — the store checks and submits it"),
 		transfers: __("Store to store — the receiving store accepts it"),
+		returns: __("Store sends stock back — warehouse / POS Admin approves it"),
 		received: __("Delivered to the store — last 30 days"),
 	};
 
@@ -236,7 +239,8 @@
 			const tiles = d.tabs.map((t) => `<div class="prb-tile ${t.key === d.tab ? "active" : ""}" data-tab="${t.key}" style="--c:${TAB_COLORS[t.key]}">
 				<div class="n">${t.count}</div><div class="l">${esc(t.label)}</div><div class="h">${esc(HINTS[t.key])}</div>
 				${t.key === "transit" && d.late ? `<div class="late">${__("{0} waiting over {1} days", [d.late, d.late_days])}</div>` : ""}
-				${t.key === "transfers" && d.late_transfers ? `<div class="late">${__("{0} waiting over {1} days", [d.late_transfers, d.late_days])}</div>` : ""}</div>`).join("");
+				${t.key === "transfers" && d.late_transfers ? `<div class="late">${__("{0} waiting over {1} days", [d.late_transfers, d.late_days])}</div>` : ""}
+				${t.key === "returns" && d.late_returns ? `<div class="late">${__("{0} waiting over {1} days", [d.late_returns, d.late_days])}</div>` : ""}</div>`).join("");
 			const rows = d.rows.length ? d.rows.map(row_html).join("")
 				: `<div class="prb-empty">${__("Nothing in {0}.", [esc((d.tabs.find((t) => t.key === d.tab) || {}).label)])}</div>`;
 			root.innerHTML = `
@@ -279,8 +283,31 @@
 			</div>`;
 		}
 
+		function return_html(r) {
+			const late = r.waiting_days >= (state.data.late_days || 2);
+			const items = r.items.slice(0, 6).map((i) => `<span>${esc(i.item_code)} × <b>${num(i.qty)}</b></span>`).join("")
+				+ (r.items.length > 6 ? `<span>+${r.items.length - 6} ${__("more")}</span>` : "");
+			const acts = [];
+			if (r.can.approve) acts.push(`<button class="btn btn-success btn-xs" data-act="approve">${__("Approve")}</button>`);
+			acts.push(`<button class="btn btn-default btn-xs" data-act="open">${__("Open")}</button>`);
+			return `<div class="prb-row ${late ? "prb-late" : ""}" data-name="${esc(r.name)}" data-kind="return">
+				<div class="prb-main">
+					<div><span class="prb-name" data-act="open">${esc(r.name)}</span>
+						<span class="indicator-pill orange" style="margin-left:6px">${__("Waiting for Approval")}</span>
+						<span class="text-muted small" style="margin-left:6px">${__("Return to HO")}</span>
+						${late ? `<span class="prb-late-badge">${__("Waiting {0} days — not approved yet", [r.waiting_days])}</span>` : ""}</div>
+					<div class="prb-meta"><b>${esc(r.from)} → ${esc(r.to)}</b> · ${esc(r.owner_name)} · ${__("sent {0}", [frappe.datetime.comment_when(r.sent_on, true)])}
+						· ${r.items.length} ${__("items")}, ${num(r.total_qty)} ${__("qty")}</div>
+					<div class="prb-items">${items}</div>
+					<div class="prb-po text-muted">${__("Warehouse Incharge, Warehouse Executive or POS Admin checks what came back and approves it.")}</div>
+				</div>
+				<div class="prb-acts">${acts.join("")}</div>
+			</div>`;
+		}
+
 		function row_html(r) {
 			if (r.kind === "transfer") return transfer_html(r);
+			if (r.kind === "return") return return_html(r);
 			const items = r.items.slice(0, 6).map((i) => `<span>${esc(i.item_code)} × <b>${num(i.qty)}</b>${
 				i.dispatched > 0.0001 && i.dispatched + 0.0001 < i.qty ? ` <span class="text-muted">(${__("{0} received", [num(i.dispatched)])})</span>` : ""}</span>`).join("")
 				+ (r.items.length > 6 ? `<span>+${r.items.length - 6} ${__("more")}</span>` : "");
@@ -330,7 +357,14 @@
 			const row = e.target.closest(".prb-row");
 			if (!act || !row) return;
 			const name = row.dataset.name;
-			if (row.dataset.kind === "transfer") return frappe.set_route("Form", "Stock Entry", name);
+			if (row.dataset.kind === "return" && act.dataset.act === "approve") {
+				return frappe.confirm(__("Approve {0}? The stock moves into the warehouse now. Open it first if you need to change a qty.", [name.bold()]), () =>
+					call("approve_return", { name }, __("Approving…")).then(() => {
+						frappe.show_alert({ message: __("{0} approved.", [name]), indicator: "green" });
+						load();
+					}));
+			}
+			if (row.dataset.kind === "transfer" || row.dataset.kind === "return") return frappe.set_route("Form", "Stock Entry", name);
 			const handlers = { send, review, dispatch, receive: (n) => receive(n), purchase: (n) => purchase(n),
 				open: (n) => frappe.set_route("Form", "Material Request", n) };
 			handlers[act.dataset.act] && handlers[act.dataset.act](name, load);

@@ -70,7 +70,9 @@ INITIAL_ROLES = [
 ]
 # Role Profile name when it differs from the role name (an existing profile is
 # reused; names match case-insensitively, e.g. "DAC CRM HEAD").
-PROFILE_NAME = {"Merchandiser User": "Merchandiser", "Warhouse Executive": "Warehouse Executive"}
+PROFILE_NAME = {"Merchandiser User": "Merchandiser", "Warhouse Executive": "Warehouse Executive",
+				# live already has an unrelated old "Operations Manager" profile (many roles, incl. accounts)
+				"Operations Manager": "Operations Manager (Order Flow)"}
 BASE_ROLES = ["Employee", "Employee Self Service"]
 SHEET_ROLES = INITIAL_ROLES  # kept for callers; use sheet_roles() for the live list
 ROLE_FLAG = "custom_dacsinc_access_role"

@@ -94,6 +94,12 @@ and the rows' warehouses.
     for a request: incoming (with **Check & accept**) and sent for a store, all of them
     for POS Admin / HO. Each shows age, with the same "Waiting N days" flag. A store
     board also has **+ New Transfer**.
+  - The board's **Returns to HO** tile lists a store's draft transfers back into the supply
+    warehouse (VV Puram - IND, `pos_notify.needs_warehouse_approval`) — Store Transfers
+    leaves them out, since they go to no store (`_store_returns`). POS Admin / HO see all
+    (store picker = the sending store); a store sees what it sent, without Approve.
+    **Approve** (Warehouse Incharge / Executive / POS Admin) submits it (`approve_return`;
+    `guard_pos_approval` records Approved By). The form's own Approve still works.
   - The Stock Entry form says whose turn it is ("Sent to <store>…", "In transit to
     <store>…", or "Transfer from <store> to your store — check, then Submit"), and hides
     Submit from everyone who can't accept it (`get_transfer_state`).

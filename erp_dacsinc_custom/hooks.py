@@ -43,7 +43,7 @@ app_include_js = [
     # list filter boxes match parts of words: "mo ra" finds "Mohan Madhan Raj" (list_words.js)
     "/assets/erp_dacsinc_custom/js/list_words.js?v=1.0.0",
     # POS store requests board + dialogs (workspace block and Material Request form) — bump ?v= on change
-    "/assets/erp_dacsinc_custom/js/pos_requests_board.js?v=1.0.6",
+    "/assets/erp_dacsinc_custom/js/pos_requests_board.js?v=1.0.7",
     # Overall discount skips items ticked "Exclude from Overall Discount" (overall_discount.py)
     "/assets/erp_dacsinc_custom/js/overall_discount.js?v=1.0.1",
     # Workspace shortcuts without a count filter are not counted (single DocTypes have no table)

@@ -13,6 +13,8 @@ import frappe
 ROLE_TYPES = {
 	# jobber transfers of their orders; Uniform tab transfers
 	"Merchandiser User": ["Send to Subcontractor", "Material Transfer", "Repack"],
+	# same work for every customer's orders (ops_manager.py)
+	"Operations Manager": ["Send to Subcontractor", "Material Transfer", "Repack"],
 }
 # roles every login has; they decide nothing here
 BASE_ROLES = {"All", "Guest", "Desk User", "Employee", "Employee Self Service"}

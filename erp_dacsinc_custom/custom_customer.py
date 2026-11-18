@@ -380,3 +380,6 @@ def guard_protected_customer_fields(doc, method=None):
 def extend_bootinfo(bootinfo):
 	"""The Customer form / list know whether this user may change the protected fields."""
 	bootinfo.dacs_can_edit_customer_protected = can_edit_protected_customer_fields()
+	# Operations Manager: Subcontract POs / jobber transfers only (ops_manager.py)
+	from erp_dacsinc_custom.ops_manager import boot as ops_boot
+	ops_boot(bootinfo)

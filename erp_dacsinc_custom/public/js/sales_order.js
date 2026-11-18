@@ -6025,7 +6025,8 @@ function so_buy_btn(d, so_name_arg, item_arg, qty, primary, pair_key) {
     const subcontract = (d.is_sub_contracted_item || d.is_bom_item) && d.bom_no;
     if (!subcontract) {
         // A Merchandiser User raises only Subcontract POs (custom_script.guard_merchandiser_plain_po).
-        if (so_is_scoped_merchandiser()) {
+        // So does an Operations Manager without a purchase role (ops_manager.is_limited).
+        if (so_is_scoped_merchandiser() || (frappe.boot.dacs_ops_limited || {})['Purchase Order']) {
             return `<div class="so-action__note" style="color:var(--text-muted);" title="${esc('A normal purchase PO is raised by the purchase team.')}">
                 <i class="fa fa-shopping-cart"></i> ${__('Purchase team to order')}</div>`;
         }
