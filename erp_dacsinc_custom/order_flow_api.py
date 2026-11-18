@@ -6167,7 +6167,9 @@ def setup_sales_order_workflow(force=False):
     
     workflow.append("states", {"state": "Draft", "doc_status": 0, "allow_edit": "All"})
     workflow.append("states", {"state": "Pending Merchandiser Approval", "doc_status": 0, "allow_edit": "Merchandiser User"})
-    workflow.append("states", {"state": "Pending Final Approval", "doc_status": 0, "allow_edit": "System Manager"})
+    # Admin edits an order waiting for final approval (user, 18-11-2026; every System Manager user on live also
+    # holds Admin) — patches/so_final_approval_edit_admin.py sets the same on existing sites.
+    workflow.append("states", {"state": "Pending Final Approval", "doc_status": 0, "allow_edit": "Admin"})
     workflow.append("states", {"state": "Approved", "doc_status": 1, "allow_edit": "System Manager"})
     workflow.append("states", {"state": "Rejected", "doc_status": 0, "allow_edit": "All"})
     
