@@ -15,6 +15,7 @@ Profile: **Operations Manager (Order Flow)** = Operations Manager + Employee + E
 | Stock Entries | jobber transfers of any Sales Order + own; types Send to Subcontractor / Material Transfer / Repack | same, own orders |
 | Order Flow tabs | SO Approvals (all 5 sub-tabs), Sales Tracker, Pick Lists, Job Work, Stock Tracker, Embroidery Transfers — view and act | same |
 | Sales Tracker stages Ready for Delivery / Need to Bill | counts shown (no amounts) | same |
+| Sales Tracker › Merchandiser filter (pick a merchandiser's customers) | yes (like every non-merchandiser; not on SO Approvals) | no — they see only their own |
 | SO approval | **merchandiser step only** (Approve / Reject at Pending Merchandiser Approval) | same |
 | Final SO approval | **no** — stays with Sales Order Final Approver / System Manager / Super Admin and the users in Admin Settings › Sales Order Final Approval | no |
 | Accounts | no Read on Sales / Purchase Invoice, Payment Entry, Journal Entry; no Finance or Pending DN/SI tab; no accounting / tax reports | — |

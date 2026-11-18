@@ -512,7 +512,7 @@ the same state adds a role:
 | State | Edit |
 |---|---|
 | Draft, Rejected | All |
-| Pending Merchandiser Approval | Merchandiser User, **Admin**, **Sales Order Final Approver** |
+| Pending Merchandiser Approval | Merchandiser User, **Admin**, **Sales Order Final Approver**, Operations Manager (docs/operations-manager.md) |
 | Pending Final Approval | **Admin**, **Sales Order Final Approver** |
 | Approved (submitted) | System Manager |
 
@@ -831,7 +831,15 @@ Orders/Material Requests/Receipts/Embroidery Work Orders/Invoices tied to
 their own Sales Orders, the same way Tracker already scoped Sales Orders
 themselves.
 
-**Who is scoped: anyone holding Merchandiser User, except admins.** This was
+**Who is scoped: anyone holding Merchandiser User, except admins.** (Operations Manager is a separate role and sees every customer's orders —
+`docs/operations-manager.md`.)
+
+**Merchandiser filter** (`merch_filter_allowed` in order_flow.js): final approvers and admins (System
+Manager / Super Admin / Admin) on SO Approvals and Sales Tracker; every other user on Sales Tracker only,
+except a scoped Merchandiser User (`perms.scoped_merchandiser`) — their list holds only their own
+customers' orders, so picking another merchandiser would just empty it. Not on SO Approvals for the rest:
+its sub-tabs already split orders by merchandiser. The filter only narrows; the server applies each
+user's own limits first, so it never shows an order the user couldn't see without it. This was
 once narrower — any OTHER role that also granted the tab (or, for the Desk
 hooks, read on the doctype) switched scoping off, on the reasoning that a
 combined operational role needs company-wide visibility. In practice that
