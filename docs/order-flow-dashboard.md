@@ -502,6 +502,21 @@ purpose Raw Material). Nothing to request → a plain "Nothing to request".
 must stay stable; `stage_label` is free text rendered as-is and safe to
 reword without touching any client-side logic.
 
+## Who can edit a draft Sales Order in each workflow state
+
+The Sales Order Workflow (`order_flow_api.setup_sales_order_workflow`) makes a draft read-only for everyone except
+the state's one "Only Allow Edit For" role — Write permission on Sales Order is not enough:
+
+| State | Edit |
+|---|---|
+| Draft, Rejected | All |
+| Pending Merchandiser Approval | Merchandiser User |
+| Pending Final Approval | **Admin** (`patches/so_final_approval_edit_admin.py`; was System Manager — every System Manager user also holds Admin) |
+| Approved (submitted) | System Manager |
+
+The patch sets only that one field: it does not rebuild the workflow, so a site's own transitions stay as they are.
+Approving is separate (the transitions: Sales Order Final Approver, Super Admin, System Manager).
+
 ## Final approval: BOM rows vs normal rows
 
 Before a Sales Order's **final** approval, `dacs_confirm_bom_split` (public/js/workflow.js,
