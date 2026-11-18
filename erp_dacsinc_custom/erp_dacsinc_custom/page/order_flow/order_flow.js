@@ -5990,9 +5990,96 @@ class OrderFlow {
     }
 
     handle_final_approval(so) {
-        // First: which rows have a BOM (→ Subcontract PO) and which are normal items (workflow.js).
-        dacs_confirm_bom_split([so]).then((ok) => {
-            if (ok) this.handle_approval_with_checks(so, __('Are you sure you want to final approve Sales Order {0}?', [so]));
+        // First the order's lines and prices (Price List Rate / Discount % editable — so_price_edit.py), then, as
+        // before: which rows have a BOM (→ Subcontract PO) and which are normal items (workflow.js), then the
+        // customer's details.
+        this.prompt_final_prices(so).then((go) => {
+            if (!go) return;
+            dacs_confirm_bom_split([so]).then((ok) => {
+                if (ok) this.handle_approval_with_checks(so, __('Are you sure you want to final approve Sales Order {0}?', [so]));
+            });
+        });
+    }
+
+    // Final Approve › Items & prices: every line with its Price List Rate (editable — Rate stays read-only, the rule
+    // everywhere), its discount (as it is) and the Rate / Amount they give. "Save & continue" saves changed lines (ERPNext works out the Rate, taxes and totals);
+    // "Continue" goes on without saving. Resolves true to go on, false when closed.
+    prompt_final_prices(so) {
+        return new Promise((resolve) => {
+            frappe.call({ method: 'erp_dacsinc_custom.so_price_edit.get_price_lines', args: { sales_order: so } }).then((r) => {
+                const d0 = r.message;
+                if (!d0) return resolve(false);
+                const cur = d0.currency;
+                const money = (v) => format_currency(v, cur);
+                const num = (v) => (Math.round(flt(v) * 100) / 100).toString();
+                let settled = false;
+                const dialog = new frappe.ui.Dialog({
+                    title: __('Final Approve {0}: items and prices', [so]),
+                    size: 'extra-large',
+                    fields: [{ fieldtype: 'HTML', fieldname: 'lines' }],
+                    primary_action_label: __('Continue'),
+                    primary_action: () => save_and_go(),
+                    secondary_action_label: __('Cancel'),
+                    secondary_action: () => dialog.hide(),
+                });
+                const rows_html = d0.rows.map((x) => `
+                    <tr data-row="${of_esc(x.name)}">
+                        <td>${x.idx}</td>
+                        <td><b>${of_esc(x.item_code)}</b>${x.item_name && x.item_name !== x.item_code ? `<div class="text-muted small">${of_esc(x.item_name)}</div>` : ''}</td>
+                        <td class="text-right">${flt(x.qty)} ${of_esc(x.uom || '')}</td>
+                        <td class="text-right"><input type="number" min="0" step="0.01" class="form-control input-xs text-right ofp-plr" value="${num(x.price_list_rate)}" style="width:110px;margin-left:auto"></td>
+                        <td class="text-right">${flt(x.discount_percentage) ? `${num(x.discount_percentage)}%` : ''}</td>
+                        <td class="text-right ofp-rate">${money(x.rate)}${x.margin ? `<div class="text-muted small">${__('with margin')}</div>` : ''}</td>
+                        <td class="text-right ofp-amt">${money(x.amount)}</td>
+                    </tr>`).join('');
+                dialog.fields_dict.lines.$wrapper.html(`
+                    <div class="text-muted small" style="margin-bottom:8px;">${__('Change a line\'s Price List Rate if needed. The Rate is worked out from it and the line\'s discount, as on the Sales Order form.')}</div>
+                    <div style="overflow-x:auto;"><table class="table table-bordered table-condensed" style="font-size:12.5px;">
+                        <thead><tr><th>#</th><th>${__('Item')}</th><th class="text-right">${__('Qty')}</th><th class="text-right">${__('Price List Rate')}</th>
+                            <th class="text-right">${__('Discount')}</th><th class="text-right">${__('Rate')}</th><th class="text-right">${__('Amount')}</th></tr></thead>
+                        <tbody>${rows_html}</tbody>
+                    </table></div>
+                    <div class="text-right" style="font-size:13px;">${__('Net Total')}: <b class="ofp-net">${money(d0.net_total)}</b> &nbsp; · &nbsp; ${__('Grand Total')}: <b>${money(d0.rounded_total || d0.grand_total)}</b>
+                        <div class="text-muted small ofp-note" style="display:none;">${__('Totals and taxes are worked out again when you save.')}</div></div>`);
+                const $w = dialog.fields_dict.lines.$wrapper;
+                const changed = () => d0.rows.filter((x) => {
+                    const $tr = $w.find(`tr[data-row="${CSS.escape(x.name)}"]`);
+                    return Math.abs(flt($tr.find('.ofp-plr').val()) - flt(x.price_list_rate)) >= 0.005;
+                }).map((x) => {
+                    const $tr = $w.find(`tr[data-row="${CSS.escape(x.name)}"]`);
+                    return { name: x.name, price_list_rate: flt($tr.find('.ofp-plr').val()) };
+                });
+                // preview of a changed line (a line with a margin is worked out on save)
+                $w.on('input', 'input', (e) => {
+                    const $tr = $(e.target).closest('tr');
+                    const x = d0.rows.find((y) => y.name === $tr.data('row'));
+                    if (x && !x.margin) {
+                        const rate = flt($tr.find('.ofp-plr').val()) * (1 - flt(x.discount_percentage) / 100);
+                        $tr.find('.ofp-rate').text(money(rate));
+                        $tr.find('.ofp-amt').text(money(rate * flt(x.qty)));
+                    }
+                    const n = changed().length;
+                    dialog.set_primary_action(n ? __('Save & continue') : __('Continue'), () => save_and_go());
+                    $w.find('.ofp-note').toggle(!!n);
+                });
+                const save_and_go = () => {
+                    const rows = changed();
+                    if (!rows.length) { settled = true; dialog.hide(); return resolve(true); }
+                    frappe.call({
+                        method: 'erp_dacsinc_custom.so_price_edit.save_price_lines',
+                        args: { sales_order: so, rows: JSON.stringify(rows), modified: d0.modified },
+                        freeze: true, freeze_message: __('Saving prices…'),
+                    }).then((res) => {
+                        const m = res.message || {};
+                        frappe.show_alert({ message: __('Prices saved on {0} line(s). Grand Total {1}', [m.changed || 0, money(m.rounded_total || m.grand_total)]), indicator: 'green' });
+                        settled = true;
+                        dialog.hide();
+                        resolve(true);
+                    });
+                };
+                dialog.onhide = () => { if (!settled) resolve(false); };
+                dialog.show();
+            });
         });
     }
 
