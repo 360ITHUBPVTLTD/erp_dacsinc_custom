@@ -50,6 +50,35 @@ def _view(doc):
 	}
 
 
+def _set_tax_templates(doc, rows):
+	"""What the form does when a price changes (erpnext transaction.js, the rate trigger): the line's GST template
+	for its new net rate (an item's 5% / 18% slab, docs/item-taxes.md), from ERPNext's own get_item_tax_template —
+	so the save finds every template right, as after an edit on the form (no "Item Tax template updated" alert),
+	and the taxes are worked out with it."""
+	from erpnext.controllers.taxes_and_totals import calculate_taxes_and_totals
+	from erpnext.stock.get_item_details import get_item_tax_map, get_item_tax_template
+
+	class _Rates(calculate_taxes_and_totals):
+		"""The form's own on-screen calculation: Rate, bill discount and net rate, without the save's template check
+		(which would switch the template itself and show "Item Tax template updated")."""
+
+		def validate_item_tax_template(self):
+			pass
+
+	_Rates(doc)  # the new Rate / net rate of the changed lines (and the bill discount over them)
+	for r in rows:
+		if not (r.item_code and r.rate):
+			continue
+		tmpl = get_item_tax_template({
+			"item_code": r.item_code, "company": doc.company, "base_net_rate": r.base_net_rate,
+			"tax_category": doc.get("tax_category"), "item_tax_template": r.item_tax_template,
+			"transaction_date": doc.get("transaction_date"),
+		})
+		if tmpl and tmpl != r.item_tax_template:
+			r.item_tax_template = tmpl
+			r.item_tax_rate = get_item_tax_map(doc.company, tmpl, as_json=True)
+
+
 @frappe.whitelist()
 def get_price_lines(sales_order):
 	doc = frappe.get_doc("Sales Order", sales_order)
@@ -66,7 +95,7 @@ def save_price_lines(sales_order, rows, modified):
 	if str(doc.modified) != str(modified):
 		frappe.throw(_("{0} was changed by someone else after you opened it. Close this and open Final Approve again.").format(doc.name))
 	by_name = {r.name: r for r in doc.items}
-	changed = 0
+	changed, touched = 0, []
 	for x in frappe.parse_json(rows) or []:
 		r = by_name.get(x.get("name"))
 		if not r:
@@ -82,7 +111,9 @@ def save_price_lines(sales_order, rows, modified):
 		else:
 			r.rate = 0  # ERPNext sets it again on save from the Price List Rate, the discount % and any margin
 		changed += 1
+		touched.append(r)
 	if changed:
+		_set_tax_templates(doc, touched)
 		doc.save()
 		frappe.get_doc({"doctype": "Comment", "comment_type": "Info", "reference_doctype": "Sales Order", "reference_name": doc.name,
 		                "content": _("Prices changed on {0} line(s) at Final Approve by {1}.").format(

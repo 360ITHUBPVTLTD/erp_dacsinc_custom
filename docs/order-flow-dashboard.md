@@ -536,7 +536,17 @@ be changed** — the rule everywhere: Rate stays read-only, the price is changed
 (`so_price_edit.save_price_lines`): their Rate is cleared and ERPNext's own calculation on save sets it from the
 Price List Rate, the discount % and any margin, then the taxes, the bill discount and the totals — the same result as
 the form (checked line and totals). A line discounted by an amount keeps that amount (Rate = Price List Rate −
-discount amount). **Continue** (nothing changed) saves nothing. Then, as before, the BOM split
+discount amount).
+
+GST slab (docs/item-taxes.md: e.g. 5% below ₹2,501, 18% from it): as the form does when a price changes
+(erpnext `transaction.js`, the rate trigger → `get_item_tax_template`), the prompt first works the new net rate out
+without the save's template check (`so_price_edit._set_tax_templates`, a `calculate_taxes_and_totals` subclass whose
+`validate_item_tax_template` does nothing), sets each changed line's template from that net rate with ERPNext's
+`get_item_tax_template`, then saves. So the save finds the templates right and shows no "Item Tax template updated"
+alert — like a save on the form. Checked In-State (CGST + SGST) and Out-State (IGST): ₹400 → ₹3,000 / ₹2,600 → 18%,
+taxes and totals identical to ERPNext's own save. With a **bill discount on Grand Total** near the slab ERPNext's
+save checks the slab before and after the discount and shows that alert itself — on the form too; the line still
+ends on the right template and GST. **Continue** (nothing changed) saves nothing. Then, as before, the BOM split
 check and the customer details.
 
 - Only an admin or a user in Admin Settings › Sales Order Final Approval, only on a draft in Pending Merchandiser /
