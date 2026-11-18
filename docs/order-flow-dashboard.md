@@ -527,22 +527,44 @@ Order from a real role.
 which the browser keeps until the DocType itself changes. After such a change each user clicks their picture ›
 **Reload** (or reloads twice within 5 seconds).
 
-## Final Approve: items and prices
+## Final Approve: one dialog (items & prices, BOM check, customer details)
 
-On the dashboard's **Final Approve** of one order (SO Approvals, `handle_final_approval`) the first step lists the
-order's lines — item, qty, Price List Rate, discount, Rate, Amount, Net / Grand Total. **Only the Price List Rate can
-be changed** — the rule everywhere: Rate stays read-only, the price is changed through the Price List Rate
-(docs/rate-read-only.md); each line keeps its own discount and margin. **Save & continue** saves the changed lines
-(`so_price_edit.save_price_lines`): their Rate is cleared and ERPNext's own calculation on save sets it from the
-Price List Rate, the discount % and any margin, then the taxes, the bill discount and the totals — the same result as
-the form (checked line and totals). A line discounted by an amount keeps that amount (Rate = Price List Rate −
-discount amount). **Continue** (nothing changed) saves nothing. Then, as before, the BOM split
-check and the customer details.
+Final approval of **one** order is one dialog, the same on the **Sales Order form** (workflow Approve at Pending Final
+Approval, `WorkflowOverride.show_actions`) and on the **Order Flow page** (SO Approvals › Final Approve,
+`handle_final_approval`): `dacs_final_approve_dialog` in `public/js/workflow.js` (loaded on every desk page;
+`hooks.py` › `app_include_js` version bumped when it changes). It shows:
 
-- Only an admin or a user in Admin Settings › Sales Order Final Approval, only on a draft in Pending Merchandiser /
-  Final Approval, and only if the order was not changed since the prompt opened (`modified`).
-- A comment on the order records how many lines changed and who changed them.
-- Bulk Final Approve and the form's Approve button are unchanged (no price step).
+- the order's lines — item, qty, **Price List Rate (editable)**, discount, Rate, Amount, **BOM → Subcontract PO** or
+  **Normal item** — with Net / Grand Total;
+- the tick "I have checked which rows have a BOM (Subcontract PO) and which are normal items" (required);
+- the customer's details (`wf_customer_verify_fields`, the same fields as Verify Customer Details below) and the skip
+  comment.
+
+**Update & Final Approve** (or **Skip & Approve** with a comment) runs, in this order: changed prices saved
+(`so_price_edit.save_price_lines`), then the same calls as before — `save_and_approve_sales_order` (customer
+details) or `approve_sales_order_with_comment`. A step that is refused stops the rest and shows its message; prices
+already saved stay saved (the dialog closes and the screen reloads the order).
+
+**Prices.** Only the Price List Rate can be changed — the rule everywhere: Rate stays read-only, the price is changed
+through the Price List Rate (docs/rate-read-only.md); each line keeps its own discount and margin. A changed line's
+Rate is cleared and ERPNext's own calculation on save sets it from the Price List Rate, the discount % and any margin,
+then the taxes, the bill discount and the totals — the same result as the form (checked line and totals). A line
+discounted by an amount keeps that amount (Rate = Price List Rate − discount amount). Only an admin or a user in Admin
+Settings › Sales Order Final Approval, only on a draft in Pending Merchandiser / Final Approval, and only if the order
+was not changed since the dialog opened (`modified`). A comment on the order records how many lines changed and who
+changed them.
+
+**GST slab** (docs/item-taxes.md: e.g. 5% below ₹2,501, 18% from it): as the form does when a price changes
+(erpnext `transaction.js`, the rate trigger → `get_item_tax_template`), the save first works the new net rate out
+without the save's template check (`so_price_edit._set_tax_templates`, a `calculate_taxes_and_totals` subclass whose
+`validate_item_tax_template` does nothing), sets each changed line's template from that net rate with ERPNext's
+`get_item_tax_template`, then saves — so no "Item Tax template updated" alert, like a save on the form. Checked
+In-State (CGST + SGST) and Out-State (IGST): ₹400 → ₹3,000 / ₹2,600 → 18%, taxes and totals identical to ERPNext's
+own save. With a **bill discount on Grand Total** near the slab ERPNext's save checks the slab before and after the
+discount and shows that alert itself — on the form too; the line still ends on the right template and GST.
+
+Unchanged: Bulk Final Approve (BOM check below, then approve), Reject, and the merchandiser approval (Verify
+Customer Details).
 
 ## Final approval: BOM rows vs normal rows
 
@@ -556,10 +578,8 @@ loaded on every desk page) shows every row split into two groups:
 have a BOM…". After final approval a row can't change group, so a wrong row is
 corrected on the order first.
 
-- It runs on the Sales Order form's Approve at Pending Final Approval
-  (`wf_action`), on the Order Flow page's Final Approve (`handle_final_approval`, before
-  Verify Customer Details), and on Bulk Final Approve (all selected orders in one
-  dialog).
+- As its own dialog it runs on **Bulk Final Approve** (all selected orders in one dialog). The final approval of
+  one order (form or Order Flow page) has the same check inside the one-step Final Approve dialog above.
 - Data comes from `order_flow_api.get_bom_split`, which returns only orders the user
   may read.
 
@@ -567,8 +587,10 @@ corrected on the order first.
 
 `show_verification_dialog` in `order_flow.js`, and a **near-identical
 duplicate** in `public/js/workflow.js` (triggered from the Sales Order
-form's own workflow-action buttons via the `WorkflowOverride` class) — both
-call the same server methods and must be kept in sync when either changes.
+form's own workflow-action buttons via the `WorkflowOverride` class; its fields are
+`wf_customer_verify_fields`, also used by the one-step Final Approve dialog) — both
+call the same server methods and must be kept in sync when either changes. Final
+approval of one order uses the one-step Final Approve dialog instead (above).
 
 Backed by `verify_customer_details(sales_order)` in `order_flow_api.py`.
 

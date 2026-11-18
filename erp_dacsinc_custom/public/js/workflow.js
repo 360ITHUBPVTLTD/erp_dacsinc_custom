@@ -156,16 +156,12 @@ class WorkflowOverride extends frappe.ui.form.States {
                         
                         
                         else if (me.frm.doc.doctype === "Sales Order") {
-                            // Final approval: confirm which rows have a BOM (→ Subcontract PO) first.
-                            if (d.action === "Approve" && me.frm.doc.workflow_state === "Pending Final Approval" && !d.__bom_checked) {
-                                dacs_confirm_bom_split([me.frm.doc.name]).then((ok) => {
-                                    if (!ok) return;
-                                    d.__bom_checked = true;
-                                    wf_action();
-                                });
+                            // Final approval: the one-step Final Approve dialog (items & prices, BOM check, customer
+                            // details) — the same as the Order Flow page's Final Approve.
+                            if (d.action === "Approve" && me.frm.doc.workflow_state === "Pending Final Approval") {
+                                dacs_final_approve_dialog(me.frm.doc.name, { on_done: () => me.frm.reload_doc() });
                                 return;
                             }
-                            d.__bom_checked = false;  // one confirmation per click
                             if (d.action === "Reject" || d.action.toLowerCase().includes("reject")) {
                                 frappe.prompt([
                                     {
@@ -198,135 +194,7 @@ class WorkflowOverride extends frappe.ui.form.States {
                                             return;
                                         }
                                         
-                                        const contact_details = res.contact_details || {};
-                                        const address_query = () => ({
-                                            query: 'frappe.contacts.doctype.address.address.address_query',
-                                            filters: { link_doctype: 'Customer', link_name: res.customer }
-                                        });
-                                        const customer_link_html = `<a href="${frappe.utils.get_form_link('Customer', res.customer)}" target="_blank">${wf_esc(res.customer_display_name || res.customer)} (${wf_esc(res.customer)})</a>`;
-                                        const customer_label_html = contact_details.first_name
-                                            ? `${customer_link_html} <span style="color:var(--text-muted);">(${wf_esc(contact_details.first_name)})</span>`
-                                            : customer_link_html;
-
-                                         const fields = [
-                                            {
-                                                fieldtype: 'HTML',
-                                                fieldname: 'notice',
-                                                options: `
-                                                    <div class="alert alert-warning" style="margin-bottom: 15px;">
-                                                        <i class="fa fa-warning"></i> ${__('Customer {0} details. Fill or correct them below to save to master, or enter a comment to skip.', [`<b>${customer_label_html}</b>`])}
-                                                    </div>
-                                                `
-                                            },
-                                            {
-                                                fieldtype: 'Section Break',
-                                                label: __('Customer Profile')
-                                            },
-                                            {
-                                                fieldtype: 'Data',
-                                                fieldname: 'gstin',
-                                                label: __('GSTIN / UIN'),
-                                                default: res.gstin || '',
-                                                onchange: () => wf_sync_gst_category(dialog)
-                                            },
-                                            {
-                                                fieldtype: 'Column Break'
-                                            },
-                                            {
-                                                fieldtype: 'Select',
-                                                fieldname: 'gst_category',
-                                                label: __('GST Category'),
-                                                options: wf_gst_category_options(),
-                                                default: res.gst_category || wf_guess_gst_category(res.gstin) || '',
-                                                // description: __("Guessed from the GSTIN above — override if it's wrong.")
-                                            },
-                                            {
-                                                fieldtype: 'Column Break'
-                                            },
-                                            {
-                                                fieldtype: 'Link',
-                                                options: 'Tax Category',
-                                                fieldname: 'tax_category',
-                                                label: __('Tax Category'),
-                                                default: res.tax_category || ''
-                                            },
-                                            {
-                                                fieldtype: 'Section Break',
-                                                label: __('Billing & Shipping Address')
-                                            },
-                                            {
-                                                fieldtype: 'Link',
-                                                options: 'Address',
-                                                fieldname: 'billing_address',
-                                                label: __('Billing Address'),
-                                                default: res.billing_address || '',
-                                                description: __('Pick one of this customer\'s existing addresses, or use "Create a New Address" — applies to this Sales Order only.'),
-                                                get_query: address_query,
-                                                onchange: () => wf_refresh_address_preview(dialog, 'billing_address', 'billing_address_display')
-                                            },
-                                            {
-                                                fieldtype: 'Small Text',
-                                                fieldname: 'billing_address_display',
-                                                label: __('Address Preview'),
-                                                read_only: 1,
-                                                default: res.billing_address_display || ''
-                                            },
-                                            {
-                                                fieldtype: 'Column Break'
-                                            },
-                                            {
-                                                fieldtype: 'Link',
-                                                options: 'Address',
-                                                fieldname: 'shipping_address',
-                                                label: __('Shipping Address'),
-                                                default: res.shipping_address || '',
-                                                description: __('Pick one of this customer\'s existing addresses, or use "Create a New Address" — applies to this Sales Order only.'),
-                                                get_query: address_query,
-                                                onchange: () => wf_refresh_address_preview(dialog, 'shipping_address', 'shipping_address_display')
-                                            },
-                                            {
-                                                fieldtype: 'Small Text',
-                                                fieldname: 'shipping_address_display',
-                                                label: __('Address Preview'),
-                                                read_only: 1,
-                                                default: res.shipping_address_display || ''
-                                            },
-                                            {
-                                                fieldtype: 'Section Break',
-                                                label: __('Primary Contact Details')
-                                            },
-                                            {
-                                                fieldtype: 'Data',
-                                                fieldname: 'contact_first_name',
-                                                label: __('First Name'),
-                                                default: contact_details.first_name || ''
-                                            },
-                                            {
-                                                fieldtype: 'Column Break'
-                                            },
-                                            {
-                                                fieldtype: 'Data',
-                                                fieldname: 'contact_mobile_no',
-                                                label: __('Mobile Number'),
-                                                default: contact_details.mobile_no || ''
-                                            },
-                                            {
-                                                fieldtype: 'Data',
-                                                fieldname: 'contact_email',
-                                                label: __('Email ID'),
-                                                default: contact_details.email || ''
-                                            },
-                                            {
-                                                fieldtype: 'Section Break',
-                                                label: __('Skip Verification')
-                                            },
-                                            {
-                                                fieldtype: 'Small Text',
-                                                fieldname: 'skip_comment',
-                                                label: __('Or Approve with Comment (Will notify in dashboard)'),
-                                                placeholder: __('Enter comment if you wish to skip validations...')
-                                            }
-                                        ];
+                                        const fields = wf_customer_verify_fields(res, () => dialog);
 
                                         // No "Skip Delivery Note (Direct Billing)" control here —
                                         // same reasoning as the Order Flow page's copy of this
@@ -611,5 +479,269 @@ window.dacs_confirm_bom_split = function (sales_orders) {
             d.fields_dict.checked.$input.on("change", function () { btn.prop("disabled", !this.checked); });
             d.show();
         });
+    });
+};
+
+// The Verify Customer Details fields (GSTIN, GST / Tax Category, addresses, contact, skip comment), shared by the
+// Sales Order form's customer dialog and the one-step Final Approve dialog (dacs_final_approve_dialog).
+// get_dialog() returns the dialog they end up in (their onchange handlers need it).
+window.wf_customer_verify_fields = function (res, get_dialog) {
+    const contact_details = res.contact_details || {};
+    const address_query = () => ({
+        query: 'frappe.contacts.doctype.address.address.address_query',
+        filters: { link_doctype: 'Customer', link_name: res.customer }
+    });
+    const customer_link_html = `<a href="${frappe.utils.get_form_link('Customer', res.customer)}" target="_blank">${wf_esc(res.customer_display_name || res.customer)} (${wf_esc(res.customer)})</a>`;
+    const customer_label_html = contact_details.first_name
+        ? `${customer_link_html} <span style="color:var(--text-muted);">(${wf_esc(contact_details.first_name)})</span>`
+        : customer_link_html;
+
+    const fields = [
+        {
+            fieldtype: 'HTML',
+            fieldname: 'notice',
+            options: `
+                <div class="alert alert-warning" style="margin-bottom: 15px;">
+                    <i class="fa fa-warning"></i> ${__('Customer {0} details. Fill or correct them below to save to master, or enter a comment to skip.', [`<b>${customer_label_html}</b>`])}
+                </div>
+            `
+        },
+        {
+            fieldtype: 'Section Break',
+            label: __('Customer Profile')
+        },
+        {
+            fieldtype: 'Data',
+            fieldname: 'gstin',
+            label: __('GSTIN / UIN'),
+            default: res.gstin || '',
+            onchange: () => wf_sync_gst_category(get_dialog())
+        },
+        {
+            fieldtype: 'Column Break'
+        },
+        {
+            fieldtype: 'Select',
+            fieldname: 'gst_category',
+            label: __('GST Category'),
+            options: wf_gst_category_options(),
+            default: res.gst_category || wf_guess_gst_category(res.gstin) || '',
+            // description: __("Guessed from the GSTIN above — override if it's wrong.")
+        },
+        {
+            fieldtype: 'Column Break'
+        },
+        {
+            fieldtype: 'Link',
+            options: 'Tax Category',
+            fieldname: 'tax_category',
+            label: __('Tax Category'),
+            default: res.tax_category || ''
+        },
+        {
+            fieldtype: 'Section Break',
+            label: __('Billing & Shipping Address')
+        },
+        {
+            fieldtype: 'Link',
+            options: 'Address',
+            fieldname: 'billing_address',
+            label: __('Billing Address'),
+            default: res.billing_address || '',
+            description: __('Pick one of this customer\'s existing addresses, or use "Create a New Address" — applies to this Sales Order only.'),
+            get_query: address_query,
+            onchange: () => wf_refresh_address_preview(get_dialog(), 'billing_address', 'billing_address_display')
+        },
+        {
+            fieldtype: 'Small Text',
+            fieldname: 'billing_address_display',
+            label: __('Address Preview'),
+            read_only: 1,
+            default: res.billing_address_display || ''
+        },
+        {
+            fieldtype: 'Column Break'
+        },
+        {
+            fieldtype: 'Link',
+            options: 'Address',
+            fieldname: 'shipping_address',
+            label: __('Shipping Address'),
+            default: res.shipping_address || '',
+            description: __('Pick one of this customer\'s existing addresses, or use "Create a New Address" — applies to this Sales Order only.'),
+            get_query: address_query,
+            onchange: () => wf_refresh_address_preview(get_dialog(), 'shipping_address', 'shipping_address_display')
+        },
+        {
+            fieldtype: 'Small Text',
+            fieldname: 'shipping_address_display',
+            label: __('Address Preview'),
+            read_only: 1,
+            default: res.shipping_address_display || ''
+        },
+        {
+            fieldtype: 'Section Break',
+            label: __('Primary Contact Details')
+        },
+        {
+            fieldtype: 'Data',
+            fieldname: 'contact_first_name',
+            label: __('First Name'),
+            default: contact_details.first_name || ''
+        },
+        {
+            fieldtype: 'Column Break'
+        },
+        {
+            fieldtype: 'Data',
+            fieldname: 'contact_mobile_no',
+            label: __('Mobile Number'),
+            default: contact_details.mobile_no || ''
+        },
+        {
+            fieldtype: 'Data',
+            fieldname: 'contact_email',
+            label: __('Email ID'),
+            default: contact_details.email || ''
+        },
+        {
+            fieldtype: 'Section Break',
+            label: __('Skip Verification')
+        },
+        {
+            fieldtype: 'Small Text',
+            fieldname: 'skip_comment',
+            label: __('Or Approve with Comment (Will notify in dashboard)'),
+            placeholder: __('Enter comment if you wish to skip validations...')
+        }
+    ];
+    return fields;
+};
+
+// Final Approve of ONE Sales Order — one dialog, the same on the Sales Order form (workflow Approve at Pending Final
+// Approval) and on the Order Flow page (SO Approvals › Final Approve) (user, 18-11-2026; was three dialogs: items &
+// prices, BOM check, customer details). It shows the lines with their Price List Rate (editable — Rate stays
+// read-only), discount, Rate, Amount and BOM / normal; the "I have checked the BOM and normal rows" tick; the
+// customer's details; the skip comment. One click runs, in this order: changed prices saved
+// (so_price_edit.save_price_lines — ERPNext's own rate / GST / totals), then the same calls as before:
+// save_and_approve_sales_order (customer details) or approve_sales_order_with_comment. A step that fails stops the
+// rest and shows its message. opts.on_done runs after the approval (and after a refusal that came once prices were
+// saved, so the screen shows the order as it now is). Bulk Final Approve keeps dacs_confirm_bom_split.
+window.dacs_final_approve_dialog = function (so, opts) {
+    opts = opts || {};
+    const done = () => opts.on_done && opts.on_done();
+    Promise.all([
+        frappe.call({ method: "erp_dacsinc_custom.so_price_edit.get_price_lines", args: { sales_order: so } }),
+        frappe.call({ method: "erp_dacsinc_custom.order_flow_api.get_bom_split", args: { sales_orders: [so] } }),
+        frappe.call({ method: "erp_dacsinc_custom.order_flow_api.verify_customer_details", args: { sales_order: so } }),
+    ]).then(([p, b, v]) => {
+        const d0 = p.message, res = v.message;
+        if (!d0 || !res) return;
+        const bom_rows = ((b.message || {})[so] || {}).rows || [];
+        const cur = d0.currency;
+        const money = (x) => format_currency(x, cur);
+        const num = (x) => (Math.round(flt(x) * 100) / 100).toString();
+        const bom_of = {};
+        bom_rows.forEach((x) => { bom_of[x.idx] = x.bom_no || ""; });
+        const n_bom = d0.rows.filter((x) => bom_of[x.idx]).length;
+        const rows_html = d0.rows.map((x) => `
+            <tr data-row="${wf_esc(x.name)}">
+                <td>${x.idx}</td>
+                <td><b>${wf_esc(x.item_code)}</b>${x.item_name && x.item_name !== x.item_code ? `<div class="text-muted small">${wf_esc(x.item_name)}</div>` : ""}</td>
+                <td class="text-right">${flt(x.qty)} ${wf_esc(x.uom || "")}</td>
+                <td class="text-right"><input type="number" min="0" step="0.01" class="form-control input-xs text-right ofp-plr" value="${num(x.price_list_rate)}" style="width:110px;margin-left:auto"></td>
+                <td class="text-right">${flt(x.discount_percentage) ? `${num(x.discount_percentage)}%` : ""}</td>
+                <td class="text-right ofp-rate">${money(x.rate)}${x.margin ? `<div class="text-muted small">${__("with margin")}</div>` : ""}</td>
+                <td class="text-right ofp-amt">${money(x.amount)}</td>
+                <td>${bom_of[x.idx]
+                    ? `<span class="indicator-pill orange" title="${wf_esc(bom_of[x.idx])}">${__("BOM → Subcontract PO")}</span>`
+                    : `<span class="indicator-pill green">${__("Normal item")}</span>`}</td>
+            </tr>`).join("");
+        let dialog;
+        const go = (values, skip) => {
+            if (!values.bom_checked) {
+                frappe.msgprint(__('Tick "I have checked which rows have a BOM…" first.'));
+                return;
+            }
+            const comment = (values.skip_comment || "").trim();
+            if (skip && !comment) {
+                frappe.msgprint(__("Please enter a comment in the field below first."));
+                return;
+            }
+            buttons(false);
+            const prices = changed();
+            let prices_saved = false;
+            const save_prices = prices.length
+                ? frappe.call({ method: "erp_dacsinc_custom.so_price_edit.save_price_lines",
+                                args: { sales_order: so, rows: JSON.stringify(prices), modified: d0.modified },
+                                freeze: true, freeze_message: __("Saving prices…") })
+                : Promise.resolve();
+            save_prices.then(() => {
+                prices_saved = prices.length > 0;
+                if (comment) {
+                    return frappe.call({ method: "erp_dacsinc_custom.order_flow_api.approve_sales_order_with_comment",
+                                         args: { sales_order: so, comment: comment }, freeze: true })
+                        .then(() => __("Sales Order approved with comment successfully"));
+                }
+                let contact_data = null;
+                if (values.contact_first_name) {
+                    contact_data = JSON.stringify({ first_name: values.contact_first_name, mobile_no: values.contact_mobile_no, email: values.contact_email });
+                }
+                return frappe.call({ method: "erp_dacsinc_custom.order_flow_api.save_and_approve_sales_order",
+                    args: { sales_order: so, gstin: values.gstin || null, gst_category: values.gst_category || null,
+                            tax_category: values.tax_category || null, billing_address: values.billing_address || null,
+                            shipping_address: values.shipping_address || null, contact_data: contact_data },
+                    freeze: true }).then(() => __("Customer details updated and Sales Order approved"));
+            }).then((msg) => {
+                dialog.hide();
+                frappe.show_alert({ message: (prices.length ? __("Prices saved on {0} line(s). ", [prices.length]) : "") + msg, indicator: "green" });
+                done();
+            }).catch(() => {
+                // A step was refused (its message is shown): nothing after it ran. Prices already saved stay saved —
+                // open Final Approve again to go on with the order as it is now.
+                buttons(true);
+                if (prices_saved) { dialog.hide(); done(); }
+            });
+        };
+        dialog = new frappe.ui.Dialog({
+            title: __("Final Approve {0}", [so]),
+            size: "extra-large",
+            fields: [
+                { fieldtype: "HTML", fieldname: "items_html" },
+                { fieldtype: "Check", fieldname: "bom_checked",
+                  label: __("I have checked which rows have a BOM (Subcontract PO) and which are normal items — this can't be changed after final approval") },
+                ...wf_customer_verify_fields(res, () => dialog),
+            ],
+            primary_action_label: __("Update & Final Approve"),
+            primary_action: (values) => go(values, false),
+            secondary_action_label: __("Skip & Approve"),
+            secondary_action: () => go(dialog.get_values(true) || {}, true),
+        });
+        const $w = dialog.fields_dict.items_html.$wrapper;
+        $w.html(`
+            <div class="text-muted small" style="margin-bottom:6px;">${__("Change a line's Price List Rate if needed — the Rate is worked out from it and the line's discount, as on the Sales Order form. {0} row(s) with a BOM · {1} normal row(s).", [n_bom, d0.rows.length - n_bom])}</div>
+            <div style="overflow-x:auto;"><table class="table table-bordered table-condensed" style="font-size:12.5px;margin-bottom:6px;">
+                <thead><tr><th>#</th><th>${__("Item")}</th><th class="text-right">${__("Qty")}</th><th class="text-right">${__("Price List Rate")}</th>
+                    <th class="text-right">${__("Discount")}</th><th class="text-right">${__("Rate")}</th><th class="text-right">${__("Amount")}</th><th>${__("BOM")}</th></tr></thead>
+                <tbody>${rows_html}</tbody>
+            </table></div>
+            <div class="text-right" style="font-size:13px;">${__("Net Total")}: <b>${money(d0.net_total)}</b> &nbsp;·&nbsp; ${__("Grand Total")}: <b>${money(d0.rounded_total || d0.grand_total)}</b>
+                <div class="text-muted small ofp-note" style="display:none;">${__("Prices changed: taxes and totals are worked out again when you approve.")}</div></div>`);
+        const changed = () => d0.rows.map((x) => ({ x, v: flt($w.find(`tr[data-row="${CSS.escape(x.name)}"] .ofp-plr`).val()) }))
+            .filter(({ x, v }) => Math.abs(v - flt(x.price_list_rate)) >= 0.005)
+            .map(({ x, v }) => ({ name: x.name, price_list_rate: v }));
+        $w.on("input", ".ofp-plr", (e) => {
+            const $tr = $(e.target).closest("tr");
+            const x = d0.rows.find((y) => y.name === $tr.data("row"));
+            if (x && !x.margin) {
+                const rate = flt($(e.target).val()) * (1 - flt(x.discount_percentage) / 100);
+                $tr.find(".ofp-rate").text(money(rate));
+                $tr.find(".ofp-amt").text(money(rate * flt(x.qty)));
+            }
+            $w.find(".ofp-note").toggle(!!changed().length);
+        });
+        const buttons = (on) => [dialog.get_primary_btn(), dialog.get_secondary_btn()].forEach((btn) => btn && btn.prop("disabled", !on).toggleClass("disabled", !on));
+        wf_enable_new_address_customer_prefill(dialog, res.customer);
+        dialog.show();
     });
 };
