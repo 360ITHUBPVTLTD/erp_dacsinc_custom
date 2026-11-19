@@ -18,8 +18,8 @@ POS Request Status (custom_pos_request_status) when created; every other Materia
   can't change it either.
 - A transfer into a POS store (for a request, store to store, or HO without a request) is
   accepted — submitted — by a POS user of the store it goes to who didn't make it, or by POS
-  Admin, who can do everything (guard_transfer_submit). HO and admins without POS Admin
-  can't. The store may lower the qty to what really arrived; HO then sends the rest.
+  Admin / Warehouse Incharge, who can accept any (guard_transfer_submit). Other HO roles and
+  admins without one of those can't. The store may lower the qty to what really arrived; HO then sends the rest.
 - VV Puram short? HO's "Purchase shortfall" opens a draft Purchase Order into VV Puram for
   the missing qty (Purchase Order › POS Request links it back). The stock is sent to the
   store once it has arrived.
@@ -368,7 +368,7 @@ def get_request(name):
 			"review": doc.docstatus == 0 and status == PENDING and is_approver(),
 			"dispatch": open_send and is_approver(),
 			"purchase": open_send and _can_purchase(),
-			"receive": bool(transfers) and (is_store_user(targets) or is_pos_admin()),
+			"receive": bool(transfers) and (is_store_user(targets) or accepts_any()),
 		},
 	}
 
@@ -500,8 +500,9 @@ def mail_store_on_transfer(doc, method=None):
 # Any Material Transfer whose target is a POS store's warehouse — a store-to-store transfer,
 # HO's transfer for a POS request, or HO sending stock to a store without one — stays a
 # draft (In Transit) until the RECEIVING store accepts it: a POS Store Manager of that store,
-# who is not the one who made it, checks what arrived and submits it — or POS Admin, who can
-# do everything. Nobody else submits it (not the sender, HO or an admin without POS Admin).
+# who is not the one who made it, checks what arrived and submits it — or POS Admin /
+# Warehouse Incharge, who may accept any. Nobody else submits it (not the sender, other HO
+# roles or an admin without one of those roles).
 # One transfer goes to one store.
 def store_targets(doc):
 	from erp_dacsinc_custom.pos_scope import all_store_warehouses
@@ -512,11 +513,18 @@ def store_targets(doc):
 	return {d.t_warehouse for d in doc.get("items") or [] if d.t_warehouse in stores}
 
 
+ACCEPT_ANY_ROLES = ("POS Admin", "Warehouse Incharge")  # Warehouse Incharge too: user, 19-11-2026
+
+
 def can_accept(doc, user=None):
-	"""The receiving store's POS user (not the sender), or POS Admin (any transfer)."""
+	"""The receiving store's POS user (not the sender), or POS Admin / Warehouse Incharge (any transfer)."""
 	user = user or frappe.session.user
 	targets = store_targets(doc)
-	return bool(targets) and (is_pos_admin(user) or (doc.owner != user and is_store_user(targets, user)))
+	return bool(targets) and (accepts_any(user) or (doc.owner != user and is_store_user(targets, user)))
+
+
+def accepts_any(user=None):
+	return bool(set(frappe.get_roles(user or frappe.session.user)) & set(ACCEPT_ANY_ROLES))
 
 
 def _pos_requests_of(doc):
@@ -835,7 +843,7 @@ def get_board(tab=None, store=None, limit=50):
 				"review": d.docstatus == 0 and d.status == PENDING and approver,
 				"dispatch": d.docstatus == 1 and d.status in (APPROVED, PARTLY) and approver,
 				"purchase": d.docstatus == 1 and d.status in (APPROVED, PARTLY) and can_purchase,
-				"receive": d.status == IN_TRANSIT and (is_store_user(_targets(doc_like)) or is_pos_admin()),
+				"receive": d.status == IN_TRANSIT and (is_store_user(_targets(doc_like)) or accepts_any()),
 			},
 		})
 	stores = []

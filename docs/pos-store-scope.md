@@ -19,7 +19,7 @@ works either way.
 | POS Profile | all | their stores |
 | Customer | POS customers (POS Store set) + ones they created | their stores' customers + ones they created |
 | Stock Entry | touching any store's warehouse, or made by POS staff | touching their stores' warehouses, or their own |
-| Material Request | flagged Created by POS User (`custom_is_pos_request`), or their own | touching their stores' warehouses, or their own |
+| Material Request | **all** (not limited) | touching their stores' warehouses, or their own |
 | Item | all | their stores' brands (none listed = all) |
 | Sales Invoice | POS Sales Invoices only | their own (sheet: O) |
 
@@ -82,9 +82,10 @@ and the rows' warehouses.
   one.
   - It stays a draft (**In Transit**) until a POS Store Manager of the receiving store, who
     didn't make it, checks what arrived (lowering a qty if less came) and submits it.
-  - **POS Admin can do everything**: they may accept any transfer, their own included. The
-    rule is keyed on the POS Admin role, so Administrator, who holds every role, counts too.
-  - The sender, HO, and admins without POS Admin are refused, on the server.
+  - **POS Admin and Warehouse Incharge** may accept any transfer, their own included
+    (`pos_request.ACCEPT_ANY_ROLES` / `accepts_any`). The rule is keyed on those roles, so
+    Administrator, who holds every role, counts too.
+  - The sender, other HO roles, and admins without one of those roles are refused, on the server.
   - **One store per transfer**: a transfer to two stores is refused, so each store accepts
     its own.
   - Saving one emails the receiving store's POS Store Managers, not the sender
@@ -142,16 +143,21 @@ has no status and is unaffected, including a POS Admin's own requests.
     ignore_permissions after the role check.
 - **The store accepts the transfer**, under the same rule as every transfer into a store
   (see *Transfers into a store are accepted by that store* above):
-  - a POS Store Manager of that store who didn't make it, or POS Admin;
-  - HO and admins without POS Admin are refused, so ERPNext's Submit can't get around it
-    either;
+  - a POS Store Manager of that store who didn't make it, or POS Admin / Warehouse Incharge;
+  - other HO roles and admins without one of those roles are refused, so ERPNext's Submit
+    can't get around it either;
   - the rows can't take the request past its qty.
 - **Items with a BOM can be requested.** The Material Request rule "has a BOM … not requested via
   Material Request" (`custom_script.validate_material_request_no_bom_items`) is skipped for a
   POS request (Created by POS User) that is against no Sales Order. It moves finished stock
   from VV Puram to a store, so nothing is bought or produced. Every other Material Request
   keeps the rule, including a POS one with a Sales Order link.
-- **Warehouse Incharge** has **View** on Material Request in the access sheet, for this.
+- **POS Admin and Warehouse Incharge have every Material Request action** (sheet VNESCD:
+  New, Edit, Submit, Stop / Close, Cancel, Amend, Delete) on **every** Material Request, not
+  only store requests (user, 19-11-2026; patch `pos_admin_wh_incharge_mr_full`, add-only).
+  Still unchanged for POS Admin: a Material Request they make is a Material Transfer, ticked
+  Created by POS User, and the form shows no Create menu / Get Item From SO (POS staff rules
+  below). Purchase shortfall still needs Create on Purchase Order, which neither role has.
   A user whose Material Request access is View only, through an approver role, sees
   only POS store requests (`pos_request.material_request_query` /
   `has_material_request_permission`).

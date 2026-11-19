@@ -259,7 +259,7 @@
         requirements, how to build and deploy, and the task list — delivered, open from the 8 Oct meeting, and Phase 2.</p>
     </div>
     <div class="actions no-print">
-      <a class="btn" href="/assets/erp_dacsinc_custom/docs/project-guide.pdf?v=39" download="Dacsinc ERP - Project Guide.pdf" data-dl-name="Dacsinc ERP - Project Guide">⤓ Download PDF</a>
+      <a class="btn" href="/assets/erp_dacsinc_custom/docs/project-guide.pdf?v=40" download="Dacsinc ERP - Project Guide.pdf" data-dl-name="Dacsinc ERP - Project Guide">⤓ Download PDF</a>
       <button class="btn outline" type="button" id="btn-pdf">⎙ Print all</button>
       <button class="btn outline" type="button" id="btn-tab">⎙ Print this tab</button>
       <button class="btn outline" type="button" id="btn-html">⤓ HTML copy</button>
@@ -730,12 +730,12 @@ const ROLES = [
   {r: "Sales Order Final Approver", job: "Management", does: ["Final approval / rejection"], tabs: ["SO Approvals › Pending Final SO Approval", "Rejected"], ctl: ["Set user-wise in Admin Settings", "Never approves own order"]},
   {r: "Purchase Executive / Manager", job: "Purchase", does: ["Material Requests, plain POs", "Receipts, purchase invoices"], tabs: ["Purchase Flow", "Sales Tracker › Material Requests"], ctl: ["PO price check if listed in Admin Settings"]},
   {r: "Production Manager / Assistant", job: "Production", does: ["BOMs, subcontracting, embroidery"], tabs: ["Job Work", "Embroidery Transfers", "Kits", "Stock (requested — MOM 8 Oct)"], ctl: ["Subcontracting PO analysis report (requested — MOM 8 Oct)"]},
-  {r: "Warehouse Incharge / Executive", job: "Warehouse / Inward", does: ["Receipts, stock entries, picking", "Approves POS supply transfers", "Approves POS store requests and makes the transfer (POS HO workspace)"], tabs: ["Pick Lists", "Stock Tracker"], ctl: ["Held stock protected unless listed in Admin Settings › Stock Hold"]},
+  {r: "Warehouse Incharge / Executive", job: "Warehouse / Inward", does: ["Receipts, stock entries, picking", "Approves POS supply transfers", "Approves POS store requests and makes the transfer (POS HO workspace)", "Warehouse Incharge: every Material Request action (new, submit, cancel, amend, delete) and may accept any transfer into a store"], tabs: ["Pick Lists", "Stock Tracker"], ctl: ["Held stock protected unless listed in Admin Settings › Stock Hold"]},
   {r: "Packing Team", job: "Packing", does: ["Pick Lists"], tabs: ["Pick Lists"], ctl: []},
   {r: "Accounts Executive / Manager", job: "Accounts", does: ["Delivery Notes, Sales Invoices", "Purchase invoices"], tabs: ["Pending DN/SI", "Finance"], ctl: ["Only roles that may print / export customer, supplier and price data"]},
   {r: "Finance Executive / Collection", job: "Finance", does: ["Receivables, collections"], tabs: ["Finance"], ctl: []},
   {r: "Logistics", job: "Logistics", does: ["Transporter, LR No, signed copy"], tabs: ["Logistics"], ctl: []},
-  {r: "POS Admin", job: "Operations store manager", does: ["All stores, transfers, POS reports"], tabs: ["None — works in POS"], ctl: ["All stores", "Approves supply transfers"]},
+  {r: "POS Admin", job: "Operations store manager", does: ["All stores, transfers, POS reports", "Every Material Request action on every Material Request"], tabs: ["None — works in POS"], ctl: ["All stores", "Approves supply transfers"]},
   {r: "POS Store Manager", job: "Store manager", does: ["Own store's shifts, bills, stock requests (sent for HO approval; submit HO's transfer on arrival)", "Store Cash Book"], tabs: ["None — works in POS"], ctl: ["Own store and its brands only"]},
   {r: "HR Manager", job: "HR", does: ["Creates users, gives sheet profiles"], tabs: [], ctl: ["Never gives admin roles, never edits admins or self, never deletes"]},
   {r: "Admin", job: "Business admin", does: ["Edits the access sheet", "Admin Settings"], tabs: ["All"], ctl: ["Sees everything"]},
