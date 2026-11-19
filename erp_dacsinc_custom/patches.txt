@@ -59,3 +59,4 @@ erp_dacsinc_custom.patches.kits_tab_roles
 erp_dacsinc_custom.patches.so_final_approval_edit_admin
 erp_dacsinc_custom.patches.so_pending_states_edit_rows
 erp_dacsinc_custom.patches.operations_manager_role
+erp_dacsinc_custom.patches.pos_admin_wh_incharge_mr_full

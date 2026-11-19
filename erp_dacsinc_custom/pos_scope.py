@@ -217,8 +217,8 @@ def backfill():
 
 # ------------------------------------------------------------------ Stock Entry / Material Request
 # A store's warehouse is its POS Profile's warehouse.
-#   POS Admin: every POS store's Stock Entries / Material Requests, plus any made by
-#              POS staff.
+#   POS Admin: every POS store's Stock Entries, plus any made by POS staff; every
+#              Material Request (not limited, like Warehouse Incharge).
 #   POS Store Manager: those touching their stores' warehouses, plus their own.
 # A Material Transfer into a store is submitted by that store (its target warehouse);
 # POS Admin may submit any (guard_pos_transfer_submit).
@@ -261,15 +261,12 @@ def stock_entry_query(user=None):
 
 
 def material_request_query(user=None):
-	"""POS Admin: Material Requests flagged Created by POS User (custom_is_pos_request)
-	and their own. POS Store Manager: their stores' warehouses and their own."""
+	"""POS Admin: every Material Request (user, 19-11-2026). POS Store Manager: their
+	stores' warehouses and their own."""
 	user = user or frappe.session.user
 	sc = _stock_scope(user, "Material Request")
-	if not sc:
+	if not sc or get_scope(user, "Material Request")[0] == "all":
 		return ""
-	if get_scope(user, "Material Request")[0] == "all":
-		return (f"(`tabMaterial Request`.`custom_is_pos_request` = 1"
-				f" or `tabMaterial Request`.`owner` = {frappe.db.escape(user)})")
 	wh, owners = sc
 	w = _in(wh)
 	return (f"(`tabMaterial Request`.`owner` in {_in([user] + owners)}"
@@ -299,10 +296,8 @@ def has_stock_entry_permission(doc, ptype=None, user=None, debug=False):
 def has_material_request_permission(doc, ptype=None, user=None, debug=False):
 	user = user or frappe.session.user
 	sc = _stock_scope(user, "Material Request")
-	if not sc or doc.is_new():
-		return None
-	if get_scope(user, "Material Request")[0] == "all":
-		return bool(doc.get("custom_is_pos_request")) or doc.owner == user
+	if not sc or doc.is_new() or get_scope(user, "Material Request")[0] == "all":
+		return None  # POS Admin: every Material Request
 	wh, owners = sc
 	if doc.owner in [user] + owners:
 		return True
