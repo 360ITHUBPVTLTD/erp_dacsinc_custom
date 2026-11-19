@@ -875,7 +875,8 @@ def get_board(tab=None, store=None, limit=50):
 			"late_returns": sum(1 for r in store_returns if r["waiting_days"] >= LATE_DAYS),
 			"rows": rows, "stores": stores, "is_approver": approver, "is_store": is_store,
 			"can_create": frappe.has_permission("Material Request", "create") and is_store,
-			"can_transfer": frappe.has_permission("Stock Entry", "create") and is_store}
+			# + New Transfer: a store, or POS Admin / Warehouse Incharge sending stock to a store (user, 19-11-2026)
+			"can_transfer": frappe.has_permission("Stock Entry", "create") and (is_store or accepts_any())}
 
 
 # ------------------------------------------------------------------ mails

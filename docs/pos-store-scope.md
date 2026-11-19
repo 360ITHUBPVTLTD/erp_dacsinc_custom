@@ -93,8 +93,11 @@ and the rows' warehouses.
     emails that request's creator.
   - The board's **Store Transfers** tile lists drafts waiting for a store, those not made
     for a request: incoming (with **Check & accept**) and sent for a store, all of them
-    for POS Admin / HO. Each shows age, with the same "Waiting N days" flag. A store
-    board also has **+ New Transfer**.
+    for POS Admin / HO. Each shows age, with the same "Waiting N days" flag.
+  - **+ New Transfer** (a new Material Transfer Stock Entry) shows for a store user and for
+    POS Admin / Warehouse Incharge, who send stock to a store without a request; the store
+    still accepts it. **+ New Request** is a store user's only: a request made by HO gets no
+    POS Request Status, so it would never show on the board.
   - The board's **Returns to HO** tile lists a store's draft transfers back into the supply
     warehouse (VV Puram - IND, `pos_notify.needs_warehouse_approval`) — Store Transfers
     leaves them out, since they go to no store (`_store_returns`). POS Admin / HO see all
