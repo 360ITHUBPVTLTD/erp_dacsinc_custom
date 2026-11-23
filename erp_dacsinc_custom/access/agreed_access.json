@@ -18,6 +18,7 @@
     "V",
     "V",
     "",
+    "",
     ""
    ],
    "Business Contacts": [
@@ -27,6 +28,7 @@
     "VNED",
     "V",
     "V",
+    "",
     "",
     "",
     "",
@@ -56,6 +58,7 @@
     "V",
     "V",
     "",
+    "V",
     "V"
    ],
    "Customer": [
@@ -72,6 +75,7 @@
     "V",
     "",
     "",
+    "V",
     "V",
     "V",
     "V",
@@ -94,7 +98,8 @@
     "VNES",
     "VNES",
     "VNES",
-    ""
+    "",
+    "V"
    ],
    "Embroidery Work Order": [
     "",
@@ -113,6 +118,7 @@
     "VNES",
     "VNES",
     "",
+    "",
     ""
    ],
    "Event Activity": [
@@ -120,6 +126,7 @@
     "",
     "VNEO",
     "VNED",
+    "",
     "",
     "",
     "",
@@ -151,7 +158,8 @@
     "V",
     "V",
     "V",
-    ""
+    "",
+    "V"
    ],
    "Item Price": [
     "VNE",
@@ -170,11 +178,13 @@
     "V",
     "V",
     "V",
+    "V",
     "V"
    ],
    "Journal Entry": [
     "VNESC",
     "VNESC",
+    "",
     "",
     "",
     "",
@@ -208,6 +218,7 @@
     "",
     "",
     "",
+    "",
     ""
    ],
    "Material Request": [
@@ -227,6 +238,7 @@
     "V",
     "",
     "",
+    "",
     ""
    ],
    "POS Closing Entry": [
@@ -239,6 +251,7 @@
     "",
     "VNES",
     "VNES",
+    "",
     "",
     "",
     "",
@@ -265,6 +278,7 @@
     "",
     "",
     "",
+    "",
     ""
    ],
    "POS Opening Entry": [
@@ -277,6 +291,7 @@
     "",
     "VNES",
     "VNES",
+    "",
     "",
     "",
     "",
@@ -303,11 +318,13 @@
     "",
     "",
     "",
+    "",
     ""
    ],
    "Payment Entry": [
     "VNESC",
     "VNESC",
+    "",
     "",
     "",
     "",
@@ -341,11 +358,12 @@
     "VNES",
     "VNES",
     "VNES",
-    ""
+    "",
+    "V"
    ],
    "Purchase Invoice": [
     "VNES",
-    "VNES",
+    "VNESC",
     "",
     "",
     "",
@@ -357,6 +375,7 @@
     "VC",
     "VNES",
     "VNES",
+    "",
     "",
     "",
     "",
@@ -379,6 +398,7 @@
     "V",
     "V",
     "",
+    "V",
     "V"
    ],
    "Purchase Receipt": [
@@ -398,6 +418,7 @@
     "VNES",
     "VNES",
     "",
+    "",
     ""
    ],
    "Quotation": [
@@ -410,6 +431,7 @@
     "",
     "VNESO",
     "VNESO",
+    "",
     "",
     "",
     "",
@@ -436,6 +458,7 @@
     "",
     "",
     "",
+    "",
     ""
    ],
    "Sales Order": [
@@ -455,7 +478,8 @@
     "V",
     "V",
     "V",
-    ""
+    "",
+    "V"
    ],
    "Stock Entry": [
     "",
@@ -474,6 +498,7 @@
     "VNES",
     "VNES",
     "",
+    "",
     ""
    ],
    "Stock Reconciliation": [
@@ -488,6 +513,7 @@
     "",
     "",
     "VNES",
+    "",
     "",
     "",
     "",
@@ -512,7 +538,8 @@
     "",
     "",
     "",
-    ""
+    "",
+    "V"
    ],
    "Subcontracting Order": [
     "",
@@ -531,7 +558,8 @@
     "VNES",
     "VNES",
     "",
-    ""
+    "",
+    "V"
    ],
    "Subcontracting Receipt": [
     "",
@@ -549,6 +577,7 @@
     "",
     "VNES",
     "VNES",
+    "",
     "",
     ""
    ],
@@ -569,6 +598,7 @@
     "V",
     "V",
     "",
+    "",
     ""
    ],
    "Uniform Embroidery Transfer": [
@@ -587,6 +617,7 @@
     "",
     "VNE",
     "VNE",
+    "",
     "",
     ""
    ],
@@ -607,11 +638,12 @@
     "V",
     "V",
     "V",
-    "V"
+    "V",
+    ""
    ]
   },
   "letters": "VNESCDO",
-  "note": "Role Permission Manager \u00b7 Administrator: Production Manager \u00b7 Embroidery Work Order: VNES \u2192 VNESC",
+  "note": "Role Permission Manager \u00b7 Administrator: Accounts Manager \u00b7 Purchase Invoice: VNES \u2192 VNESC",
   "roles": [
    "Accounts Executive",
    "Accounts Manager",
@@ -629,14 +661,15 @@
    "Warehouse Incharge",
    "Warhouse Executive",
    "Packing Team",
-   "Logistics"
+   "Logistics",
+   "Operations Manager"
   ],
   "saved_by": "Administrator",
   "saved_by_name": "Administrator",
-  "saved_on": "2026-11-18 12:26:21.018154",
-  "version": 59
+  "saved_on": "2026-11-23 16:06:31.527085",
+  "version": 65
  },
- "fingerprint": "d46da543e844e1c42fe1fee45333d8b4e638dd99",
+ "fingerprint": "a34a6c6c1ab0759bef9710734584048abcd85d8a",
  "tab_access": {
   "cells": {
    "Embroidery Transfers": [
@@ -656,11 +689,13 @@
     "A",
     "",
     "",
+    "",
     ""
    ],
    "Finance": [
     "A",
     "A",
+    "",
     "",
     "",
     "",
@@ -694,6 +729,7 @@
     "",
     "",
     "",
+    "",
     ""
    ],
    "Finance \u203a Receivables": [
@@ -713,9 +749,11 @@
     "",
     "",
     "",
+    "",
     ""
    ],
    "Finance \u203a Returns / Notes": [
+    "",
     "",
     "",
     "",
@@ -751,6 +789,7 @@
     "",
     "",
     "",
+    "",
     ""
    ],
    "Job Work": [
@@ -768,6 +807,7 @@
     "",
     "",
     "A",
+    "",
     "",
     "",
     ""
@@ -789,6 +829,7 @@
     "A",
     "",
     "",
+    "",
     ""
    ],
    "Job Work \u203a Embroidery - Panel": [
@@ -806,6 +847,7 @@
     "",
     "",
     "A",
+    "",
     "",
     "",
     ""
@@ -827,6 +869,7 @@
     "A",
     "",
     "",
+    "",
     ""
    ],
    "Job Work \u203a Sub Receipts": [
@@ -844,6 +887,7 @@
     "",
     "",
     "A",
+    "",
     "",
     "",
     ""
@@ -865,6 +909,7 @@
     "A",
     "A",
     "",
+    "",
     ""
    ],
    "Logistics": [
@@ -874,6 +919,7 @@
     "",
     "A",
     "Y",
+    "",
     "",
     "",
     "",
@@ -903,6 +949,7 @@
     "A",
     "A",
     "",
+    "",
     ""
    ],
    "Pick Lists": [
@@ -922,6 +969,7 @@
     "",
     "",
     "A",
+    "",
     ""
    ],
    "Purchase Flow": [
@@ -941,7 +989,8 @@
     "Y",
     "",
     "",
-    "Y"
+    "Y",
+    ""
    ],
    "Purchase Flow \u203a POs": [
     "",
@@ -960,7 +1009,8 @@
     "Y",
     "",
     "",
-    "Y"
+    "Y",
+    ""
    ],
    "Purchase Flow \u203a Receipts": [
     "Y",
@@ -977,6 +1027,7 @@
     "A",
     "A",
     "A",
+    "",
     "",
     "",
     ""
@@ -998,6 +1049,7 @@
     "",
     "",
     "",
+    "",
     ""
    ],
    "SO Approvals": [
@@ -1008,6 +1060,7 @@
     "Y",
     "Y",
     "A",
+    "",
     "",
     "",
     "",
@@ -1036,6 +1089,7 @@
     "",
     "",
     "",
+    "",
     ""
    ],
    "SO Approvals \u203a 2. Merchandiser Unassigned Orders": [
@@ -1046,6 +1100,7 @@
     "Y",
     "Y",
     "A",
+    "",
     "",
     "",
     "",
@@ -1074,6 +1129,7 @@
     "",
     "",
     "",
+    "",
     ""
    ],
    "SO Approvals \u203a 4. Pending Final SO Approval": [
@@ -1084,6 +1140,7 @@
     "Y",
     "Y",
     "A",
+    "",
     "",
     "",
     "",
@@ -1112,6 +1169,7 @@
     "",
     "",
     "",
+    "",
     ""
    ],
    "Sales Tracker": [
@@ -1131,7 +1189,8 @@
     "",
     "",
     "Y",
-    ""
+    "",
+    "Y"
    ],
    "Sales Tracker \u203a Embroidery - FP": [
     "",
@@ -1150,7 +1209,8 @@
     "",
     "",
     "",
-    ""
+    "",
+    "Y"
    ],
    "Sales Tracker \u203a Embroidery - Panel": [
     "",
@@ -1169,7 +1229,8 @@
     "",
     "",
     "",
-    ""
+    "",
+    "Y"
    ],
    "Sales Tracker \u203a Material Requests": [
     "",
@@ -1188,7 +1249,8 @@
     "",
     "",
     "",
-    ""
+    "",
+    "Y"
    ],
    "Sales Tracker \u203a Sales Orders": [
     "",
@@ -1207,7 +1269,8 @@
     "",
     "",
     "Y",
-    ""
+    "",
+    "Y"
    ],
    "Stock Tracker": [
     "",
@@ -1226,6 +1289,7 @@
     "A",
     "A",
     "A",
+    "",
     ""
    ]
   },
@@ -1246,11 +1310,12 @@
    "Warehouse Incharge",
    "Warhouse Executive",
    "Packing Team",
-   "Logistics"
+   "Logistics",
+   "Operations Manager"
   ],
   "saved_by": "Administrator",
   "saved_by_name": "Administrator",
-  "saved_on": "2026-11-11 16:09:53.201239",
-  "version": 20
+  "saved_on": "2026-11-18 16:30:04.944817",
+  "version": 23
  }
 }
