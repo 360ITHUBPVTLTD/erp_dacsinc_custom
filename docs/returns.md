@@ -39,7 +39,10 @@ covers another note's shortfall. Rule (agreed 2026-10-23): **never blocks**.
   ERPNext's own Update Stock can't be used there. On **Submit**, `on_note_submit` makes the Sales /
   Purchase Return from the original DN / PR for this note's lines and qty and submits it (as part of
   the note, permissions ignored like ERPNext's Update Stock) — original cost, the DN / PR knows, no
-  double return. Its name goes into the note's *Sales / Purchase Return* field. **Cancelling** the note
+  double return. The return takes the party's address, GSTIN and GST Category from the **note**, not
+  the old DN / PR (a DN saved Unregistered without an address, GSTIN added to the customer later, would
+  otherwise fail with "GST Category cannot be Unregistered for party with GSTIN"); the same for **Make
+  Sales / Purchase Return**. Its name goes into the note's *Sales / Purchase Return* field. **Cancelling** the note
   cancels that return first (`on_note_cancel`).
 - **Leave it unticked** — the note shows *Stock not returned* with **Make Sales / Purchase Return**.
 

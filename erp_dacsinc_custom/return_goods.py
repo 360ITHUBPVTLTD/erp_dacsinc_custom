@@ -33,10 +33,12 @@ NOTE = {  # money document → its goods document
 	"Sales Invoice": {
 		"goods": "Delivery Note", "goods_item": "Delivery Note Item", "note_item": "Sales Invoice Item",
 		"note_key": "dn_detail", "goods_key": "dn_detail", "goods_label": _("Sales Return"), "note_label": _("Credit Note"),
+		"gst_fields": ("customer_address", "address_display", "billing_address_gstin", "gst_category"),
 	},
 	"Purchase Invoice": {
 		"goods": "Purchase Receipt", "goods_item": "Purchase Receipt Item", "note_item": "Purchase Invoice Item",
 		"note_key": "pr_detail", "goods_key": "purchase_receipt_item", "goods_label": _("Purchase Return"), "note_label": _("Debit Note"),
+		"gst_fields": ("supplier_address", "address_display", "supplier_gstin", "gst_category"),
 	},
 }
 GOODS = {c["goods"]: n for n, c in NOTE.items()}  # goods document → its money document
@@ -281,10 +283,15 @@ def _goods_returns_for(note_dt, note_name, missing):
 		from erpnext.stock.doctype.delivery_note.delivery_note import make_sales_return as make
 	else:
 		from erpnext.stock.doctype.purchase_receipt.purchase_receipt import make_purchase_return as make
+	# The party's GST details come from the note, not the old DN / PR: a DN saved as Unregistered
+	# with no address (GSTIN added to the customer later) made the return "Unregistered" with the
+	# customer's GSTIN → "GST Category cannot be Unregistered for party with GSTIN" (CN 364, 23-11).
+	gst = frappe.db.get_value(note_dt, note_name, list(c["gst_fields"]), as_dict=True) or {}
 	out = []
 	for src in sorted(set(parents.values())):
 		doc = _trim(make(src), c["goods_key"], {k: v for k, v in missing.items() if parents.get(k) == src})
 		doc.custom_against_note = note_name
+		doc.update(gst)
 		out.append(doc)
 	return out
 
