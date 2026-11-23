@@ -219,6 +219,13 @@ multi-copy prints; and its fitted estimates switched it off on documents outside
 left at the bottom). Credit / Debit Note DAC, Purchase Invoice DAC and the two older Delivery Note challans still use
 `min-height` boxes, which can't squeeze anything (a Credit Note ends ~24 mm above the footer).
 
+**Credit Note DAC, long notes** (the same line count that drops its page box, `fu.n > 11`): the item rows use the
+format's own 2px / 3px padding with `!important`, because Frappe's print style forces 6px and line height 1.8 on every
+cell, and the totals, amount in words and Remarks / signature are wrapped in `.rn-tail` (`page-break-inside: avoid`).
+Before, a 13-line note put the Remarks / signature box alone on page 2 under a repeated header. The wrapper is
+written only for long notes: inside the short notes' `-webkit-box` page it stopped the blank rows filling to the totals.
+Short notes print as before (pixel-identical on 21 live notes).
+
 Subcontracting Order Print Format 3 (Goods Issue Note): the issue table (Sn., Issue Item Details, UOM, Qty, Total
 Issued Qty) is plain; the space is under the **Receivable Product Summary** (Sn., Item to be Received, Qty, and an
 empty **Remark** column for the user to write in — same column widths as the issue table). It is **empty space with
