@@ -6769,7 +6769,20 @@ def validate_quotation(doc, method=None):
         # Sync custom_lead_owner if missing
         if not doc.custom_lead_owner:
             doc.custom_lead_owner = frappe.db.get_value("Lead", doc.party_name, "lead_owner")
-            
+
+    elif doc.quotation_to == "Customer" and doc.custom_lead_id:
+        # A Quotation made from a DUPLICATE lead: make_quotation_custom switches it to the lead's
+        # Customer but keeps custom_lead_id pointing at that lead, so it must behave like a normal
+        # lead quotation (status moves Enquiry → Pipeline on submit, lists under the lead). Keep the
+        # link only when the lead really belongs to this customer; sync the owner the same way.
+        lead_cust, lead_owner = frappe.db.get_value(
+            "Lead", doc.custom_lead_id, ["custom_lead_customer", "lead_owner"]
+        ) or (None, None)
+        if lead_cust != doc.party_name:
+            doc.custom_lead_id = None
+        elif not doc.custom_lead_owner:
+            doc.custom_lead_owner = lead_owner
+
     else:
         # Clear custom_lead_id if quotation_to is not "Lead" or party_name is empty
         doc.custom_lead_id = None

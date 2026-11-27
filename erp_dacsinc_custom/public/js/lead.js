@@ -662,7 +662,10 @@ frappe.ui.form.on('Lead', {
             });
         }
 
-        if (!frm.doc.__islocal && !frm.doc.custom_business_contacts) {
+        // A duplicate lead (carries custom_duplicate_lead_id — copied from another lead for an
+        // existing customer) must not be converted to a Business Contact: the original lead
+        // already owns that contact.
+        if (!frm.doc.__islocal && !frm.doc.custom_business_contacts && !frm.doc.custom_duplicate_lead_id) {
             frm.add_custom_button(__('Convert to Business Contact'), function () {
                 frappe.call({
                     method: "erp_dacsinc_custom.custom_lead.check_linked_quotation",
@@ -853,7 +856,8 @@ frappe.ui.form.on('Lead', {
 
         calculate_lead_age(frm);
         quotation_html(frm)
-        // if (frm.doc.name ) { 
+        family_quotation_so_html(frm)
+        // if (frm.doc.name ) {
 
         frappe.call({
             method: 'erp_dacsinc_custom.custom_lead.get_activities_for_lead', // Replace with your app and module path
@@ -1010,6 +1014,94 @@ function quotation_html(frm) {
         }
     });
 
+}
+
+// Quotations of the whole lead family (main lead + all its duplicates), each with the Sales
+// Order(s) raised from it. Backed by custom_lead.get_family_quotations_with_so.
+function family_quotation_so_html(frm) {
+    if (!frm.fields_dict.custom_quotation_so_html) return;
+    let wrapper = $(frm.fields_dict.custom_quotation_so_html.wrapper);
+    frappe.call({
+        method: 'erp_dacsinc_custom.custom_lead.get_family_quotations_with_so',
+        args: { lead_name: frm.doc.name },
+        callback: function (r) {
+            let rows = (r.message && r.message.rows) || [];
+            let fd = (r.message && r.message.family_details) || [];
+            let dupCount = (r.message && r.message.duplicate_count) || 0;
+
+            // Family roster: shown on the main lead AND on every duplicate, so the user can see
+            // how many duplicate leads were created (even ones with no quotation yet).
+            let rosterHtml = '';
+            if (fd.length > 1) {
+                let items = fd.map(f => {
+                    let color = f.role === 'Main' ? '#2e7d32' : '#ef6c00';
+                    let created = f.created ? frappe.datetime.str_to_user((f.created + '').split(' ')[0]) : '';
+                    return `<li style="margin-bottom:4px; list-style:none;">
+                        <span style="background:${color};color:#fff;padding:1px 6px;border-radius:3px;font-size:11px;">${f.role}</span>
+                        <a href="/app/lead/${f.name}" target="_blank" style="font-weight:600;">${f.name}</a>
+                        ${f.lead_name ? '— ' + frappe.utils.escape_html(f.lead_name) : ''}
+                        ${f.category ? '<span style="color:#6c757d;">(' + f.category + ')</span>' : ''}
+                        ${created ? '<span style="color:#6c757d;"> · ' + created + '</span>' : ''}
+                    </li>`;
+                }).join('');
+                rosterHtml = `
+                    <div style="margin-bottom:12px; padding:10px; background:#f8f9fa; border:1px solid #ddd; border-radius:4px;">
+                        <strong>Duplicate Leads Created: ${dupCount}</strong>
+                        <ul style="margin:6px 0 0 0; padding:0;">${items}</ul>
+                    </div>`;
+            }
+
+            if (!rows.length) {
+                wrapper.html(rosterHtml + '<p>No quotations found for this lead or its duplicates.</p>');
+                return;
+            }
+            let body = rows.map(row => {
+                let q_link = `/app/quotation/${row.quotation_id}`;
+                let lead_link = `/app/lead/${row.lead}`;
+                let formatted_date = row.transaction_date ? frappe.datetime.str_to_user(row.transaction_date) : '';
+                let formatted_total = format_currency(row.grand_total, 'INR');
+                let items = row.items && row.items.length ? row.items.join(', ') : 'No items';
+                let so_html = (row.sales_orders && row.sales_orders.length)
+                    ? row.sales_orders.map(s => `<a href="/app/sales-order/${s.name}" target="_blank">${s.name}</a> <span style="color:#6c757d;">(${s.status})</span>`).join('<br>')
+                    : '<span style="color:#6c757d;">—</span>';
+                let role_color = row.lead_role === 'Main' ? '#2e7d32' : '#ef6c00';
+                let role_badge = `<span style="background:${role_color};color:#fff;padding:1px 6px;border-radius:3px;font-size:11px;">${row.lead_role}</span>`;
+                return `
+                    <tr>
+                        <td style="border:1px solid #bcb9b4;">${role_badge}<br><a href="${lead_link}" target="_blank">${row.lead}</a></td>
+                        <td style="border:1px solid #bcb9b4;"><a href="${q_link}" target="_blank">${row.quotation_id}</a></td>
+                        <td style="border:1px solid #bcb9b4;">${row.status || ''}</td>
+                        <td style="border:1px solid #bcb9b4;">${row.customer_name || ''}</td>
+                        <td style="border:1px solid #bcb9b4;">${formatted_date}</td>
+                        <td style="border:1px solid #bcb9b4;">${items}</td>
+                        <td style="border:1px solid #bcb9b4;">${formatted_total}</td>
+                        <td style="border:1px solid #bcb9b4;">${so_html}</td>
+                    </tr>`;
+            }).join('');
+            let html = `
+                <div class="quotation-summary">
+                    <p><strong>Quotations &amp; Sales Orders (Lead + Duplicates): ${rows.length}</strong></p>
+                </div>
+                <div class="quotation-list-wrapper">
+                    <table class="table table-bordered">
+                        <thead>
+                            <tr style="background-color:#3498DB; color:white; text-align:left;">
+                                <th style="border:1px solid #bcb9b4;">Lead</th>
+                                <th style="border:1px solid #bcb9b4;">Quotation ID</th>
+                                <th style="border:1px solid #bcb9b4;">Status</th>
+                                <th style="border:1px solid #bcb9b4;">Customer Name</th>
+                                <th style="border:1px solid #bcb9b4;">Date</th>
+                                <th style="border:1px solid #bcb9b4;">Items</th>
+                                <th style="border:1px solid #bcb9b4;">Total</th>
+                                <th style="border:1px solid #bcb9b4;">Sales Order(s)</th>
+                            </tr>
+                        </thead>
+                        <tbody>${body}</tbody>
+                    </table>
+                </div>`;
+            wrapper.html(rosterHtml + html);
+        }
+    });
 }
 
 

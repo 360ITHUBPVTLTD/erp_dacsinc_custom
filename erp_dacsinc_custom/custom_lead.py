@@ -1353,6 +1353,13 @@ def get_lead_category_report(from_date=None, to_date=None):
     if from_date and to_date:
         quotation_filters["transaction_date"] = ["between", [from_date, to_date]]
 
+    # Scope quotations to the current user exactly like the leads above: a DAC CRM user
+    # (not DAC CRM Head / Administrator) must see only the quotations they created in the
+    # "Quotation Sent (User Wise)" section, not every user's. The section is grouped by
+    # q.owner, so filter on the same field so their row's totals stay correct.
+    if not is_admin:
+        quotation_filters["owner"] = user
+
     quotations = frappe.get_all(
         "Quotation",
         filters=quotation_filters,
@@ -1585,8 +1592,78 @@ def get_quotations_for_lead(lead_name):
             'grand_total': quotation.grand_total,
             'items': [item.item_code for item in items]
         })
-    
+
     return quotation_data
+
+
+@frappe.whitelist()
+def get_family_quotations_with_so(lead_name):
+    """Quotations for the whole lead family (the main lead and all its duplicates) with the
+    Sales Order(s) raised from each quotation.
+
+    A duplicate lead carries custom_duplicate_lead_id = the main lead it was copied from; the
+    main lead is its own root. So whether this form is opened on the main lead or on a duplicate,
+    the family is the same set and every row is tagged Main / Duplicate. A quotation's Sales
+    Orders are the submitted-or-draft Sales Orders whose line prevdoc_docname is that quotation
+    (the same link sync_lead_data uses)."""
+    if not frappe.has_permission("Quotation", "read"):
+        frappe.throw(_("You do not have permission to access Quotation records."), frappe.PermissionError)
+
+    dup_of = frappe.db.get_value("Lead", lead_name, "custom_duplicate_lead_id")
+    main = dup_of or lead_name
+    duplicates = frappe.get_all(
+        "Lead", filters={"custom_duplicate_lead_id": main}, pluck="name", order_by="creation asc")
+    family = [main] + duplicates
+    role = {main: "Main"}
+    for d in duplicates:
+        role[d] = "Duplicate"
+
+    # The full family roster (every lead, even ones with no quotation yet) so the Lead form can
+    # show how many duplicates exist, on the main lead and on each duplicate alike.
+    family_details = []
+    for name in family:
+        info = frappe.db.get_value(
+            "Lead", name, ["lead_name", "custom_lead_category", "creation"], as_dict=True) or {}
+        family_details.append({
+            "name": name,
+            "role": role.get(name, "Duplicate"),
+            "lead_name": info.get("lead_name"),
+            "category": info.get("custom_lead_category"),
+            "created": info.get("creation"),
+        })
+
+    quotations = frappe.get_all(
+        "Quotation",
+        filters={"custom_lead_id": ["in", family], "docstatus": ["<", 2]},
+        fields=["name", "custom_lead_id", "quotation_to", "party_name", "customer_name",
+                "status", "transaction_date", "grand_total"],
+        order_by="transaction_date desc, name desc",
+    )
+
+    rows = []
+    for q in quotations:
+        items = frappe.get_all("Quotation Item", filters={"parent": q.name}, pluck="item_code")
+        sos = frappe.db.sql("""
+            SELECT DISTINCT so.name, so.status
+            FROM `tabSales Order Item` soi
+            JOIN `tabSales Order` so ON so.name = soi.parent
+            WHERE soi.prevdoc_docname = %s AND so.docstatus < 2
+            ORDER BY so.creation
+        """, q.name, as_dict=True)
+        rows.append({
+            "lead": q.custom_lead_id,
+            "lead_role": role.get(q.custom_lead_id, "Duplicate"),
+            "quotation_id": q.name,
+            "status": q.status,
+            "customer_name": q.customer_name or q.party_name,
+            "transaction_date": q.transaction_date,
+            "grand_total": q.grand_total,
+            "items": items,
+            "sales_orders": [{"name": s.name, "status": s.status} for s in sos],
+        })
+
+    return {"main": main, "family": family, "family_details": family_details,
+            "duplicate_count": len(duplicates), "rows": rows}
 
 
 @frappe.whitelist()
@@ -1878,6 +1955,13 @@ def make_quotation_custom(source_name, target_doc=None):
     if lead and lead.custom_lead_customer and lead.custom_duplicated_lead:
         doc.quotation_to = "Customer"
         doc.party_name = lead.custom_lead_customer
+
+        # The Quotation is now "to Customer", but it still came from this Lead. Keep the link so it
+        # behaves exactly like a normal Lead quotation: validate_quotation keeps custom_lead_id for the
+        # duplicate-lead → customer case, quotation_on_submit then moves the Lead Enquiry → Pipeline and
+        # syncs expected revenue, and get_quotations_for_lead lists it under the Lead. Without this the
+        # standard mapper leaves custom_lead_id blank (it only fills it for Quotation To = Lead).
+        doc.custom_lead_id = source_name
 
         # Optional: Fetch and set the Customer Name for display purposes
         doc.customer_name = frappe.db.get_value("Customer", lead.custom_lead_customer, "customer_name")
